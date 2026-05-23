@@ -139,6 +139,77 @@
     .nav-right { display:none!important; }
     }
 
+
+  /* === MOBILE MENU === */
+  @media (max-width: 900px) {
+    .nav-links { display: none !important; }
+    .nav-right { display: none !important; }
+    #mob-btn {
+      display: flex !important;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      width: 44px;
+      height: 44px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 8px;
+      z-index: 9999;
+    }
+    #mob-btn span {
+      display: block;
+      width: 26px;
+      height: 2px;
+      background: #e8ecf4;
+      border-radius: 2px;
+      transition: all 0.3s;
+      pointer-events: none;
+    }
+  }
+  #mob-btn { display: none; }
+  #mob-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #040407;
+    z-index: 9998;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+  }
+  #mob-overlay.show { display: flex; }
+  #mob-overlay a {
+    font-family: 'Syncopate', sans-serif;
+    font-size: 32px;
+    letter-spacing: 0.08em;
+    color: #8a909e;
+    text-decoration: none;
+    text-transform: uppercase;
+    padding: 22px 0;
+    width: 80%;
+    text-align: center;
+    border-bottom: 1px solid #2a2d38;
+    transition: color 0.2s;
+  }
+  #mob-overlay a:first-child { border-top: 1px solid #2a2d38; }
+  #mob-overlay a:hover,
+  #mob-overlay a.active { color: #e8ecf4; }
+  #mob-overlay .mob-cta {
+    margin-top: 48px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    color: #040407;
+    background: #c8cdd6;
+    padding: 16px 48px;
+    text-decoration: none;
+    text-transform: uppercase;
+    border: none;
+    width: auto;
+  }
+
 </style>
 </head>
 <body>
@@ -161,26 +232,18 @@
     </div>
     <a href="contact.html" class="nav-cta">Get Started</a>
   </div>
-  <button id="ham" onclick="toggleMob()" style="display:none;background:none;border:none;cursor:pointer;padding:8px;z-index:201;position:relative;" aria-label="Menu">
-    <svg id="ham-icon" width="28" height="20" viewBox="0 0 28 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect y="0" width="28" height="2" rx="1" fill="#e8ecf4"/>
-      <rect y="9" width="28" height="2" rx="1" fill="#e8ecf4"/>
-      <rect y="18" width="28" height="2" rx="1" fill="#e8ecf4"/>
-    </svg>
-    <svg id="close-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;">
-      <line x1="4" y1="4" x2="20" y2="20" stroke="#e8ecf4" stroke-width="2" stroke-linecap="round"/>
-      <line x1="20" y1="4" x2="4" y2="20" stroke="#e8ecf4" stroke-width="2" stroke-linecap="round"/>
-    </svg>
-  </button>
-</nav>
+  
 
-<div class="mob" id="mob">
+  <button id="mob-btn" aria-label="Open menu"><span></span><span></span><span></span></button>
+</nav>
+<div id="mob-overlay">
   <a href="index.html" class="active">Home</a>
   <a href="portfolio.html">Portfolio</a>
   <a href="about.html">About</a>
   <a href="contact.html">Contact</a>
   <a href="contact.html" class="mob-cta">Get Started</a>
 </div>
+
 <div class="cursor" id="cursor"></div>
 <div class="cursor-ring" id="cursorRing"></div>
 
@@ -274,23 +337,35 @@ mob.querySelectorAll('a').forEach(a => {
 });
 
 
-// Mobile menu
-function toggleMob() {
-  var mob = document.getElementById('mob');
-  var ham = document.getElementById('ham');
-  var hamIcon = document.getElementById('ham-icon');
-  var closeIcon = document.getElementById('close-icon');
-  var isOpen = mob.classList.toggle('is-open');
-  hamIcon.style.display = isOpen ? 'none' : 'block';
-  closeIcon.style.display = isOpen ? 'block' : 'none';
+
+// ── Mobile menu ──
+var mobBtn = document.getElementById('mob-btn');
+var mobOverlay = document.getElementById('mob-overlay');
+
+mobBtn.addEventListener('click', function() {
+  var isOpen = mobOverlay.classList.toggle('show');
   document.body.style.overflow = isOpen ? 'hidden' : '';
-}
-document.querySelectorAll('#mob a').forEach(function(a) {
+  // Animate icon to X
+  var spans = mobBtn.querySelectorAll('span');
+  if (isOpen) {
+    spans[0].style.transform = 'translateY(8px) rotate(45deg)';
+    spans[1].style.opacity = '0';
+    spans[2].style.transform = 'translateY(-8px) rotate(-45deg)';
+  } else {
+    spans[0].style.transform = '';
+    spans[1].style.opacity = '';
+    spans[2].style.transform = '';
+  }
+});
+
+mobOverlay.querySelectorAll('a').forEach(function(a) {
   a.addEventListener('click', function() {
-    document.getElementById('mob').classList.remove('is-open');
-    document.getElementById('ham-icon').style.display = 'block';
-    document.getElementById('close-icon').style.display = 'none';
+    mobOverlay.classList.remove('show');
     document.body.style.overflow = '';
+    var spans = mobBtn.querySelectorAll('span');
+    spans[0].style.transform = '';
+    spans[1].style.opacity = '';
+    spans[2].style.transform = '';
   });
 });
 
