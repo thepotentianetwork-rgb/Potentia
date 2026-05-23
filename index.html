@@ -696,7 +696,100 @@
   }
   .plan-btn.solid:hover { background: var(--bright); }
 
-  /* ─── TESTIMONIALS ─── */
+  /* ─── SERVICES ─── */
+  .services {
+    padding: 160px 80px;
+    border-top: 1px solid var(--dim);
+  }
+  .services-inner { max-width: 1400px; margin: 0 auto; }
+  .services-header {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 40px; align-items: end;
+    margin-bottom: 80px;
+  }
+  .services-title {
+    font-size: clamp(40px, 5vw, 72px);
+    font-weight: 300;
+    color: var(--bright);
+    line-height: 1;
+  }
+  .services-title em { font-style: italic; color: var(--silver); }
+  .services-desc {
+    font-size: 20px;
+    color: var(--silver);
+    line-height: 1.7;
+    font-weight: 300;
+    padding-bottom: 8px;
+  }
+  .services-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--dim);
+  }
+  .service-card {
+    background: var(--black);
+    padding: 56px 48px;
+    position: relative;
+    overflow: hidden;
+    transition: background 0.4s;
+  }
+  .service-card:hover { background: var(--deep); }
+  .service-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--dim), transparent);
+    transition: background 0.4s;
+  }
+  .service-card:hover::before {
+    background: linear-gradient(90deg, transparent, var(--chrome), transparent);
+  }
+  .service-tag {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px; letter-spacing: 0.4em;
+    color: var(--dim);
+    text-transform: uppercase;
+    margin-bottom: 40px;
+    display: block;
+  }
+  .service-icon {
+    width: 48px; height: 48px;
+    margin-bottom: 32px;
+  }
+  .service-card h3 {
+    font-size: 28px;
+    font-weight: 300;
+    color: var(--bright);
+    margin-bottom: 16px;
+    line-height: 1.2;
+  }
+  .service-card p {
+    font-size: 17px;
+    color: var(--silver);
+    line-height: 1.7;
+    font-weight: 300;
+    margin-bottom: 40px;
+  }
+  .service-pills {
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .pill {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px; letter-spacing: 0.2em;
+    color: var(--silver);
+    border: 1px solid var(--dim);
+    padding: 6px 14px;
+    text-transform: uppercase;
+    transition: border-color 0.3s, color 0.3s;
+  }
+  .service-card:hover .pill { border-color: rgba(138,144,158,0.4); }
+
+  @media (max-width: 900px) {
+    .services { padding: 100px 24px; }
+    .services-header { grid-template-columns: 1fr; }
+    .services-grid { grid-template-columns: 1fr; }
+  }
   .testimonials {
     padding: 160px 80px;
     background: var(--deep);
@@ -787,7 +880,129 @@
     line-height: 1.6;
     position: relative;
   }
-  .cta-actions { display: flex; gap: 20px; justify-content: center; position: relative; }
+  .cta-footnote {
+    margin-top: 40px;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+    position: relative;
+  }
+  .cta-footnote:hover { color: var(--silver); transition: color 0.3s; }
+
+  /* ─── CONTACT FORM ─── */
+  .contact-form-wrap {
+    max-width: 680px;
+    margin: 0 auto;
+    text-align: left;
+    position: relative;
+  }
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .form-group label {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    color: var(--silver);
+    text-transform: uppercase;
+  }
+  .form-group input,
+  .form-group textarea,
+  .form-group select {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--dim);
+    color: var(--bright);
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 18px;
+    font-weight: 300;
+    padding: 14px 18px;
+    outline: none;
+    transition: border-color 0.3s;
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+  }
+  .form-group input:focus,
+  .form-group textarea:focus,
+  .form-group select:focus { border-color: var(--silver); }
+  .form-group textarea { resize: vertical; min-height: 120px; }
+  .form-group select { cursor: pointer; }
+  .form-group select option { background: #0a0a12; color: var(--bright); }
+  .fs-field-error {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: #c0675a;
+    letter-spacing: 0.1em;
+  }
+  .fs-error-global {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: #c0675a;
+    letter-spacing: 0.1em;
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  .fs-success {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 28px;
+    font-weight: 300;
+    color: var(--bright);
+    text-align: center;
+    padding: 64px 0;
+    font-style: italic;
+  }
+  .form-submit {
+    width: 100%;
+    text-align: center;
+    padding: 18px;
+    margin-top: 8px;
+    font-size: 12px;
+    cursor: pointer;
+    border: none;
+  }
+  .form-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+  .form-divider {
+    display: flex; align-items: center; gap: 16px;
+    margin: 24px 0 20px;
+  }
+  .form-divider::before, .form-divider::after {
+    content: ''; flex: 1;
+    height: 1px; background: var(--dim);
+  }
+  .form-divider span {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; letter-spacing: 0.3em;
+    color: var(--dim); text-transform: uppercase;
+  }
+  .form-contact-options {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .form-contact-btn {
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px;
+    border: 1px solid var(--dim);
+    padding: 14px;
+    text-decoration: none;
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; letter-spacing: 0.2em;
+    color: var(--silver); text-transform: uppercase;
+    transition: border-color 0.3s, color 0.3s;
+  }
+  .form-contact-btn:hover { border-color: var(--chrome); color: var(--bright); }
+  .form-contact-btn:hover svg path { stroke: var(--chrome); transition: stroke 0.3s; }
+  @media (max-width: 900px) {
+    .form-row { grid-template-columns: 1fr; }
+  }
 
   /* ─── FOOTER ─── */
   footer {
@@ -864,11 +1079,29 @@
     nav { padding: 20px 24px; }
     .nav-links { display: none; }
     .process, .showcase, .pricing, .testimonials, .cta-section { padding: 100px 24px; }
-    .process-header, .steps, .plans, .portfolio-grid, .testimonial-grid { grid-template-columns: 1fr; }
-    .portfolio-item:first-child { grid-column: span 1; aspect-ratio: 4/3; }
+    .process-header, .steps, .plans, .testimonial-grid { grid-template-columns: 1fr; }
     .showcase-top { flex-direction: column; gap: 24px; align-items: start; }
     footer { flex-direction: column; gap: 32px; text-align: center; }
     .hero-actions, .cta-actions { flex-direction: column; align-items: center; }
+    .values { padding: 80px 0; }
+    .values-header { padding: 0 24px; margin-bottom: 40px; }
+    .values-grid {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      gap: 0;
+      background: var(--dim);
+      scrollbar-width: none;
+    }
+    .values-grid::-webkit-scrollbar { display: none; }
+    .value-card {
+      min-width: 80vw;
+      scroll-snap-align: start;
+      flex-shrink: 0;
+    }
+    .portfolio-grid { grid-template-columns: 1fr; }
+    .portfolio-item:first-child { grid-column: span 1; aspect-ratio: 4/3; }
   }
 </style>
 </head>
@@ -1093,53 +1326,66 @@
   </div>
 </section>
 
-<!-- TESTIMONIALS -->
-<section class="testimonials">
-  <div class="testimonials-inner">
-    <h2 class="testimonials-title reveal" data-i18n="testimonials.title">What clients <em>say</em></h2>
-    <div class="testimonial-grid">
-      <div class="testimonial reveal">
-        <p class="testimonial-quote" data-i18n="t1.quote">"We got a site that rivals what agencies charge $30k for. In 4 days. I'm still surprised every time I show it off."</p>
-        <div class="testimonial-author">
-          <div class="author-avatar">M</div>
-          <div class="author-info">
-            <p class="author-name">Marcus Webb</p>
-            <p class="author-role" data-i18n="t1.role">Founder, NexaFlow</p>
-          </div>
-        </div>
-      </div>
-      <div class="testimonial reveal reveal-delay-1">
-        <p class="testimonial-quote" data-i18n="t2.quote">"The design is extraordinary. It captures our brand better than anything we'd briefed a human team on for months."</p>
-        <div class="testimonial-author">
-          <div class="author-avatar">S</div>
-          <div class="author-info">
-            <p class="author-name">Sophia Laurent</p>
-            <p class="author-role" data-i18n="t2.role">Creative Director, Luma</p>
-          </div>
-        </div>
-      </div>
-      <div class="testimonial reveal reveal-delay-2">
-        <p class="testimonial-quote" data-i18n="t3.quote">"Fast, beautiful, and actually converts. Our lead gen went up 3× in the first month after launch."</p>
-        <div class="testimonial-author">
-          <div class="author-avatar">J</div>
-          <div class="author-info">
-            <p class="author-name">James Okafor</p>
-            <p class="author-role" data-i18n="t3.role">CEO, Voltex</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- CTA -->
 <section class="cta-section" id="contact">
   <p class="section-label reveal" style="margin-bottom:32px;" data-i18n="cta.label">Ready to begin?</p>
   <h2 class="cta-title reveal reveal-delay-1" data-i18n="cta.title">Your site.<br><em>Elevated.</em></h2>
-  <p class="cta-sub reveal reveal-delay-2" data-i18n="cta.sub">Book a free 15-minute discovery call and we'll tell you exactly what we'd build for you.</p>
-  <div class="cta-actions reveal reveal-delay-3">
-    <a href="mailto:hello@potentia.studio" class="btn-primary" data-i18n="cta.btn1">Book a Call</a>
-    <a href="mailto:hello@potentia.studio" class="btn-ghost" data-i18n="cta.btn2">Send a Brief</a>
+  <p class="cta-sub reveal reveal-delay-2" data-i18n="cta.sub">Tell us about your project and we'll get back to you within 24 hours.</p>
+
+  <div class="contact-form-wrap reveal reveal-delay-3">
+    <div data-fs-success class="fs-success"></div>
+    <div data-fs-error class="fs-error-global"></div>
+
+    <form id="contact-form">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="name" data-i18n="form.name">Name</label>
+          <input type="text" id="name" name="name" data-fs-field required autocomplete="off">
+          <span data-fs-error="name" class="fs-field-error"></span>
+        </div>
+        <div class="form-group">
+          <label for="email" data-i18n="form.email">Email</label>
+          <input type="email" id="email" name="email" data-fs-field required autocomplete="off">
+          <span data-fs-error="email" class="fs-field-error"></span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="service" data-i18n="form.service">What are you looking for?</label>
+        <select id="service" name="service" data-fs-field>
+          <option value="" disabled selected data-i18n="form.service.placeholder">Select a service</option>
+          <option value="Website" data-i18n="form.service.web">Website</option>
+          <option value="Content Creation" data-i18n="form.service.content">Content Creation</option>
+          <option value="Social Media" data-i18n="form.service.social">Social Media Management</option>
+          <option value="Paid Ads" data-i18n="form.service.ads">Paid Ads</option>
+          <option value="Full Package" data-i18n="form.service.full">Full Package</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="message" data-i18n="form.message">Tell us about your project</label>
+        <textarea id="message" name="message" rows="4" data-fs-field></textarea>
+        <span data-fs-error="message" class="fs-field-error"></span>
+      </div>
+      <button type="submit" class="btn-primary form-submit" data-fs-submit-btn data-i18n="form.submit">Send Message</button>
+
+      <div class="form-divider">
+        <span data-i18n="form.or">or</span>
+      </div>
+
+      <div class="form-contact-options">
+        <a href="tel:+14352770764" class="form-contact-btn">
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+            <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="#8a909e" stroke-width="1.5"/>
+          </svg>
+          <span data-i18n="form.call">Call us</span>
+        </a>
+        <a href="sms:+14352770764" class="form-contact-btn">
+          <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="#8a909e" stroke-width="1.5"/>
+          </svg>
+          <span data-i18n="form.text">Text us</span>
+        </a>
+      </div>
+    </form>
   </div>
 </section>
 
@@ -1274,6 +1520,22 @@ const translations = {
     'cta.sub': 'Book a free 15-minute discovery call and we\'ll tell you exactly what we\'d build for you.',
     'cta.btn1': 'Book a Call',
     'cta.btn2': 'Send a Brief',
+    'cta.sub': 'Tell us about your project and we\'ll get back to you within 24 hours.',
+    'form.name': 'Name',
+    'form.email': 'Email',
+    'form.service': 'What are you looking for?',
+    'form.service.placeholder': 'Select a service',
+    'form.service.web': 'Website',
+    'form.service.content': 'Content Creation',
+    'form.service.social': 'Social Media Management',
+    'form.service.ads': 'Paid Ads',
+    'form.service.full': 'Full Package',
+    'form.message': 'Tell us about your project',
+    'form.submit': 'Send Message',
+    'form.or': 'or',
+    'form.call': 'Call us',
+    'form.text': 'Text us',
+    'cta.footnote': 'Also offer content creation, social media management & paid ads — ask us about it.',
     'footer.privacy': 'Privacy',
     'footer.terms': 'Terms',
     'footer.copy': '© 2026 Potentia Studio',
@@ -1331,6 +1593,22 @@ const translations = {
     'cta.sub': 'Reserva una llamada de descubrimiento gratuita de 15 minutos y te diremos exactamente lo que construiríamos para ti.',
     'cta.btn1': 'Reservar una Llamada',
     'cta.btn2': 'Enviar un Brief',
+    'cta.sub': 'Cuéntanos sobre tu proyecto y te responderemos en menos de 24 horas.',
+    'form.name': 'Nombre',
+    'form.email': 'Correo Electrónico',
+    'form.service': '¿Qué estás buscando?',
+    'form.service.placeholder': 'Selecciona un servicio',
+    'form.service.web': 'Sitio Web',
+    'form.service.content': 'Creación de Contenido',
+    'form.service.social': 'Gestión de Redes Sociales',
+    'form.service.ads': 'Anuncios Pagados',
+    'form.service.full': 'Paquete Completo',
+    'form.message': 'Cuéntanos sobre tu proyecto',
+    'form.submit': 'Enviar Mensaje',
+    'form.or': 'o',
+    'form.call': 'Llámanos',
+    'form.text': 'Escríbenos',
+    'cta.footnote': 'También ofrecemos creación de contenido, gestión de redes sociales y anuncios pagados — pregúntanos.',
     'footer.privacy': 'Privacidad',
     'footer.terms': 'Términos',
     'footer.copy': '© 2026 Potentia Studio',
@@ -1359,7 +1637,10 @@ function setLang(lang) {
   document.getElementById('btn-en').classList.toggle('active', lang === 'en');
   document.getElementById('btn-es').classList.toggle('active', lang === 'es');
   document.documentElement.lang = lang;
-}
+// Formspree
+window.formspree = window.formspree || function () { (formspree.q = formspree.q || []).push(arguments); };
+formspree('initForm', { formElement: '#contact-form', formId: 'mredlobr' });
 </script>
+<script src="https://unpkg.com/@formspree/ajax@1" defer></script>
 </body>
 </html>
