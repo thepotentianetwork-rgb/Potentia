@@ -327,13 +327,6 @@ function setLang(l){
   document.getElementById('btn-es').classList.toggle('active',l==='es');
 }
 
-
-mob.querySelectorAll('a').forEach(a => {
-  a.addEventListener('click', () => {
-    ham.classList.remove('is-open');
-    mob.classList.remove('is-open');
-    document.body.style.overflow = '';
-  });
 });
 
 

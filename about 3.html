@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About — Potentia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  :root { --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38; }
+  html { scroll-behavior: smooth; }
+  body { background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;cursor:none; }
+  .cursor { width:8px;height:8px;background:var(--chrome);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9999;mix-blend-mode:difference; }
+  .cursor-ring { width:32px;height:32px;border:1px solid rgba(200,205,214,0.4);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9998;transition:transform 0.25s ease,width 0.3s,height 0.3s; }
+
+  /* NAV */
+  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 60px;background:linear-gradient(to bottom,rgba(4,4,7,0.95),transparent);backdrop-filter:blur(2px); }
+  .nav-logo { display:flex;align-items:center;gap:14px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none; }
+  .nav-logo img { width:36px;height:36px;object-fit:contain; }
+  .nav-links { display:flex;gap:48px; }
+  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
+  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
+  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s,transform 0.2s; }
+  .nav-cta:hover { background:var(--bright);transform:translateY(-1px); }
+
+  /* PAGE HERO */
+  .page-hero { padding:200px 80px 120px;max-width:1400px;margin:0 auto; }
+  .page-hero-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:32px;opacity:0;animation:fadeUp 1s 0.2s forwards; }
+  .page-hero-title { font-size:clamp(56px,8vw,110px);font-weight:300;line-height:0.95;letter-spacing:-0.02em;color:var(--bright);margin-bottom:48px;opacity:0;animation:fadeUp 1s 0.4s forwards; }
+  .page-hero-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
+  .page-hero-intro { font-size:clamp(20px,2.5vw,28px);font-weight:300;color:var(--silver);max-width:680px;line-height:1.7;opacity:0;animation:fadeUp 1s 0.6s forwards; }
+
+  /* DIVIDER */
+  .divider { border:none;border-top:1px solid var(--dim);margin:0; }
+
+  /* MISSION */
+  .mission { padding:120px 80px;max-width:1400px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center; }
+  .mission-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
+  .mission-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1.05;margin-bottom:32px; }
+  .mission-title em { font-style:italic;color:var(--silver); }
+  .mission-body { font-size:20px;color:var(--silver);line-height:1.8;font-weight:300; }
+  .mission-body p { margin-bottom:24px; }
+  .mission-body p:last-child { margin-bottom:0; }
+  .mission-visual { position:relative;aspect-ratio:1;display:flex;align-items:center;justify-content:center; }
+  .mission-hex { width:280px;height:280px;position:relative; }
+  .mission-hex svg { width:100%;height:100%; }
+
+  /* VALUES STRIP */
+  .pillars { background:var(--deep);border-top:1px solid var(--dim);border-bottom:1px solid var(--dim);padding:100px 80px; }
+  .pillars-inner { max-width:1400px;margin:0 auto; }
+  .pillars-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
+  .pillars-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1.05;margin-bottom:80px; }
+  .pillars-title em { font-style:italic;color:var(--silver); }
+  .pillars-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
+  .pillar { background:var(--deep);padding:56px 48px;transition:background 0.3s; }
+  .pillar:hover { background:var(--black); }
+  .pillar-num { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);margin-bottom:32px; }
+  .pillar h3 { font-size:28px;font-weight:300;color:var(--bright);margin-bottom:16px;line-height:1.2; }
+  .pillar p { font-size:17px;color:var(--silver);line-height:1.7;font-weight:300; }
+
+  /* PROCESS */
+  .process { padding:120px 80px;max-width:1400px;margin:0 auto; }
+  .process-header { display:grid;grid-template-columns:1fr 1fr;gap:40px;align-items:end;margin-bottom:100px; }
+  .process-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
+  .process-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1.05; }
+  .process-title em { font-style:italic;color:var(--silver); }
+  .process-desc { font-size:20px;color:var(--silver);line-height:1.7;font-weight:300;padding-bottom:8px; }
+  .steps { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
+  .step { background:var(--black);padding:56px 48px;position:relative;overflow:hidden;transition:background 0.4s; }
+  .step:hover { background:var(--deep); }
+  .step::before { content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--chrome),transparent);opacity:0;transition:opacity 0.4s; }
+  .step:hover::before { opacity:1; }
+  .step-num { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.3em;color:var(--dim);margin-bottom:40px; }
+  .step-icon { width:48px;height:48px;margin-bottom:32px; }
+  .step h3 { font-size:28px;font-weight:300;color:var(--bright);margin-bottom:16px;line-height:1.2; }
+  .step p { font-size:17px;color:var(--silver);line-height:1.7;font-weight:300; }
+
+  /* CTA BAND */
+  .cta-band { padding:160px 80px;text-align:center;position:relative;overflow:hidden; }
+  .cta-band::before { content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 50%,rgba(160,168,188,0.06),transparent); }
+  .cta-band-title { font-size:clamp(48px,7vw,96px);font-weight:300;color:var(--bright);line-height:0.95;margin-bottom:40px;position:relative; }
+  .cta-band-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
+  .cta-band-sub { font-size:20px;color:var(--silver);font-weight:300;max-width:440px;margin:0 auto 56px;line-height:1.6;position:relative; }
+  .cta-actions { display:flex;gap:20px;justify-content:center;position:relative; }
+  .btn-primary { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
+  .btn-primary:hover { background:var(--bright);transform:translateY(-2px); }
+  .btn-ghost { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
+  .btn-ghost:hover { border-color:var(--chrome);color:var(--bright); }
+
+  /* FOOTER */
+  footer { border-top:1px solid var(--dim);padding:64px 80px;display:flex;justify-content:space-between;align-items:center; }
+  .footer-brand { display:flex;align-items:center;gap:14px; }
+  .footer-brand img { width:28px;height:28px;object-fit:contain; }
+  .footer-brand span { font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver); }
+  .footer-links { display:flex;gap:40px; }
+  .footer-links a { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
+  .footer-links a:hover { color:var(--silver); }
+  .footer-copy { font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);letter-spacing:0.1em; }
+
+  /* ANIMATIONS */
+  @keyframes fadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+  .reveal { opacity:0;transform:translateY(32px);transition:opacity 0.8s ease,transform 0.8s ease; }
+  .reveal.visible { opacity:1;transform:translateY(0); }
+  .reveal-delay-1 { transition-delay:0.1s; }
+  .reveal-delay-2 { transition-delay:0.2s; }
+  .reveal-delay-3 { transition-delay:0.3s; }
+
+  
+    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
+    body.menu-open { overflow:hidden; }
+  }
+    
+  }
+
+  /* ─── MOBILE ─── */
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+    .nav-links { display:none!important; }
+    .nav-right { display:none!important; }
+    
+    .hero-actions, .cta-actions { flex-direction:column;align-items:center; }
+    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
+    body.menu-open { overflow:hidden; }
+    .page-hero { padding:140px 24px 80px; }
+    .mission { padding:80px 24px;grid-template-columns:1fr; }
+    .mission-visual { display:none; }
+    .pillars { padding:80px 24px; }
+    .pillars-grid { grid-template-columns:1fr; }
+    .process { padding:80px 24px; }
+    .process-header { grid-template-columns:1fr; }
+    .steps { grid-template-columns:1fr; }
+    .cta-band { padding:100px 24px; }
+    .cta-actions { flex-direction:column;align-items:center; }
+  }
+
+  /* ─── NAV ─── */
+  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:24px 40px;background:linear-gradient(to bottom,rgba(4,4,7,0.9),transparent);backdrop-filter:blur(4px); }
+  .nav-logo { display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none;z-index:201; }
+  .nav-logo img { width:32px;height:32px;object-fit:contain; }
+  .nav-links { display:flex;gap:48px; }
+  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
+  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
+  .nav-right { display:flex;align-items:center;gap:16px; }
+  .lang-toggle { display:flex;align-items:center;border:1px solid var(--dim);overflow:hidden; }
+  .lang-btn { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);background:none;border:none;padding:8px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.25s; }
+  .lang-btn.active { background:var(--dim);color:var(--bright); }
+  .lang-divider { width:1px;height:16px;background:var(--dim); }
+  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
+  .nav-cta:hover { background:var(--bright); }
+
+  /* ─── HAMBURGER ─── */
+
+  /* ─── MOBILE OVERLAY ─── */
+  .mob { display:none;position:fixed;inset:0;background:var(--black);z-index:200;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.35s ease;opacity:0;pointer-events:none; }
+  .mob.is-open { opacity:1;pointer-events:all; }
+  .mob a { font-family:'Syncopate',sans-serif;font-size:clamp(22px,7vw,40px);letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:18px 0;border-bottom:1px solid var(--dim);width:80%;text-align:center;transition:color 0.2s; }
+  .mob a:first-of-type { border-top:1px solid var(--dim); }
+  .mob a.active,.mob a:hover { color:var(--bright); }
+  .mob-cta { display:inline-block;margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 48px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
+  .mob-cta:hover { background:var(--bright); }
+
+  @media (max-width:900px) {
+    #ham { display:block!important; }
+    nav { padding:18px 24px;background:rgba(4,4,7,0.95); }
+    .nav-links { display:none!important; }
+    .nav-right { display:none!important; }
+    }
+
+
+  /* === MOBILE MENU === */
+  @media (max-width: 900px) {
+    .nav-links { display: none !important; }
+    .nav-right { display: none !important; }
+    #mob-btn {
+      display: flex !important;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      width: 44px;
+      height: 44px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 8px;
+      z-index: 9999;
+    }
+    #mob-btn span {
+      display: block;
+      width: 26px;
+      height: 2px;
+      background: #e8ecf4;
+      border-radius: 2px;
+      transition: all 0.3s;
+      pointer-events: none;
+    }
+  }
+  #mob-btn { display: none; }
+  #mob-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: #040407;
+    z-index: 9998;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+  }
+  #mob-overlay.show { display: flex; }
+  #mob-overlay a {
+    font-family: 'Syncopate', sans-serif;
+    font-size: 32px;
+    letter-spacing: 0.08em;
+    color: #8a909e;
+    text-decoration: none;
+    text-transform: uppercase;
+    padding: 22px 0;
+    width: 80%;
+    text-align: center;
+    border-bottom: 1px solid #2a2d38;
+    transition: color 0.2s;
+  }
+  #mob-overlay a:first-child { border-top: 1px solid #2a2d38; }
+  #mob-overlay a:hover,
+  #mob-overlay a.active { color: #e8ecf4; }
+  #mob-overlay .mob-cta {
+    margin-top: 48px;
+    font-family: 'DM Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    color: #040407;
+    background: #c8cdd6;
+    padding: 16px 48px;
+    text-decoration: none;
+    text-transform: uppercase;
+    border: none;
+    width: auto;
+  }
+
+</style>
+</head>
+<body>
+<nav>
+  <a href="index.html" class="nav-logo">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    POTENTIA
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="about.html" class="active">About</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <a href="contact.html" class="nav-cta">Get Started</a>
+  
+
+  <button id="mob-btn" aria-label="Open menu"><span></span><span></span><span></span></button>
+</nav>
+<div id="mob-overlay">
+  <a href="index.html">Home</a>
+  <a href="portfolio.html">Portfolio</a>
+  <a href="about.html" class="active">About</a>
+  <a href="contact.html">Contact</a>
+  <a href="contact.html" class="mob-cta">Get Started</a>
+</div>
+
+<div class="cursor" id="cursor"></div>
+<div class="cursor-ring" id="cursorRing"></div>
+
+
+<!-- PAGE HERO -->
+<div class="page-hero">
+  <p class="page-hero-label">About Potentia</p>
+  <h1 class="page-hero-title">We build websites<br>that <em>mean</em> business</h1>
+  <p class="page-hero-intro">Potentia is a boutique digital studio obsessed with craft, speed, and results. We don't do average — every site we deliver is built to stand out, rank higher, and convert better.</p>
+</div>
+
+<hr class="divider">
+
+<!-- MISSION -->
+<div class="mission">
+  <div>
+    <p class="mission-label reveal">Our Mission</p>
+    <h2 class="mission-title reveal reveal-delay-1">Giving every business a <em>powerful</em> digital presence</h2>
+    <div class="mission-body reveal reveal-delay-2">
+      <p>The name Potentia is Latin for power, potential, and strength. It's what we believe every business deserves online — a presence that commands attention, earns trust, and drives growth.</p>
+      <p>We built Potentia because too many great businesses are being let down by generic templates, slow agencies, and websites that look beautiful but don't perform. We fix that.</p>
+      <p>Our approach is simple: precision over quantity, results over aesthetics, and partnerships over transactions. When your site succeeds, we succeed.</p>
+    </div>
+  </div>
+  <div class="mission-visual reveal reveal-delay-2">
+    <div class="mission-hex">
+      <svg viewBox="0 0 280 280" fill="none">
+        <polygon points="140,20 240,75 240,205 140,260 40,205 40,75" stroke="#2a2d38" stroke-width="1" fill="none"/>
+        <polygon points="140,45 220,90 220,195 140,240 60,195 60,90" stroke="#2a2d38" stroke-width="0.5" fill="none"/>
+        <polygon points="140,70 200,103 200,177 140,210 80,177 80,103" stroke="#8a909e" stroke-width="1" fill="none"/>
+        <image href="Potentia_Logo.png" x="95" y="95" width="90" height="90"/>
+        <line x1="140" y1="20" x2="140" y2="45" stroke="#2a2d38" stroke-width="1"/>
+        <line x1="240" y1="75" x2="220" y2="90" stroke="#2a2d38" stroke-width="1"/>
+        <line x1="240" y1="205" x2="220" y2="195" stroke="#2a2d38" stroke-width="1"/>
+        <line x1="140" y1="260" x2="140" y2="240" stroke="#2a2d38" stroke-width="1"/>
+        <line x1="40" y1="205" x2="60" y2="195" stroke="#2a2d38" stroke-width="1"/>
+        <line x1="40" y1="75" x2="60" y2="90" stroke="#2a2d38" stroke-width="1"/>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- PILLARS -->
+<div class="pillars">
+  <div class="pillars-inner">
+    <p class="pillars-label reveal">What we stand for</p>
+    <h2 class="pillars-title reveal reveal-delay-1">Three things we <em>never</em> compromise on</h2>
+    <div class="pillars-grid">
+      <div class="pillar reveal">
+        <p class="pillar-num">01 / 03</p>
+        <h3>Craft over shortcuts</h3>
+        <p>Every site is hand-built with intention. We don't drag and drop — we design, develop, and refine until every detail is exactly right.</p>
+      </div>
+      <div class="pillar reveal reveal-delay-1">
+        <p class="pillar-num">02 / 03</p>
+        <h3>Performance by default</h3>
+        <p>Speed, SEO, and mobile responsiveness aren't add-ons. They're baked into every line of code we write from the very first day.</p>
+      </div>
+      <div class="pillar reveal reveal-delay-2">
+        <p class="pillar-num">03 / 03</p>
+        <h3>Honesty, always</h3>
+        <p>No jargon. No bloated retainers. We tell you exactly what you need, what it costs, and what to expect — then we deliver on it.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PROCESS -->
+<section class="process">
+  <div class="process-header">
+    <div>
+      <p class="process-label reveal">How it works</p>
+      <h2 class="process-title reveal reveal-delay-1">From brief<br>to <em>live</em> in<br>72 hours</h2>
+    </div>
+    <p class="process-desc reveal reveal-delay-2">No lengthy sprints. No back-and-forth delays. We combine relentless craft with modern tools to deliver websites that would take others weeks — in days.</p>
+  </div>
+  <div class="steps">
+    <div class="step reveal">
+      <p class="step-num">01 / 03</p>
+      <svg class="step-icon" viewBox="0 0 48 48" fill="none">
+        <rect x="8" y="8" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
+        <rect x="26" y="8" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
+        <rect x="8" y="26" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
+        <rect x="26" y="26" width="14" height="14" stroke="#c8cdd6" stroke-width="1"/>
+      </svg>
+      <h3>You share your vision</h3>
+      <p>Tell us about your business, your aesthetic, your goals. A 15-minute call or a detailed brief — whatever works for you.</p>
+    </div>
+    <div class="step reveal reveal-delay-1">
+      <p class="step-num">02 / 03</p>
+      <svg class="step-icon" viewBox="0 0 48 48" fill="none">
+        <polygon points="24,6 30,18 44,18 33,28 37,42 24,33 11,42 15,28 4,18 18,18" stroke="#8a909e" stroke-width="1" fill="none"/>
+      </svg>
+      <h3>We design &amp; build</h3>
+      <p>Our studio refines every detail with precision — copy, layout, motion, code — at a pace that never sacrifices quality for speed.</p>
+    </div>
+    <div class="step reveal reveal-delay-2">
+      <p class="step-num">03 / 03</p>
+      <svg class="step-icon" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="16" stroke="#8a909e" stroke-width="1"/>
+        <path d="M16 24 L22 30 L32 18" stroke="#c8cdd6" stroke-width="1.5"/>
+      </svg>
+      <h3>You launch, we deliver</h3>
+      <p>Your site goes live fully hosted, optimised, and ready to grow. Revisions, updates, and support are always a message away.</p>
+    </div>
+  </div>
+</section>
+
+<!-- CTA BAND -->
+<section class="cta-band">
+  <h2 class="cta-band-title reveal">Ready to build<br>something <em>great?</em></h2>
+  <p class="cta-band-sub reveal reveal-delay-1">Let's talk about your project. No pressure, no pitch — just an honest conversation about what's possible.</p>
+  <div class="cta-actions reveal reveal-delay-2">
+    <a href="contact.html" class="btn-primary">Get in Touch</a>
+    <a href="index.html" class="btn-ghost">See Our Work</a>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-brand">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    <span>POTENTIA</span>
+  </div>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="about.html">About</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <p class="footer-copy">© 2026 Potentia Studio</p>
+</footer>
+
+<script>
+const cursor=document.getElementById('cursor');
+const ring=document.getElementById('cursorRing');
+let mx=0,my=0,rx=0,ry=0;
+document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;cursor.style.transform=`translate(${mx-4}px,${my-4}px)`;});
+(function animRing(){rx+=(mx-rx)*0.12;ry+=(my-ry)*0.12;ring.style.transform=`translate(${rx-16}px,${ry-16}px)`;requestAnimationFrame(animRing);})();
+document.querySelectorAll('a,button').forEach(el=>{
+  el.addEventListener('mouseenter',()=>{ring.style.width='56px';ring.style.height='56px';ring.style.marginLeft='-12px';ring.style.marginTop='-12px';});
+  el.addEventListener('mouseleave',()=>{ring.style.width='32px';ring.style.height='32px';ring.style.marginLeft='0';ring.style.marginTop='0';});
+});
+const reveals=document.querySelectorAll('.reveal');
+const io=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.1});
+reveals.forEach(el=>io.observe(el));
+
+});
+
+
+
+// ── Mobile menu ──
+var mobBtn = document.getElementById('mob-btn');
+var mobOverlay = document.getElementById('mob-overlay');
+
+mobBtn.addEventListener('click', function() {
+  var isOpen = mobOverlay.classList.toggle('show');
+  document.body.style.overflow = isOpen ? 'hidden' : '';
+  // Animate icon to X
+  var spans = mobBtn.querySelectorAll('span');
+  if (isOpen) {
+    spans[0].style.transform = 'translateY(8px) rotate(45deg)';
+    spans[1].style.opacity = '0';
+    spans[2].style.transform = 'translateY(-8px) rotate(-45deg)';
+  } else {
+    spans[0].style.transform = '';
+    spans[1].style.opacity = '';
+    spans[2].style.transform = '';
+  }
+});
+
+mobOverlay.querySelectorAll('a').forEach(function(a) {
+  a.addEventListener('click', function() {
+    mobOverlay.classList.remove('show');
+    document.body.style.overflow = '';
+    var spans = mobBtn.querySelectorAll('span');
+    spans[0].style.transform = '';
+    spans[1].style.opacity = '';
+    spans[2].style.transform = '';
+  });
+});
+
+</script>
+</body>
+</html>
