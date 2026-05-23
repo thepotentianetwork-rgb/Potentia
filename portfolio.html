@@ -5,273 +5,145 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Portfolio — Potentia</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-  :root { --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38; }
-  html { scroll-behavior: smooth; }
-  body { background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;cursor:none; }
-  .cursor { width:8px;height:8px;background:var(--chrome);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9999;mix-blend-mode:difference; }
-  .cursor-ring { width:32px;height:32px;border:1px solid rgba(200,205,214,0.4);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9998;transition:transform 0.25s ease,width 0.3s,height 0.3s; }
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+html{scroll-behavior:smooth}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden}
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:24px 48px;background:rgba(4,4,7,0.97);border-bottom:1px solid var(--dim)}
+.nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
+.nav-logo img{width:32px;height:32px;object-fit:contain}
+.nav-links{display:flex;gap:40px}
+.nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.nav-links a:hover,.nav-links a.active{color:var(--bright)}
+.nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--chrome);padding:10px 22px;text-decoration:none;text-transform:uppercase}
+.nav-cta:hover{background:var(--bright)}
+.nav-ham{display:none;flex-direction:column;gap:5px;background:none;border:none;padding:6px;cursor:pointer;z-index:2000}
+.nav-ham span{display:block;width:25px;height:2px;background:var(--bright);border-radius:1px;transition:all 0.3s}
+.mob-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#040407;z-index:1500;flex-direction:column;align-items:center;justify-content:center}
+.mob-overlay.open{display:flex}
+.mob-overlay a{font-family:'Syncopate',sans-serif;font-size:28px;letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 0;width:80%;text-align:center;border-bottom:1px solid var(--dim);transition:color 0.2s}
+.mob-overlay a:first-child{border-top:1px solid var(--dim)}
+.mob-overlay a:hover,.mob-overlay a.active{color:var(--bright)}
+.mob-cta-btn{margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:14px 40px!important;border:none!important}
 
-  /* NAV */
-  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 60px;background:rgba(4,4,7,0.95);backdrop-filter:blur(2px);border-bottom:1px solid var(--dim); }
-  .nav-logo { display:flex;align-items:center;gap:14px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none; }
-  .nav-logo img { width:36px;height:36px;object-fit:contain; }
-  .nav-links { display:flex;gap:48px; }
-  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
-  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
-  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s,transform 0.2s; }
-  .nav-cta:hover { background:var(--bright);transform:translateY(-1px); }
+/* PAGE */
+.page-top{padding:160px 80px 80px;max-width:1400px;margin:0 auto}
+.page-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px}
+.page-title{font-size:clamp(48px,7vw,96px);font-weight:300;line-height:0.95;color:var(--bright);margin-bottom:24px}
+.page-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.page-sub{font-size:20px;color:var(--silver);font-weight:300;max-width:520px;line-height:1.7}
 
-  /* PAGE HERO */
-  .page-hero { padding:180px 80px 100px;max-width:1400px;margin:0 auto; }
-  .page-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:32px;opacity:0;animation:fadeUp 1s 0.2s forwards; }
-  .page-title { font-size:clamp(56px,7vw,100px);font-weight:300;line-height:0.95;letter-spacing:-0.02em;color:var(--bright);margin-bottom:32px;opacity:0;animation:fadeUp 1s 0.4s forwards; }
-  .page-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
-  .page-sub { font-size:clamp(18px,2vw,22px);color:var(--silver);font-weight:300;max-width:540px;line-height:1.7;opacity:0;animation:fadeUp 1s 0.6s forwards; }
+/* STATS */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
+.stat{padding:56px 80px;text-align:center;border-right:1px solid var(--dim)}
+.stat:last-child{border-right:none}
+.stat-num{font-size:clamp(48px,6vw,80px);font-weight:300;color:var(--bright);line-height:1}
+.stat-num sup{font-size:0.45em;color:var(--silver);vertical-align:top;margin-top:12px;display:inline-block}
+.stat-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-top:12px}
 
-  /* STATS STRIP */
-  .stats-strip { border-top:1px solid var(--dim);border-bottom:1px solid var(--dim); }
-  .stats-inner { max-width:1400px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
-  .stat { background:var(--black);padding:56px 80px;text-align:center;transition:background 0.3s; }
-  .stat:hover { background:var(--deep); }
-  .stat-num { font-size:clamp(56px,6vw,88px);font-weight:300;color:var(--bright);line-height:1;letter-spacing:-0.02em; }
-  .stat-num span { font-size:0.5em;color:var(--silver); }
-  .stat-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase;margin-top:12px; }
+/* PORTFOLIO */
+.portfolio-wrap{padding:100px 80px;max-width:1400px;margin:0 auto}
+.section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px}
+.section-title{font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:64px}
+.section-title em{font-style:italic;color:var(--silver)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.grid-item{position:relative;aspect-ratio:4/3;overflow:hidden;background:var(--dim);cursor:pointer}
+.grid-item.wide{grid-column:span 2;aspect-ratio:16/9}
+.iframe-wrap{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.iframe-wrap iframe{width:1400px;height:900px;border:none;transform-origin:top left;transform:scale(0.3)}
+.grid-item.wide .iframe-wrap iframe{transform:scale(0.48)}
+.grid-overlay{position:absolute;inset:0;background:rgba(4,4,7,0.65);display:flex;flex-direction:column;justify-content:flex-end;padding:28px;opacity:0;transition:opacity 0.3s;pointer-events:all}
+.grid-item:hover .grid-overlay{opacity:1}
+.grid-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px}
+.grid-name{font-size:22px;font-weight:300;color:var(--bright);margin-bottom:4px}
+.grid-url{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+.yours{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--black)}
+.yours p:first-child{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase}
+.yours p:last-child{font-size:36px;font-weight:300;color:var(--dim);font-style:italic}
 
-  /* PORTFOLIO GRID */
-  .portfolio-section { padding:120px 80px;max-width:1400px;margin:0 auto; }
-  .portfolio-header { display:flex;justify-content:space-between;align-items:end;margin-bottom:64px; }
-  .portfolio-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1; }
-  .portfolio-title em { font-style:italic;color:var(--silver); }
-  .portfolio-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
-  .portfolio-item { position:relative;overflow:hidden;background:var(--dim);cursor:pointer;aspect-ratio:4/3; }
-  .portfolio-item.wide { grid-column:span 2;aspect-ratio:16/9; }
-  .portfolio-iframe-wrap { position:absolute;inset:0;overflow:hidden;pointer-events:none; }
-  .portfolio-iframe-wrap iframe { width:1400px;height:900px;border:none;transform-origin:top left; }
-  .portfolio-item.wide .portfolio-iframe-wrap iframe { transform:scale(0.5); }
-  .portfolio-item:not(.wide) .portfolio-iframe-wrap iframe { transform:scale(0.28); }
-  .portfolio-overlay { position:absolute;inset:0;background:rgba(4,4,7,0.65);display:flex;flex-direction:column;justify-content:flex-end;padding:32px;opacity:0;transition:opacity 0.4s;pointer-events:all; }
-  .portfolio-item:hover .portfolio-overlay { opacity:1; }
-  .portfolio-tag { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:10px; }
-  .portfolio-name { font-size:24px;font-weight:300;color:var(--bright);margin-bottom:8px; }
-  .portfolio-url { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim); }
+/* PROCESS */
+.process{padding:100px 80px;background:var(--deep);border-top:1px solid var(--dim)}
+.process-inner{max-width:1400px;margin:0 auto}
+.process-header{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:end;margin-bottom:64px}
+.process-title{font-size:clamp(36px,4vw,56px);font-weight:300;color:var(--bright);line-height:1.05}
+.process-title em{font-style:italic;color:var(--silver)}
+.process-desc{font-size:19px;color:var(--silver);line-height:1.7;font-weight:300}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.step{background:var(--deep);padding:48px;transition:background 0.3s}
+.step:hover{background:var(--black)}
+.step-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);margin-bottom:32px}
+.step-icon{width:44px;height:44px;margin-bottom:24px}
+.step h3{font-size:26px;font-weight:300;color:var(--bright);margin-bottom:12px}
+.step p{font-size:16px;color:var(--silver);line-height:1.7;font-weight:300}
 
-  /* PROCESS */
-  .process { padding:120px 80px;background:var(--deep);border-top:1px solid var(--dim); }
-  .process-inner { max-width:1400px;margin:0 auto; }
-  .process-header { display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:end;margin-bottom:80px; }
-  .process-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
-  .process-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1.05; }
-  .process-title em { font-style:italic;color:var(--silver); }
-  .process-desc { font-size:20px;color:var(--silver);line-height:1.7;font-weight:300; }
-  .steps { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
-  .step { background:var(--deep);padding:56px 48px;position:relative;transition:background 0.4s; }
-  .step:hover { background:var(--black); }
-  .step::before { content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--chrome),transparent);opacity:0;transition:opacity 0.4s; }
-  .step:hover::before { opacity:1; }
-  .step-num { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.3em;color:var(--dim);margin-bottom:40px; }
-  .step-icon { width:48px;height:48px;margin-bottom:32px; }
-  .step h3 { font-size:28px;font-weight:300;color:var(--bright);margin-bottom:16px; }
-  .step p { font-size:17px;color:var(--silver);line-height:1.7;font-weight:300; }
+/* VALUES */
+.values{padding:100px 80px;max-width:1400px;margin:0 auto}
+.values-header{text-align:center;margin-bottom:64px}
+.values-title{font-size:clamp(36px,4vw,56px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:16px}
+.values-title em{font-style:italic;color:var(--silver)}
+.values-sub{font-size:18px;color:var(--silver);font-weight:300;max-width:440px;margin:0 auto;line-height:1.6}
+.vgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.vcard{background:var(--black);padding:48px;transition:background 0.3s}
+.vcard:hover{background:var(--deep)}
+.vcard-icon{width:44px;height:44px;margin-bottom:24px}
+.vcard-stat{font-size:60px;font-weight:300;color:var(--bright);line-height:1;margin-bottom:8px}
+.vcard-stat span{font-size:30px;color:var(--silver)}
+.vcard-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-bottom:20px}
+.vcard h3{font-size:22px;font-weight:300;color:var(--bright);margin-bottom:10px}
+.vcard p{font-size:15px;color:var(--silver);line-height:1.7;font-weight:300}
 
-  /* VALUES */
-  .values { padding:120px 80px;max-width:1400px;margin:0 auto; }
-  .values-header { text-align:center;margin-bottom:80px; }
-  .values-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
-  .values-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:16px; }
-  .values-title em { font-style:italic;color:var(--silver); }
-  .values-sub { font-size:19px;color:var(--silver);font-weight:300;max-width:480px;margin:0 auto;line-height:1.6; }
-  .values-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
-  .value-card { background:var(--black);padding:56px 48px;transition:background 0.4s; }
-  .value-card:hover { background:var(--deep); }
-  .value-icon { width:48px;height:48px;margin-bottom:28px; }
-  .value-stat { font-size:64px;font-weight:300;color:var(--bright);line-height:1;margin-bottom:8px;letter-spacing:-0.02em; }
-  .value-stat span { font-size:32px;color:var(--silver); }
-  .value-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
-  .value-card h3 { font-size:24px;font-weight:300;color:var(--bright);margin-bottom:12px; }
-  .value-card p { font-size:16px;color:var(--silver);line-height:1.7;font-weight:300; }
+/* CTA */
+.cta{padding:140px 80px;text-align:center;border-top:1px solid var(--dim)}
+.cta-title{font-size:clamp(44px,6vw,88px);font-weight:300;color:var(--bright);line-height:0.95;margin-bottom:32px}
+.cta-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.cta-sub{font-size:19px;color:var(--silver);font-weight:300;max-width:400px;margin:0 auto 48px;line-height:1.6}
+.cta-btns{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.btn-solid{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:15px 36px;text-decoration:none;text-transform:uppercase;transition:background 0.3s;display:inline-block}
+.btn-solid:hover{background:var(--bright)}
+.btn-outline{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:15px 36px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block}
+.btn-outline:hover{border-color:var(--chrome);color:var(--bright)}
 
-  /* CTA BAND */
-  .cta-band { padding:160px 80px;text-align:center;border-top:1px solid var(--dim);position:relative;overflow:hidden; }
-  .cta-band::before { content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 50%,rgba(160,168,188,0.05),transparent); }
-  .cta-title { font-size:clamp(48px,7vw,96px);font-weight:300;color:var(--bright);line-height:0.95;margin-bottom:40px;position:relative; }
-  .cta-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
-  .cta-sub { font-size:20px;color:var(--silver);font-weight:300;max-width:440px;margin:0 auto 56px;line-height:1.6;position:relative; }
-  .cta-actions { display:flex;gap:20px;justify-content:center;position:relative; }
-  .btn-primary { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
-  .btn-primary:hover { background:var(--bright);transform:translateY(-2px); }
-  .btn-ghost { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
-  .btn-ghost:hover { border-color:var(--chrome);color:var(--bright); }
+/* FOOTER */
+footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+.footer-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver);text-decoration:none}
+.footer-logo img{width:24px;height:24px;object-fit:contain}
+.footer-links{display:flex;gap:32px}
+.footer-links a{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.footer-links a:hover{color:var(--silver)}
+.footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
 
-  /* FOOTER */
-  footer { border-top:1px solid var(--dim);padding:64px 80px;display:flex;justify-content:space-between;align-items:center; }
-  .footer-brand { display:flex;align-items:center;gap:14px; }
-  .footer-brand img { width:28px;height:28px;object-fit:contain; }
-  .footer-brand span { font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver); }
-  .footer-links { display:flex;gap:40px; }
-  .footer-links a { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
-  .footer-links a:hover { color:var(--silver); }
-  .footer-copy { font-family:'DM Mono',monospace;font-size:10px;color:var(--dim); }
+.reveal{opacity:0;transform:translateY(24px);transition:opacity 0.7s ease,transform 0.7s ease}
+.reveal.on{opacity:1;transform:translateY(0)}
+.delay-1{transition-delay:0.1s}.delay-2{transition-delay:0.2s}
 
-  @keyframes fadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
-  .reveal { opacity:0;transform:translateY(32px);transition:opacity 0.8s ease,transform 0.8s ease; }
-  .reveal.visible { opacity:1;transform:translateY(0); }
-  .reveal-delay-1 { transition-delay:0.1s; }
-  .reveal-delay-2 { transition-delay:0.2s; }
-  .reveal-delay-3 { transition-delay:0.3s; }
-
-  
-    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
-    body.menu-open { overflow:hidden; }
-  }
-    
-  }
-
-  /* ─── MOBILE ─── */
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-    .nav-links { display:none!important; }
-    .nav-right { display:none!important; }
-    
-    .hero-actions, .cta-actions { flex-direction:column;align-items:center; }
-    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
-    body.menu-open { overflow:hidden; }
-    .stats-inner { grid-template-columns:1fr; }
-    .stat { padding:40px 24px; }
-    .portfolio-section { padding:80px 24px; }
-    .portfolio-grid { grid-template-columns:1fr; }
-    .portfolio-item.wide { grid-column:span 1;aspect-ratio:4/3; }
-    .portfolio-item.wide .portfolio-iframe-wrap iframe { transform:scale(0.25); }
-    .portfolio-header { flex-direction:column;gap:16px;align-items:start; }
-    .process { padding:80px 24px; }
-    .process-header { grid-template-columns:1fr;gap:32px; }
-    .steps { grid-template-columns:1fr; }
-    .values { padding:80px 24px; }
-    .values-grid { grid-template-columns:1fr; }
-    .value-card { padding:40px 32px; }
-    .cta-band { padding:100px 24px; }
-    .cta-actions { flex-direction:column;align-items:center; }
-  }
-
-  /* ─── NAV ─── */
-  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:24px 40px;background:linear-gradient(to bottom,rgba(4,4,7,0.9),transparent);backdrop-filter:blur(4px); }
-  .nav-logo { display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none;z-index:201; }
-  .nav-logo img { width:32px;height:32px;object-fit:contain; }
-  .nav-links { display:flex;gap:48px; }
-  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
-  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
-  .nav-right { display:flex;align-items:center;gap:16px; }
-  .lang-toggle { display:flex;align-items:center;border:1px solid var(--dim);overflow:hidden; }
-  .lang-btn { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);background:none;border:none;padding:8px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.25s; }
-  .lang-btn.active { background:var(--dim);color:var(--bright); }
-  .lang-divider { width:1px;height:16px;background:var(--dim); }
-  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
-  .nav-cta:hover { background:var(--bright); }
-
-  /* ─── HAMBURGER ─── */
-
-  /* ─── MOBILE OVERLAY ─── */
-  .mob { display:none;position:fixed;inset:0;background:var(--black);z-index:200;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.35s ease;opacity:0;pointer-events:none; }
-  .mob.is-open { opacity:1;pointer-events:all; }
-  .mob a { font-family:'Syncopate',sans-serif;font-size:clamp(22px,7vw,40px);letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:18px 0;border-bottom:1px solid var(--dim);width:80%;text-align:center;transition:color 0.2s; }
-  .mob a:first-of-type { border-top:1px solid var(--dim); }
-  .mob a.active,.mob a:hover { color:var(--bright); }
-  .mob-cta { display:inline-block;margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 48px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
-  .mob-cta:hover { background:var(--bright); }
-
-  @media (max-width:900px) {
-    #ham { display:block!important; }
-    nav { padding:18px 24px;background:rgba(4,4,7,0.95); }
-    .nav-links { display:none!important; }
-    .nav-right { display:none!important; }
-    }
-
-
-  /* === MOBILE MENU === */
-  @media (max-width: 900px) {
-    .nav-links { display: none !important; }
-    .nav-right { display: none !important; }
-    #mob-btn {
-      display: flex !important;
-      flex-direction: column;
-      justify-content: center;
-      gap: 6px;
-      width: 44px;
-      height: 44px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 8px;
-      z-index: 9999;
-    }
-    #mob-btn span {
-      display: block;
-      width: 26px;
-      height: 2px;
-      background: #e8ecf4;
-      border-radius: 2px;
-      transition: all 0.3s;
-      pointer-events: none;
-    }
-  }
-  #mob-btn { display: none; }
-  #mob-overlay {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: #040407;
-    z-index: 9998;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0;
-  }
-  #mob-overlay.show { display: flex; }
-  #mob-overlay a {
-    font-family: 'Syncopate', sans-serif;
-    font-size: 32px;
-    letter-spacing: 0.08em;
-    color: #8a909e;
-    text-decoration: none;
-    text-transform: uppercase;
-    padding: 22px 0;
-    width: 80%;
-    text-align: center;
-    border-bottom: 1px solid #2a2d38;
-    transition: color 0.2s;
-  }
-  #mob-overlay a:first-child { border-top: 1px solid #2a2d38; }
-  #mob-overlay a:hover,
-  #mob-overlay a.active { color: #e8ecf4; }
-  #mob-overlay .mob-cta {
-    margin-top: 48px;
-    font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    letter-spacing: 0.2em;
-    color: #040407;
-    background: #c8cdd6;
-    padding: 16px 48px;
-    text-decoration: none;
-    text-transform: uppercase;
-    border: none;
-    width: auto;
-  }
-
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links,.nav-cta{display:none}
+  .nav-ham{display:flex!important}
+  .page-top{padding:110px 24px 48px}
+  .stats{grid-template-columns:1fr}
+  .stat{border-right:none;border-bottom:1px solid var(--dim);padding:40px 24px}
+  .stat:last-child{border-bottom:none}
+  .portfolio-wrap{padding:64px 24px}
+  .grid{grid-template-columns:1fr}
+  .grid-item.wide{grid-column:span 1;aspect-ratio:4/3}
+  .grid-item.wide .iframe-wrap iframe{transform:scale(0.25)}
+  .process{padding:64px 24px}
+  .process-header{grid-template-columns:1fr;gap:24px}
+  .steps{grid-template-columns:1fr}
+  .values{padding:64px 24px}
+  .vgrid{grid-template-columns:1fr}
+  .cta{padding:80px 24px}
+  .cta-btns{flex-direction:column;align-items:center}
+  footer{padding:32px 20px;flex-direction:column;text-align:center}
+  .footer-links{justify-content:center}
+}
 </style>
 </head>
 <body>
+
 <nav>
   <a href="index.html" class="nav-logo">
     <img src="Potentia_Logo.png" alt="Potentia">
@@ -284,203 +156,136 @@
     <a href="contact.html">Contact</a>
   </div>
   <a href="contact.html" class="nav-cta">Get Started</a>
-  
-
-  <button id="mob-btn" aria-label="Open menu"><span></span><span></span><span></span></button>
+  <button class="nav-ham" id="navHam" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
 </nav>
-<div id="mob-overlay">
+
+<div class="mob-overlay" id="mobOverlay">
   <a href="index.html">Home</a>
   <a href="portfolio.html" class="active">Portfolio</a>
   <a href="about.html">About</a>
   <a href="contact.html">Contact</a>
-  <a href="contact.html" class="mob-cta">Get Started</a>
+  <a href="contact.html" class="mob-cta-btn">Get Started</a>
 </div>
 
-<div class="cursor" id="cursor"></div>
-<div class="cursor-ring" id="cursorRing"></div>
-
-
-<!-- PAGE HERO -->
-<div class="page-hero">
-  <h1 class="page-title">Sites built to<br><em>perform</em></h1>
-  <p class="page-sub">Every project is a partnership. We bring the craft — our clients bring the vision. Here's what happens when the two meet.</p>
+<div class="page-top">
+  <p class="page-label reveal">Our Work</p>
+  <h1 class="page-title reveal">Sites built to<br><em>perform</em></h1>
+  <p class="page-sub reveal">Every project is a partnership. We bring the craft — our clients bring the vision.</p>
 </div>
 
-<!-- STATS -->
-<div class="stats-strip">
-  <div class="stats-inner">
-    <div class="stat reveal">
-      <div class="stat-num">72<span>hrs</span></div>
-      <p class="stat-label">Average Delivery Time</p>
+<div class="stats">
+  <div class="stat reveal"><div class="stat-num">72<sup>hrs</sup></div><p class="stat-label">Avg Delivery</p></div>
+  <div class="stat reveal delay-1"><div class="stat-num">0.8<sup>s</sup></div><p class="stat-label">Avg Load Time</p></div>
+  <div class="stat reveal delay-2"><div class="stat-num">100<sup>%</sup></div><p class="stat-label">Mobile Optimised</p></div>
+</div>
+
+<div class="portfolio-wrap">
+  <p class="section-label reveal">Selected projects</p>
+  <h2 class="section-title reveal">Sites that<br><em>sell themselves</em></h2>
+  <div class="grid reveal">
+    <div class="grid-item wide" onclick="window.open('https://shedpro-utah.com','_blank')">
+      <div class="iframe-wrap"><iframe src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah"></iframe></div>
+      <div class="grid-overlay">
+        <p class="grid-tag">Home Services · Utah</p>
+        <p class="grid-name">ShedPro LLC</p>
+        <p class="grid-url">shedpro-utah.com ↗</p>
+      </div>
     </div>
-    <div class="stat reveal reveal-delay-1">
-      <div class="stat-num">0.8<span>s</span></div>
-      <p class="stat-label">Average Load Time</p>
+    <div class="grid-item" onclick="window.open('https://chonis.net','_blank')">
+      <div class="iframe-wrap"><iframe src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis"></iframe></div>
+      <div class="grid-overlay">
+        <p class="grid-tag">Fashion · Brand Launch</p>
+        <p class="grid-name">Chonis</p>
+        <p class="grid-url">chonis.net ↗</p>
+      </div>
     </div>
-    <div class="stat reveal reveal-delay-2">
-      <div class="stat-num">100<span>%</span></div>
-      <p class="stat-label">Mobile Optimised</p>
+    <div class="grid-item" onclick="window.location='contact.html'">
+      <div class="yours"><p>Next project</p><p>Yours?</p></div>
+      <div class="grid-overlay">
+        <p class="grid-tag">Your Industry</p>
+        <p class="grid-name">Your Brand</p>
+        <p class="grid-url">Get in touch ↗</p>
+      </div>
     </div>
   </div>
 </div>
 
-<!-- PORTFOLIO -->
-<div class="portfolio-section">
-  <div class="portfolio-header">
-    <div>
-      <p style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:16px;" class="reveal">Selected projects</p>
-      <h2 class="portfolio-title reveal reveal-delay-1">Sites that<br><em>sell themselves</em></h2>
-    </div>
-  </div>
-  <div class="portfolio-grid reveal">
-
-    <!-- ShedPro — wide -->
-    <div class="portfolio-item wide" onclick="window.open('https://shedpro-utah.com','_blank')">
-      <div class="portfolio-iframe-wrap">
-        <iframe src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah"></iframe>
-      </div>
-      <div class="portfolio-overlay">
-        <p class="portfolio-tag">Home Services · Utah</p>
-        <p class="portfolio-name">ShedPro LLC — Custom Shed Builder</p>
-        <p class="portfolio-url">shedpro-utah.com ↗</p>
-      </div>
-    </div>
-
-    <!-- Chonis -->
-    <div class="portfolio-item" onclick="window.open('https://chonis.net','_blank')">
-      <div class="portfolio-iframe-wrap">
-        <iframe src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis"></iframe>
-      </div>
-      <div class="portfolio-overlay">
-        <p class="portfolio-tag">Fashion · Brand Launch</p>
-        <p class="portfolio-name">Chonis</p>
-        <p class="portfolio-url">chonis.net ↗</p>
-      </div>
-    </div>
-
-    <!-- Yours? -->
-    <div class="portfolio-item" onclick="window.location='contact.html'">
-      <div style="width:100%;height:100%;background:var(--black);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
-        <p style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase;">Next project</p>
-        <p style="font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:300;color:var(--dim);font-style:italic;">Yours?</p>
-      </div>
-      <div class="portfolio-overlay">
-        <p class="portfolio-tag">Your Industry</p>
-        <p class="portfolio-name">Your Brand — Let's Build It</p>
-        <p class="portfolio-url">Get in touch ↗</p>
-      </div>
-    </div>
-
-  </div>
-</div>
-
-<!-- PROCESS -->
-<section class="process">
+<div class="process">
   <div class="process-inner">
     <div class="process-header">
       <div>
-        <p class="process-label reveal">How it works</p>
-        <h2 class="process-title reveal reveal-delay-1">From brief<br>to <em>live</em> in<br>72 hours</h2>
+        <p class="section-label reveal">How it works</p>
+        <h2 class="process-title reveal">From brief<br>to <em>live</em> in 72hrs</h2>
       </div>
-      <p class="process-desc reveal reveal-delay-2">No lengthy sprints. No back-and-forth delays. We combine relentless craft with modern tools to deliver websites that would take others weeks — in days.</p>
+      <p class="process-desc reveal">No lengthy sprints. No delays. Relentless craft with modern tools — in days, not weeks.</p>
     </div>
     <div class="steps">
       <div class="step reveal">
         <p class="step-num">01 / 03</p>
-        <svg class="step-icon" viewBox="0 0 48 48" fill="none">
-          <rect x="8" y="8" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
-          <rect x="26" y="8" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
-          <rect x="8" y="26" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
-          <rect x="26" y="26" width="14" height="14" stroke="#c8cdd6" stroke-width="1"/>
-        </svg>
-        <h3>You share your vision</h3>
-        <p>Tell us about your business, your aesthetic, your goals. A 15-minute call or a detailed brief — whatever works for you.</p>
+        <svg class="step-icon" viewBox="0 0 44 44" fill="none"><rect x="6" y="6" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="25" y="6" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="6" y="25" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="25" y="25" width="13" height="13" stroke="#c8cdd6" stroke-width="1"/></svg>
+        <h3>Share your vision</h3>
+        <p>Tell us about your business, aesthetic, and goals. A 15-minute call or a brief — whatever works.</p>
       </div>
-      <div class="step reveal reveal-delay-1">
+      <div class="step reveal delay-1">
         <p class="step-num">02 / 03</p>
-        <svg class="step-icon" viewBox="0 0 48 48" fill="none">
-          <polygon points="24,6 30,18 44,18 33,28 37,42 24,33 11,42 15,28 4,18 18,18" stroke="#8a909e" stroke-width="1" fill="none"/>
-        </svg>
+        <svg class="step-icon" viewBox="0 0 44 44" fill="none"><polygon points="22,4 27,16 40,16 30,25 34,38 22,30 10,38 14,25 4,16 17,16" stroke="#8a909e" stroke-width="1" fill="none"/></svg>
         <h3>We design &amp; build</h3>
-        <p>Our studio refines every detail with precision — copy, layout, motion, code — at a pace that never sacrifices quality for speed.</p>
+        <p>Every detail refined with precision — copy, layout, motion, code — without sacrificing quality for speed.</p>
       </div>
-      <div class="step reveal reveal-delay-2">
+      <div class="step reveal delay-2">
         <p class="step-num">03 / 03</p>
-        <svg class="step-icon" viewBox="0 0 48 48" fill="none">
-          <circle cx="24" cy="24" r="16" stroke="#8a909e" stroke-width="1"/>
-          <path d="M16 24 L22 30 L32 18" stroke="#c8cdd6" stroke-width="1.5"/>
-        </svg>
-        <h3>You launch, we deliver</h3>
-        <p>Your site goes live fully hosted, optimised, and ready to grow. Revisions, updates, and support are always a message away.</p>
+        <svg class="step-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="15" stroke="#8a909e" stroke-width="1"/><path d="M15 22 L20 27 L29 17" stroke="#c8cdd6" stroke-width="1.5"/></svg>
+        <h3>You launch</h3>
+        <p>Your site goes live, fully hosted and ready to grow. Revisions and support are always a message away.</p>
       </div>
     </div>
   </div>
-</section>
+</div>
 
-<!-- VALUES -->
-<section class="values">
+<div class="values">
   <div class="values-header">
-    <p class="values-label reveal">Built different</p>
-    <h2 class="values-title reveal reveal-delay-1">Why clients <em>choose</em> Potentia</h2>
-    <p class="values-sub reveal reveal-delay-2">Every site engineered to rank, load fast, and convert — on any device.</p>
+    <p class="section-label reveal">Built different</p>
+    <h2 class="values-title reveal">Why clients choose <em>Potentia</em></h2>
+    <p class="values-sub reveal">Engineered to rank, load fast, and convert on any device.</p>
   </div>
-  <div class="values-grid">
-    <div class="value-card reveal">
-      <svg class="value-icon" viewBox="0 0 48 48" fill="none">
-        <circle cx="24" cy="24" r="16" stroke="#2a2d38" stroke-width="1"/>
-        <path d="M24 8 Q30 14 30 24 Q30 34 24 40 Q18 34 18 24 Q18 14 24 8Z" stroke="#8a909e" stroke-width="1" fill="none"/>
-        <line x1="8" y1="24" x2="40" y2="24" stroke="#8a909e" stroke-width="1"/>
-        <circle cx="24" cy="24" r="2" fill="#c8cdd6"/>
-      </svg>
-      <div class="value-stat">Top<span>3</span></div>
-      <p class="value-label">Google Rankings</p>
+  <div class="vgrid">
+    <div class="vcard reveal">
+      <svg class="vcard-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="15" stroke="#2a2d38" stroke-width="1"/><path d="M22 7 Q27 13 27 22 Q27 31 22 37 Q17 31 17 22 Q17 13 22 7Z" stroke="#8a909e" stroke-width="1" fill="none"/><line x1="7" y1="22" x2="37" y2="22" stroke="#8a909e" stroke-width="1"/><circle cx="22" cy="22" r="2" fill="#c8cdd6"/></svg>
+      <div class="vcard-stat">Top<span>3</span></div>
+      <p class="vcard-label">Google Rankings</p>
       <h3>SEO from day one</h3>
-      <p>Every site is structured and optimised so search engines find you — and rank you above the competition.</p>
+      <p>Every site structured and optimised so search engines rank you above the competition.</p>
     </div>
-    <div class="value-card reveal reveal-delay-1">
-      <svg class="value-icon" viewBox="0 0 48 48" fill="none">
-        <circle cx="24" cy="24" r="16" stroke="#2a2d38" stroke-width="1"/>
-        <path d="M17 24 L22 29 L31 19" stroke="#c8cdd6" stroke-width="1.5"/>
-        <path d="M24 8 L24 12" stroke="#8a909e" stroke-width="1"/>
-        <path d="M24 36 L24 40" stroke="#8a909e" stroke-width="1"/>
-        <path d="M8 24 L12 24" stroke="#8a909e" stroke-width="1"/>
-        <path d="M36 24 L40 24" stroke="#8a909e" stroke-width="1"/>
-      </svg>
-      <div class="value-stat">0.8<span>s</span></div>
-      <p class="value-label">Avg Load Time</p>
-      <h3>Blazing fast, always</h3>
-      <p>Speed is a ranking factor and a conversion driver. Our sites load in under a second, every time.</p>
+    <div class="vcard reveal delay-1">
+      <svg class="vcard-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="15" stroke="#2a2d38" stroke-width="1"/><path d="M15 22 L20 27 L29 17" stroke="#c8cdd6" stroke-width="1.5"/><path d="M22 7 L22 11" stroke="#8a909e" stroke-width="1"/><path d="M22 33 L22 37" stroke="#8a909e" stroke-width="1"/><path d="M7 22 L11 22" stroke="#8a909e" stroke-width="1"/><path d="M33 22 L37 22" stroke="#8a909e" stroke-width="1"/></svg>
+      <div class="vcard-stat">0.8<span>s</span></div>
+      <p class="vcard-label">Avg Load Time</p>
+      <h3>Blazing fast</h3>
+      <p>Speed is a ranking factor and conversion driver. Our sites load in under a second, every time.</p>
     </div>
-    <div class="value-card reveal reveal-delay-2">
-      <svg class="value-icon" viewBox="0 0 48 48" fill="none">
-        <rect x="4" y="12" width="26" height="18" rx="1" stroke="#8a909e" stroke-width="1"/>
-        <rect x="34" y="16" width="10" height="18" rx="1" stroke="#c8cdd6" stroke-width="1"/>
-        <line x1="11" y1="30" x2="11" y2="34" stroke="#8a909e" stroke-width="1"/>
-        <line x1="4" y1="34" x2="18" y2="34" stroke="#8a909e" stroke-width="1"/>
-      </svg>
-      <div class="value-stat">100<span>%</span></div>
-      <p class="value-label">Mobile Optimised</p>
-      <h3>Flawless on every screen</h3>
-      <p>Over 70% of visitors are on mobile. Every layout is designed mobile-first so your site feels native, not scaled down.</p>
+    <div class="vcard reveal delay-2">
+      <svg class="vcard-icon" viewBox="0 0 44 44" fill="none"><rect x="3" y="11" width="25" height="18" rx="1" stroke="#8a909e" stroke-width="1"/><rect x="32" y="15" width="9" height="18" rx="1" stroke="#c8cdd6" stroke-width="1"/><line x1="10" y1="29" x2="10" y2="33" stroke="#8a909e" stroke-width="1"/><line x1="3" y1="33" x2="17" y2="33" stroke="#8a909e" stroke-width="1"/></svg>
+      <div class="vcard-stat">100<span>%</span></div>
+      <p class="vcard-label">Mobile Optimised</p>
+      <h3>Every screen</h3>
+      <p>Over 70% of visitors are on mobile. Every layout designed mobile-first, so it feels native.</p>
     </div>
   </div>
-</section>
+</div>
 
-<!-- CTA -->
-<section class="cta-band">
+<div class="cta">
   <h2 class="cta-title reveal">Ready to be<br><em>next?</em></h2>
-  <p class="cta-sub reveal reveal-delay-1">Let's build something you're proud to show off. Tell us about your project and we'll get back to you within 24 hours.</p>
-  <div class="cta-actions reveal reveal-delay-2">
-    <a href="contact.html" class="btn-primary">Start a Project</a>
-    <a href="about.html" class="btn-ghost">Learn About Us</a>
+  <p class="cta-sub reveal">Tell us about your project — we'll get back within 24 hours.</p>
+  <div class="cta-btns reveal">
+    <a href="contact.html" class="btn-solid">Start a Project</a>
+    <a href="about.html" class="btn-outline">About Us</a>
   </div>
-</section>
+</div>
 
 <footer>
-  <div class="footer-brand">
-    <img src="Potentia_Logo.png" alt="Potentia">
-    <span>POTENTIA</span>
-  </div>
+  <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
   <div class="footer-links">
     <a href="index.html">Home</a>
     <a href="about.html">About</a>
@@ -490,53 +295,23 @@
 </footer>
 
 <script>
-const cursor=document.getElementById('cursor'),ring=document.getElementById('cursorRing');
-let mx=0,my=0,rx=0,ry=0;
-document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;cursor.style.transform=`translate(${mx-4}px,${my-4}px)`;});
-(function loop(){rx+=(mx-rx)*0.12;ry+=(my-ry)*0.12;ring.style.transform=`translate(${rx-16}px,${ry-16}px)`;requestAnimationFrame(loop);})();
-document.querySelectorAll('a,button').forEach(el=>{
-  el.addEventListener('mouseenter',()=>{ring.style.width='56px';ring.style.height='56px';ring.style.marginLeft='-12px';ring.style.marginTop='-12px';});
-  el.addEventListener('mouseleave',()=>{ring.style.width='32px';ring.style.height='32px';ring.style.marginLeft='0';ring.style.marginTop='0';});
+var ham = document.getElementById('navHam');
+var overlay = document.getElementById('mobOverlay');
+ham.addEventListener('click', function() {
+  overlay.classList.toggle('open');
+  document.body.style.overflow = overlay.classList.contains('open') ? 'hidden' : '';
 });
-const reveals=document.querySelectorAll('.reveal');
-const io=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.1});
-reveals.forEach(el=>io.observe(el));
-
-});
-
-
-
-// ── Mobile menu ──
-var mobBtn = document.getElementById('mob-btn');
-var mobOverlay = document.getElementById('mob-overlay');
-
-mobBtn.addEventListener('click', function() {
-  var isOpen = mobOverlay.classList.toggle('show');
-  document.body.style.overflow = isOpen ? 'hidden' : '';
-  // Animate icon to X
-  var spans = mobBtn.querySelectorAll('span');
-  if (isOpen) {
-    spans[0].style.transform = 'translateY(8px) rotate(45deg)';
-    spans[1].style.opacity = '0';
-    spans[2].style.transform = 'translateY(-8px) rotate(-45deg)';
-  } else {
-    spans[0].style.transform = '';
-    spans[1].style.opacity = '';
-    spans[2].style.transform = '';
-  }
-});
-
-mobOverlay.querySelectorAll('a').forEach(function(a) {
+overlay.querySelectorAll('a').forEach(function(a) {
   a.addEventListener('click', function() {
-    mobOverlay.classList.remove('show');
+    overlay.classList.remove('open');
     document.body.style.overflow = '';
-    var spans = mobBtn.querySelectorAll('span');
-    spans[0].style.transform = '';
-    spans[1].style.opacity = '';
-    spans[2].style.transform = '';
   });
 });
-
+var reveals = document.querySelectorAll('.reveal');
+var io = new IntersectionObserver(function(entries) {
+  entries.forEach(function(e) { if(e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } });
+}, {threshold: 0.1});
+reveals.forEach(function(el) { io.observe(el); });
 </script>
 </body>
 </html>

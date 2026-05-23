@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About — Potentia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+html{scroll-behavior:smooth}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden}
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:24px 48px;background:rgba(4,4,7,0.97);border-bottom:1px solid var(--dim)}
+.nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
+.nav-logo img{width:32px;height:32px;object-fit:contain}
+.nav-links{display:flex;gap:40px}
+.nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.nav-links a:hover,.nav-links a.active{color:var(--bright)}
+.nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--chrome);padding:10px 22px;text-decoration:none;text-transform:uppercase}
+.nav-cta:hover{background:var(--bright)}
+.nav-ham{display:none;flex-direction:column;gap:5px;background:none;border:none;padding:6px;cursor:pointer;z-index:2000}
+.nav-ham span{display:block;width:25px;height:2px;background:var(--bright);border-radius:1px}
+.mob-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#040407;z-index:1500;flex-direction:column;align-items:center;justify-content:center}
+.mob-overlay.open{display:flex}
+.mob-overlay a{font-family:'Syncopate',sans-serif;font-size:28px;letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 0;width:80%;text-align:center;border-bottom:1px solid var(--dim);transition:color 0.2s}
+.mob-overlay a:first-child{border-top:1px solid var(--dim)}
+.mob-overlay a:hover,.mob-overlay a.active{color:var(--bright)}
+.mob-cta-btn{margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:14px 40px!important;border:none!important}
+
+.page-top{padding:160px 80px 80px;max-width:1400px;margin:0 auto}
+.page-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px}
+.page-title{font-size:clamp(48px,7vw,96px);font-weight:300;line-height:0.95;color:var(--bright);margin-bottom:28px}
+.page-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.page-intro{font-size:clamp(19px,2vw,24px);color:var(--silver);font-weight:300;max-width:600px;line-height:1.7}
+
+.mission{padding:80px;max-width:1400px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center;border-top:1px solid var(--dim)}
+.mission-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:20px}
+.mission-title{font-size:clamp(32px,4vw,52px);font-weight:300;color:var(--bright);line-height:1.05;margin-bottom:28px}
+.mission-title em{font-style:italic;color:var(--silver)}
+.mission-body{font-size:19px;color:var(--silver);line-height:1.8;font-weight:300}
+.mission-body p{margin-bottom:20px}
+.mission-body p:last-child{margin-bottom:0}
+.mission-visual{display:flex;align-items:center;justify-content:center}
+.mission-visual img{width:200px;height:200px;object-fit:contain;filter:drop-shadow(0 0 60px rgba(160,168,188,0.15))}
+
+.pillars{background:var(--deep);border-top:1px solid var(--dim);padding:100px 80px}
+.pillars-inner{max-width:1400px;margin:0 auto}
+.section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:20px}
+.section-title{font-size:clamp(36px,4vw,56px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:64px}
+.section-title em{font-style:italic;color:var(--silver)}
+.pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.pillar{background:var(--deep);padding:48px;transition:background 0.3s}
+.pillar:hover{background:var(--black)}
+.pillar-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);margin-bottom:28px}
+.pillar h3{font-size:26px;font-weight:300;color:var(--bright);margin-bottom:12px}
+.pillar p{font-size:16px;color:var(--silver);line-height:1.7;font-weight:300}
+
+.process{padding:100px 80px;max-width:1400px;margin:0 auto}
+.process-header{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:end;margin-bottom:64px}
+.process-title{font-size:clamp(36px,4vw,56px);font-weight:300;color:var(--bright);line-height:1.05}
+.process-title em{font-style:italic;color:var(--silver)}
+.process-desc{font-size:19px;color:var(--silver);line-height:1.7;font-weight:300}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.step{background:var(--black);padding:48px;transition:background 0.3s}
+.step:hover{background:var(--deep)}
+.step-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);margin-bottom:32px}
+.step-icon{width:44px;height:44px;margin-bottom:24px}
+.step h3{font-size:26px;font-weight:300;color:var(--bright);margin-bottom:12px}
+.step p{font-size:16px;color:var(--silver);line-height:1.7;font-weight:300}
+
+.cta{padding:140px 80px;text-align:center;border-top:1px solid var(--dim)}
+.cta-title{font-size:clamp(44px,6vw,88px);font-weight:300;color:var(--bright);line-height:0.95;margin-bottom:32px}
+.cta-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.cta-sub{font-size:19px;color:var(--silver);font-weight:300;max-width:400px;margin:0 auto 48px;line-height:1.6}
+.cta-btns{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.btn-solid{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:15px 36px;text-decoration:none;text-transform:uppercase;display:inline-block;transition:background 0.3s}
+.btn-solid:hover{background:var(--bright)}
+.btn-outline{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:15px 36px;text-decoration:none;text-transform:uppercase;display:inline-block;transition:all 0.3s}
+.btn-outline:hover{border-color:var(--chrome);color:var(--bright)}
+
+footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+.footer-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver);text-decoration:none}
+.footer-logo img{width:24px;height:24px;object-fit:contain}
+.footer-links{display:flex;gap:32px}
+.footer-links a{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.footer-links a:hover{color:var(--silver)}
+.footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+
+.reveal{opacity:0;transform:translateY(24px);transition:opacity 0.7s ease,transform 0.7s ease}
+.reveal.on{opacity:1;transform:translateY(0)}
+.delay-1{transition-delay:0.1s}.delay-2{transition-delay:0.2s}
+
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links,.nav-cta{display:none}
+  .nav-ham{display:flex!important}
+  .page-top{padding:110px 24px 48px}
+  .mission{padding:48px 24px;grid-template-columns:1fr}
+  .mission-visual{display:none}
+  .pillars{padding:64px 24px}
+  .pgrid{grid-template-columns:1fr}
+  .process{padding:64px 24px}
+  .process-header{grid-template-columns:1fr;gap:24px}
+  .steps{grid-template-columns:1fr}
+  .cta{padding:80px 24px}
+  .cta-btns{flex-direction:column;align-items:center}
+  footer{padding:32px 20px;flex-direction:column;text-align:center}
+  .footer-links{justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="about.html" class="active">About</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <a href="contact.html" class="nav-cta">Get Started</a>
+  <button class="nav-ham" id="navHam" aria-label="Menu"><span></span><span></span><span></span></button>
+</nav>
+
+<div class="mob-overlay" id="mobOverlay">
+  <a href="index.html">Home</a>
+  <a href="portfolio.html">Portfolio</a>
+  <a href="about.html" class="active">About</a>
+  <a href="contact.html">Contact</a>
+  <a href="contact.html" class="mob-cta-btn">Get Started</a>
+</div>
+
+<div class="page-top">
+  <p class="page-label">About Potentia</p>
+  <h1 class="page-title">We build websites<br>that <em>mean</em> business</h1>
+  <p class="page-intro">A boutique digital studio obsessed with craft, speed, and results. We don't do average — every site we deliver is built to stand out, rank higher, and convert better.</p>
+</div>
+
+<div class="mission">
+  <div>
+    <p class="mission-label reveal">Our Mission</p>
+    <h2 class="mission-title reveal">Giving every business a <em>powerful</em> digital presence</h2>
+    <div class="mission-body reveal">
+      <p>The name Potentia is Latin for power, potential, and strength. It's what we believe every business deserves online — a presence that commands attention, earns trust, and drives growth.</p>
+      <p>We built Potentia because too many great businesses are being let down by generic templates, slow agencies, and websites that look beautiful but don't perform.</p>
+      <p>Our approach is simple: precision over quantity, results over aesthetics, and partnerships over transactions.</p>
+    </div>
+  </div>
+  <div class="mission-visual reveal">
+    <img src="Potentia_Logo.png" alt="Potentia">
+  </div>
+</div>
+
+<div class="pillars">
+  <div class="pillars-inner">
+    <p class="section-label reveal">What we stand for</p>
+    <h2 class="section-title reveal">Three things we <em>never</em> compromise on</h2>
+    <div class="pgrid">
+      <div class="pillar reveal">
+        <p class="pillar-num">01 / 03</p>
+        <h3>Craft over shortcuts</h3>
+        <p>Every site is hand-built with intention. We design, develop, and refine until every detail is exactly right.</p>
+      </div>
+      <div class="pillar reveal delay-1">
+        <p class="pillar-num">02 / 03</p>
+        <h3>Performance by default</h3>
+        <p>Speed, SEO, and mobile responsiveness are baked into every line of code from day one — not added later.</p>
+      </div>
+      <div class="pillar reveal delay-2">
+        <p class="pillar-num">03 / 03</p>
+        <h3>Honesty, always</h3>
+        <p>No jargon. No bloated retainers. We tell you exactly what you need, what it costs, and we deliver on it.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="process">
+  <div class="process-header">
+    <div>
+      <p class="section-label reveal">How it works</p>
+      <h2 class="process-title reveal">From brief<br>to <em>live</em> in 72hrs</h2>
+    </div>
+    <p class="process-desc reveal">No lengthy sprints. No back-and-forth delays. Relentless craft with modern tools — websites that would take others weeks, in days.</p>
+  </div>
+  <div class="steps">
+    <div class="step reveal">
+      <p class="step-num">01 / 03</p>
+      <svg class="step-icon" viewBox="0 0 44 44" fill="none"><rect x="6" y="6" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="25" y="6" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="6" y="25" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="25" y="25" width="13" height="13" stroke="#c8cdd6" stroke-width="1"/></svg>
+      <h3>Share your vision</h3>
+      <p>Tell us about your business, aesthetic, and goals. A 15-minute call or a brief — whatever works.</p>
+    </div>
+    <div class="step reveal delay-1">
+      <p class="step-num">02 / 03</p>
+      <svg class="step-icon" viewBox="0 0 44 44" fill="none"><polygon points="22,4 27,16 40,16 30,25 34,38 22,30 10,38 14,25 4,16 17,16" stroke="#8a909e" stroke-width="1" fill="none"/></svg>
+      <h3>We design &amp; build</h3>
+      <p>Every detail refined with precision — copy, layout, motion, code — without sacrificing quality for speed.</p>
+    </div>
+    <div class="step reveal delay-2">
+      <p class="step-num">03 / 03</p>
+      <svg class="step-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="15" stroke="#8a909e" stroke-width="1"/><path d="M15 22 L20 27 L29 17" stroke="#c8cdd6" stroke-width="1.5"/></svg>
+      <h3>You launch</h3>
+      <p>Your site goes live, fully hosted and ready to grow. Revisions and support always a message away.</p>
+    </div>
+  </div>
+</div>
+
+<div class="cta">
+  <h2 class="cta-title reveal">Ready to build<br>something <em>great?</em></h2>
+  <p class="cta-sub reveal">No pressure — just an honest conversation about what's possible.</p>
+  <div class="cta-btns reveal">
+    <a href="contact.html" class="btn-solid">Get in Touch</a>
+    <a href="portfolio.html" class="btn-outline">See Our Work</a>
+  </div>
+</div>
+
+<footer>
+  <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <p class="footer-copy">© 2026 Potentia Studio</p>
+</footer>
+
+<script>
+var ham = document.getElementById('navHam');
+var overlay = document.getElementById('mobOverlay');
+ham.addEventListener('click', function() {
+  overlay.classList.toggle('open');
+  document.body.style.overflow = overlay.classList.contains('open') ? 'hidden' : '';
+});
+overlay.querySelectorAll('a').forEach(function(a) {
+  a.addEventListener('click', function() {
+    overlay.classList.remove('open');
+    document.body.style.overflow = '';
+  });
+});
+var reveals = document.querySelectorAll('.reveal');
+var io = new IntersectionObserver(function(entries) {
+  entries.forEach(function(e) { if(e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } });
+}, {threshold: 0.1});
+reveals.forEach(function(el) { io.observe(el); });
+</script>
+</body>
+</html>

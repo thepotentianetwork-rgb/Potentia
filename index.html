@@ -5,214 +5,92 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Potentia — Exceptional Websites</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <style>
-  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-  :root { --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38; }
-  html { scroll-behavior: smooth; }
-  body { background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;cursor:none; }
-  .cursor { width:8px;height:8px;background:var(--chrome);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9999;mix-blend-mode:difference; }
-  .cursor-ring { width:32px;height:32px;border:1px solid rgba(200,205,214,0.4);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9998;transition:transform 0.25s ease,width 0.3s,height 0.3s; }
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+html{scroll-behavior:smooth}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden}
 
-  /* NAV */
-  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 60px;background:linear-gradient(to bottom,rgba(4,4,7,0.8),transparent);backdrop-filter:blur(2px); }
-  .nav-logo { display:flex;align-items:center;gap:14px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none; }
-  .nav-logo img { width:36px;height:36px;object-fit:contain; }
-  .nav-links { display:flex;gap:48px; }
-  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
-  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
-  .nav-right { display:flex;align-items:center;gap:16px; }
-  .lang-toggle { display:flex;align-items:center;border:1px solid var(--dim);overflow:hidden; }
-  .lang-btn { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);background:none;border:none;padding:8px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.25s; }
-  .lang-btn.active { background:var(--dim);color:var(--bright); }
-  .lang-divider { width:1px;height:16px;background:var(--dim); }
-  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s,transform 0.2s; }
-  .nav-cta:hover { background:var(--bright);transform:translateY(-1px); }
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:24px 48px;background:linear-gradient(to bottom,rgba(4,4,7,0.9),transparent)}
+.nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
+.nav-logo img{width:32px;height:32px;object-fit:contain}
+.nav-links{display:flex;gap:40px}
+.nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.nav-links a:hover,.nav-links a.active{color:var(--bright)}
+.nav-right{display:flex;align-items:center;gap:16px}
+.lang-toggle{display:flex;border:1px solid var(--dim);overflow:hidden}
+.lang-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--silver);background:none;border:none;padding:8px 12px;cursor:pointer;text-transform:uppercase}
+.lang-btn.active{background:var(--dim);color:var(--bright)}
+.nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--chrome);padding:10px 22px;text-decoration:none;text-transform:uppercase}
+.nav-cta:hover{background:var(--bright)}
 
-  /* HERO — full viewport, nothing else */
-  .hero { width:100vw;height:100vh;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;text-align:center; }
-  .hero-bg-video { position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0.45; }
-  .hero-bg-overlay { position:absolute;inset:0;z-index:1;
-    background:
-      radial-gradient(ellipse 70% 50% at 50% 50%,transparent 0%,rgba(4,4,7,0.55) 55%,rgba(4,4,7,0.92) 80%,var(--black) 100%),
-      linear-gradient(to bottom,var(--black) 0%,transparent 18%,transparent 75%,var(--black) 100%),
-      linear-gradient(to right,var(--black) 0%,transparent 15%,transparent 85%,var(--black) 100%);
-  }
-  .hero-content { position:relative;z-index:2;padding:0 40px; }
-  .hero-eyebrow { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.35em;color:var(--silver);text-transform:uppercase;margin-bottom:48px;opacity:0;animation:fadeUp 1s 0.3s forwards; }
-  .hero-logo-center { width:110px;height:110px;margin:0 auto 48px;opacity:0;animation:scaleIn 1.2s 0.1s cubic-bezier(0.16,1,0.3,1) forwards;filter:drop-shadow(0 0 40px rgba(160,168,188,0.25)); }
-  .hero-title { font-size:clamp(56px,8vw,110px);font-weight:300;line-height:0.95;letter-spacing:-0.02em;color:var(--bright);margin-bottom:32px;opacity:0;animation:fadeUp 1s 0.5s forwards; }
-  .hero-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
-  .hero-sub { font-size:clamp(18px,2vw,24px);font-weight:300;color:var(--silver);max-width:520px;margin:0 auto 64px;line-height:1.7;opacity:0;animation:fadeUp 1s 0.7s forwards; }
-  .hero-actions { display:flex;gap:20px;justify-content:center;opacity:0;animation:fadeUp 1s 0.9s forwards; }
-  .btn-primary { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
-  .btn-primary:hover { background:var(--bright);transform:translateY(-2px); }
-  .btn-ghost { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
-  .btn-ghost:hover { border-color:var(--chrome);color:var(--bright); }
+/* HAMBURGER */
+.nav-ham{display:none;flex-direction:column;gap:5px;background:none;border:none;padding:6px;cursor:pointer;z-index:2000}
+.nav-ham span{display:block;width:25px;height:2px;background:var(--bright);border-radius:1px;transition:all 0.3s}
 
-  /* Scroll hint */
-  .scroll-hint { position:absolute;bottom:48px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:12px;opacity:0;animation:fadeIn 1s 1.5s forwards;z-index:2; }
-  .scroll-hint span { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase; }
-  .scroll-line { width:1px;height:48px;background:linear-gradient(to bottom,var(--dim),transparent);animation:scrollPulse 2s ease-in-out infinite; }
+/* MOBILE OVERLAY */
+.mob-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#040407;z-index:1500;flex-direction:column;align-items:center;justify-content:center;gap:0}
+.mob-overlay.open{display:flex}
+.mob-overlay a{font-family:'Syncopate',sans-serif;font-size:28px;letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 0;width:80%;text-align:center;border-bottom:1px solid var(--dim);transition:color 0.2s}
+.mob-overlay a:first-child{border-top:1px solid var(--dim)}
+.mob-overlay a:hover,.mob-overlay a.active{color:var(--bright)}
+.mob-cta-btn{margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:14px 40px!important;border:none!important}
+.mob-cta-btn:hover{background:var(--bright);color:var(--black)!important}
 
-  /* MARQUEE — just below hero */
-  .marquee-strip { border-top:1px solid var(--dim);border-bottom:1px solid var(--dim);padding:20px 0;overflow:hidden;white-space:nowrap; }
-  .marquee-inner { display:inline-flex;gap:80px;animation:marquee 30s linear infinite; }
-  .marquee-inner span { font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--dim);text-transform:uppercase; }
-  .marquee-inner .dot { color:var(--silver);font-size:20px;line-height:1; }
+/* HERO */
+.hero{width:100%;height:100vh;position:relative;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden}
+.hero-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0.45}
+.hero-overlay{position:absolute;inset:0;background:radial-gradient(ellipse 70% 50% at 50% 50%,transparent 0%,rgba(4,4,7,0.6) 60%,rgba(4,4,7,0.95) 85%,#040407 100%),linear-gradient(to bottom,#040407 0%,transparent 20%,transparent 75%,#040407 100%)}
+.hero-content{position:relative;z-index:2;padding:0 32px}
+.hero-logo{width:100px;height:100px;margin:0 auto 40px;display:block;filter:drop-shadow(0 0 30px rgba(160,168,188,0.2))}
+.hero-title{font-size:clamp(48px,9vw,110px);font-weight:300;line-height:0.95;letter-spacing:-0.02em;color:var(--bright);margin-bottom:28px}
+.hero-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.hero-sub{font-size:clamp(16px,2.5vw,22px);font-weight:300;color:var(--silver);max-width:500px;margin:0 auto 56px;line-height:1.7}
+.hero-btns{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.btn-solid{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:15px 36px;text-decoration:none;text-transform:uppercase;transition:background 0.3s}
+.btn-solid:hover{background:var(--bright)}
+.btn-outline{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:15px 36px;text-decoration:none;text-transform:uppercase;transition:all 0.3s}
+.btn-outline:hover{border-color:var(--chrome);color:var(--bright)}
 
-  /* FOOTER */
-  footer { border-top:1px solid var(--dim);padding:64px 80px;display:flex;justify-content:space-between;align-items:center; }
-  .footer-brand { display:flex;align-items:center;gap:14px; }
-  .footer-brand img { width:28px;height:28px;object-fit:contain; }
-  .footer-brand span { font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver); }
-  .footer-links { display:flex;gap:40px; }
-  .footer-links a { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
-  .footer-links a:hover { color:var(--silver); }
-  .footer-copy { font-family:'DM Mono',monospace;font-size:10px;color:var(--dim); }
+/* MARQUEE */
+.marquee{border-top:1px solid var(--dim);border-bottom:1px solid var(--dim);padding:18px 0;overflow:hidden;white-space:nowrap}
+.marquee-inner{display:inline-flex;gap:64px;animation:marquee 28s linear infinite}
+.marquee-inner span{font-family:'Syncopate',sans-serif;font-size:10px;letter-spacing:0.25em;color:var(--dim);text-transform:uppercase}
+.marquee-inner .dot{color:var(--silver);font-size:16px}
+@keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
 
-  /* ANIMATIONS */
-  @keyframes fadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
-  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
-  @keyframes scaleIn { from{opacity:0;transform:scale(0.85)} to{opacity:1;transform:scale(1)} }
-  @keyframes scrollPulse { 0%,100%{opacity:0.3} 50%{opacity:1} }
-  @keyframes marquee { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+/* FOOTER */
+footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+.footer-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver);text-decoration:none}
+.footer-logo img{width:24px;height:24px;object-fit:contain}
+.footer-links{display:flex;gap:32px}
+.footer-links a{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.footer-links a:hover{color:var(--silver)}
+.footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
 
-  
-    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
-    body.menu-open { overflow:hidden; }
-  }
-    
-  }
+/* ANIMATIONS */
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes scaleIn{from{opacity:0;transform:scale(0.9)}to{opacity:1;transform:scale(1)}}
+.hero-logo{animation:scaleIn 1s 0.1s both}
+.hero-title{animation:fadeUp 1s 0.4s both}
+.hero-sub{animation:fadeUp 1s 0.6s both}
+.hero-btns{animation:fadeUp 1s 0.8s both}
 
-  /* ─── MOBILE ─── */
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-    .nav-links { display:none!important; }
-    .nav-right { display:none!important; }
-    
-    .hero-actions, .cta-actions { flex-direction:column;align-items:center; }
-    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
-    body.menu-open { overflow:hidden; }
-  }
-
-  /* ─── NAV ─── */
-  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:24px 40px;background:linear-gradient(to bottom,rgba(4,4,7,0.9),transparent);backdrop-filter:blur(4px); }
-  .nav-logo { display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none;z-index:201; }
-  .nav-logo img { width:32px;height:32px;object-fit:contain; }
-  .nav-links { display:flex;gap:48px; }
-  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
-  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
-  .nav-right { display:flex;align-items:center;gap:16px; }
-  .lang-toggle { display:flex;align-items:center;border:1px solid var(--dim);overflow:hidden; }
-  .lang-btn { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);background:none;border:none;padding:8px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.25s; }
-  .lang-btn.active { background:var(--dim);color:var(--bright); }
-  .lang-divider { width:1px;height:16px;background:var(--dim); }
-  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
-  .nav-cta:hover { background:var(--bright); }
-
-  /* ─── HAMBURGER ─── */
-
-  /* ─── MOBILE OVERLAY ─── */
-  .mob { display:none;position:fixed;inset:0;background:var(--black);z-index:200;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.35s ease;opacity:0;pointer-events:none; }
-  .mob.is-open { opacity:1;pointer-events:all; }
-  .mob a { font-family:'Syncopate',sans-serif;font-size:clamp(22px,7vw,40px);letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:18px 0;border-bottom:1px solid var(--dim);width:80%;text-align:center;transition:color 0.2s; }
-  .mob a:first-of-type { border-top:1px solid var(--dim); }
-  .mob a.active,.mob a:hover { color:var(--bright); }
-  .mob-cta { display:inline-block;margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 48px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
-  .mob-cta:hover { background:var(--bright); }
-
-  @media (max-width:900px) {
-    #ham { display:block!important; }
-    nav { padding:18px 24px;background:rgba(4,4,7,0.95); }
-    .nav-links { display:none!important; }
-    .nav-right { display:none!important; }
-    }
-
-
-  /* === MOBILE MENU === */
-  @media (max-width: 900px) {
-    .nav-links { display: none !important; }
-    .nav-right { display: none !important; }
-    #mob-btn {
-      display: flex !important;
-      flex-direction: column;
-      justify-content: center;
-      gap: 6px;
-      width: 44px;
-      height: 44px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 8px;
-      z-index: 9999;
-    }
-    #mob-btn span {
-      display: block;
-      width: 26px;
-      height: 2px;
-      background: #e8ecf4;
-      border-radius: 2px;
-      transition: all 0.3s;
-      pointer-events: none;
-    }
-  }
-  #mob-btn { display: none; }
-  #mob-overlay {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: #040407;
-    z-index: 9998;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0;
-  }
-  #mob-overlay.show { display: flex; }
-  #mob-overlay a {
-    font-family: 'Syncopate', sans-serif;
-    font-size: 32px;
-    letter-spacing: 0.08em;
-    color: #8a909e;
-    text-decoration: none;
-    text-transform: uppercase;
-    padding: 22px 0;
-    width: 80%;
-    text-align: center;
-    border-bottom: 1px solid #2a2d38;
-    transition: color 0.2s;
-  }
-  #mob-overlay a:first-child { border-top: 1px solid #2a2d38; }
-  #mob-overlay a:hover,
-  #mob-overlay a.active { color: #e8ecf4; }
-  #mob-overlay .mob-cta {
-    margin-top: 48px;
-    font-family: 'DM Mono', monospace;
-    font-size: 12px;
-    letter-spacing: 0.2em;
-    color: #040407;
-    background: #c8cdd6;
-    padding: 16px 48px;
-    text-decoration: none;
-    text-transform: uppercase;
-    border: none;
-    width: auto;
-  }
-
+/* MOBILE */
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links{display:none}
+  .nav-right{display:none}
+  .nav-ham{display:flex!important}
+  footer{padding:32px 20px;flex-direction:column;text-align:center}
+  .footer-links{justify-content:center}
+}
 </style>
 </head>
 <body>
+
 <nav>
   <a href="index.html" class="nav-logo">
     <img src="Potentia_Logo.png" alt="Potentia">
@@ -227,141 +105,95 @@
   <div class="nav-right">
     <div class="lang-toggle">
       <button class="lang-btn active" id="btn-en" onclick="setLang('en')">EN</button>
-      <div class="lang-divider"></div>
       <button class="lang-btn" id="btn-es" onclick="setLang('es')">ES</button>
     </div>
     <a href="contact.html" class="nav-cta">Get Started</a>
   </div>
-  
-
-  <button id="mob-btn" aria-label="Open menu"><span></span><span></span><span></span></button>
+  <button class="nav-ham" id="navHam" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
 </nav>
-<div id="mob-overlay">
+
+<div class="mob-overlay" id="mobOverlay">
   <a href="index.html" class="active">Home</a>
   <a href="portfolio.html">Portfolio</a>
   <a href="about.html">About</a>
   <a href="contact.html">Contact</a>
-  <a href="contact.html" class="mob-cta">Get Started</a>
+  <a href="contact.html" class="mob-cta-btn">Get Started</a>
 </div>
 
-<div class="cursor" id="cursor"></div>
-<div class="cursor-ring" id="cursorRing"></div>
-
-
 <section class="hero">
-  <video class="hero-bg-video" autoplay muted loop playsinline>
+  <video class="hero-video" autoplay muted loop playsinline>
     <source src="hero-bg.mp4" type="video/mp4">
   </video>
-  <div class="hero-bg-overlay"></div>
+  <div class="hero-overlay"></div>
   <div class="hero-content">
-    <img class="hero-logo-center" src="Potentia_Logo.png" alt="Potentia">
-    <h1 class="hero-title" data-i18n="hero.title">Websites that<br><em>command</em> attention</h1>
-    <p class="hero-sub" data-i18n="hero.sub">We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.</p>
-    <div class="hero-actions">
-      <a href="portfolio.html" class="btn-primary" data-i18n="hero.cta1">See Our Work</a>
-      <a href="contact.html" class="btn-ghost" data-i18n="hero.cta2">Get Started</a>
+    <img class="hero-logo" src="Potentia_Logo.png" alt="Potentia">
+    <h1 class="hero-title">Websites that<br><em>command</em> attention</h1>
+    <p class="hero-sub">We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.</p>
+    <div class="hero-btns">
+      <a href="portfolio.html" class="btn-solid">See Our Work</a>
+      <a href="contact.html" class="btn-outline">Get Started</a>
     </div>
-  </div>
-  <div class="scroll-hint">
-    <span data-i18n="scroll">Scroll</span>
-    <div class="scroll-line"></div>
   </div>
 </section>
 
-<div class="marquee-strip">
+<div class="marquee">
   <div class="marquee-inner">
-    <span data-i18n="m1">Precision Design</span><span class="dot">✦</span>
-    <span data-i18n="m2">Delivered in Days</span><span class="dot">✦</span>
-    <span data-i18n="m3">Built to Convert</span><span class="dot">✦</span>
-    <span data-i18n="m4">Pixel Perfect</span><span class="dot">✦</span>
-    <span data-i18n="m5">Future-Proof Code</span><span class="dot">✦</span>
-    <span data-i18n="m6">Fully Custom</span><span class="dot">✦</span>
-    <span data-i18n="m1">Precision Design</span><span class="dot">✦</span>
-    <span data-i18n="m2">Delivered in Days</span><span class="dot">✦</span>
-    <span data-i18n="m3">Built to Convert</span><span class="dot">✦</span>
-    <span data-i18n="m4">Pixel Perfect</span><span class="dot">✦</span>
-    <span data-i18n="m5">Future-Proof Code</span><span class="dot">✦</span>
-    <span data-i18n="m6">Fully Custom</span><span class="dot">✦</span>
+    <span>Precision Design</span><span class="dot">✦</span>
+    <span>Delivered in Days</span><span class="dot">✦</span>
+    <span>Built to Convert</span><span class="dot">✦</span>
+    <span>Pixel Perfect</span><span class="dot">✦</span>
+    <span>Future-Proof Code</span><span class="dot">✦</span>
+    <span>Fully Custom</span><span class="dot">✦</span>
+    <span>Precision Design</span><span class="dot">✦</span>
+    <span>Delivered in Days</span><span class="dot">✦</span>
+    <span>Built to Convert</span><span class="dot">✦</span>
+    <span>Pixel Perfect</span><span class="dot">✦</span>
+    <span>Future-Proof Code</span><span class="dot">✦</span>
+    <span>Fully Custom</span><span class="dot">✦</span>
   </div>
 </div>
 
 <footer>
-  <div class="footer-brand">
+  <a href="index.html" class="footer-logo">
     <img src="Potentia_Logo.png" alt="Potentia">
-    <span>POTENTIA</span>
-  </div>
+    POTENTIA
+  </a>
   <div class="footer-links">
-    <a href="portfolio.html" data-i18n="nav.portfolio">Portfolio</a>
-    <a href="about.html" data-i18n="nav.about">About</a>
-    <a href="contact.html" data-i18n="nav.contact">Contact</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="about.html">About</a>
+    <a href="contact.html">Contact</a>
   </div>
   <p class="footer-copy">© 2026 Potentia Studio</p>
 </footer>
 
 <script>
-const cursor=document.getElementById('cursor'),ring=document.getElementById('cursorRing');
-let mx=0,my=0,rx=0,ry=0;
-document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;cursor.style.transform=`translate(${mx-4}px,${my-4}px)`;});
-(function loop(){rx+=(mx-rx)*0.12;ry+=(my-ry)*0.12;ring.style.transform=`translate(${rx-16}px,${ry-16}px)`;requestAnimationFrame(loop);})();
-document.querySelectorAll('a,button').forEach(el=>{
-  el.addEventListener('mouseenter',()=>{ring.style.width='56px';ring.style.height='56px';ring.style.marginLeft='-12px';ring.style.marginTop='-12px';});
-  el.addEventListener('mouseleave',()=>{ring.style.width='32px';ring.style.height='32px';ring.style.marginLeft='0';ring.style.marginTop='0';});
+// Hamburger
+var ham = document.getElementById('navHam');
+var overlay = document.getElementById('mobOverlay');
+ham.addEventListener('click', function() {
+  overlay.classList.toggle('open');
+  document.body.style.overflow = overlay.classList.contains('open') ? 'hidden' : '';
 });
-const T={
-  en:{'nav.home':'Home','nav.portfolio':'Portfolio','nav.about':'About','nav.contact':'Contact','nav.cta':'Get Started',
-      'hero.title':'Websites that<br><em>command</em> attention',
-      'hero.sub':'We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.',
-      'hero.cta1':'See Our Work','hero.cta2':'Get Started','scroll':'Scroll',
-      'm1':'Precision Design','m2':'Delivered in Days','m3':'Built to Convert',
-      'm4':'Pixel Perfect','m5':'Future-Proof Code','m6':'Fully Custom'},
-  es:{'nav.home':'Inicio','nav.portfolio':'Portafolio','nav.about':'Nosotros','nav.contact':'Contacto','nav.cta':'Comenzar',
-      'hero.title':'Sitios web que<br><em>dominan</em> la atención',
-      'hero.sub':'Creamos sitios web impresionantes con atención obsesiva al detalle — más rápido que una agencia, más preciso que una plantilla.',
-      'hero.cta1':'Ver Nuestro Trabajo','hero.cta2':'Comenzar','scroll':'Desplazar',
-      'm1':'Diseño de Precisión','m2':'Entregado en Días','m3':'Diseñado para Convertir',
-      'm4':'Perfección Pixel a Pixel','m5':'Código Futuro','m6':'Totalmente Personalizado'}
-};
-function setLang(l){
-  document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.getAttribute('data-i18n');if(T[l][k])el.innerHTML=T[l][k];});
-  document.getElementById('btn-en').classList.toggle('active',l==='en');
-  document.getElementById('btn-es').classList.toggle('active',l==='es');
-}
-
-});
-
-
-
-// ── Mobile menu ──
-var mobBtn = document.getElementById('mob-btn');
-var mobOverlay = document.getElementById('mob-overlay');
-
-mobBtn.addEventListener('click', function() {
-  var isOpen = mobOverlay.classList.toggle('show');
-  document.body.style.overflow = isOpen ? 'hidden' : '';
-  // Animate icon to X
-  var spans = mobBtn.querySelectorAll('span');
-  if (isOpen) {
-    spans[0].style.transform = 'translateY(8px) rotate(45deg)';
-    spans[1].style.opacity = '0';
-    spans[2].style.transform = 'translateY(-8px) rotate(-45deg)';
-  } else {
-    spans[0].style.transform = '';
-    spans[1].style.opacity = '';
-    spans[2].style.transform = '';
-  }
-});
-
-mobOverlay.querySelectorAll('a').forEach(function(a) {
+overlay.querySelectorAll('a').forEach(function(a) {
   a.addEventListener('click', function() {
-    mobOverlay.classList.remove('show');
+    overlay.classList.remove('open');
     document.body.style.overflow = '';
-    var spans = mobBtn.querySelectorAll('span');
-    spans[0].style.transform = '';
-    spans[1].style.opacity = '';
-    spans[2].style.transform = '';
   });
 });
 
+// Language toggle
+var T = {
+  en: { title: 'Websites that<br><em>command</em> attention', sub: 'We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.', cta1: 'See Our Work', cta2: 'Get Started' },
+  es: { title: 'Sitios web que<br><em>dominan</em> la atención', sub: 'Creamos sitios web impresionantes con atención obsesiva al detalle — más rápido que una agencia, más preciso que una plantilla.', cta1: 'Ver Nuestro Trabajo', cta2: 'Comenzar' }
+};
+function setLang(l) {
+  document.querySelector('.hero-title').innerHTML = T[l].title;
+  document.querySelector('.hero-sub').textContent = T[l].sub;
+  document.getElementById('btn-en').classList.toggle('active', l==='en');
+  document.getElementById('btn-es').classList.toggle('active', l==='es');
+}
 </script>
 </body>
 </html>
