@@ -82,46 +82,76 @@
     footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
     body.menu-open { overflow:hidden; }
   }
-    .mobile-menu { display:flex; }
+    
   }
 
   /* ─── MOBILE ─── */
-  .hamburger { display:none;flex-direction:column;justify-content:center;gap:6px;background:transparent;border:none;outline:none;cursor:pointer;padding:8px;z-index:200;-webkit-appearance:none;appearance:none; }
-  .hamburger span { display:block;width:26px;height:2px;background:var(--bright);border-radius:1px;transition:all 0.3s ease; }
-  .hamburger.open span:nth-child(1) { transform:translateY(6px) rotate(45deg); }
-  .hamburger.open span:nth-child(2) { opacity:0; }
-  .hamburger.open span:nth-child(3) { transform:translateY(-6px) rotate(-45deg); }
-  .mobile-menu { display:none;position:fixed;inset:0;background:rgba(4,4,7,0.98);z-index:150;flex-direction:column;align-items:center;justify-content:center;opacity:0;transition:opacity 0.3s ease;pointer-events:none; }
-  .mobile-menu.open { opacity:1;pointer-events:all; }
-  .mobile-menu a { font-family:'Syncopate',sans-serif;font-size:clamp(24px,6vw,42px);font-weight:400;letter-spacing:0.1em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 40px;display:block;text-align:center;transition:color 0.3s;border-bottom:1px solid var(--dim);width:100%; }
-  .mobile-menu a:first-child { border-top:1px solid var(--dim); }
-  .mobile-menu a.active, .mobile-menu a:hover { color:var(--bright); }
-  .mobile-menu-cta { margin-top:40px;font-family:'DM Mono',monospace!important;font-size:12px!important;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:16px 48px!important;border:none!important;text-transform:uppercase; }
-  @media (max-width:900px) {
-    nav { padding:20px 24px; }
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
     .nav-links { display:none!important; }
     .nav-right { display:none!important; }
-    .hamburger { display:flex!important; }
+    
     .hero-actions, .cta-actions { flex-direction:column;align-items:center; }
     footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
     body.menu-open { overflow:hidden; }
   }
+
+  /* ─── NAV ─── */
+  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:24px 40px;background:linear-gradient(to bottom,rgba(4,4,7,0.9),transparent);backdrop-filter:blur(4px); }
+  .nav-logo { display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none;z-index:201; }
+  .nav-logo img { width:32px;height:32px;object-fit:contain; }
+  .nav-links { display:flex;gap:48px; }
+  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
+  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
+  .nav-right { display:flex;align-items:center;gap:16px; }
+  .lang-toggle { display:flex;align-items:center;border:1px solid var(--dim);overflow:hidden; }
+  .lang-btn { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);background:none;border:none;padding:8px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.25s; }
+  .lang-btn.active { background:var(--dim);color:var(--bright); }
+  .lang-divider { width:1px;height:16px;background:var(--dim); }
+  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
+  .nav-cta:hover { background:var(--bright); }
+
+  /* ─── HAMBURGER ─── */
+
+  /* ─── MOBILE OVERLAY ─── */
+  .mob { display:none;position:fixed;inset:0;background:var(--black);z-index:200;flex-direction:column;align-items:center;justify-content:center;transition:opacity 0.35s ease;opacity:0;pointer-events:none; }
+  .mob.is-open { opacity:1;pointer-events:all; }
+  .mob a { font-family:'Syncopate',sans-serif;font-size:clamp(22px,7vw,40px);letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:18px 0;border-bottom:1px solid var(--dim);width:80%;text-align:center;transition:color 0.2s; }
+  .mob a:first-of-type { border-top:1px solid var(--dim); }
+  .mob a.active,.mob a:hover { color:var(--bright); }
+  .mob-cta { display:inline-block;margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 48px;text-decoration:none;text-transform:uppercase;transition:background 0.3s; }
+  .mob-cta:hover { background:var(--bright); }
+
+  @media (max-width:900px) {
+    #ham { display:block!important; }
+    nav { padding:18px 24px;background:rgba(4,4,7,0.95); }
+    .nav-links { display:none!important; }
+    .nav-right { display:none!important; }
+    }
+
 </style>
 </head>
 <body>
-<div class="cursor" id="cursor"></div>
-<div class="cursor-ring" id="cursorRing"></div>
-
 <nav>
   <a href="index.html" class="nav-logo">
     <img src="Potentia_Logo.png" alt="Potentia">
     POTENTIA
   </a>
   <div class="nav-links">
-    <a href="index.html" class="active" data-i18n="nav.home">Home</a>
-    <a href="portfolio.html" data-i18n="nav.portfolio">Portfolio</a>
-    <a href="about.html" data-i18n="nav.about">About</a>
-    <a href="contact.html" data-i18n="nav.contact">Contact</a>
+    <a href="index.html" class="active">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="about.html">About</a>
+    <a href="contact.html">Contact</a>
   </div>
   <div class="nav-right">
     <div class="lang-toggle">
@@ -129,20 +159,30 @@
       <div class="lang-divider"></div>
       <button class="lang-btn" id="btn-es" onclick="setLang('es')">ES</button>
     </div>
-    <a href="contact.html" class="nav-cta" data-i18n="nav.cta">Get Started</a>
+    <a href="contact.html" class="nav-cta">Get Started</a>
   </div>
-  <button class="hamburger" id="hamburger" aria-label="Menu" onclick="toggleMenu()">
-    <span></span><span></span><span></span>
+  <button id="ham" onclick="toggleMob()" style="display:none;background:none;border:none;cursor:pointer;padding:8px;z-index:201;position:relative;" aria-label="Menu">
+    <svg id="ham-icon" width="28" height="20" viewBox="0 0 28 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect y="0" width="28" height="2" rx="1" fill="#e8ecf4"/>
+      <rect y="9" width="28" height="2" rx="1" fill="#e8ecf4"/>
+      <rect y="18" width="28" height="2" rx="1" fill="#e8ecf4"/>
+    </svg>
+    <svg id="close-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:none;">
+      <line x1="4" y1="4" x2="20" y2="20" stroke="#e8ecf4" stroke-width="2" stroke-linecap="round"/>
+      <line x1="20" y1="4" x2="4" y2="20" stroke="#e8ecf4" stroke-width="2" stroke-linecap="round"/>
+    </svg>
   </button>
 </nav>
-<div class="mobile-menu" id="mobileMenu">
-    <a href="index.html" class="active">Home</a>
+
+<div class="mob" id="mob">
+  <a href="index.html" class="active">Home</a>
   <a href="portfolio.html">Portfolio</a>
   <a href="about.html">About</a>
   <a href="contact.html">Contact</a>
-
-  <a href="contact.html" class="mobile-menu-cta">Get Started</a>
+  <a href="contact.html" class="mob-cta">Get Started</a>
 </div>
+<div class="cursor" id="cursor"></div>
+<div class="cursor-ring" id="cursorRing"></div>
 
 
 <section class="hero">
@@ -224,19 +264,33 @@ function setLang(l){
   document.getElementById('btn-es').classList.toggle('active',l==='es');
 }
 
-function toggleMenu(){
-  const h=document.getElementById('hamburger');
-  const m=document.getElementById('mobileMenu');
-  h.classList.toggle('open');
-  m.classList.toggle('open');
-  document.body.classList.toggle('menu-open');
+
+mob.querySelectorAll('a').forEach(a => {
+  a.addEventListener('click', () => {
+    ham.classList.remove('is-open');
+    mob.classList.remove('is-open');
+    document.body.style.overflow = '';
+  });
+});
+
+
+// Mobile menu
+function toggleMob() {
+  var mob = document.getElementById('mob');
+  var ham = document.getElementById('ham');
+  var hamIcon = document.getElementById('ham-icon');
+  var closeIcon = document.getElementById('close-icon');
+  var isOpen = mob.classList.toggle('is-open');
+  hamIcon.style.display = isOpen ? 'none' : 'block';
+  closeIcon.style.display = isOpen ? 'block' : 'none';
+  document.body.style.overflow = isOpen ? 'hidden' : '';
 }
-// Close menu on link click
-document.querySelectorAll('.mobile-menu a').forEach(a=>{
-  a.addEventListener('click',()=>{
-    document.getElementById('hamburger').classList.remove('open');
-    document.getElementById('mobileMenu').classList.remove('open');
-    document.body.classList.remove('menu-open');
+document.querySelectorAll('#mob a').forEach(function(a) {
+  a.addEventListener('click', function() {
+    document.getElementById('mob').classList.remove('is-open');
+    document.getElementById('ham-icon').style.display = 'block';
+    document.getElementById('close-icon').style.display = 'none';
+    document.body.style.overflow = '';
   });
 });
 
