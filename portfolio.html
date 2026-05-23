@@ -122,10 +122,33 @@
   .reveal-delay-2 { transition-delay:0.2s; }
   .reveal-delay-3 { transition-delay:0.3s; }
 
+  
+    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
+    body.menu-open { overflow:hidden; }
+  }
+    .mobile-menu { display:flex; }
+  }
+
+  /* ─── MOBILE ─── */
+  .hamburger { display:none;flex-direction:column;gap:5px;background:none;border:none;cursor:pointer;padding:4px;z-index:200; }
+  .hamburger span { display:block;width:24px;height:1px;background:var(--bright);transition:all 0.3s ease; }
+  .hamburger.open span:nth-child(1) { transform:translateY(6px) rotate(45deg); }
+  .hamburger.open span:nth-child(2) { opacity:0; }
+  .hamburger.open span:nth-child(3) { transform:translateY(-6px) rotate(-45deg); }
+  .mobile-menu { display:none;position:fixed;inset:0;background:rgba(4,4,7,0.98);z-index:150;flex-direction:column;align-items:center;justify-content:center;opacity:0;transition:opacity 0.3s ease;pointer-events:none; }
+  .mobile-menu.open { opacity:1;pointer-events:all; }
+  .mobile-menu a { font-family:'Syncopate',sans-serif;font-size:clamp(24px,6vw,42px);font-weight:400;letter-spacing:0.1em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 40px;display:block;text-align:center;transition:color 0.3s;border-bottom:1px solid var(--dim);width:100%; }
+  .mobile-menu a:first-child { border-top:1px solid var(--dim); }
+  .mobile-menu a.active, .mobile-menu a:hover { color:var(--bright); }
+  .mobile-menu-cta { margin-top:40px;font-family:'DM Mono',monospace!important;font-size:12px!important;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:16px 48px!important;border:none!important;text-transform:uppercase; }
   @media (max-width:900px) {
     nav { padding:20px 24px; }
-    .nav-links { display:none; }
-    .page-hero { padding:120px 24px 60px; }
+    .nav-links { display:none!important; }
+    .nav-right { display:none!important; }
+    .hamburger { display:flex!important; }
+    .hero-actions, .cta-actions { flex-direction:column;align-items:center; }
+    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
+    body.menu-open { overflow:hidden; }
     .stats-inner { grid-template-columns:1fr; }
     .stat { padding:40px 24px; }
     .portfolio-section { padding:80px 24px; }
@@ -141,44 +164,6 @@
     .value-card { padding:40px 32px; }
     .cta-band { padding:100px 24px; }
     .cta-actions { flex-direction:column;align-items:center; }
-    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
-  }
-
-  /* HAMBURGER + MOBILE MENU */
-  .hamburger { display:none;flex-direction:column;gap:5px;background:none;border:none;cursor:pointer;padding:4px;z-index:200; }
-  .hamburger span { display:block;width:24px;height:1px;background:var(--bright);transition:all 0.3s ease; }
-  .hamburger.open span:nth-child(1) { transform:translateY(6px) rotate(45deg); }
-  .hamburger.open span:nth-child(2) { opacity:0; }
-  .hamburger.open span:nth-child(3) { transform:translateY(-6px) rotate(-45deg); }
-  .mobile-menu {
-    display:none;position:fixed;inset:0;background:rgba(4,4,7,0.98);
-    z-index:150;flex-direction:column;align-items:center;justify-content:center;gap:0;
-    opacity:0;transition:opacity 0.3s ease;pointer-events:none;
-  }
-  .mobile-menu.open { opacity:1;pointer-events:all; }
-  .mobile-menu a {
-    font-family:'Syncopate',sans-serif;font-size:clamp(28px,7vw,48px);
-    font-weight:400;letter-spacing:0.1em;color:var(--silver);
-    text-decoration:none;text-transform:uppercase;
-    padding:20px 40px;display:block;text-align:center;
-    transition:color 0.3s;border-bottom:1px solid var(--dim);width:100%;
-  }
-  .mobile-menu a:first-child { border-top:1px solid var(--dim); }
-  .mobile-menu a:hover, .mobile-menu a.active { color:var(--bright); }
-  .mobile-menu-cta {
-    margin-top:40px;
-    font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;
-    color:var(--black)!important;background:var(--chrome);
-    padding:16px 48px!important;border:none!important;
-    font-family:'DM Mono',monospace!important;font-size:12px!important;
-  }
-  .mobile-menu-cta:hover { background:var(--bright);color:var(--black)!important; }
-  @media (max-width:900px) {
-    .hamburger { display:flex; }
-    .nav-links { display:none!important; }
-    .nav-right { display:none!important; }
-    body.menu-open { overflow:hidden; }
-    .mobile-menu { display:flex; }
   }
 </style>
 </head>
@@ -211,7 +196,6 @@
 
 <!-- PAGE HERO -->
 <div class="page-hero">
-  <p class="page-label">Our Work</p>
   <h1 class="page-title">Sites built to<br><em>perform</em></h1>
   <p class="page-sub">Every project is a partnership. We bring the craft — our clients bring the vision. Here's what happens when the two meet.</p>
 </div>
