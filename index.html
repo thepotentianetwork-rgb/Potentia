@@ -488,6 +488,39 @@
     background: var(--dim);
     cursor: pointer;
   }
+  .portfolio-item:first-child {
+    grid-column: span 2;
+    aspect-ratio: unset;
+  }
+  .portfolio-iframe-wrap {
+    position: absolute; inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .portfolio-iframe-wrap iframe {
+    width: 1400px;
+    height: 900px;
+    border: none;
+    transform-origin: top left;
+    transform: scale(0.33);
+  }
+  .portfolio-item:first-child .portfolio-iframe-wrap iframe {
+    width: 1400px;
+    height: 900px;
+    transform: scale(0.46);
+  }
+  /* Overlay captures clicks and shows info on hover */
+  .portfolio-overlay {
+    position: absolute; inset: 0;
+    background: rgba(4,4,7,0.6);
+    display: flex; flex-direction: column;
+    justify-content: flex-end;
+    padding: 28px;
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: all;
+  }
+  .portfolio-item:hover .portfolio-overlay { opacity: 1; }
 
   .portfolio-thumb {
     width: 100%; height: 100%;
@@ -1014,28 +1047,9 @@
     <div class="portfolio-grid reveal">
 
       <!-- ShedPro Utah -->
-      <div class="portfolio-item" onclick="window.open('https://shedpro-utah.com','_blank')">
-        <div class="portfolio-thumb thumb-1">
-          <div class="thumb-lines">
-            <!-- Nav bar -->
-            <div class="tl" style="width:100%;height:10px;background:rgba(200,205,214,0.12);margin-bottom:10px;"></div>
-            <!-- Hero text block -->
-            <div class="tl" style="width:70%;height:18px;background:rgba(200,205,214,0.18);margin-bottom:6px;"></div>
-            <div class="tl" style="width:50%;height:12px;background:rgba(200,205,214,0.1);margin-bottom:16px;"></div>
-            <!-- CTA buttons -->
-            <div style="display:flex;gap:8px;margin-bottom:20px;">
-              <div style="width:80px;height:28px;background:rgba(200,205,214,0.25);"></div>
-              <div style="width:80px;height:28px;border:1px solid rgba(200,205,214,0.15);"></div>
-            </div>
-            <!-- Feature cards -->
-            <div class="tl-block">
-              <div class="tl-card"></div>
-              <div class="tl-card"></div>
-              <div class="tl-card"></div>
-            </div>
-          </div>
-          <!-- Color accent matching their brand -->
-          <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#4a7c4e,#6aab70,#4a7c4e);opacity:0.6;"></div>
+      <div class="portfolio-item" onclick="window.open('https://shedpro-utah.com','_blank')" style="min-height:300px;">
+        <div class="portfolio-iframe-wrap">
+          <iframe src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah"></iframe>
         </div>
         <div class="portfolio-overlay">
           <p class="portfolio-tag">Home Services · Utah</p>
@@ -1045,19 +1059,8 @@
 
       <!-- Chonis -->
       <div class="portfolio-item" onclick="window.open('https://chonis.net','_blank')">
-        <div class="portfolio-thumb thumb-2">
-          <div class="thumb-lines">
-            <!-- Centered logo area -->
-            <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
-              <div style="width:56px;height:56px;border:1px solid rgba(200,205,214,0.3);border-radius:50%;"></div>
-              <div style="width:100px;height:10px;background:rgba(200,205,214,0.2);"></div>
-              <div style="width:60px;height:8px;background:rgba(200,205,214,0.1);"></div>
-              <!-- Marquee hint -->
-              <div style="width:140px;height:6px;background:rgba(200,205,214,0.08);margin-top:12px;"></div>
-            </div>
-          </div>
-          <!-- Dark moody accent -->
-          <div style="position:absolute;inset:0;background:radial-gradient(circle at 50% 40%,rgba(180,150,100,0.06),transparent 70%);"></div>
+        <div class="portfolio-iframe-wrap">
+          <iframe src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis"></iframe>
         </div>
         <div class="portfolio-overlay">
           <p class="portfolio-tag">Fashion · Brand Launch</p>
@@ -1065,9 +1068,9 @@
         </div>
       </div>
 
-      <!-- Coming Soon card -->
-      <div class="portfolio-item">
-        <div class="portfolio-thumb" style="background:#040407;display:flex;align-items:center;justify-content:center;">
+      <!-- Coming Soon -->
+      <div class="portfolio-item" style="aspect-ratio:4/3;">
+        <div class="portfolio-thumb" style="background:#040407;width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
           <div style="text-align:center;">
             <p style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:#2a2d38;text-transform:uppercase;margin-bottom:16px;">Next Project</p>
             <p style="font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:300;color:#2a2d38;font-style:italic;">Yours?</p>
