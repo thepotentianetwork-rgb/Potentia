@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio — Potentia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  :root { --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38; }
+  html { scroll-behavior: smooth; }
+  body { background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;cursor:none; }
+  .cursor { width:8px;height:8px;background:var(--chrome);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9999;mix-blend-mode:difference; }
+  .cursor-ring { width:32px;height:32px;border:1px solid rgba(200,205,214,0.4);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9998;transition:transform 0.25s ease,width 0.3s,height 0.3s; }
+
+  /* NAV */
+  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 60px;background:rgba(4,4,7,0.95);backdrop-filter:blur(2px);border-bottom:1px solid var(--dim); }
+  .nav-logo { display:flex;align-items:center;gap:14px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none; }
+  .nav-logo img { width:36px;height:36px;object-fit:contain; }
+  .nav-links { display:flex;gap:48px; }
+  .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
+  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
+  .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s,transform 0.2s; }
+  .nav-cta:hover { background:var(--bright);transform:translateY(-1px); }
+
+  /* PAGE HERO */
+  .page-hero { padding:180px 80px 100px;max-width:1400px;margin:0 auto; }
+  .page-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:32px;opacity:0;animation:fadeUp 1s 0.2s forwards; }
+  .page-title { font-size:clamp(56px,7vw,100px);font-weight:300;line-height:0.95;letter-spacing:-0.02em;color:var(--bright);margin-bottom:32px;opacity:0;animation:fadeUp 1s 0.4s forwards; }
+  .page-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
+  .page-sub { font-size:clamp(18px,2vw,22px);color:var(--silver);font-weight:300;max-width:540px;line-height:1.7;opacity:0;animation:fadeUp 1s 0.6s forwards; }
+
+  /* STATS STRIP */
+  .stats-strip { border-top:1px solid var(--dim);border-bottom:1px solid var(--dim); }
+  .stats-inner { max-width:1400px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
+  .stat { background:var(--black);padding:56px 80px;text-align:center;transition:background 0.3s; }
+  .stat:hover { background:var(--deep); }
+  .stat-num { font-size:clamp(56px,6vw,88px);font-weight:300;color:var(--bright);line-height:1;letter-spacing:-0.02em; }
+  .stat-num span { font-size:0.5em;color:var(--silver); }
+  .stat-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase;margin-top:12px; }
+
+  /* PORTFOLIO GRID */
+  .portfolio-section { padding:120px 80px;max-width:1400px;margin:0 auto; }
+  .portfolio-header { display:flex;justify-content:space-between;align-items:end;margin-bottom:64px; }
+  .portfolio-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1; }
+  .portfolio-title em { font-style:italic;color:var(--silver); }
+  .portfolio-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
+  .portfolio-item { position:relative;overflow:hidden;background:var(--dim);cursor:pointer;aspect-ratio:4/3; }
+  .portfolio-item.wide { grid-column:span 2;aspect-ratio:16/9; }
+  .portfolio-iframe-wrap { position:absolute;inset:0;overflow:hidden;pointer-events:none; }
+  .portfolio-iframe-wrap iframe { width:1400px;height:900px;border:none;transform-origin:top left; }
+  .portfolio-item.wide .portfolio-iframe-wrap iframe { transform:scale(0.5); }
+  .portfolio-item:not(.wide) .portfolio-iframe-wrap iframe { transform:scale(0.28); }
+  .portfolio-overlay { position:absolute;inset:0;background:rgba(4,4,7,0.65);display:flex;flex-direction:column;justify-content:flex-end;padding:32px;opacity:0;transition:opacity 0.4s;pointer-events:all; }
+  .portfolio-item:hover .portfolio-overlay { opacity:1; }
+  .portfolio-tag { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:10px; }
+  .portfolio-name { font-size:24px;font-weight:300;color:var(--bright);margin-bottom:8px; }
+  .portfolio-url { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim); }
+
+  /* PROCESS */
+  .process { padding:120px 80px;background:var(--deep);border-top:1px solid var(--dim); }
+  .process-inner { max-width:1400px;margin:0 auto; }
+  .process-header { display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:end;margin-bottom:80px; }
+  .process-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
+  .process-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1.05; }
+  .process-title em { font-style:italic;color:var(--silver); }
+  .process-desc { font-size:20px;color:var(--silver);line-height:1.7;font-weight:300; }
+  .steps { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
+  .step { background:var(--deep);padding:56px 48px;position:relative;transition:background 0.4s; }
+  .step:hover { background:var(--black); }
+  .step::before { content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--chrome),transparent);opacity:0;transition:opacity 0.4s; }
+  .step:hover::before { opacity:1; }
+  .step-num { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.3em;color:var(--dim);margin-bottom:40px; }
+  .step-icon { width:48px;height:48px;margin-bottom:32px; }
+  .step h3 { font-size:28px;font-weight:300;color:var(--bright);margin-bottom:16px; }
+  .step p { font-size:17px;color:var(--silver);line-height:1.7;font-weight:300; }
+
+  /* VALUES */
+  .values { padding:120px 80px;max-width:1400px;margin:0 auto; }
+  .values-header { text-align:center;margin-bottom:80px; }
+  .values-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
+  .values-title { font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:16px; }
+  .values-title em { font-style:italic;color:var(--silver); }
+  .values-sub { font-size:19px;color:var(--silver);font-weight:300;max-width:480px;margin:0 auto;line-height:1.6; }
+  .values-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
+  .value-card { background:var(--black);padding:56px 48px;transition:background 0.4s; }
+  .value-card:hover { background:var(--deep); }
+  .value-icon { width:48px;height:48px;margin-bottom:28px; }
+  .value-stat { font-size:64px;font-weight:300;color:var(--bright);line-height:1;margin-bottom:8px;letter-spacing:-0.02em; }
+  .value-stat span { font-size:32px;color:var(--silver); }
+  .value-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
+  .value-card h3 { font-size:24px;font-weight:300;color:var(--bright);margin-bottom:12px; }
+  .value-card p { font-size:16px;color:var(--silver);line-height:1.7;font-weight:300; }
+
+  /* CTA BAND */
+  .cta-band { padding:160px 80px;text-align:center;border-top:1px solid var(--dim);position:relative;overflow:hidden; }
+  .cta-band::before { content:'';position:absolute;inset:0;background:radial-gradient(ellipse 60% 50% at 50% 50%,rgba(160,168,188,0.05),transparent); }
+  .cta-title { font-size:clamp(48px,7vw,96px);font-weight:300;color:var(--bright);line-height:0.95;margin-bottom:40px;position:relative; }
+  .cta-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
+  .cta-sub { font-size:20px;color:var(--silver);font-weight:300;max-width:440px;margin:0 auto 56px;line-height:1.6;position:relative; }
+  .cta-actions { display:flex;gap:20px;justify-content:center;position:relative; }
+  .btn-primary { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
+  .btn-primary:hover { background:var(--bright);transform:translateY(-2px); }
+  .btn-ghost { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
+  .btn-ghost:hover { border-color:var(--chrome);color:var(--bright); }
+
+  /* FOOTER */
+  footer { border-top:1px solid var(--dim);padding:64px 80px;display:flex;justify-content:space-between;align-items:center; }
+  .footer-brand { display:flex;align-items:center;gap:14px; }
+  .footer-brand img { width:28px;height:28px;object-fit:contain; }
+  .footer-brand span { font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver); }
+  .footer-links { display:flex;gap:40px; }
+  .footer-links a { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
+  .footer-links a:hover { color:var(--silver); }
+  .footer-copy { font-family:'DM Mono',monospace;font-size:10px;color:var(--dim); }
+
+  @keyframes fadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+  .reveal { opacity:0;transform:translateY(32px);transition:opacity 0.8s ease,transform 0.8s ease; }
+  .reveal.visible { opacity:1;transform:translateY(0); }
+  .reveal-delay-1 { transition-delay:0.1s; }
+  .reveal-delay-2 { transition-delay:0.2s; }
+  .reveal-delay-3 { transition-delay:0.3s; }
+
+  @media (max-width:900px) {
+    nav { padding:20px 24px; }
+    .nav-links { display:none; }
+    .page-hero { padding:120px 24px 60px; }
+    .stats-inner { grid-template-columns:1fr; }
+    .stat { padding:40px 24px; }
+    .portfolio-section { padding:80px 24px; }
+    .portfolio-grid { grid-template-columns:1fr; }
+    .portfolio-item.wide { grid-column:span 1;aspect-ratio:4/3; }
+    .portfolio-item.wide .portfolio-iframe-wrap iframe { transform:scale(0.25); }
+    .portfolio-header { flex-direction:column;gap:16px;align-items:start; }
+    .process { padding:80px 24px; }
+    .process-header { grid-template-columns:1fr;gap:32px; }
+    .steps { grid-template-columns:1fr; }
+    .values { padding:80px 24px; }
+    .values-grid { grid-template-columns:1fr; }
+    .value-card { padding:40px 32px; }
+    .cta-band { padding:100px 24px; }
+    .cta-actions { flex-direction:column;align-items:center; }
+    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="cursor" id="cursor"></div>
+<div class="cursor-ring" id="cursorRing"></div>
+
+<nav>
+  <a href="index.html" class="nav-logo">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    POTENTIA
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html" class="active">Portfolio</a>
+    <a href="about.html">About</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <a href="contact.html" class="nav-cta">Get Started</a>
+</nav>
+
+<!-- PAGE HERO -->
+<div class="page-hero">
+  <p class="page-label">Our Work</p>
+  <h1 class="page-title">Sites built to<br><em>perform</em></h1>
+  <p class="page-sub">Every project is a partnership. We bring the craft — our clients bring the vision. Here's what happens when the two meet.</p>
+</div>
+
+<!-- STATS -->
+<div class="stats-strip">
+  <div class="stats-inner">
+    <div class="stat reveal">
+      <div class="stat-num">72<span>hrs</span></div>
+      <p class="stat-label">Average Delivery Time</p>
+    </div>
+    <div class="stat reveal reveal-delay-1">
+      <div class="stat-num">0.8<span>s</span></div>
+      <p class="stat-label">Average Load Time</p>
+    </div>
+    <div class="stat reveal reveal-delay-2">
+      <div class="stat-num">100<span>%</span></div>
+      <p class="stat-label">Mobile Optimised</p>
+    </div>
+  </div>
+</div>
+
+<!-- PORTFOLIO -->
+<div class="portfolio-section">
+  <div class="portfolio-header">
+    <div>
+      <p style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:16px;" class="reveal">Selected projects</p>
+      <h2 class="portfolio-title reveal reveal-delay-1">Sites that<br><em>sell themselves</em></h2>
+    </div>
+  </div>
+  <div class="portfolio-grid reveal">
+
+    <!-- ShedPro — wide -->
+    <div class="portfolio-item wide" onclick="window.open('https://shedpro-utah.com','_blank')">
+      <div class="portfolio-iframe-wrap">
+        <iframe src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah"></iframe>
+      </div>
+      <div class="portfolio-overlay">
+        <p class="portfolio-tag">Home Services · Utah</p>
+        <p class="portfolio-name">ShedPro LLC — Custom Shed Builder</p>
+        <p class="portfolio-url">shedpro-utah.com ↗</p>
+      </div>
+    </div>
+
+    <!-- Chonis -->
+    <div class="portfolio-item" onclick="window.open('https://chonis.net','_blank')">
+      <div class="portfolio-iframe-wrap">
+        <iframe src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis"></iframe>
+      </div>
+      <div class="portfolio-overlay">
+        <p class="portfolio-tag">Fashion · Brand Launch</p>
+        <p class="portfolio-name">Chonis</p>
+        <p class="portfolio-url">chonis.net ↗</p>
+      </div>
+    </div>
+
+    <!-- Yours? -->
+    <div class="portfolio-item" onclick="window.location='contact.html'">
+      <div style="width:100%;height:100%;background:var(--black);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
+        <p style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase;">Next project</p>
+        <p style="font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:300;color:var(--dim);font-style:italic;">Yours?</p>
+      </div>
+      <div class="portfolio-overlay">
+        <p class="portfolio-tag">Your Industry</p>
+        <p class="portfolio-name">Your Brand — Let's Build It</p>
+        <p class="portfolio-url">Get in touch ↗</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- PROCESS -->
+<section class="process">
+  <div class="process-inner">
+    <div class="process-header">
+      <div>
+        <p class="process-label reveal">How it works</p>
+        <h2 class="process-title reveal reveal-delay-1">From brief<br>to <em>live</em> in<br>72 hours</h2>
+      </div>
+      <p class="process-desc reveal reveal-delay-2">No lengthy sprints. No back-and-forth delays. We combine relentless craft with modern tools to deliver websites that would take others weeks — in days.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <p class="step-num">01 / 03</p>
+        <svg class="step-icon" viewBox="0 0 48 48" fill="none">
+          <rect x="8" y="8" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
+          <rect x="26" y="8" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
+          <rect x="8" y="26" width="14" height="14" stroke="#8a909e" stroke-width="1"/>
+          <rect x="26" y="26" width="14" height="14" stroke="#c8cdd6" stroke-width="1"/>
+        </svg>
+        <h3>You share your vision</h3>
+        <p>Tell us about your business, your aesthetic, your goals. A 15-minute call or a detailed brief — whatever works for you.</p>
+      </div>
+      <div class="step reveal reveal-delay-1">
+        <p class="step-num">02 / 03</p>
+        <svg class="step-icon" viewBox="0 0 48 48" fill="none">
+          <polygon points="24,6 30,18 44,18 33,28 37,42 24,33 11,42 15,28 4,18 18,18" stroke="#8a909e" stroke-width="1" fill="none"/>
+        </svg>
+        <h3>We design &amp; build</h3>
+        <p>Our studio refines every detail with precision — copy, layout, motion, code — at a pace that never sacrifices quality for speed.</p>
+      </div>
+      <div class="step reveal reveal-delay-2">
+        <p class="step-num">03 / 03</p>
+        <svg class="step-icon" viewBox="0 0 48 48" fill="none">
+          <circle cx="24" cy="24" r="16" stroke="#8a909e" stroke-width="1"/>
+          <path d="M16 24 L22 30 L32 18" stroke="#c8cdd6" stroke-width="1.5"/>
+        </svg>
+        <h3>You launch, we deliver</h3>
+        <p>Your site goes live fully hosted, optimised, and ready to grow. Revisions, updates, and support are always a message away.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- VALUES -->
+<section class="values">
+  <div class="values-header">
+    <p class="values-label reveal">Built different</p>
+    <h2 class="values-title reveal reveal-delay-1">Why clients <em>choose</em> Potentia</h2>
+    <p class="values-sub reveal reveal-delay-2">Every site engineered to rank, load fast, and convert — on any device.</p>
+  </div>
+  <div class="values-grid">
+    <div class="value-card reveal">
+      <svg class="value-icon" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="16" stroke="#2a2d38" stroke-width="1"/>
+        <path d="M24 8 Q30 14 30 24 Q30 34 24 40 Q18 34 18 24 Q18 14 24 8Z" stroke="#8a909e" stroke-width="1" fill="none"/>
+        <line x1="8" y1="24" x2="40" y2="24" stroke="#8a909e" stroke-width="1"/>
+        <circle cx="24" cy="24" r="2" fill="#c8cdd6"/>
+      </svg>
+      <div class="value-stat">Top<span>3</span></div>
+      <p class="value-label">Google Rankings</p>
+      <h3>SEO from day one</h3>
+      <p>Every site is structured and optimised so search engines find you — and rank you above the competition.</p>
+    </div>
+    <div class="value-card reveal reveal-delay-1">
+      <svg class="value-icon" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="16" stroke="#2a2d38" stroke-width="1"/>
+        <path d="M17 24 L22 29 L31 19" stroke="#c8cdd6" stroke-width="1.5"/>
+        <path d="M24 8 L24 12" stroke="#8a909e" stroke-width="1"/>
+        <path d="M24 36 L24 40" stroke="#8a909e" stroke-width="1"/>
+        <path d="M8 24 L12 24" stroke="#8a909e" stroke-width="1"/>
+        <path d="M36 24 L40 24" stroke="#8a909e" stroke-width="1"/>
+      </svg>
+      <div class="value-stat">0.8<span>s</span></div>
+      <p class="value-label">Avg Load Time</p>
+      <h3>Blazing fast, always</h3>
+      <p>Speed is a ranking factor and a conversion driver. Our sites load in under a second, every time.</p>
+    </div>
+    <div class="value-card reveal reveal-delay-2">
+      <svg class="value-icon" viewBox="0 0 48 48" fill="none">
+        <rect x="4" y="12" width="26" height="18" rx="1" stroke="#8a909e" stroke-width="1"/>
+        <rect x="34" y="16" width="10" height="18" rx="1" stroke="#c8cdd6" stroke-width="1"/>
+        <line x1="11" y1="30" x2="11" y2="34" stroke="#8a909e" stroke-width="1"/>
+        <line x1="4" y1="34" x2="18" y2="34" stroke="#8a909e" stroke-width="1"/>
+      </svg>
+      <div class="value-stat">100<span>%</span></div>
+      <p class="value-label">Mobile Optimised</p>
+      <h3>Flawless on every screen</h3>
+      <p>Over 70% of visitors are on mobile. Every layout is designed mobile-first so your site feels native, not scaled down.</p>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-band">
+  <h2 class="cta-title reveal">Ready to be<br><em>next?</em></h2>
+  <p class="cta-sub reveal reveal-delay-1">Let's build something you're proud to show off. Tell us about your project and we'll get back to you within 24 hours.</p>
+  <div class="cta-actions reveal reveal-delay-2">
+    <a href="contact.html" class="btn-primary">Start a Project</a>
+    <a href="about.html" class="btn-ghost">Learn About Us</a>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-brand">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    <span>POTENTIA</span>
+  </div>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="about.html">About</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <p class="footer-copy">© 2026 Potentia Studio</p>
+</footer>
+
+<script>
+const cursor=document.getElementById('cursor'),ring=document.getElementById('cursorRing');
+let mx=0,my=0,rx=0,ry=0;
+document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;cursor.style.transform=`translate(${mx-4}px,${my-4}px)`;});
+(function loop(){rx+=(mx-rx)*0.12;ry+=(my-ry)*0.12;ring.style.transform=`translate(${rx-16}px,${ry-16}px)`;requestAnimationFrame(loop);})();
+document.querySelectorAll('a,button').forEach(el=>{
+  el.addEventListener('mouseenter',()=>{ring.style.width='56px';ring.style.height='56px';ring.style.marginLeft='-12px';ring.style.marginTop='-12px';});
+  el.addEventListener('mouseleave',()=>{ring.style.width='32px';ring.style.height='32px';ring.style.marginLeft='0';ring.style.marginTop='0';});
+});
+const reveals=document.querySelectorAll('.reveal');
+const io=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.1});
+reveals.forEach(el=>io.observe(el));
+</script>
+</body>
+</html>

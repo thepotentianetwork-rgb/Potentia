@@ -8,24 +8,19 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-  :root {
-    --black: #040407; --deep: #08080f; --chrome: #c8cdd6;
-    --silver: #8a909e; --bright: #e8ecf4; --dim: #2a2d38; --accent: #a0a8bc;
-  }
+  :root { --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38; }
   html { scroll-behavior: smooth; }
-  body { background: var(--black); color: var(--chrome); font-family: 'Cormorant Garamond', serif; overflow-x: hidden; cursor: none; }
-
-  /* CURSOR */
+  body { background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;cursor:none; }
   .cursor { width:8px;height:8px;background:var(--chrome);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9999;mix-blend-mode:difference; }
   .cursor-ring { width:32px;height:32px;border:1px solid rgba(200,205,214,0.4);border-radius:50%;position:fixed;top:0;left:0;pointer-events:none;z-index:9998;transition:transform 0.25s ease,width 0.3s,height 0.3s; }
 
   /* NAV */
-  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 60px;background:linear-gradient(to bottom,rgba(4,4,7,0.9),transparent);backdrop-filter:blur(2px); }
+  nav { position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:28px 60px;background:linear-gradient(to bottom,rgba(4,4,7,0.8),transparent);backdrop-filter:blur(2px); }
   .nav-logo { display:flex;align-items:center;gap:14px;font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.25em;color:var(--bright);text-decoration:none; }
   .nav-logo img { width:36px;height:36px;object-fit:contain; }
   .nav-links { display:flex;gap:48px; }
   .nav-links a { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
-  .nav-links a:hover, .nav-links a.active { color:var(--bright); }
+  .nav-links a:hover,.nav-links a.active { color:var(--bright); }
   .nav-right { display:flex;align-items:center;gap:16px; }
   .lang-toggle { display:flex;align-items:center;border:1px solid var(--dim);overflow:hidden; }
   .lang-btn { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);background:none;border:none;padding:8px 14px;cursor:pointer;text-transform:uppercase;transition:all 0.25s; }
@@ -34,72 +29,37 @@
   .nav-cta { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.18em;color:var(--black);background:var(--chrome);padding:10px 24px;text-decoration:none;text-transform:uppercase;transition:background 0.3s,transform 0.2s; }
   .nav-cta:hover { background:var(--bright);transform:translateY(-1px); }
 
-  /* HERO */
-  .hero { min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden;padding:0 40px;text-align:center; }
+  /* HERO — full viewport, nothing else */
+  .hero { width:100vw;height:100vh;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;text-align:center; }
   .hero-bg-video { position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;opacity:0.45; }
-  .hero-bg-overlay { position:absolute;inset:0;z-index:1;background:radial-gradient(ellipse 70% 50% at 50% 50%,transparent 0%,rgba(4,4,7,0.6) 55%,rgba(4,4,7,0.92) 80%,var(--black) 100%),linear-gradient(to bottom,var(--black) 0%,transparent 15%,transparent 75%,var(--black) 100%),linear-gradient(to right,var(--black) 0%,transparent 15%,transparent 85%,var(--black) 100%); }
-  .hero-content { position:relative;z-index:2; }
+  .hero-bg-overlay { position:absolute;inset:0;z-index:1;
+    background:
+      radial-gradient(ellipse 70% 50% at 50% 50%,transparent 0%,rgba(4,4,7,0.55) 55%,rgba(4,4,7,0.92) 80%,var(--black) 100%),
+      linear-gradient(to bottom,var(--black) 0%,transparent 18%,transparent 75%,var(--black) 100%),
+      linear-gradient(to right,var(--black) 0%,transparent 15%,transparent 85%,var(--black) 100%);
+  }
+  .hero-content { position:relative;z-index:2;padding:0 40px; }
   .hero-eyebrow { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.35em;color:var(--silver);text-transform:uppercase;margin-bottom:48px;opacity:0;animation:fadeUp 1s 0.3s forwards; }
   .hero-logo-center { width:110px;height:110px;margin:0 auto 48px;opacity:0;animation:scaleIn 1.2s 0.1s cubic-bezier(0.16,1,0.3,1) forwards;filter:drop-shadow(0 0 40px rgba(160,168,188,0.25)); }
   .hero-title { font-size:clamp(56px,8vw,110px);font-weight:300;line-height:0.95;letter-spacing:-0.02em;color:var(--bright);margin-bottom:32px;opacity:0;animation:fadeUp 1s 0.5s forwards; }
   .hero-title em { font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome); }
-  .hero-sub { font-size:clamp(18px,2.5vw,26px);font-weight:300;color:var(--silver);max-width:560px;margin:0 auto 64px;line-height:1.6;opacity:0;animation:fadeUp 1s 0.7s forwards; }
-  .hero-actions { display:flex;gap:24px;justify-content:center;opacity:0;animation:fadeUp 1s 0.9s forwards; }
-  .scroll-hint { position:absolute;bottom:48px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:12px;opacity:0;animation:fadeIn 1s 1.5s forwards; }
-  .scroll-hint span { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase; }
-  .scroll-line { width:1px;height:48px;background:linear-gradient(to bottom,var(--dim),transparent);animation:scrollPulse 2s ease-in-out infinite; }
-
-  /* BUTTONS */
-  .btn-primary { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;position:relative;overflow:hidden;display:inline-block; }
-  .btn-primary::before { content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.3),transparent);transform:translateX(-100%);transition:transform 0.5s; }
-  .btn-primary:hover::before { transform:translateX(100%); }
-  .btn-primary:hover { background:var(--bright);transform:translateY(-2px);box-shadow:0 20px 60px rgba(160,168,188,0.2); }
+  .hero-sub { font-size:clamp(18px,2vw,24px);font-weight:300;color:var(--silver);max-width:520px;margin:0 auto 64px;line-height:1.7;opacity:0;animation:fadeUp 1s 0.7s forwards; }
+  .hero-actions { display:flex;gap:20px;justify-content:center;opacity:0;animation:fadeUp 1s 0.9s forwards; }
+  .btn-primary { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
+  .btn-primary:hover { background:var(--bright);transform:translateY(-2px); }
   .btn-ghost { font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:16px 40px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block; }
   .btn-ghost:hover { border-color:var(--chrome);color:var(--bright); }
 
-  /* MARQUEE */
+  /* Scroll hint */
+  .scroll-hint { position:absolute;bottom:48px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:12px;opacity:0;animation:fadeIn 1s 1.5s forwards;z-index:2; }
+  .scroll-hint span { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase; }
+  .scroll-line { width:1px;height:48px;background:linear-gradient(to bottom,var(--dim),transparent);animation:scrollPulse 2s ease-in-out infinite; }
+
+  /* MARQUEE — just below hero */
   .marquee-strip { border-top:1px solid var(--dim);border-bottom:1px solid var(--dim);padding:20px 0;overflow:hidden;white-space:nowrap; }
   .marquee-inner { display:inline-flex;gap:80px;animation:marquee 30s linear infinite; }
   .marquee-inner span { font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--dim);text-transform:uppercase; }
   .marquee-inner .dot { color:var(--silver);font-size:20px;line-height:1; }
-
-  /* SECTION BASE */
-  .section-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px; }
-
-  /* VALUES */
-  .values { padding:140px 80px;max-width:1400px;margin:0 auto; }
-  .values-header { text-align:center;margin-bottom:100px; }
-  .values-title { font-size:clamp(40px,5vw,72px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:20px; }
-  .values-title em { font-style:italic;color:var(--silver); }
-  .values-sub { font-size:20px;color:var(--silver);font-weight:300;max-width:520px;margin:0 auto;line-height:1.6; }
-  .values-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
-  .value-card { background:var(--black);padding:64px 48px;position:relative;overflow:hidden;transition:background 0.4s; }
-  .value-card:hover { background:var(--deep); }
-  .value-icon { width:56px;height:56px;margin-bottom:36px; }
-  .value-stat { font-size:72px;font-weight:300;color:var(--bright);line-height:1;margin-bottom:8px;letter-spacing:-0.02em; }
-  .value-stat span { font-size:36px;color:var(--silver); }
-  .value-label { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase;margin-bottom:28px; }
-  .value-card h3 { font-size:26px;font-weight:300;color:var(--bright);margin-bottom:14px;line-height:1.2; }
-  .value-card p { font-size:17px;color:var(--silver);line-height:1.7;font-weight:300; }
-
-  /* SHOWCASE */
-  .showcase { padding:160px 80px;background:var(--deep);border-top:1px solid var(--dim); }
-  .showcase-inner { max-width:1400px;margin:0 auto; }
-  .showcase-top { display:flex;justify-content:space-between;align-items:end;margin-bottom:80px; }
-  .showcase-title { font-size:clamp(40px,5vw,72px);font-weight:300;color:var(--bright);line-height:1; }
-  .showcase-title em { font-style:italic;color:var(--silver); }
-  .showcase-link { font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;border-bottom:1px solid var(--dim);padding-bottom:4px;transition:color 0.3s,border-color 0.3s; }
-  .showcase-link:hover { color:var(--bright);border-color:var(--chrome); }
-  .portfolio-grid { display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim); }
-  .portfolio-item { position:relative;aspect-ratio:4/3;overflow:hidden;background:var(--dim);cursor:pointer; }
-  .portfolio-item:first-child { grid-column:span 2;aspect-ratio:unset; }
-  .portfolio-iframe-wrap { position:absolute;inset:0;overflow:hidden;pointer-events:none; }
-  .portfolio-iframe-wrap iframe { width:1400px;height:900px;border:none;transform-origin:top left;transform:scale(0.33); }
-  .portfolio-item:first-child .portfolio-iframe-wrap iframe { transform:scale(0.46); }
-  .portfolio-overlay { position:absolute;inset:0;background:rgba(4,4,7,0.6);display:flex;flex-direction:column;justify-content:flex-end;padding:28px;opacity:0;transition:opacity 0.4s;pointer-events:all; }
-  .portfolio-item:hover .portfolio-overlay { opacity:1; }
-  .portfolio-tag { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px; }
-  .portfolio-name { font-size:22px;font-weight:300;color:var(--bright); }
 
   /* FOOTER */
   footer { border-top:1px solid var(--dim);padding:64px 80px;display:flex;justify-content:space-between;align-items:center; }
@@ -109,38 +69,20 @@
   .footer-links { display:flex;gap:40px; }
   .footer-links a { font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s; }
   .footer-links a:hover { color:var(--silver); }
-  .footer-copy { font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);letter-spacing:0.1em; }
+  .footer-copy { font-family:'DM Mono',monospace;font-size:10px;color:var(--dim); }
 
   /* ANIMATIONS */
   @keyframes fadeUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
   @keyframes fadeIn { from{opacity:0} to{opacity:1} }
   @keyframes scaleIn { from{opacity:0;transform:scale(0.85)} to{opacity:1;transform:scale(1)} }
-  @keyframes scrollPulse { 0%,100%{opacity:0.3;transform:scaleY(1)} 50%{opacity:1;transform:scaleY(1.2)} }
+  @keyframes scrollPulse { 0%,100%{opacity:0.3} 50%{opacity:1} }
   @keyframes marquee { from{transform:translateX(0)} to{transform:translateX(-50%)} }
-  .reveal { opacity:0;transform:translateY(32px);transition:opacity 0.8s ease,transform 0.8s ease; }
-  .reveal.visible { opacity:1;transform:translateY(0); }
-  .reveal-delay-1 { transition-delay:0.1s; }
-  .reveal-delay-2 { transition-delay:0.2s; }
-  .reveal-delay-3 { transition-delay:0.3s; }
 
-  /* MOBILE */
   @media (max-width:900px) {
     nav { padding:20px 24px; }
     .nav-links { display:none; }
     .hero-actions { flex-direction:column;align-items:center; }
-    .values { padding:80px 24px; }
-    .values-header { margin-bottom:48px; }
-    .values-grid { grid-template-columns:1fr; }
-    .value-card { padding:40px 32px; }
-    .value-stat { font-size:52px; }
-    .value-icon { width:36px;height:36px;margin-bottom:20px; }
-    .value-card h3 { font-size:22px; }
-    .value-card p { font-size:15px; }
-    .showcase { padding:100px 24px; }
-    .showcase-top { flex-direction:column;gap:24px;align-items:start; }
-    .portfolio-grid { grid-template-columns:1fr; }
-    .portfolio-item:first-child { grid-column:span 1;aspect-ratio:4/3; }
-    footer { flex-direction:column;gap:32px;text-align:center; }
+    footer { flex-direction:column;gap:32px;text-align:center;padding:48px 24px; }
   }
 </style>
 </head>
@@ -155,6 +97,7 @@
   </a>
   <div class="nav-links">
     <a href="index.html" class="active" data-i18n="nav.home">Home</a>
+    <a href="portfolio.html" data-i18n="nav.portfolio">Portfolio</a>
     <a href="about.html" data-i18n="nav.about">About</a>
     <a href="contact.html" data-i18n="nav.contact">Contact</a>
   </div>
@@ -168,7 +111,6 @@
   </div>
 </nav>
 
-<!-- HERO -->
 <section class="hero">
   <video class="hero-bg-video" autoplay muted loop playsinline>
     <source src="hero-bg.mp4" type="video/mp4">
@@ -180,8 +122,8 @@
     <h1 class="hero-title" data-i18n="hero.title">Websites that<br><em>command</em> attention</h1>
     <p class="hero-sub" data-i18n="hero.sub">We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.</p>
     <div class="hero-actions">
-      <a href="contact.html" class="btn-primary" data-i18n="hero.cta1">Get Started</a>
-      <a href="about.html" class="btn-ghost" data-i18n="hero.cta2">About Us</a>
+      <a href="portfolio.html" class="btn-primary" data-i18n="hero.cta1">See Our Work</a>
+      <a href="contact.html" class="btn-ghost" data-i18n="hero.cta2">Get Started</a>
     </div>
   </div>
   <div class="scroll-hint">
@@ -190,117 +132,22 @@
   </div>
 </section>
 
-<!-- MARQUEE -->
 <div class="marquee-strip">
   <div class="marquee-inner">
-    <span data-i18n="marquee.1">Precision Design</span><span class="dot">✦</span>
-    <span data-i18n="marquee.2">Delivered in Days</span><span class="dot">✦</span>
-    <span data-i18n="marquee.3">Built to Convert</span><span class="dot">✦</span>
-    <span data-i18n="marquee.4">Pixel Perfect</span><span class="dot">✦</span>
-    <span data-i18n="marquee.5">Future-Proof Code</span><span class="dot">✦</span>
-    <span data-i18n="marquee.6">Fully Custom</span><span class="dot">✦</span>
-    <span data-i18n="marquee.1">Precision Design</span><span class="dot">✦</span>
-    <span data-i18n="marquee.2">Delivered in Days</span><span class="dot">✦</span>
-    <span data-i18n="marquee.3">Built to Convert</span><span class="dot">✦</span>
-    <span data-i18n="marquee.4">Pixel Perfect</span><span class="dot">✦</span>
-    <span data-i18n="marquee.5">Future-Proof Code</span><span class="dot">✦</span>
-    <span data-i18n="marquee.6">Fully Custom</span><span class="dot">✦</span>
+    <span data-i18n="m1">Precision Design</span><span class="dot">✦</span>
+    <span data-i18n="m2">Delivered in Days</span><span class="dot">✦</span>
+    <span data-i18n="m3">Built to Convert</span><span class="dot">✦</span>
+    <span data-i18n="m4">Pixel Perfect</span><span class="dot">✦</span>
+    <span data-i18n="m5">Future-Proof Code</span><span class="dot">✦</span>
+    <span data-i18n="m6">Fully Custom</span><span class="dot">✦</span>
+    <span data-i18n="m1">Precision Design</span><span class="dot">✦</span>
+    <span data-i18n="m2">Delivered in Days</span><span class="dot">✦</span>
+    <span data-i18n="m3">Built to Convert</span><span class="dot">✦</span>
+    <span data-i18n="m4">Pixel Perfect</span><span class="dot">✦</span>
+    <span data-i18n="m5">Future-Proof Code</span><span class="dot">✦</span>
+    <span data-i18n="m6">Fully Custom</span><span class="dot">✦</span>
   </div>
 </div>
-
-<!-- VALUES -->
-<section class="values">
-  <div class="values-header">
-    <p class="section-label reveal" data-i18n="values.label">Why Potentia</p>
-    <h2 class="values-title reveal reveal-delay-1" data-i18n="values.title">Built to <em>perform</em></h2>
-    <p class="values-sub reveal reveal-delay-2" data-i18n="values.sub">Every site we build is engineered from the ground up to rank, load fast, and convert — on any device.</p>
-  </div>
-  <div class="values-grid">
-    <div class="value-card reveal">
-      <svg class="value-icon" viewBox="0 0 56 56" fill="none">
-        <circle cx="28" cy="28" r="20" stroke="#2a2d38" stroke-width="1"/>
-        <path d="M28 8 Q36 16 36 28 Q36 40 28 48 Q20 40 20 28 Q20 16 28 8Z" stroke="#8a909e" stroke-width="1" fill="none"/>
-        <line x1="8" y1="28" x2="48" y2="28" stroke="#8a909e" stroke-width="1"/>
-        <circle cx="28" cy="28" r="2" fill="#c8cdd6"/>
-      </svg>
-      <div class="value-stat">Top<span>3</span></div>
-      <p class="value-label" data-i18n="v1.label">Google Rankings</p>
-      <h3 data-i18n="v1.title">SEO built in from day one</h3>
-      <p data-i18n="v1.desc">Every site is structured, tagged, and optimised so search engines find you — and rank you above the competition.</p>
-    </div>
-    <div class="value-card reveal reveal-delay-1">
-      <svg class="value-icon" viewBox="0 0 56 56" fill="none">
-        <circle cx="28" cy="28" r="20" stroke="#2a2d38" stroke-width="1"/>
-        <path d="M20 28 L26 34 L36 22" stroke="#c8cdd6" stroke-width="1.5"/>
-        <path d="M28 8 L28 14" stroke="#8a909e" stroke-width="1"/>
-        <path d="M28 42 L28 48" stroke="#8a909e" stroke-width="1"/>
-        <path d="M8 28 L14 28" stroke="#8a909e" stroke-width="1"/>
-        <path d="M42 28 L48 28" stroke="#8a909e" stroke-width="1"/>
-      </svg>
-      <div class="value-stat">0.8<span>s</span></div>
-      <p class="value-label" data-i18n="v2.label">Average Load Time</p>
-      <h3 data-i18n="v2.title">Blazing fast, always</h3>
-      <p data-i18n="v2.desc">Speed is a ranking factor and a conversion driver. Our sites load in under a second, keeping visitors engaged and Google impressed.</p>
-    </div>
-    <div class="value-card reveal reveal-delay-2">
-      <svg class="value-icon" viewBox="0 0 56 56" fill="none">
-        <rect x="6" y="14" width="28" height="20" rx="1" stroke="#8a909e" stroke-width="1"/>
-        <rect x="38" y="18" width="12" height="20" rx="1" stroke="#c8cdd6" stroke-width="1"/>
-        <line x1="14" y1="34" x2="14" y2="38" stroke="#8a909e" stroke-width="1"/>
-        <line x1="6" y1="38" x2="22" y2="38" stroke="#8a909e" stroke-width="1"/>
-      </svg>
-      <div class="value-stat">100<span>%</span></div>
-      <p class="value-label" data-i18n="v3.label">Mobile Optimised</p>
-      <h3 data-i18n="v3.title">Flawless on every screen</h3>
-      <p data-i18n="v3.desc">Over 70% of your visitors are on mobile. Every layout and interaction is designed mobile-first — so your site feels native, not scaled down.</p>
-    </div>
-  </div>
-</section>
-
-<!-- WORK -->
-<section class="showcase" id="work">
-  <div class="showcase-inner">
-    <div class="showcase-top">
-      <div>
-        <p class="section-label reveal" data-i18n="work.label">Selected work</p>
-        <h2 class="showcase-title reveal reveal-delay-1" data-i18n="work.title">Sites that<br><em>sell themselves</em></h2>
-      </div>
-      <a href="about.html" class="showcase-link reveal reveal-delay-2" data-i18n="work.link">View all projects →</a>
-    </div>
-    <div class="portfolio-grid reveal">
-      <div class="portfolio-item" onclick="window.open('https://shedpro-utah.com','_blank')" style="min-height:300px;">
-        <div class="portfolio-iframe-wrap">
-          <iframe src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah"></iframe>
-        </div>
-        <div class="portfolio-overlay">
-          <p class="portfolio-tag">Home Services · Utah</p>
-          <p class="portfolio-name">ShedPro LLC — Custom Shed Builder</p>
-        </div>
-      </div>
-      <div class="portfolio-item" onclick="window.open('https://chonis.net','_blank')">
-        <div class="portfolio-iframe-wrap">
-          <iframe src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis"></iframe>
-        </div>
-        <div class="portfolio-overlay">
-          <p class="portfolio-tag">Fashion · Brand Launch</p>
-          <p class="portfolio-name">Chonis — The Official Underwear of La Cultura</p>
-        </div>
-      </div>
-      <div class="portfolio-item" style="aspect-ratio:4/3;">
-        <div style="background:#040407;width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
-          <div style="text-align:center;">
-            <p style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:#2a2d38;text-transform:uppercase;margin-bottom:16px;">Next Project</p>
-            <p style="font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:300;color:#2a2d38;font-style:italic;">Yours?</p>
-          </div>
-        </div>
-        <div class="portfolio-overlay">
-          <p class="portfolio-tag">Your Industry</p>
-          <p class="portfolio-name">Your Brand — Let's Build It</p>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
 
 <footer>
   <div class="footer-brand">
@@ -308,7 +155,7 @@
     <span>POTENTIA</span>
   </div>
   <div class="footer-links">
-    <a href="index.html" data-i18n="nav.home">Home</a>
+    <a href="portfolio.html" data-i18n="nav.portfolio">Portfolio</a>
     <a href="about.html" data-i18n="nav.about">About</a>
     <a href="contact.html" data-i18n="nav.contact">Contact</a>
   </div>
@@ -316,65 +163,34 @@
 </footer>
 
 <script>
-const cursor = document.getElementById('cursor');
-const ring = document.getElementById('cursorRing');
+const cursor=document.getElementById('cursor'),ring=document.getElementById('cursorRing');
 let mx=0,my=0,rx=0,ry=0;
 document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;cursor.style.transform=`translate(${mx-4}px,${my-4}px)`;});
-(function animRing(){rx+=(mx-rx)*0.12;ry+=(my-ry)*0.12;ring.style.transform=`translate(${rx-16}px,${ry-16}px)`;requestAnimationFrame(animRing);})();
+(function loop(){rx+=(mx-rx)*0.12;ry+=(my-ry)*0.12;ring.style.transform=`translate(${rx-16}px,${ry-16}px)`;requestAnimationFrame(loop);})();
 document.querySelectorAll('a,button').forEach(el=>{
   el.addEventListener('mouseenter',()=>{ring.style.width='56px';ring.style.height='56px';ring.style.marginLeft='-12px';ring.style.marginTop='-12px';});
   el.addEventListener('mouseleave',()=>{ring.style.width='32px';ring.style.height='32px';ring.style.marginLeft='0';ring.style.marginTop='0';});
 });
-const reveals=document.querySelectorAll('.reveal');
-const io=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.1});
-reveals.forEach(el=>io.observe(el));
-
-const translations={
-  en:{
-    'nav.home':'Home','nav.about':'About','nav.contact':'Contact','nav.cta':'Get Started',
-    'hero.eyebrow':'Precision-Crafted Digital Presence',
-    'hero.title':'Websites that<br><em>command</em> attention',
-    'hero.sub':'We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.',
-    'hero.cta1':'Get Started','hero.cta2':'About Us','scroll':'Scroll',
-    'marquee.1':'Precision Design','marquee.2':'Delivered in Days','marquee.3':'Built to Convert',
-    'marquee.4':'Pixel Perfect','marquee.5':'Future-Proof Code','marquee.6':'Fully Custom',
-    'values.label':'Why Potentia','values.title':'Built to <em>perform</em>',
-    'values.sub':'Every site we build is engineered from the ground up to rank, load fast, and convert — on any device.',
-    'v1.label':'Google Rankings','v1.title':'SEO built in from day one',
-    'v1.desc':'Every site is structured, tagged, and optimised so search engines find you — and rank you above the competition.',
-    'v2.label':'Average Load Time','v2.title':'Blazing fast, always',
-    'v2.desc':'Speed is a ranking factor and a conversion driver. Our sites load in under a second, keeping visitors engaged and Google impressed.',
-    'v3.label':'Mobile Optimised','v3.title':'Flawless on every screen',
-    'v3.desc':'Over 70% of your visitors are on mobile. Every layout and interaction is designed mobile-first — so your site feels native, not scaled down.',
-    'work.label':'Selected work','work.title':'Sites that<br><em>sell themselves</em>','work.link':'View all projects →',
-  },
-  es:{
-    'nav.home':'Inicio','nav.about':'Nosotros','nav.contact':'Contacto','nav.cta':'Comenzar',
-    'hero.eyebrow':'Presencia Digital de Precisión',
-    'hero.title':'Sitios web que<br><em>dominan</em> la atención',
-    'hero.sub':'Creamos sitios web impresionantes y de alto rendimiento con atención obsesiva al detalle — más rápido que una agencia, más preciso que una plantilla.',
-    'hero.cta1':'Comenzar','hero.cta2':'Nosotros','scroll':'Desplazar',
-    'marquee.1':'Diseño de Precisión','marquee.2':'Entregado en Días','marquee.3':'Diseñado para Convertir',
-    'marquee.4':'Perfección Pixel a Pixel','marquee.5':'Código a Prueba de Futuro','marquee.6':'Totalmente Personalizado',
-    'values.label':'Por qué Potentia','values.title':'Construido para <em>rendir</em>',
-    'values.sub':'Cada sitio que creamos está diseñado desde cero para posicionar, cargar rápido y convertir — en cualquier dispositivo.',
-    'v1.label':'Posicionamiento en Google','v1.title':'SEO integrado desde el primer día',
-    'v1.desc':'Cada sitio está estructurado, etiquetado y optimizado para que los motores de búsqueda te encuentren — y te posicionen por encima de la competencia.',
-    'v2.label':'Tiempo de Carga Promedio','v2.title':'Increíblemente rápido, siempre',
-    'v2.desc':'La velocidad es un factor de posicionamiento y un impulsor de conversiones. Nuestros sitios cargan en menos de un segundo.',
-    'v3.label':'Optimizado para Móvil','v3.title':'Perfecto en cada pantalla',
-    'v3.desc':'Más del 70% de tus visitantes están en móvil. Cada diseño e interacción está pensado primero para móvil.',
-    'work.label':'Trabajo selecto','work.title':'Sitios que<br><em>se venden solos</em>','work.link':'Ver todos los proyectos →',
-  }
+const T={
+  en:{'nav.home':'Home','nav.portfolio':'Portfolio','nav.about':'About','nav.contact':'Contact','nav.cta':'Get Started',
+      'hero.eyebrow':'Precision-Crafted Digital Presence',
+      'hero.title':'Websites that<br><em>command</em> attention',
+      'hero.sub':'We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.',
+      'hero.cta1':'See Our Work','hero.cta2':'Get Started','scroll':'Scroll',
+      'm1':'Precision Design','m2':'Delivered in Days','m3':'Built to Convert',
+      'm4':'Pixel Perfect','m5':'Future-Proof Code','m6':'Fully Custom'},
+  es:{'nav.home':'Inicio','nav.portfolio':'Portafolio','nav.about':'Nosotros','nav.contact':'Contacto','nav.cta':'Comenzar',
+      'hero.eyebrow':'Presencia Digital de Precisión',
+      'hero.title':'Sitios web que<br><em>dominan</em> la atención',
+      'hero.sub':'Creamos sitios web impresionantes con atención obsesiva al detalle — más rápido que una agencia, más preciso que una plantilla.',
+      'hero.cta1':'Ver Nuestro Trabajo','hero.cta2':'Comenzar','scroll':'Desplazar',
+      'm1':'Diseño de Precisión','m2':'Entregado en Días','m3':'Diseñado para Convertir',
+      'm4':'Perfección Pixel a Pixel','m5':'Código Futuro','m6':'Totalmente Personalizado'}
 };
-function setLang(lang){
-  document.querySelectorAll('[data-i18n]').forEach(el=>{
-    const key=el.getAttribute('data-i18n');
-    if(translations[lang][key]!==undefined)el.innerHTML=translations[lang][key];
-  });
-  document.getElementById('btn-en').classList.toggle('active',lang==='en');
-  document.getElementById('btn-es').classList.toggle('active',lang==='es');
-  document.documentElement.lang=lang;
+function setLang(l){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.getAttribute('data-i18n');if(T[l][k])el.innerHTML=T[l][k];});
+  document.getElementById('btn-en').classList.toggle('active',l==='en');
+  document.getElementById('btn-es').classList.toggle('active',l==='es');
 }
 </script>
 </body>
