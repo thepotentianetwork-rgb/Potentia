@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio — Potentia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+html{scroll-behavior:smooth}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden}
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:24px 48px;background:rgba(4,4,7,0.97);border-bottom:1px solid var(--dim)}
+.nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
+.nav-logo img{width:32px;height:32px;object-fit:contain}
+.nav-links{display:flex;gap:40px}
+.nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.nav-links a:hover,.nav-links a.active{color:var(--bright)}
+.nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--chrome);padding:10px 22px;text-decoration:none;text-transform:uppercase}
+.nav-cta:hover{background:var(--bright)}
+.nav-ham{display:none;flex-direction:column;gap:5px;background:none;border:none;padding:6px;cursor:pointer;z-index:2000}
+.nav-ham span{display:block;width:25px;height:2px;background:var(--bright);border-radius:1px;transition:all 0.3s}
+.mob-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#040407;z-index:1500;flex-direction:column;align-items:center;justify-content:center}
+.mob-overlay.open{display:flex}
+.mob-overlay a{font-family:'Syncopate',sans-serif;font-size:28px;letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 0;width:80%;text-align:center;border-bottom:1px solid var(--dim);transition:color 0.2s}
+.mob-overlay a:first-child{border-top:1px solid var(--dim)}
+.mob-overlay a:hover,.mob-overlay a.active{color:var(--bright)}
+.mob-cta-btn{margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:14px 40px!important;border:none!important}
+
+/* PAGE */
+.page-top{padding:160px 80px 80px;max-width:1400px;margin:0 auto}
+.page-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px}
+.page-title{font-size:clamp(48px,7vw,96px);font-weight:300;line-height:0.95;color:var(--bright);margin-bottom:24px}
+.page-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.page-sub{font-size:20px;color:var(--silver);font-weight:300;max-width:520px;line-height:1.7}
+
+/* STATS */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
+.stat{padding:56px 80px;text-align:center;border-right:1px solid var(--dim)}
+.stat:last-child{border-right:none}
+.stat-num{font-size:clamp(48px,6vw,80px);font-weight:300;color:var(--bright);line-height:1}
+.stat-num sup{font-size:0.45em;color:var(--silver);vertical-align:top;margin-top:12px;display:inline-block}
+.stat-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-top:12px}
+
+/* PORTFOLIO */
+.portfolio-wrap{padding:100px 80px;max-width:1400px;margin:0 auto}
+.section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px}
+.section-title{font-size:clamp(36px,4vw,60px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:64px}
+.section-title em{font-style:italic;color:var(--silver)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.grid-item{position:relative;aspect-ratio:4/3;overflow:hidden;background:var(--dim);cursor:pointer}
+.grid-item.wide{grid-column:span 2;aspect-ratio:16/9}
+.iframe-wrap{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.iframe-wrap iframe{width:1400px;height:900px;border:none;transform-origin:top left;transform:scale(0.3)}
+.grid-item.wide .iframe-wrap iframe{transform:scale(0.48)}
+.grid-overlay{position:absolute;inset:0;background:rgba(4,4,7,0.65);display:flex;flex-direction:column;justify-content:flex-end;padding:28px;opacity:0;transition:opacity 0.3s;pointer-events:all}
+.grid-item:hover .grid-overlay{opacity:1}
+.grid-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px}
+.grid-name{font-size:22px;font-weight:300;color:var(--bright);margin-bottom:4px}
+.grid-url{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+.yours{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--black)}
+.yours p:first-child{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase}
+.yours p:last-child{font-size:36px;font-weight:300;color:var(--dim);font-style:italic}
+
+/* PROCESS */
+.process{padding:100px 80px;background:var(--deep);border-top:1px solid var(--dim)}
+.process-inner{max-width:1400px;margin:0 auto}
+.process-header{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:end;margin-bottom:64px}
+.process-title{font-size:clamp(36px,4vw,56px);font-weight:300;color:var(--bright);line-height:1.05}
+.process-title em{font-style:italic;color:var(--silver)}
+.process-desc{font-size:19px;color:var(--silver);line-height:1.7;font-weight:300}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.step{background:var(--deep);padding:48px;transition:background 0.3s}
+.step:hover{background:var(--black)}
+.step-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);margin-bottom:32px}
+.step-icon{width:44px;height:44px;margin-bottom:24px}
+.step h3{font-size:26px;font-weight:300;color:var(--bright);margin-bottom:12px}
+.step p{font-size:16px;color:var(--silver);line-height:1.7;font-weight:300}
+
+/* VALUES */
+.values{padding:100px 80px;max-width:1400px;margin:0 auto}
+.values-header{text-align:center;margin-bottom:64px}
+.values-title{font-size:clamp(36px,4vw,56px);font-weight:300;color:var(--bright);line-height:1;margin-bottom:16px}
+.values-title em{font-style:italic;color:var(--silver)}
+.values-sub{font-size:18px;color:var(--silver);font-weight:300;max-width:440px;margin:0 auto;line-height:1.6}
+.vgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
+.vcard{background:var(--black);padding:48px;transition:background 0.3s}
+.vcard:hover{background:var(--deep)}
+.vcard-icon{width:44px;height:44px;margin-bottom:24px}
+.vcard-stat{font-size:60px;font-weight:300;color:var(--bright);line-height:1;margin-bottom:8px}
+.vcard-stat span{font-size:30px;color:var(--silver)}
+.vcard-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-bottom:20px}
+.vcard h3{font-size:22px;font-weight:300;color:var(--bright);margin-bottom:10px}
+.vcard p{font-size:15px;color:var(--silver);line-height:1.7;font-weight:300}
+
+/* CTA */
+.cta{padding:140px 80px;text-align:center;border-top:1px solid var(--dim)}
+.cta-title{font-size:clamp(44px,6vw,88px);font-weight:300;color:var(--bright);line-height:0.95;margin-bottom:32px}
+.cta-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.cta-sub{font-size:19px;color:var(--silver);font-weight:300;max-width:400px;margin:0 auto 48px;line-height:1.6}
+.cta-btns{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+.btn-solid{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:15px 36px;text-decoration:none;text-transform:uppercase;transition:background 0.3s;display:inline-block}
+.btn-solid:hover{background:var(--bright)}
+.btn-outline{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--chrome);border:1px solid var(--dim);padding:15px 36px;text-decoration:none;text-transform:uppercase;transition:all 0.3s;display:inline-block}
+.btn-outline:hover{border-color:var(--chrome);color:var(--bright)}
+
+/* FOOTER */
+footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:24px}
+.footer-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver);text-decoration:none}
+.footer-logo img{width:24px;height:24px;object-fit:contain}
+.footer-links{display:flex;gap:32px}
+.footer-links a{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.footer-links a:hover{color:var(--silver)}
+.footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+
+.reveal{opacity:0;transform:translateY(24px);transition:opacity 0.7s ease,transform 0.7s ease}
+.reveal.on{opacity:1;transform:translateY(0)}
+.delay-1{transition-delay:0.1s}.delay-2{transition-delay:0.2s}
+
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links,.nav-cta{display:none}
+  .nav-ham{display:flex!important}
+  .page-top{padding:110px 24px 48px}
+  .stats{grid-template-columns:1fr}
+  .stat{border-right:none;border-bottom:1px solid var(--dim);padding:40px 24px}
+  .stat:last-child{border-bottom:none}
+  .portfolio-wrap{padding:64px 24px}
+  .grid{grid-template-columns:1fr}
+  .grid-item.wide{grid-column:span 1;aspect-ratio:4/3}
+  .grid-item.wide .iframe-wrap iframe{transform:scale(0.25)}
+  .process{padding:64px 24px}
+  .process-header{grid-template-columns:1fr;gap:24px}
+  .steps{grid-template-columns:1fr}
+  .values{padding:64px 24px}
+  .vgrid{grid-template-columns:1fr}
+  .cta{padding:80px 24px}
+  .cta-btns{flex-direction:column;align-items:center}
+  footer{padding:32px 20px;flex-direction:column;text-align:center}
+  .footer-links{justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    POTENTIA
+  </a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html" class="active">Portfolio</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="contact.html">Contact</a>
+    <a href="https://potentia-car-detailers-crm.vercel.app/login">Client Login</a>
+  </div>
+  <a href="contact.html" class="nav-cta">Get Started</a>
+  <button class="nav-ham" id="navHam" aria-label="Menu">
+    <span></span><span></span><span></span>
+  </button>
+</nav>
+
+<div class="mob-overlay" id="mobOverlay">
+  <a href="index.html">Home</a>
+  <a href="portfolio.html" class="active">Portfolio</a>
+  <a href="pricing.html">Pricing</a>
+  <a href="contact.html">Contact</a>
+  <a href="https://potentia-car-detailers-crm.vercel.app/login">Client Login</a>
+  <a href="contact.html" class="mob-cta-btn">Get Started</a>
+</div>
+
+<div class="page-top">
+  <p class="page-label reveal">Our Work</p>
+  <h1 class="page-title reveal">Sites built to<br><em>perform</em></h1>
+  <p class="page-sub reveal">Every project is a partnership. We bring the craft — our clients bring the vision.</p>
+</div>
+
+<div class="stats">
+  <div class="stat reveal"><div class="stat-num">72<sup>hrs</sup></div><p class="stat-label">Avg Delivery</p></div>
+  <div class="stat reveal delay-1"><div class="stat-num">0.8<sup>s</sup></div><p class="stat-label">Avg Load Time</p></div>
+  <div class="stat reveal delay-2"><div class="stat-num">100<sup>%</sup></div><p class="stat-label">Mobile Optimised</p></div>
+</div>
+
+<div class="portfolio-wrap">
+  <p class="section-label reveal">Selected projects</p>
+  <h2 class="section-title reveal">Sites that<br><em>sell themselves</em></h2>
+  <div class="grid reveal">
+    <div class="grid-item wide" onclick="window.open('https://shedpro-utah.com','_blank')">
+      <div class="iframe-wrap"><iframe src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah"></iframe></div>
+      <div class="grid-overlay">
+        <p class="grid-tag">Home Services · Utah</p>
+        <p class="grid-name">ShedPro LLC</p>
+        <p class="grid-url">shedpro-utah.com ↗</p>
+      </div>
+    </div>
+    <div class="grid-item" onclick="window.open('https://chonis.net','_blank')">
+      <div class="iframe-wrap"><iframe src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis"></iframe></div>
+      <div class="grid-overlay">
+        <p class="grid-tag">Fashion · Brand Launch</p>
+        <p class="grid-name">Chonis</p>
+        <p class="grid-url">chonis.net ↗</p>
+      </div>
+    </div>
+    <div class="grid-item" onclick="window.location='contact.html'">
+      <div class="yours"><p>Next project</p><p>Yours?</p></div>
+      <div class="grid-overlay">
+        <p class="grid-tag">Your Industry</p>
+        <p class="grid-name">Your Brand</p>
+        <p class="grid-url">Get in touch ↗</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="process">
+  <div class="process-inner">
+    <div class="process-header">
+      <div>
+        <p class="section-label reveal">How it works</p>
+        <h2 class="process-title reveal">From brief<br>to <em>live</em> in 72hrs</h2>
+      </div>
+      <p class="process-desc reveal">No lengthy sprints. No delays. Relentless craft with modern tools — in days, not weeks.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <p class="step-num">01 / 03</p>
+        <svg class="step-icon" viewBox="0 0 44 44" fill="none"><rect x="6" y="6" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="25" y="6" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="6" y="25" width="13" height="13" stroke="#8a909e" stroke-width="1"/><rect x="25" y="25" width="13" height="13" stroke="#c8cdd6" stroke-width="1"/></svg>
+        <h3>Share your vision</h3>
+        <p>Tell us about your business, aesthetic, and goals. A 15-minute call or a brief — whatever works.</p>
+      </div>
+      <div class="step reveal delay-1">
+        <p class="step-num">02 / 03</p>
+        <svg class="step-icon" viewBox="0 0 44 44" fill="none"><polygon points="22,4 27,16 40,16 30,25 34,38 22,30 10,38 14,25 4,16 17,16" stroke="#8a909e" stroke-width="1" fill="none"/></svg>
+        <h3>We design &amp; build</h3>
+        <p>Every detail refined with precision — copy, layout, motion, code — without sacrificing quality for speed.</p>
+      </div>
+      <div class="step reveal delay-2">
+        <p class="step-num">03 / 03</p>
+        <svg class="step-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="15" stroke="#8a909e" stroke-width="1"/><path d="M15 22 L20 27 L29 17" stroke="#c8cdd6" stroke-width="1.5"/></svg>
+        <h3>You launch</h3>
+        <p>Your site goes live, fully hosted and ready to grow. Revisions and support are always a message away.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="values">
+  <div class="values-header">
+    <p class="section-label reveal">Built different</p>
+    <h2 class="values-title reveal">Why clients choose <em>Potentia</em></h2>
+    <p class="values-sub reveal">Engineered to rank, load fast, and convert on any device.</p>
+  </div>
+  <div class="vgrid">
+    <div class="vcard reveal">
+      <svg class="vcard-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="15" stroke="#2a2d38" stroke-width="1"/><path d="M22 7 Q27 13 27 22 Q27 31 22 37 Q17 31 17 22 Q17 13 22 7Z" stroke="#8a909e" stroke-width="1" fill="none"/><line x1="7" y1="22" x2="37" y2="22" stroke="#8a909e" stroke-width="1"/><circle cx="22" cy="22" r="2" fill="#c8cdd6"/></svg>
+      <div class="vcard-stat">Top<span>3</span></div>
+      <p class="vcard-label">Google Rankings</p>
+      <h3>SEO from day one</h3>
+      <p>Every site structured and optimised so search engines rank you above the competition.</p>
+    </div>
+    <div class="vcard reveal delay-1">
+      <svg class="vcard-icon" viewBox="0 0 44 44" fill="none"><circle cx="22" cy="22" r="15" stroke="#2a2d38" stroke-width="1"/><path d="M15 22 L20 27 L29 17" stroke="#c8cdd6" stroke-width="1.5"/><path d="M22 7 L22 11" stroke="#8a909e" stroke-width="1"/><path d="M22 33 L22 37" stroke="#8a909e" stroke-width="1"/><path d="M7 22 L11 22" stroke="#8a909e" stroke-width="1"/><path d="M33 22 L37 22" stroke="#8a909e" stroke-width="1"/></svg>
+      <div class="vcard-stat">0.8<span>s</span></div>
+      <p class="vcard-label">Avg Load Time</p>
+      <h3>Blazing fast</h3>
+      <p>Speed is a ranking factor and conversion driver. Our sites load in under a second, every time.</p>
+    </div>
+    <div class="vcard reveal delay-2">
+      <svg class="vcard-icon" viewBox="0 0 44 44" fill="none"><rect x="3" y="11" width="25" height="18" rx="1" stroke="#8a909e" stroke-width="1"/><rect x="32" y="15" width="9" height="18" rx="1" stroke="#c8cdd6" stroke-width="1"/><line x1="10" y1="29" x2="10" y2="33" stroke="#8a909e" stroke-width="1"/><line x1="3" y1="33" x2="17" y2="33" stroke="#8a909e" stroke-width="1"/></svg>
+      <div class="vcard-stat">100<span>%</span></div>
+      <p class="vcard-label">Mobile Optimised</p>
+      <h3>Every screen</h3>
+      <p>Over 70% of visitors are on mobile. Every layout designed mobile-first, so it feels native.</p>
+    </div>
+  </div>
+</div>
+
+<div class="cta">
+  <h2 class="cta-title reveal">Ready to be<br><em>next?</em></h2>
+  <p class="cta-sub reveal">Tell us about your project — we'll get back within 24 hours.</p>
+  <div class="cta-btns reveal">
+    <a href="contact.html" class="btn-solid">Start a Project</a>
+    <a href="index.html" class="btn-outline">Home</a>
+  </div>
+</div>
+
+<footer>
+  <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <p class="footer-copy">© 2026 Potentia Studio</p>
+</footer>
+
+<script>
+var ham = document.getElementById('navHam');
+var overlay = document.getElementById('mobOverlay');
+ham.addEventListener('click', function() {
+  overlay.classList.toggle('open');
+  document.body.style.overflow = overlay.classList.contains('open') ? 'hidden' : '';
+});
+overlay.querySelectorAll('a').forEach(function(a) {
+  a.addEventListener('click', function() {
+    overlay.classList.remove('open');
+    document.body.style.overflow = '';
+  });
+});
+var reveals = document.querySelectorAll('.reveal');
+var io = new IntersectionObserver(function(entries) {
+  entries.forEach(function(e) { if(e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } });
+}, {threshold: 0.1});
+reveals.forEach(function(el) { io.observe(el); });
+</script>
+</body>
+</html>
