@@ -1,0 +1,3 @@
+name = "potentia-assistant"
+main = "index.js"
+compatibility_date = "2026-08-01"
