@@ -51,9 +51,8 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .plan-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-bottom:12px}
 .plan-name{font-size:32px;font-weight:300;color:var(--bright)}
 .plan-price{text-align:right}
-.plan-amount{font-size:44px;font-weight:300;color:var(--bright);line-height:1}
-.plan-cycle{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);margin-top:4px}
-.plan-monthly{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);margin-top:6px}
+.plan-request{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.15em;color:var(--chrome);text-decoration:none;text-transform:uppercase;border-bottom:1px solid var(--dim);padding-bottom:4px;transition:color 0.3s,border-color 0.3s}
+.plan-request:hover{color:var(--bright);border-color:var(--silver)}
 .plan-desc{font-size:18px;color:var(--silver);font-weight:300;line-height:1.6;margin-bottom:28px;max-width:600px}
 .plan-features{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--dim);padding-top:24px;margin-bottom:20px}
 .plan-features span{font-family:'DM Mono',monospace;font-size:13px;color:var(--chrome);display:flex;align-items:center;gap:8px}
@@ -69,8 +68,8 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .addon:hover{background:var(--deep)}
 .addon-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;gap:16px}
 .addon h3{font-size:22px;font-weight:300;color:var(--bright)}
-.addon-price{font-family:'DM Mono',monospace;font-size:14px;color:var(--chrome);white-space:nowrap}
-.addon-price span{font-size:10px;color:var(--dim);display:block;margin-top:2px}
+.addon-price a{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.1em;color:var(--chrome);text-decoration:none;text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--dim);padding-bottom:2px;transition:color 0.3s,border-color 0.3s}
+.addon-price a:hover{color:var(--bright);border-color:var(--silver)}
 .addon p{font-size:15px;color:var(--silver);line-height:1.6;font-weight:300}
 
 /* CTA */
@@ -138,8 +137,8 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
 
 <div class="page-top">
   <p class="page-label reveal">Services &amp; Investment</p>
-  <h1 class="page-title reveal">Honest pricing.<br><em>No surprises.</em></h1>
-  <p class="page-sub reveal">Every project is built custom, by hand, with restraint and precision. No templates, no bloated platforms — just clean, lasting work and transparent pricing.</p>
+  <h1 class="page-title reveal">Built for you.<br><em>Priced for you.</em></h1>
+  <p class="page-sub reveal">Every project is built custom, by hand, with restraint and precision. No templates, no bloated platforms — and no two quotes are the same. Reach out and we'll put together pricing for your project.</p>
 </div>
 
 <div class="perks reveal">
@@ -168,9 +167,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
         <h2 class="plan-name">3-Page Essential Site</h2>
       </div>
       <div class="plan-price">
-        <div class="plan-amount">$300</div>
-        <p class="plan-cycle">one-time build</p>
-        <p class="plan-monthly">$50 / edit after 7 days</p>
+        <a href="contact.html" class="plan-request">Request Info →</a>
       </div>
     </div>
     <p class="plan-desc">A clean, professional entry point — built to introduce your business and make it easy to get in touch.</p>
@@ -180,7 +177,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       <span>No monthly subscription</span>
       <span>Free domain — 1 year included</span>
     </div>
-    <p class="plan-note">Edits after the first <strong>7 days</strong> of launch are billed at <strong>$50 per change request</strong>.</p>
+    <p class="plan-note">Edits after the first <strong>7 days</strong> of launch are billed per change request — contact us for details.</p>
   </div>
 
   <div class="plan reveal delay-1">
@@ -190,9 +187,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
         <h2 class="plan-name">3-Page Booking Site</h2>
       </div>
       <div class="plan-price">
-        <div class="plan-amount">$500</div>
-        <p class="plan-cycle">to build</p>
-        <p class="plan-monthly">$25 / month</p>
+        <a href="contact.html" class="plan-request">Request Info →</a>
       </div>
     </div>
     <p class="plan-desc">Everything in the Essential Site, plus a live booking calendar — clients select a service and schedule directly on your site.</p>
@@ -201,7 +196,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       <span>5 images throughout</span>
       <span>Free domain — 1 year included</span>
     </div>
-    <p class="plan-note"><strong>$25/month</strong> for ongoing management &amp; edits.</p>
+    <p class="plan-note">Includes a <strong>monthly plan</strong> for ongoing management &amp; edits — contact us for details.</p>
   </div>
 
   <div class="plan reveal delay-2">
@@ -211,9 +206,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
         <h2 class="plan-name">4-Page Gallery Site</h2>
       </div>
       <div class="plan-price">
-        <div class="plan-amount">$850</div>
-        <p class="plan-cycle">to build</p>
-        <p class="plan-monthly">$50 / month</p>
+        <a href="contact.html" class="plan-request">Request Info →</a>
       </div>
     </div>
     <p class="plan-desc">A visual showcase for businesses where the work speaks for itself — built with a dedicated gallery page to display your portfolio in full.</p>
@@ -222,7 +215,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       <span>1 video featured on-site</span>
       <span>Free domain — 1 year included</span>
     </div>
-    <p class="plan-note"><strong>$50/month</strong> to edit, manage &amp; update photos.</p>
+    <p class="plan-note">Includes a <strong>monthly plan</strong> to edit, manage &amp; update photos — contact us for details.</p>
   </div>
 
 </div>
@@ -233,42 +226,42 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     <div class="addon">
       <div class="addon-top">
         <h3>Promotional Video</h3>
-        <div class="addon-price">$500<span>one-time</span></div>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>Two videos — one to promote your website, one featured directly on the site.</p>
     </div>
     <div class="addon">
       <div class="addon-top">
         <h3>Google Business Setup</h3>
-        <div class="addon-price">$250<span>one-time</span></div>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>Full setup of your Google Business Profile, optimized to help you get found locally.</p>
     </div>
     <div class="addon">
       <div class="addon-top">
         <h3>Google Profile Management</h3>
-        <div class="addon-price">$25<span>/ month</span></div>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>Ongoing management of your Google Business Profile — updates, responses, and optimization.</p>
     </div>
     <div class="addon">
       <div class="addon-top">
         <h3>Professional Photography</h3>
-        <div class="addon-price">$150<span>one-time</span></div>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>High-quality photos of your business, work, or product — captured to elevate your site.</p>
     </div>
     <div class="addon">
       <div class="addon-top">
         <h3>Logo Vectorization</h3>
-        <div class="addon-price">$50<span>one-time</span></div>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>Your logo redone in clean, editable vector formats — scalable for print, signage, and merch.</p>
     </div>
     <div class="addon">
       <div class="addon-top">
         <h3>Service Menu Design</h3>
-        <div class="addon-price">$75<span>one-time</span></div>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>A polished, professional menu of your services — delivered as a print-ready PDF for clients to browse.</p>
     </div>
