@@ -66,6 +66,7 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .addons-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--dim)}
 .addon{background:var(--black);padding:36px 40px;transition:background 0.3s}
 .addon:hover{background:var(--deep)}
+.addon:last-child:nth-child(odd){grid-column:1 / -1}
 .addon-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;gap:16px}
 .addon h3{font-size:22px;font-weight:300;color:var(--bright)}
 .addon-price a{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.1em;color:var(--chrome);text-decoration:none;text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--dim);padding-bottom:2px;transition:color 0.3s,border-color 0.3s}
@@ -218,6 +219,26 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     <p class="plan-note">Includes a <strong>monthly plan</strong> to edit, manage &amp; update photos — contact us for details.</p>
   </div>
 
+  <div class="plan reveal">
+    <div class="plan-top">
+      <div>
+        <p class="plan-tag">04 — Operator</p>
+        <h2 class="plan-name">Website + Growth System</h2>
+      </div>
+      <div class="plan-price">
+        <a href="contact.html" class="plan-request">Request Info →</a>
+      </div>
+    </div>
+    <p class="plan-desc">Everything in the Gallery Site, plus a full growth system built in — an AI chat assistant to capture leads, instant lead alerts, a built-in CRM to manage them, and a monthly performance report so you always know what's working.</p>
+    <div class="plan-features">
+      <span>AI chat assistant</span>
+      <span>Instant lead alerts</span>
+      <span>Built-in CRM</span>
+      <span>Monthly performance report</span>
+    </div>
+    <p class="plan-note">Includes a <strong>monthly plan</strong> for the growth system &amp; ongoing management — contact us for details.</p>
+  </div>
+
 </div>
 
 <div class="addons-wrap">
@@ -243,6 +264,13 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
         <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>Ongoing management of your Google Business Profile — updates, responses, and optimization.</p>
+    </div>
+    <div class="addon">
+      <div class="addon-top">
+        <h3>AI Content Engine</h3>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
+      </div>
+      <p>Ongoing AI-generated content for your site and socials, kept fresh month to month.</p>
     </div>
     <div class="addon">
       <div class="addon-top">
