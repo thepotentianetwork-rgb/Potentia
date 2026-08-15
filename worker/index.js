@@ -1,13 +1,18 @@
-// Potentia AI Assistant — Cloudflare Worker backend.
-// Holds the Anthropic API key server-side and proxies chat requests from
-// the widget in /assistant.js. See README.md for deployment steps.
+// Potentia backend Worker — serves two things from one place:
+//  1. /chat            — the AI assistant widget (assistant.js)
+//  2. /admin/*          — password-gated dashboard for the shed company
+//                         partner: view submissions, edit pricing
+//     /shed/pricing     — public: current pricing (for their site to read)
+//     /shed/submit      — public: customer design submissions land here
+//
+// See README.md for full deployment steps (secrets, D1 database, etc).
 
-// Add every origin the widget will be served from (your live domain,
-// GitHub Pages URL, and localhost while testing).
 const ALLOWED_ORIGINS = [
   "https://potentianetwork.com",
   "https://www.potentianetwork.com",
   "http://localhost:8080"
+  // Add the shed company's live domain here once /shed/pricing and
+  // /shed/submit are wired into their site, e.g. "https://shedpro.com".
 ];
 
 const SYSTEM_PROMPT = `You are the AI assistant embedded on the Potentia Studio website (a small web design & digital growth studio). Potentia builds custom, hand-built websites — no templates, no bloated platforms. 72-hour turnaround, free domain included for the first year.
@@ -24,12 +29,14 @@ Important: Potentia does not publish prices publicly — every quote is custom. 
 
 Be warm, concise, and confident — a few sentences at most. You are a live example of what Potentia builds (the Operator package's AI assistant), so when it's natural you can mention that this chat is itself a sample of that add-on. Don't be pushy. If asked something unrelated to Potentia or web design, answer briefly and steer back.`;
 
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
 function corsHeaders(origin) {
   const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allow,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Vary": "Origin"
   };
 }
@@ -41,67 +48,253 @@ function json(data, status, origin) {
   });
 }
 
+// ---- base64url helpers (Workers has btoa/atob but not base64url) ----
+function bufToBase64Url(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = "";
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function base64UrlToBuf(str) {
+  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  const bin = atob(str);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes.buffer;
+}
+function strToBase64Url(str) {
+  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function base64UrlToStr(str) {
+  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  return decodeURIComponent(escape(atob(str)));
+}
+
+// ---- session tokens: HMAC-signed, stateless, no DB lookup needed ----
+async function signToken(secret, payload) {
+  const dataStr = JSON.stringify(payload);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(dataStr));
+  return `${strToBase64Url(dataStr)}.${bufToBase64Url(sig)}`;
+}
+async function verifyToken(secret, token) {
+  if (!token || token.indexOf(".") === -1) return null;
+  const [dataB64, sigB64] = token.split(".");
+  try {
+    const dataStr = base64UrlToStr(dataB64);
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["verify"]);
+    const valid = await crypto.subtle.verify("HMAC", key, base64UrlToBuf(sigB64), new TextEncoder().encode(dataStr));
+    if (!valid) return null;
+    const payload = JSON.parse(dataStr);
+    if (payload.exp && Date.now() > payload.exp) return null;
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
+function timingSafeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const len = Math.max(a.length, b.length);
+  let mismatch = a.length === b.length ? 0 : 1;
+  for (let i = 0; i < len; i++) {
+    mismatch |= (i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0);
+  }
+  return mismatch === 0;
+}
+async function requireAuth(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  return await verifyToken(env.ADMIN_SESSION_SECRET, token);
+}
+
+// ---- /chat: AI assistant ----
+async function handleChat(request, env, origin) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return json({ error: "Invalid JSON" }, 400, origin);
+  }
+
+  const incoming = Array.isArray(body.messages) ? body.messages : [];
+  const messages = incoming
+    .slice(-20)
+    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 1000) }));
+
+  if (messages.length === 0) return json({ error: "No messages" }, 400, origin);
+  if (!env.ANTHROPIC_API_KEY) return json({ error: "Server not configured" }, 500, origin);
+
+  let upstream;
+  try {
+    upstream = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 400, system: SYSTEM_PROMPT, messages })
+    });
+  } catch (e) {
+    return json({ error: "Upstream request failed" }, 502, origin);
+  }
+  if (!upstream.ok) return json({ error: "Upstream error" }, 502, origin);
+
+  const data = await upstream.json();
+  const reply = data && data.content && data.content[0] && data.content[0].text
+    ? data.content[0].text
+    : "Sorry, I didn't catch that — could you rephrase?";
+  return json({ reply }, 200, origin);
+}
+
+// ---- /admin/login ----
+async function handleAdminLogin(request, env, origin) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return json({ error: "Invalid JSON" }, 400, origin);
+  }
+  const password = typeof body.password === "string" ? body.password : "";
+  if (!env.ADMIN_PASSWORD || !env.ADMIN_SESSION_SECRET) {
+    return json({ error: "Server not configured" }, 500, origin);
+  }
+  if (!timingSafeEqual(password, env.ADMIN_PASSWORD)) {
+    return json({ error: "Invalid credentials" }, 401, origin);
+  }
+  const token = await signToken(env.ADMIN_SESSION_SECRET, { admin: true, exp: Date.now() + SESSION_TTL_MS });
+  return json({ token }, 200, origin);
+}
+
+// ---- /admin/submissions ----
+async function handleListSubmissions(request, env, origin) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, name, email, phone, details, status, created_at FROM submissions ORDER BY created_at DESC LIMIT 200"
+  ).all();
+  return json({ submissions: results }, 200, origin);
+}
+
+async function handleUpdateSubmissionStatus(request, env, origin) {
+  const body = await request.json().catch(() => ({}));
+  const id = Number(body.id);
+  const status = String(body.status || "").slice(0, 40);
+  if (!id || !status) return json({ error: "id and status required" }, 400, origin);
+  await env.DB.prepare("UPDATE submissions SET status = ? WHERE id = ?").bind(status, id).run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- /admin/pricing ----
+async function handleListPricing(request, env, origin) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, label, category, price, unit, sort_order FROM pricing ORDER BY category, sort_order, label"
+  ).all();
+  return json({ pricing: results }, 200, origin);
+}
+
+async function handleUpsertPricing(request, env, origin) {
+  const body = await request.json().catch(() => ({}));
+  const id = body.id ? Number(body.id) : null;
+  const label = String(body.label || "").slice(0, 200);
+  const category = String(body.category || "").slice(0, 100);
+  const price = Number(body.price);
+  const unit = String(body.unit || "").slice(0, 40);
+  const sortOrder = Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : 0;
+  if (!label || !Number.isFinite(price)) return json({ error: "label and numeric price required" }, 400, origin);
+  const now = new Date().toISOString();
+  if (id) {
+    await env.DB.prepare("UPDATE pricing SET label=?, category=?, price=?, unit=?, sort_order=?, updated_at=? WHERE id=?")
+      .bind(label, category, price, unit, sortOrder, now, id)
+      .run();
+    return json({ ok: true, id }, 200, origin);
+  }
+  const res = await env.DB.prepare("INSERT INTO pricing (label, category, price, unit, sort_order, updated_at) VALUES (?,?,?,?,?,?)")
+    .bind(label, category, price, unit, sortOrder, now)
+    .run();
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+async function handleDeletePricing(request, env, origin, id) {
+  await env.DB.prepare("DELETE FROM pricing WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- /shed/pricing (public) + /shed/submit (public) ----
+async function handlePublicPricing(request, env, origin) {
+  const { results } = await env.DB.prepare(
+    "SELECT label, category, price, unit FROM pricing ORDER BY category, sort_order, label"
+  ).all();
+  return json({ pricing: results }, 200, origin);
+}
+
+async function handleShedSubmit(request, env, origin) {
+  const body = await request.json().catch(() => ({}));
+  const name = String(body.name || "").slice(0, 200);
+  const email = String(body.email || "").slice(0, 200);
+  const phone = String(body.phone || "").slice(0, 60);
+  if (!name || !email) return json({ error: "name and email required" }, 400, origin);
+  const details = JSON.stringify(body.details ?? body).slice(0, 5000);
+  await env.DB.prepare("INSERT INTO submissions (name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?)")
+    .bind(name, email, phone, details, "new", new Date().toISOString())
+    .run();
+  return json({ ok: true }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
+    const url = new URL(request.url);
+    const path = url.pathname;
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(origin) });
     }
-    if (request.method !== "POST") {
+
+    try {
+      if (path === "/chat" && request.method === "POST") {
+        return await handleChat(request, env, origin);
+      }
+
+      if (path === "/admin/login" && request.method === "POST") {
+        return await handleAdminLogin(request, env, origin);
+      }
+
+      if (path === "/admin/submissions" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleListSubmissions(request, env, origin);
+      }
+      if (path === "/admin/submissions/status" && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleUpdateSubmissionStatus(request, env, origin);
+      }
+
+      if (path === "/admin/pricing" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleListPricing(request, env, origin);
+      }
+      if (path === "/admin/pricing" && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleUpsertPricing(request, env, origin);
+      }
+      if (path.startsWith("/admin/pricing/") && request.method === "DELETE") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/pricing/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleDeletePricing(request, env, origin, id);
+      }
+
+      if (path === "/shed/pricing" && request.method === "GET") {
+        return await handlePublicPricing(request, env, origin);
+      }
+      if (path === "/shed/submit" && request.method === "POST") {
+        return await handleShedSubmit(request, env, origin);
+      }
+
       return json({ error: "Not found" }, 404, origin);
-    }
-
-    let body;
-    try {
-      body = await request.json();
     } catch (e) {
-      return json({ error: "Invalid JSON" }, 400, origin);
+      return json({ error: "Server error", detail: String(e) }, 500, origin);
     }
-
-    const incoming = Array.isArray(body.messages) ? body.messages : [];
-    const messages = incoming
-      .slice(-20)
-      .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-      .map((m) => ({ role: m.role, content: m.content.slice(0, 1000) }));
-
-    if (messages.length === 0) {
-      return json({ error: "No messages" }, 400, origin);
-    }
-
-    if (!env.ANTHROPIC_API_KEY) {
-      return json({ error: "Server not configured" }, 500, origin);
-    }
-
-    let upstream;
-    try {
-      upstream = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": env.ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 400,
-          system: SYSTEM_PROMPT,
-          messages
-        })
-      });
-    } catch (e) {
-      return json({ error: "Upstream request failed" }, 502, origin);
-    }
-
-    if (!upstream.ok) {
-      return json({ error: "Upstream error" }, 502, origin);
-    }
-
-    const data = await upstream.json();
-    const reply = data && data.content && data.content[0] && data.content[0].text
-      ? data.content[0].text
-      : "Sorry, I didn't catch that — could you rephrase?";
-
-    return json({ reply }, 200, origin);
   }
 };

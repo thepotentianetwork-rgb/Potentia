@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — Potentia</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);padding:24px 40px;display:flex;justify-content:space-between;align-items:center}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright)}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--silver);color:var(--bright)}
+
+main{max-width:1200px;margin:0 auto;padding:48px 40px 100px}
+section{margin-bottom:64px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
+
+table{width:100%;border-collapse:collapse}
+th{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:left;padding:10px 12px;border-bottom:1px solid var(--dim)}
+td{padding:12px;border-bottom:1px solid var(--dim);font-size:15px;font-weight:300;vertical-align:top}
+tr:hover td{background:rgba(255,255,255,0.02)}
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:24px 12px}
+.details-pre{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);white-space:pre-wrap;max-width:320px;max-height:120px;overflow-y:auto}
+
+select,input.cell{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 10px;outline:none}
+select:focus,input.cell:focus{border-color:var(--silver)}
+input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
+
+.pricing-row td{padding:8px 12px}
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--chrome);padding:7px 14px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s}
+.btn:hover{background:var(--bright)}
+.btn-ghost{color:var(--silver);background:none;border:1px solid var(--dim)}
+.btn-ghost:hover{color:var(--bright);border-color:var(--silver)}
+.btn-danger{color:#c0675a;background:none;border:1px solid var(--dim)}
+.btn-danger:hover{border-color:#c0675a}
+
+.add-form{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;padding-top:20px;border-top:1px solid var(--dim)}
+.add-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:15px;padding:10px 12px;outline:none}
+.add-form input:focus{border-color:var(--silver)}
+.add-form input[name="label"]{flex:2;min-width:160px}
+.add-form input[name="category"]{flex:1;min-width:120px}
+.add-form input[name="price"]{width:100px}
+.add-form input[name="unit"]{width:100px}
+
+.status-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);margin-top:12px}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="h-title">POTENTIA · ADMIN</span>
+  <button class="logout" id="logout-btn">Log Out</button>
+</header>
+
+<main>
+  <section>
+    <p class="sec-label">Shed Co. Partner</p>
+    <h2>Customer Submissions</h2>
+    <table>
+      <thead>
+        <tr><th>Received</th><th>Name</th><th>Email</th><th>Phone</th><th>Details</th><th>Status</th></tr>
+      </thead>
+      <tbody id="submissions-body">
+        <tr><td class="empty" colspan="6">Loading…</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <p class="sec-label">Shed Co. Partner</p>
+    <h2>Pricing</h2>
+    <table>
+      <thead>
+        <tr><th>Label</th><th>Category</th><th>Price</th><th>Unit</th><th>Order</th><th></th></tr>
+      </thead>
+      <tbody id="pricing-body">
+        <tr><td class="empty" colspan="6">Loading…</td></tr>
+      </tbody>
+    </table>
+
+    <form class="add-form" id="add-pricing-form">
+      <input type="text" name="label" placeholder="Label (e.g. 10x12 Gable Shed)" required>
+      <input type="text" name="category" placeholder="Category (e.g. Sheds)">
+      <input type="number" step="0.01" name="price" placeholder="Price" required>
+      <input type="text" name="unit" placeholder="Unit (e.g. each, /sq ft)">
+      <button type="submit" class="btn">Add</button>
+    </form>
+    <p class="status-msg" id="pricing-msg"></p>
+  </section>
+</main>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = sessionStorage.getItem('potentia_admin_token');
+
+if (!token) {
+  window.location.href = 'admin-login.html';
+}
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      sessionStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html';
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  sessionStorage.removeItem('potentia_admin_token');
+  window.location.href = 'admin-login.html';
+});
+
+// ---- Submissions ----
+function renderSubmissions(list) {
+  var body = document.getElementById('submissions-body');
+  body.innerHTML = '';
+  if (!list.length) {
+    body.innerHTML = '<tr><td class="empty" colspan="6">No submissions yet.</td></tr>';
+    return;
+  }
+  list.forEach(function (s) {
+    var tr = document.createElement('tr');
+
+    var tdDate = document.createElement('td');
+    tdDate.textContent = new Date(s.created_at).toLocaleString();
+    var tdName = document.createElement('td');
+    tdName.textContent = s.name;
+    var tdEmail = document.createElement('td');
+    tdEmail.textContent = s.email;
+    var tdPhone = document.createElement('td');
+    tdPhone.textContent = s.phone || '—';
+
+    var tdDetails = document.createElement('td');
+    var pre = document.createElement('div');
+    pre.className = 'details-pre';
+    try { pre.textContent = JSON.stringify(JSON.parse(s.details), null, 2); }
+    catch (e) { pre.textContent = s.details || ''; }
+    tdDetails.appendChild(pre);
+
+    var tdStatus = document.createElement('td');
+    var select = document.createElement('select');
+    ['new', 'contacted', 'quoted', 'won', 'lost'].forEach(function (opt) {
+      var o = document.createElement('option');
+      o.value = opt;
+      o.textContent = opt;
+      if (opt === s.status) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', function () {
+      authFetch('/admin/submissions/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: s.id, status: select.value })
+      }).catch(function () {});
+    });
+    tdStatus.appendChild(select);
+
+    tr.appendChild(tdDate);
+    tr.appendChild(tdName);
+    tr.appendChild(tdEmail);
+    tr.appendChild(tdPhone);
+    tr.appendChild(tdDetails);
+    tr.appendChild(tdStatus);
+    body.appendChild(tr);
+  });
+}
+
+function loadSubmissions() {
+  authFetch('/admin/submissions').then(function (r) {
+    if (r.ok) renderSubmissions(r.data.submissions || []);
+  });
+}
+
+// ---- Pricing ----
+function renderPricing(list) {
+  var body = document.getElementById('pricing-body');
+  body.innerHTML = '';
+  if (!list.length) {
+    body.innerHTML = '<tr><td class="empty" colspan="6">No pricing items yet — add one below.</td></tr>';
+    return;
+  }
+  list.forEach(function (p) {
+    var tr = document.createElement('tr');
+    tr.className = 'pricing-row';
+
+    function cell(name, value, type) {
+      var td = document.createElement('td');
+      var input = document.createElement('input');
+      input.className = 'cell';
+      input.type = type || 'text';
+      if (type === 'number') input.step = '0.01';
+      input.value = value == null ? '' : value;
+      input.dataset.field = name;
+      td.appendChild(input);
+      return { td: td, input: input };
+    }
+
+    var label = cell('label', p.label);
+    var category = cell('category', p.category);
+    var price = cell('price', p.price, 'number');
+    var unit = cell('unit', p.unit);
+    var order = cell('sort_order', p.sort_order, 'number');
+
+    tr.appendChild(label.td);
+    tr.appendChild(category.td);
+    tr.appendChild(price.td);
+    tr.appendChild(unit.td);
+    tr.appendChild(order.td);
+
+    var tdActions = document.createElement('td');
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-ghost';
+    saveBtn.textContent = 'Save';
+    saveBtn.style.marginRight = '8px';
+    saveBtn.addEventListener('click', function () {
+      authFetch('/admin/pricing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: p.id,
+          label: label.input.value,
+          category: category.input.value,
+          price: parseFloat(price.input.value),
+          unit: unit.input.value,
+          sort_order: parseInt(order.input.value, 10) || 0
+        })
+      }).then(function (r) {
+        document.getElementById('pricing-msg').textContent = r.ok ? 'Saved.' : 'Could not save.';
+      });
+    });
+
+    var delBtn = document.createElement('button');
+    delBtn.className = 'btn btn-danger';
+    delBtn.textContent = 'Delete';
+    delBtn.addEventListener('click', function () {
+      if (!confirm('Delete "' + p.label + '"?')) return;
+      authFetch('/admin/pricing/' + p.id, { method: 'DELETE' }).then(function (r) {
+        if (r.ok) loadPricing();
+      });
+    });
+
+    tdActions.appendChild(saveBtn);
+    tdActions.appendChild(delBtn);
+    tr.appendChild(tdActions);
+    body.appendChild(tr);
+  });
+}
+
+function loadPricing() {
+  authFetch('/admin/pricing').then(function (r) {
+    if (r.ok) renderPricing(r.data.pricing || []);
+  });
+}
+
+document.getElementById('add-pricing-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var form = e.target;
+  authFetch('/admin/pricing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      label: form.label.value,
+      category: form.category.value,
+      price: parseFloat(form.price.value),
+      unit: form.unit.value,
+      sort_order: 0
+    })
+  }).then(function (r) {
+    if (r.ok) {
+      form.reset();
+      loadPricing();
+    } else {
+      document.getElementById('pricing-msg').textContent = 'Could not add item.';
+    }
+  });
+});
+
+if (token) {
+  loadSubmissions();
+  loadPricing();
+}
+</script>
+</body>
+</html>

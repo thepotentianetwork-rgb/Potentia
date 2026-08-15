@@ -2,7 +2,7 @@
    Talks to a Cloudflare Worker backend that holds the API key server-side.
    See /worker/README.md to deploy the backend, then set WORKER_URL below. */
 (function () {
-  var WORKER_URL = "https://YOUR-WORKER-SUBDOMAIN.workers.dev/chat";
+  var WORKER_URL = "https://potentia-assistant.thepotentianetwork.workers.dev/chat";
 
   var SUGGESTIONS = [
     "What packages do you offer?",
