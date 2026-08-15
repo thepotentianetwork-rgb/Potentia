@@ -10,9 +10,9 @@
 const ALLOWED_ORIGINS = [
   "https://potentianetwork.com",
   "https://www.potentianetwork.com",
+  "https://shedpro-utah.com",
+  "https://www.shedpro-utah.com",
   "http://localhost:8080"
-  // Add the shed company's live domain here once /shed/pricing and
-  // /shed/submit are wired into their site, e.g. "https://shedpro.com".
 ];
 
 const SYSTEM_PROMPT = `You are the AI assistant embedded on the Potentia Studio website (a small web design & digital growth studio). Potentia builds custom, hand-built websites — no templates, no bloated platforms. 72-hour turnaround, free domain included for the first year.
