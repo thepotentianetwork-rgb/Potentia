@@ -21,3 +21,12 @@ CREATE TABLE IF NOT EXISTS pricing (
   sort_order INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT
 );
+
+-- Single-row store for the shed designer's full pricing engine snapshot
+-- (base price sheets, sell prices, costs, margin defaults) — the JSON blob
+-- its own #admin screen reads/writes via /shed/pricing-config.
+CREATE TABLE IF NOT EXISTS pricing_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  data TEXT NOT NULL,
+  updated_at TEXT
+);

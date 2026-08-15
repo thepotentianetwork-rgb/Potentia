@@ -59,44 +59,107 @@ If login or the dashboard doesn't work, check that all three secrets
 (`ANTHROPIC_API_KEY`, `ADMIN_PASSWORD`, `ADMIN_SESSION_SECRET`) and the
 `DB` binding are all present on the **same** Worker.
 
-## Handing off to the Shed Co. website later
+## Shed Co. designer tool integration
 
-Whoever manages their site can wire up two things, whenever you're ready
-to connect it — no changes needed on your end:
+The designer (`designer.html`, the 3D shed configurator) already has its
+own quote-request flow and its own full pricing engine + editor screen
+(`#admin` on that page). Rather than rebuild those, we connect them
+straight to this backend:
 
-**Read live pricing** (e.g. to populate their design tool):
+**Quote requests** — change `QUOTE_ENDPOINT` near the top of the
+`QUOTE REQUEST` section in `designer.html` from `/api/quote` to:
 ```js
-fetch("https://potentia-assistant.thepotentianetwork.workers.dev/shed/pricing")
-  .then(r => r.json())
-  .then(data => console.log(data.pricing)); // [{label, category, price, unit}, ...]
+var QUOTE_ENDPOINT = 'https://potentia-assistant.thepotentianetwork.workers.dev/shed/submit';
+```
+No other changes needed there — `submitQuote()`'s existing payload shape
+(`contact`, `config`, `permalink`, `quotedPrice`, `redline`) is what the
+backend expects. Every submission lands in `/admin.html` under Customer
+Submissions, showing the quoted price and a link back to the exact 3D
+design.
+
+**Pricing engine** — change `PRICING_ENDPOINT` from `/api/pricing` to:
+```js
+var PRICING_ENDPOINT = 'https://potentia-assistant.thepotentianetwork.workers.dev/shed/pricing-config';
+```
+The boot-time `GET` (every visitor loading current prices) is public and
+needs no changes. The `POST` from `paSave()` (saving edited prices) now
+requires login — see below for the exact diff, since right now anyone
+who adds `#admin` to the URL can open and save pricing changes with no
+password at all.
+
+**Required: add a login gate to `#admin`.** Find this block near the
+bottom of `designer.html`:
+```js
+if(/[#&]admin/.test(location.hash||'')) setTimeout(openPricingAdmin,300);
+```
+Replace it, and add the small login helper above it:
+```js
+var ADMIN_API = 'https://potentia-assistant.thepotentianetwork.workers.dev';
+var shedAdminToken = sessionStorage.getItem('shed_admin_token');
+function ensureShedAdmin(cb){
+  if (shedAdminToken) { cb(); return; }
+  var pass = prompt('Admin password:');
+  if (!pass) return;
+  fetch(ADMIN_API + '/admin/login', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({password: pass})
+  }).then(function(r){ return r.json().then(function(d){ return {ok:r.ok, d:d}; }); })
+    .then(function(res){
+      if (!res.ok) { alert('Incorrect password.'); return; }
+      shedAdminToken = res.d.token;
+      sessionStorage.setItem('shed_admin_token', shedAdminToken);
+      cb();
+    })
+    .catch(function(){ alert('Could not reach the server.'); });
+}
+
+if(/[#&]admin/.test(location.hash||'')) setTimeout(function(){ ensureShedAdmin(openPricingAdmin); },300);
+```
+This uses the **same** `ADMIN_PASSWORD` you set for `admin-login.html` —
+one password for both.
+
+Then update `paSave()` to send the login token, and to re-prompt if it's
+expired:
+```js
+function paSave(){
+  paCollect();
+  if(typeof buildShed==='function') buildShed();
+  if(typeof updateSum==='function') updateSum();
+  paMsg('Saving...');
+  fetch(PRICING_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+shedAdminToken},
+    body:JSON.stringify(paSnapshot())})
+    .then(function(r){
+      if(r.status===401){ sessionStorage.removeItem('shed_admin_token'); shedAdminToken=null; throw 0; }
+      if(!r.ok) throw 0;
+      paMsg('Saved — live on every device.','#86EFAC');
+    })
+    .catch(function(){ paMsg('Applied here, but the save endpoint didn\'t answer. Use Export to keep a copy.','#ffd7a0'); });
+}
 ```
 
-**Submit a customer design request** (lands in your admin dashboard):
-```js
-fetch("https://potentia-assistant.thepotentianetwork.workers.dev/shed/submit", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    name: "Customer name",
-    email: "customer@example.com",
-    phone: "555-1234",
-    details: { size: "10x12", style: "Gable", color: "Barn Red" } // whatever fields their form has
-  })
-});
-```
+**Required: allow their domain.** Add the shed site's real live domain to
+the `ALLOWED_ORIGINS` list near the top of `worker/index.js` (there's a
+placeholder comment marking where), then redeploy — otherwise the
+browser blocks these requests as cross-origin.
 
-Before that goes live, add their real domain to the `ALLOWED_ORIGINS` list
-near the top of `worker/index.js` (currently has a placeholder comment
-marking where), or their site's requests will be blocked by CORS.
+## Simple flat `/admin/pricing` table (not currently used by the designer)
+
+The `pricing` table and the "Pricing" section in `admin.html` were built
+before we saw the designer's own pricing engine. They're independent and
+harmless to leave as-is, but editing them does **not** change what the
+shed designer charges — that's driven entirely by `pricing_config`
+above. Worth removing later to avoid confusion, once the designer
+integration is confirmed working.
 
 ## Cost control already built in
 
 - Chat replies capped at 400 tokens; history capped at last 20
   messages / 1000 characters each. Model is Claude Haiku 4.5 (cheap, fast).
 - Admin sessions expire after 12 hours.
-- Submission `details` capped at 5000 characters; pricing labels/units
-  capped to sane lengths — all just to stop a malformed request from
-  writing huge rows into the database.
+- Submission `details` capped at 20,000 characters; the pricing engine
+  snapshot at 200,000; pricing labels/units capped to sane lengths — all
+  just to stop a malformed request from writing huge rows into the
+  database.
 
 ## Optional next steps
 

@@ -231,13 +231,61 @@ async function handlePublicPricing(request, env, origin) {
 
 async function handleShedSubmit(request, env, origin) {
   const body = await request.json().catch(() => ({}));
-  const name = String(body.name || "").slice(0, 200);
-  const email = String(body.email || "").slice(0, 200);
-  const phone = String(body.phone || "").slice(0, 60);
+  // Accepts either the designer tool's shape ({contact:{...}, config, permalink,
+  // quotedPrice, redline, page}) or a plain {name, email, phone, details} shape.
+  const contact = body.contact || {};
+  const name = String(contact.name || body.name || "").slice(0, 200);
+  const email = String(contact.email || body.email || "").slice(0, 200);
+  const phone = String(contact.phone || body.phone || "").slice(0, 60);
   if (!name || !email) return json({ error: "name and email required" }, 400, origin);
-  const details = JSON.stringify(body.details ?? body).slice(0, 5000);
+
+  const detailsPayload =
+    body.details !== undefined
+      ? body.details
+      : {
+          address: contact.address || null,
+          city: contact.city || null,
+          state: contact.state || null,
+          zip: contact.zip || null,
+          notes: contact.notes || null,
+          config: body.config || null,
+          permalink: body.permalink || null,
+          quotedPrice: body.quotedPrice != null ? body.quotedPrice : null,
+          redline: body.redline || null, // internal cost/margin breakdown — admin dashboard only, never public
+          page: body.page || null
+        };
+  const details = JSON.stringify(detailsPayload).slice(0, 20000);
+
   await env.DB.prepare("INSERT INTO submissions (name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?)")
     .bind(name, email, phone, details, "new", new Date().toISOString())
+    .run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- /shed/pricing-config: the designer's full pricing engine snapshot ----
+// GET is public (every visitor's designer loads live prices on boot).
+// POST is admin-only (this is what the designer's own #admin screen saves).
+async function handleGetPricingConfig(request, env, origin) {
+  const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
+  if (!row) return json({}, 200, origin);
+  let data;
+  try {
+    data = JSON.parse(row.data);
+  } catch (e) {
+    data = {};
+  }
+  return json(data, 200, origin);
+}
+
+async function handleSavePricingConfig(request, env, origin) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") return json({ error: "Invalid JSON" }, 400, origin);
+  const data = JSON.stringify(body).slice(0, 200000);
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO pricing_config (id, data, updated_at) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at"
+  )
+    .bind(data, now)
     .run();
   return json({ ok: true }, 200, origin);
 }
@@ -290,6 +338,13 @@ export default {
       }
       if (path === "/shed/submit" && request.method === "POST") {
         return await handleShedSubmit(request, env, origin);
+      }
+      if (path === "/shed/pricing-config" && request.method === "GET") {
+        return await handleGetPricingConfig(request, env, origin);
+      }
+      if (path === "/shed/pricing-config" && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleSavePricingConfig(request, env, origin);
       }
 
       return json({ error: "Not found" }, 404, origin);

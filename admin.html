@@ -143,10 +143,36 @@ function renderSubmissions(list) {
     tdPhone.textContent = s.phone || '—';
 
     var tdDetails = document.createElement('td');
+    var parsedDetails = null;
+    try { parsedDetails = JSON.parse(s.details); } catch (e) {}
+
+    if (parsedDetails && (parsedDetails.permalink || parsedDetails.quotedPrice != null)) {
+      var summary = document.createElement('div');
+      summary.style.marginBottom = '8px';
+      if (parsedDetails.quotedPrice != null) {
+        var price = document.createElement('div');
+        price.style.color = 'var(--bright)';
+        price.style.fontSize = '16px';
+        price.textContent = '$' + Number(parsedDetails.quotedPrice).toLocaleString();
+        summary.appendChild(price);
+      }
+      if (parsedDetails.permalink) {
+        var link = document.createElement('a');
+        link.href = parsedDetails.permalink;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'View 3D design ↗';
+        link.style.color = 'var(--chrome)';
+        link.style.fontFamily = "'DM Mono',monospace";
+        link.style.fontSize = '11px';
+        summary.appendChild(link);
+      }
+      tdDetails.appendChild(summary);
+    }
+
     var pre = document.createElement('div');
     pre.className = 'details-pre';
-    try { pre.textContent = JSON.stringify(JSON.parse(s.details), null, 2); }
-    catch (e) { pre.textContent = s.details || ''; }
+    pre.textContent = parsedDetails ? JSON.stringify(parsedDetails, null, 2) : (s.details || '');
     tdDetails.appendChild(pre);
 
     var tdStatus = document.createElement('td');
