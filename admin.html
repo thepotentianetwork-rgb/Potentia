@@ -22,6 +22,9 @@ header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var
 .h-brand-text{display:flex;flex-direction:column;gap:2px}
 .h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
 .h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:20px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--sp-blue)}
 .logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
 .logout:hover{border-color:var(--sp-blue);color:var(--bright)}
 
@@ -63,23 +66,6 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   50%{box-shadow:0 0 0 5px rgba(246,148,31,0)}
 }
 
-.pricing-row td{padding:8px 12px}
-.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 14px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;font-weight:700}
-.btn:hover{background:#5ad0ff}
-.btn-ghost{color:var(--sp-blue);background:none;border:1px solid var(--sp-blue-deep)}
-.btn-ghost:hover{color:var(--bright);border-color:var(--sp-blue)}
-.btn-danger{color:#e0684f;background:none;border:1px solid var(--dim)}
-.btn-danger:hover{border-color:#e0684f}
-
-.add-form{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;padding-top:20px;border-top:1px solid var(--dim)}
-.add-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:15px;padding:10px 12px;outline:none}
-.add-form input:focus{border-color:var(--sp-blue)}
-.add-form input[name="label"]{flex:2;min-width:160px}
-.add-form input[name="category"]{flex:1;min-width:120px}
-.add-form input[name="price"]{width:100px}
-.add-form input[name="unit"]{width:100px}
-
-.status-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);margin-top:12px}
 </style>
 </head>
 <body>
@@ -92,7 +78,10 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
       <span class="h-sub">Built &amp; managed by Potentia</span>
     </div>
   </div>
-  <button class="logout" id="logout-btn">Log Out</button>
+  <div class="h-actions">
+    <a href="admin-pricing.html" class="back-link">Pricing →</a>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
 </header>
 
 <main>
@@ -107,28 +96,6 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
         <tr><td class="empty" colspan="8">Loading…</td></tr>
       </tbody>
     </table>
-  </section>
-
-  <section>
-    <p class="sec-label">ShedPro Partner</p>
-    <h2>Pricing</h2>
-    <table>
-      <thead>
-        <tr><th>Label</th><th>Category</th><th>Price</th><th>Unit</th><th>Order</th><th></th></tr>
-      </thead>
-      <tbody id="pricing-body">
-        <tr><td class="empty" colspan="6">Loading…</td></tr>
-      </tbody>
-    </table>
-
-    <form class="add-form" id="add-pricing-form">
-      <input type="text" name="label" placeholder="Label (e.g. 10x12 Gable Shed)" required>
-      <input type="text" name="category" placeholder="Category (e.g. Sheds)">
-      <input type="number" step="0.01" name="price" placeholder="Price" required>
-      <input type="text" name="unit" placeholder="Unit (e.g. each, /sq ft)">
-      <button type="submit" class="btn">Add</button>
-    </form>
-    <p class="status-msg" id="pricing-msg"></p>
   </section>
 </main>
 
@@ -258,113 +225,8 @@ function loadCustomers() {
   });
 }
 
-// ---- Pricing ----
-function renderPricing(list) {
-  var body = document.getElementById('pricing-body');
-  body.innerHTML = '';
-  if (!list.length) {
-    body.innerHTML = '<tr><td class="empty" colspan="6">No pricing items yet — add one below.</td></tr>';
-    return;
-  }
-  list.forEach(function (p) {
-    var tr = document.createElement('tr');
-    tr.className = 'pricing-row';
-
-    function cell(name, value, type) {
-      var td = document.createElement('td');
-      var input = document.createElement('input');
-      input.className = 'cell';
-      input.type = type || 'text';
-      if (type === 'number') input.step = '0.01';
-      input.value = value == null ? '' : value;
-      input.dataset.field = name;
-      td.appendChild(input);
-      return { td: td, input: input };
-    }
-
-    var label = cell('label', p.label);
-    var category = cell('category', p.category);
-    var price = cell('price', p.price, 'number');
-    var unit = cell('unit', p.unit);
-    var order = cell('sort_order', p.sort_order, 'number');
-
-    tr.appendChild(label.td);
-    tr.appendChild(category.td);
-    tr.appendChild(price.td);
-    tr.appendChild(unit.td);
-    tr.appendChild(order.td);
-
-    var tdActions = document.createElement('td');
-    var saveBtn = document.createElement('button');
-    saveBtn.className = 'btn btn-ghost';
-    saveBtn.textContent = 'Save';
-    saveBtn.style.marginRight = '8px';
-    saveBtn.addEventListener('click', function () {
-      authFetch('/admin/pricing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: p.id,
-          label: label.input.value,
-          category: category.input.value,
-          price: parseFloat(price.input.value),
-          unit: unit.input.value,
-          sort_order: parseInt(order.input.value, 10) || 0
-        })
-      }).then(function (r) {
-        document.getElementById('pricing-msg').textContent = r.ok ? 'Saved.' : 'Could not save.';
-      });
-    });
-
-    var delBtn = document.createElement('button');
-    delBtn.className = 'btn btn-danger';
-    delBtn.textContent = 'Delete';
-    delBtn.addEventListener('click', function () {
-      if (!confirm('Delete "' + p.label + '"?')) return;
-      authFetch('/admin/pricing/' + p.id, { method: 'DELETE' }).then(function (r) {
-        if (r.ok) loadPricing();
-      });
-    });
-
-    tdActions.appendChild(saveBtn);
-    tdActions.appendChild(delBtn);
-    tr.appendChild(tdActions);
-    body.appendChild(tr);
-  });
-}
-
-function loadPricing() {
-  authFetch('/admin/pricing').then(function (r) {
-    if (r.ok) renderPricing(r.data.pricing || []);
-  });
-}
-
-document.getElementById('add-pricing-form').addEventListener('submit', function (e) {
-  e.preventDefault();
-  var form = e.target;
-  authFetch('/admin/pricing', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      label: form.label.value,
-      category: form.category.value,
-      price: parseFloat(form.price.value),
-      unit: form.unit.value,
-      sort_order: 0
-    })
-  }).then(function (r) {
-    if (r.ok) {
-      form.reset();
-      loadPricing();
-    } else {
-      document.getElementById('pricing-msg').textContent = 'Could not add item.';
-    }
-  });
-});
-
 if (token) {
   loadCustomers();
-  loadPricing();
 }
 </script>
 </body>

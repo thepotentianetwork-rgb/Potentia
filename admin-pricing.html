@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pricing — ShedPro Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;--warn:#e0684f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--black);z-index:10}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:12px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--sp-blue);color:var(--bright)}
+.save-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--sp-blue);padding:9px 20px;border:none;text-transform:uppercase;cursor:pointer;font-weight:700}
+.save-btn:hover{background:#5ad0ff}
+.save-btn:disabled{opacity:0.5;cursor:not-allowed}
+
+main{max-width:1200px;margin:0 auto;padding:40px 40px 120px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:8px}
+.sec-intro{font-size:15px;color:var(--silver);max-width:700px;line-height:1.6;margin-bottom:24px}
+section{margin-bottom:64px}
+
+.summary-bar{display:flex;gap:32px;flex-wrap:wrap;padding:18px 24px;border:1px solid var(--dim);margin-bottom:28px}
+.summary-item .sl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:4px}
+.summary-item .sv{font-size:22px;color:var(--bright);font-weight:300}
+.summary-item .sv.warn{color:var(--warn)}
+
+.sheet-panel{border:1px solid var(--dim);margin-bottom:12px}
+.sheet-panel summary{list-style:none;cursor:pointer;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;font-family:'DM Mono',monospace}
+.sheet-panel summary::-webkit-details-marker{display:none}
+.sheet-panel summary:hover{background:rgba(255,255,255,0.02)}
+.sheet-title{display:flex;align-items:center;gap:14px}
+.sheet-name{font-size:15px;letter-spacing:0.05em;color:var(--bright);text-transform:uppercase}
+.sheet-arrow{color:var(--dim);font-size:11px;transition:transform 0.2s}
+.sheet-panel[open] .sheet-arrow{transform:rotate(90deg)}
+.count-tag{font-size:10px;letter-spacing:0.1em;padding:4px 10px;border-radius:20px;text-transform:uppercase}
+.count-tag.empty{color:var(--warn);background:rgba(224,104,79,0.12);border:1px solid rgba(224,104,79,0.4)}
+.count-tag.partial{color:var(--sp-orange);background:rgba(246,148,31,0.12);border:1px solid rgba(246,148,31,0.4)}
+.count-tag.complete{color:#5fd08a;background:rgba(95,208,138,0.12);border:1px solid rgba(95,208,138,0.4)}
+
+.grid-wrap{overflow-x:auto;padding:0 20px 20px}
+table.price-grid{border-collapse:collapse;font-family:'DM Mono',monospace;font-size:12px}
+table.price-grid th{padding:8px 6px;color:var(--dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:400;text-align:center;white-space:nowrap}
+table.price-grid th.corner{color:var(--silver)}
+table.price-grid td{padding:3px}
+table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:10px;white-space:nowrap}
+.cell-inp{width:76px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 6px;text-align:right;outline:none;transition:border-color 0.15s,background 0.15s}
+.cell-inp:focus{border-color:var(--sp-blue)}
+.cell-inp.missing{border-color:rgba(224,104,79,0.5);background:rgba(224,104,79,0.06)}
+.cell-inp.missing::placeholder{color:rgba(224,104,79,0.6)}
+
+.comp-group{border:1px solid var(--dim);margin-bottom:20px}
+.comp-group-head{padding:16px 20px;border-bottom:1px solid var(--dim);display:flex;justify-content:space-between;align-items:center}
+.comp-group-title{font-family:'DM Mono',monospace;font-size:13px;letter-spacing:0.1em;color:var(--bright);text-transform:uppercase}
+.comp-group-count{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+.comp-list{padding:8px 20px}
+.comp-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
+.comp-row:last-child{border-bottom:none}
+.comp-name{flex:1;font-size:15px;color:var(--chrome);font-weight:300}
+.comp-basis{font-family:'DM Mono',monospace;font-size:9px;color:var(--dim);text-transform:uppercase;border:1px solid var(--dim);padding:3px 8px;border-radius:12px}
+.comp-price-wrap{display:flex;align-items:center;gap:4px}
+.comp-price-wrap span{color:var(--dim);font-family:'DM Mono',monospace;font-size:12px}
+.comp-price{width:90px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:13px;padding:7px 8px;text-align:right;outline:none}
+.comp-price:focus{border-color:var(--sp-blue)}
+.comp-del{font-family:'DM Mono',monospace;font-size:10px;color:var(--warn);background:none;border:1px solid var(--dim);padding:6px 10px;cursor:pointer;text-transform:uppercase}
+.comp-del:hover{border-color:var(--warn)}
+
+.add-form{display:flex;gap:8px;padding:14px 20px;border-top:1px solid var(--dim)}
+.add-form input{flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:15px;padding:9px 12px;outline:none}
+.add-form input:focus{border-color:var(--sp-blue)}
+.add-form input.price-field{flex:0 0 110px;font-family:'DM Mono',monospace;font-size:13px}
+.add-form button{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:9px 16px;border:none;text-transform:uppercase;cursor:pointer;font-weight:700}
+.add-form button:hover{background:#5ad0ff}
+
+.status-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);margin-top:8px;text-align:right}
+.note{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);line-height:1.6;margin-top:8px}
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:20px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="shedpro-logo.png" alt="ShedPro">
+    <div class="h-brand-text">
+      <span class="h-title">SHEDPRO ADMIN</span>
+      <span class="h-sub">Built &amp; managed by Potentia</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <a href="admin.html" class="back-link">← All Customers</a>
+    <button class="save-btn" id="save-btn">Save Pricing</button>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <p class="sec-label">ShedPro Partner</p>
+  <h2>Pricing</h2>
+  <p class="sec-intro">This is the exact pricing your designer tool uses live — base price by size, plus every add-on. Anything highlighted in red hasn't been priced yet.</p>
+
+  <div class="summary-bar" id="summary-bar">
+    <div class="summary-item"><div class="sl">Base Prices Filled</div><div class="sv" id="sum-base">—</div></div>
+    <div class="summary-item"><div class="sl">Sheets Untouched</div><div class="sv warn" id="sum-empty-sheets">—</div></div>
+  </div>
+
+  <section>
+    <p class="sec-label">Base Price by Size</p>
+    <h2>Shed Styles</h2>
+    <p class="sec-intro">A porch isn't an add-on here — it switches which table gets read. Fill in what applies to each style; blank cells fall back to an estimate and get flagged internally until you set a real price.</p>
+    <div id="base-prices-host"></div>
+  </section>
+
+  <section>
+    <p class="sec-label">Add-Ons</p>
+    <h2>Components</h2>
+    <p class="sec-intro">Doors, windows, and every other option the customer can add. Prices here are upcharges over the included base — editing a price updates it everywhere immediately once saved.</p>
+    <div id="components-host"></div>
+  </section>
+
+  <p class="status-msg" id="save-msg"></p>
+</main>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_admin_token');
+var selfUrl = 'admin-pricing.html';
+
+if (!token) window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      localStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('potentia_admin_token');
+  window.location.href = 'admin-login.html';
+});
+
+// ---- Data model (mirrors designer.html's SELL.baseSheets / SELL groups) ----
+var GRID_WIDTHS = [6, 8, 10, 11, 12, 14, 16];
+var GRID_LENGTHS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
+var SHEET_ORDER = ['aframe', 'aframe-front', 'aframe-side', 'barn', 'leanto', 'poolhouse', '3peak', '4peak'];
+var SHEET_LABELS = {
+  'aframe': 'A-Frame Style', 'aframe-front': 'A-Frame Cabin', 'aframe-side': 'Side Porch A-Frame',
+  'barn': 'Barn Style', 'leanto': 'Single Slope', 'poolhouse': 'Poolhouse',
+  '3peak': '3 Peak', '4peak': '4 Peak'
+};
+var FLAT_GROUPS = [
+  { key: 'doors', label: 'Doors', unit: '' },
+  { key: 'windows', label: 'Windows', unit: '' },
+  { key: 'siding', label: 'Siding', unit: '/ sq ft of wall' },
+  { key: 'electrical', label: 'Electrical Packages', unit: '' }
+];
+
+var config = null; // full fetched snapshot; only baseSheets + SELL are edited here
+
+function el(tag, attrs, children) {
+  var e = document.createElement(tag);
+  for (var k in attrs || {}) {
+    if (k === 'class') e.className = attrs[k];
+    else if (k === 'text') e.textContent = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  }
+  (children || []).forEach(function (c) { e.appendChild(c); });
+  return e;
+}
+
+// ---- Base price grid ----
+function renderBasePrices() {
+  var host = document.getElementById('base-prices-host');
+  host.innerHTML = '';
+  var totalFilled = 0, totalCells = 0, emptySheets = 0;
+
+  SHEET_ORDER.forEach(function (sheetKey) {
+    if (!config.baseSheets[sheetKey]) config.baseSheets[sheetKey] = {};
+    var sheetData = config.baseSheets[sheetKey];
+
+    var filled = 0;
+    var total = GRID_WIDTHS.length * GRID_LENGTHS.length;
+    GRID_WIDTHS.forEach(function (w) {
+      GRID_LENGTHS.forEach(function (l) {
+        var v = Number(sheetData[w + 'x' + l]);
+        if (isFinite(v) && v > 0) filled++;
+      });
+    });
+    totalFilled += filled;
+    totalCells += total;
+    if (filled === 0) emptySheets++;
+
+    var details = el('details', { class: 'sheet-panel' });
+    var summary = el('summary');
+    var titleWrap = el('div', { class: 'sheet-title' });
+    titleWrap.appendChild(el('span', { class: 'sheet-arrow', text: '▶' }));
+    titleWrap.appendChild(el('span', { class: 'sheet-name', text: SHEET_LABELS[sheetKey] || sheetKey }));
+    var countTag = el('span', {
+      class: 'count-tag ' + (filled === 0 ? 'empty' : filled === total ? 'complete' : 'partial'),
+      text: filled + ' / ' + total + ' filled'
+    });
+    countTag.id = 'count-' + sheetKey;
+    summary.appendChild(titleWrap);
+    summary.appendChild(countTag);
+    details.appendChild(summary);
+
+    var gridWrap = el('div', { class: 'grid-wrap' });
+    var table = el('table', { class: 'price-grid' });
+    var thead = el('thead');
+    var headRow = el('tr');
+    headRow.appendChild(el('th', { class: 'corner', text: 'Length \\ Width' }));
+    GRID_WIDTHS.forEach(function (w) { headRow.appendChild(el('th', { text: w + "'" })); });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = el('tbody');
+    GRID_LENGTHS.forEach(function (l) {
+      var row = el('tr');
+      row.appendChild(el('td', { class: 'rowhead', text: l + "'" }));
+      GRID_WIDTHS.forEach(function (w) {
+        var key = w + 'x' + l;
+        var val = Number(sheetData[key]);
+        var hasVal = isFinite(val) && val > 0;
+        var input = el('input', { class: 'cell-inp' + (hasVal ? '' : ' missing'), type: 'number', min: '0', step: '1', placeholder: hasVal ? '' : '—' });
+        if (hasVal) input.value = val;
+        input.addEventListener('input', function () {
+          var n = Number(input.value);
+          if (input.value.trim() === '' || !isFinite(n) || n <= 0) {
+            delete sheetData[key];
+            input.classList.add('missing');
+          } else {
+            sheetData[key] = n;
+            input.classList.remove('missing');
+          }
+          updateSheetCount(sheetKey);
+        });
+        var td = el('td');
+        td.appendChild(input);
+        row.appendChild(td);
+      });
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    gridWrap.appendChild(table);
+    details.appendChild(gridWrap);
+    host.appendChild(details);
+  });
+
+  document.getElementById('sum-base').textContent = totalFilled + ' / ' + totalCells;
+  document.getElementById('sum-empty-sheets').textContent = emptySheets + ' of ' + SHEET_ORDER.length;
+}
+
+function updateSheetCount(sheetKey) {
+  var sheetData = config.baseSheets[sheetKey] || {};
+  var filled = 0, total = GRID_WIDTHS.length * GRID_LENGTHS.length;
+  GRID_WIDTHS.forEach(function (w) {
+    GRID_LENGTHS.forEach(function (l) {
+      var v = Number(sheetData[w + 'x' + l]);
+      if (isFinite(v) && v > 0) filled++;
+    });
+  });
+  var tag = document.getElementById('count-' + sheetKey);
+  if (tag) {
+    tag.textContent = filled + ' / ' + total + ' filled';
+    tag.className = 'count-tag ' + (filled === 0 ? 'empty' : filled === total ? 'complete' : 'partial');
+  }
+  // refresh the top summary too
+  var totalFilled = 0, totalCells = 0, emptySheets = 0;
+  SHEET_ORDER.forEach(function (sk) {
+    var sd = config.baseSheets[sk] || {};
+    var f = 0, t = GRID_WIDTHS.length * GRID_LENGTHS.length;
+    GRID_WIDTHS.forEach(function (w) { GRID_LENGTHS.forEach(function (l) { var v = Number(sd[w + 'x' + l]); if (isFinite(v) && v > 0) f++; }); });
+    totalFilled += f; totalCells += t; if (f === 0) emptySheets++;
+  });
+  document.getElementById('sum-base').textContent = totalFilled + ' / ' + totalCells;
+  document.getElementById('sum-empty-sheets').textContent = emptySheets + ' of ' + SHEET_ORDER.length;
+}
+
+// ---- Components ----
+function renderComponents() {
+  var host = document.getElementById('components-host');
+  host.innerHTML = '';
+
+  FLAT_GROUPS.forEach(function (g) {
+    if (!config.SELL[g.key] || typeof config.SELL[g.key] !== 'object') config.SELL[g.key] = {};
+    host.appendChild(buildFlatGroup(g.key, g.label, g.unit, config.SELL[g.key]));
+  });
+
+  if (!config.SELL.options) config.SELL.options = {};
+  if (!config.SELL.options.flat) config.SELL.options.flat = {};
+  if (!config.SELL.options.perLinFt) config.SELL.options.perLinFt = {};
+  if (!config.SELL.options.perSqft) config.SELL.options.perSqft = {};
+
+  host.appendChild(buildFlatGroup('options.flat', 'Additional Options', 'each', config.SELL.options.flat));
+  host.appendChild(buildFlatGroup('options.perLinFt', 'Options — Priced Per Linear Ft', '/ linear ft', config.SELL.options.perLinFt));
+  host.appendChild(buildPerSqftGroup(config.SELL.options.perSqft));
+}
+
+function buildFlatGroup(groupKey, label, unit, dataObj) {
+  var wrap = el('div', { class: 'comp-group' });
+  var head = el('div', { class: 'comp-group-head' });
+  head.appendChild(el('span', { class: 'comp-group-title', text: label }));
+  var countEl = el('span', { class: 'comp-group-count', text: Object.keys(dataObj).length + ' items' });
+  head.appendChild(countEl);
+  wrap.appendChild(head);
+
+  var list = el('div', { class: 'comp-list' });
+  wrap.appendChild(list);
+
+  function renderList() {
+    list.innerHTML = '';
+    var names = Object.keys(dataObj);
+    if (!names.length) {
+      list.appendChild(el('p', { class: 'empty', text: 'No items yet — add one below.' }));
+    }
+    names.forEach(function (name) {
+      var row = el('div', { class: 'comp-row' });
+      row.appendChild(el('span', { class: 'comp-name', text: name }));
+      var priceWrap = el('div', { class: 'comp-price-wrap' });
+      priceWrap.appendChild(el('span', { text: '$' }));
+      var priceInp = el('input', { class: 'comp-price', type: 'number', step: '0.01' });
+      priceInp.value = dataObj[name];
+      priceInp.addEventListener('input', function () {
+        var n = Number(priceInp.value);
+        dataObj[name] = isFinite(n) ? n : 0;
+      });
+      priceWrap.appendChild(priceInp);
+      if (unit) priceWrap.appendChild(el('span', { text: unit }));
+      row.appendChild(priceWrap);
+      var delBtn = el('button', { class: 'comp-del', text: 'Remove' });
+      delBtn.addEventListener('click', function () {
+        if (!confirm('Remove "' + name + '"? This won\'t remove it from the designer\'s selectable options, just its price.')) return;
+        delete dataObj[name];
+        countEl.textContent = Object.keys(dataObj).length + ' items';
+        renderList();
+      });
+      row.appendChild(delBtn);
+      list.appendChild(row);
+    });
+  }
+  renderList();
+
+  var addForm = el('div', { class: 'add-form' });
+  var nameInp = el('input', { type: 'text', placeholder: 'Item name' });
+  var priceInp2 = el('input', { class: 'price-field', type: 'number', step: '0.01', placeholder: 'Price' });
+  var addBtn = el('button', { text: 'Add' });
+  addBtn.addEventListener('click', function () {
+    var name = nameInp.value.trim();
+    var price = Number(priceInp2.value);
+    if (!name || !isFinite(price)) return;
+    dataObj[name] = price;
+    nameInp.value = ''; priceInp2.value = '';
+    countEl.textContent = Object.keys(dataObj).length + ' items';
+    renderList();
+  });
+  addForm.appendChild(nameInp);
+  addForm.appendChild(priceInp2);
+  addForm.appendChild(addBtn);
+  wrap.appendChild(addForm);
+  wrap.appendChild(el('p', { class: 'note', text: 'Adding an item here prices it, but making it selectable in the designer itself may need a separate code change.' }));
+
+  return wrap;
+}
+
+function buildPerSqftGroup(dataObj) {
+  var wrap = el('div', { class: 'comp-group' });
+  var head = el('div', { class: 'comp-group-head' });
+  head.appendChild(el('span', { class: 'comp-group-title', text: 'Options — Priced Per Sq Ft' }));
+  head.appendChild(el('span', { class: 'comp-group-count', text: Object.keys(dataObj).length + ' items' }));
+  wrap.appendChild(head);
+
+  var list = el('div', { class: 'comp-list' });
+  Object.keys(dataObj).forEach(function (name) {
+    var item = dataObj[name] || {};
+    var row = el('div', { class: 'comp-row' });
+    row.appendChild(el('span', { class: 'comp-name', text: name }));
+    if (item.basis) row.appendChild(el('span', { class: 'comp-basis', text: item.basis }));
+    var priceWrap = el('div', { class: 'comp-price-wrap' });
+    priceWrap.appendChild(el('span', { text: '$' }));
+    var rateInp = el('input', { class: 'comp-price', type: 'number', step: '0.01' });
+    rateInp.value = item.rate != null ? item.rate : 0;
+    rateInp.addEventListener('input', function () {
+      var n = Number(rateInp.value);
+      item.rate = isFinite(n) ? n : 0;
+      dataObj[name] = item;
+    });
+    priceWrap.appendChild(rateInp);
+    priceWrap.appendChild(el('span', { text: '/ sq ft' }));
+    row.appendChild(priceWrap);
+    list.appendChild(row);
+  });
+  if (!Object.keys(dataObj).length) list.appendChild(el('p', { class: 'empty', text: 'No items.' }));
+  wrap.appendChild(list);
+  wrap.appendChild(el('p', { class: 'note', text: 'Rate only — how each is measured (wall, floor, roof, etc.) is fixed in the designer\'s code.' }));
+  return wrap;
+}
+
+// ---- Load + Save ----
+function loadConfig() {
+  fetch(API_BASE + '/shed/pricing-config')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      config = (data && typeof data === 'object') ? data : {};
+      if (!config.baseSheets) config.baseSheets = {};
+      if (!config.SELL) config.SELL = {};
+      renderBasePrices();
+      renderComponents();
+    })
+    .catch(function () {
+      document.getElementById('base-prices-host').innerHTML = '<p class="empty">Could not load pricing data.</p>';
+    });
+}
+
+document.getElementById('save-btn').addEventListener('click', function () {
+  var btn = document.getElementById('save-btn');
+  var msg = document.getElementById('save-msg');
+  btn.disabled = true;
+  msg.textContent = 'Saving...';
+  authFetch('/shed/pricing-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  })
+    .then(function (r) {
+      msg.textContent = r.ok ? 'Saved — live on every device.' : 'Could not save.';
+    })
+    .catch(function () {
+      msg.textContent = 'Could not save — check your connection.';
+    })
+    .finally(function () {
+      btn.disabled = false;
+    });
+});
+
+if (token) loadConfig();
+</script>
+</body>
+</html>
