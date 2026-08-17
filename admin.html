@@ -3,19 +3,27 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Admin — Potentia</title>
+<title>Admin — ShedPro</title>
 <meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
 body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
 
-header{border-bottom:1px solid var(--dim);padding:24px 40px;display:flex;justify-content:space-between;align-items:center}
-.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright)}
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
 .logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
-.logout:hover{border-color:var(--silver);color:var(--bright)}
+.logout:hover{border-color:var(--sp-blue);color:var(--bright)}
 
 main{max-width:1200px;margin:0 auto;padding:48px 40px 100px}
 section{margin-bottom:64px}
@@ -30,20 +38,26 @@ tr:hover td{background:rgba(255,255,255,0.02)}
 .details-pre{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);white-space:pre-wrap;max-width:320px;max-height:120px;overflow-y:auto}
 
 select,input.cell{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 10px;outline:none}
-select:focus,input.cell:focus{border-color:var(--silver)}
+select:focus,input.cell:focus{border-color:var(--sp-blue)}
 input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px}
+.status-new{background:var(--sp-blue)}
+.status-contacted,.status-quoted{background:var(--sp-orange)}
+.status-won{background:#5fd08a}
+.status-lost{background:var(--dim)}
+
 .pricing-row td{padding:8px 12px}
-.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--chrome);padding:7px 14px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s}
-.btn:hover{background:var(--bright)}
-.btn-ghost{color:var(--silver);background:none;border:1px solid var(--dim)}
-.btn-ghost:hover{color:var(--bright);border-color:var(--silver)}
-.btn-danger{color:#c0675a;background:none;border:1px solid var(--dim)}
-.btn-danger:hover{border-color:#c0675a}
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 14px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;font-weight:700}
+.btn:hover{background:#5ad0ff}
+.btn-ghost{color:var(--sp-blue);background:none;border:1px solid var(--sp-blue-deep)}
+.btn-ghost:hover{color:var(--bright);border-color:var(--sp-blue)}
+.btn-danger{color:#e0684f;background:none;border:1px solid var(--dim)}
+.btn-danger:hover{border-color:#e0684f}
 
 .add-form{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;padding-top:20px;border-top:1px solid var(--dim)}
 .add-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:15px;padding:10px 12px;outline:none}
-.add-form input:focus{border-color:var(--silver)}
+.add-form input:focus{border-color:var(--sp-blue)}
 .add-form input[name="label"]{flex:2;min-width:160px}
 .add-form input[name="category"]{flex:1;min-width:120px}
 .add-form input[name="price"]{width:100px}
@@ -55,13 +69,19 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 <body>
 
 <header>
-  <span class="h-title">POTENTIA · ADMIN</span>
+  <div class="h-brand">
+    <img src="shedpro-logo.png" alt="ShedPro">
+    <div class="h-brand-text">
+      <span class="h-title">SHEDPRO ADMIN</span>
+      <span class="h-sub">Built &amp; managed by Potentia</span>
+    </div>
+  </div>
   <button class="logout" id="logout-btn">Log Out</button>
 </header>
 
 <main>
   <section>
-    <p class="sec-label">Shed Co. Partner</p>
+    <p class="sec-label">ShedPro Partner</p>
     <h2>Customer Submissions</h2>
     <table>
       <thead>
@@ -74,7 +94,7 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
   </section>
 
   <section>
-    <p class="sec-label">Shed Co. Partner</p>
+    <p class="sec-label">ShedPro Partner</p>
     <h2>Pricing</h2>
     <table>
       <thead>
@@ -162,7 +182,7 @@ function renderSubmissions(list) {
         link.target = '_blank';
         link.rel = 'noopener';
         link.textContent = 'View 3D design ↗';
-        link.style.color = 'var(--chrome)';
+        link.style.color = 'var(--sp-blue)';
         link.style.fontFamily = "'DM Mono',monospace";
         link.style.fontSize = '11px';
         summary.appendChild(link);
@@ -176,6 +196,10 @@ function renderSubmissions(list) {
     tdDetails.appendChild(pre);
 
     var tdStatus = document.createElement('td');
+    tdStatus.style.display = 'flex';
+    tdStatus.style.alignItems = 'center';
+    var dot = document.createElement('span');
+    dot.className = 'status-dot status-' + s.status;
     var select = document.createElement('select');
     ['new', 'contacted', 'quoted', 'won', 'lost'].forEach(function (opt) {
       var o = document.createElement('option');
@@ -185,12 +209,14 @@ function renderSubmissions(list) {
       select.appendChild(o);
     });
     select.addEventListener('change', function () {
+      dot.className = 'status-dot status-' + select.value;
       authFetch('/admin/submissions/status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: s.id, status: select.value })
       }).catch(function () {});
     });
+    tdStatus.appendChild(dot);
     tdStatus.appendChild(select);
 
     tr.appendChild(tdDate);
