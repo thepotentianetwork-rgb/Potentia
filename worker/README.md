@@ -181,6 +181,55 @@ needed for this part.
 - Notes: type in the box and hit **Add Note** — the most recent shows
   first with an orange accent, older notes stay below it.
 
+## Floor plans and 3D view renders on the quote document
+
+`quote.html` now also shows:
+- **A floor plan** — drawn as an SVG straight from the door/window
+  wall + position data the designer already captures in `config`. No
+  new setup needed, this works automatically once orders come through.
+- **5 building images** (perspective, front, right, back, left) —
+  captured by the designer at the moment of submission and stored in
+  Cloudflare R2 (object storage — images are too big to put in the D1
+  database). This part needs one more piece of infrastructure.
+
+### 1. Create an R2 bucket
+
+1. Cloudflare dashboard → **Storage & Databases** (or search "R2") →
+   **R2 Object Storage**.
+2. **Create bucket**, name it `potentia-shed-renders` → Create.
+3. Open the bucket → **Settings** → under **Public Development URL**,
+   click **Enable**. Copy the URL it gives you — looks like
+   `https://pub-xxxxxxxxxxxx.r2.dev`. Renders aren't sensitive (they're
+   just shed pictures), so a public URL is fine and much simpler than
+   proxying every image through the Worker.
+
+### 2. Bind the bucket to the Worker
+
+1. `potentia-assistant` Worker → **Settings → Bindings** → **Add binding**.
+2. Type: **R2 Bucket**. Variable name: `RENDERS` (exactly that).
+3. Bucket: pick `potentia-shed-renders`.
+4. Save/Deploy.
+
+### 3. Add one more variable (not a secret — it's just a URL)
+
+1. Same Worker → **Settings → Variables and Secrets** → **Add variable**.
+2. Type: **Text** (not Secret this time).
+3. Name: `RENDERS_PUBLIC_BASE`. Value: the `pub-....r2.dev` URL from step 1.
+4. Save/Deploy.
+
+### 4. Redeploy the Worker code and update designer.html
+
+- Paste the latest `worker/index.js` into Edit code and Deploy (adds the
+  upload-to-R2 logic).
+- Swap in the latest `designer.html` — the render capture now grabs 5
+  labeled angles (front/back/left/right/perspective) instead of 3
+  unlabeled ones. Ask for the updated file if you don't have it handy.
+
+Once that's deployed, new quote submissions will include real building
+images automatically — nothing else to wire up. Orders submitted before
+this was set up just won't have images (floor plan still works for
+those, since it doesn't depend on R2).
+
 ## Simple flat `/admin/pricing` table (not currently used by the designer)
 
 The `pricing` table and the "Pricing" section in `admin.html` were built

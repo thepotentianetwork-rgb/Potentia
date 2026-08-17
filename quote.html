@@ -51,13 +51,24 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 
 .empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
 
+.render-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.render-cell{border:1px solid var(--dim);overflow:hidden}
+.render-cell img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#000}
+.render-caption{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--silver);text-transform:uppercase;text-align:center;padding:6px 0}
+
+.floorplan-wrap{text-align:center}
+.floorplan-legend{display:flex;justify-content:center;gap:24px;margin-top:14px;font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);text-transform:uppercase}
+.legend-swatch{display:inline-block;width:14px;height:4px;margin-right:6px;vertical-align:middle}
+
 @media print{
   body{background:#fff;color:#111;padding:0}
   .toolbar{display:none}
   .doc{border:none;background:#fff;max-width:100%}
   .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong{color:#111}
-  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer{color:#555}
+  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend{color:#555}
   .price-box{background:#f5f9fc;border-color:#bcdcf0}
+  .render-cell{border-color:#ccc}
+  .render-grid{break-inside:avoid}
 }
 </style>
 </head>
@@ -160,6 +171,9 @@ function render(submission, customer) {
     +   (safePermalink ? '<a class="design-link" href="' + esc(safePermalink) + '" target="_blank" rel="noopener">View this exact 3D design ↗</a>' : '')
     + '</div>'
 
+    + '<div class="doc-section" id="renders-section"></div>'
+    + '<div class="doc-section" id="floorplan-section"></div>'
+
     + '<div class="doc-section">'
     +   '<div class="price-box">'
     +     '<span class="price-label">Quoted Price</span>'
@@ -175,6 +189,140 @@ function render(submission, customer) {
     + '</div>';
 
   document.getElementById('doc').innerHTML = html;
+
+  renderImages(details.renders, document.getElementById('renders-section'));
+  renderFloorPlan(config, document.getElementById('floorplan-section'));
+}
+
+// ---- Building Images (from R2, if this order has captured renders) ----
+function renderImages(renders, container) {
+  if (!container || !renders || typeof renders !== 'object') return;
+  var order = ['perspective', 'front', 'right', 'back', 'left'];
+  var grid = document.createElement('div');
+  grid.className = 'render-grid';
+  var any = false;
+
+  order.forEach(function (view) {
+    var url = renders[view];
+    if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return;
+    any = true;
+    var cell = document.createElement('div');
+    cell.className = 'render-cell';
+    var img = document.createElement('img');
+    img.src = url;
+    img.alt = view;
+    img.loading = 'lazy';
+    var cap = document.createElement('div');
+    cap.className = 'render-caption';
+    cap.textContent = view.charAt(0).toUpperCase() + view.slice(1);
+    cell.appendChild(img);
+    cell.appendChild(cap);
+    grid.appendChild(cell);
+  });
+
+  if (!any) return;
+  var label = document.createElement('div');
+  label.className = 'doc-label';
+  label.textContent = 'Building Images';
+  container.appendChild(label);
+  container.appendChild(grid);
+}
+
+// ---- Floor Plan (drawn from door/window wall+position data we already capture) ----
+var SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  var e = document.createElementNS(SVG_NS, tag);
+  for (var k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+
+function buildFloorPlanSVG(config) {
+  var w = Number(config.w), l = Number(config.l);
+  if (!isFinite(w) || !isFinite(l) || w <= 0 || l <= 0 || w > 200 || l > 200) return null;
+
+  var validWalls = ['front', 'back', 'left', 'right'];
+  var pad = 46, scale = 22;
+  var wPx = w * scale, lPx = l * scale;
+  var svgW = wPx + pad * 2, svgH = lPx + pad * 2 + 20;
+
+  var svg = svgEl('svg', { viewBox: '0 0 ' + svgW + ' ' + svgH, width: '100%' });
+  svg.style.maxWidth = '380px';
+  svg.style.display = 'block';
+  svg.style.margin = '0 auto';
+
+  svg.appendChild(svgEl('rect', { x: pad, y: pad, width: wPx, height: lPx, fill: 'none', stroke: '#8a909e', 'stroke-width': 2.5 }));
+
+  function label(text, x, y, rotate) {
+    var attrs = { x: x, y: y, 'font-family': 'DM Mono, monospace', 'font-size': '10px', fill: '#8a909e', 'text-anchor': 'middle' };
+    if (rotate) attrs.transform = 'rotate(' + rotate + ' ' + x + ' ' + y + ')';
+    var t = svgEl('text', attrs);
+    t.textContent = text;
+    svg.appendChild(t);
+  }
+  label('BACK', pad + wPx / 2, pad - 12);
+  label('FRONT · ' + w + '’ x ' + l + '’', pad + wPx / 2, pad + lPx + 30);
+  label('LEFT', pad - 26, pad + lPx / 2, -90);
+  label('RIGHT', pad + wPx + 26, pad + lPx / 2, 90);
+
+  function wallGeometry(wall) {
+    if (wall === 'back') return { x1: pad, y1: pad, x2: pad + wPx, y2: pad, horiz: true };
+    if (wall === 'front') return { x1: pad, y1: pad + lPx, x2: pad + wPx, y2: pad + lPx, horiz: true };
+    if (wall === 'left') return { x1: pad, y1: pad, x2: pad, y2: pad + lPx, horiz: false };
+    if (wall === 'right') return { x1: pad + wPx, y1: pad, x2: pad + wPx, y2: pad + lPx, horiz: false };
+    return null;
+  }
+
+  function placeMarker(item, kind) {
+    if (!item || typeof item !== 'object' || validWalls.indexOf(item.wall) === -1) return;
+    var geo = wallGeometry(item.wall);
+    if (!geo) return;
+    var pos = Number(item.pos);
+    if (!isFinite(pos)) pos = 0.5;
+    pos = Math.max(0, Math.min(1, pos));
+    var widthIn = Number(item.w);
+    var widthFt = isFinite(widthIn) && widthIn > 0 ? Math.min(widthIn, 300) / 12 : (kind === 'door' ? 3 : 2);
+    var markerPx = widthFt * scale;
+    var color = kind === 'door' ? '#2cc0fd' : '#f6941f';
+
+    if (geo.horiz) {
+      var cx = geo.x1 + (geo.x2 - geo.x1) * pos;
+      var x0 = Math.max(geo.x1, cx - markerPx / 2), x1 = Math.min(geo.x2, cx + markerPx / 2);
+      svg.appendChild(svgEl('line', { x1: x0, y1: geo.y1, x2: x1, y2: geo.y1, stroke: color, 'stroke-width': 5 }));
+    } else {
+      var cy = geo.y1 + (geo.y2 - geo.y1) * pos;
+      var y0 = Math.max(geo.y1, cy - markerPx / 2), y1v = Math.min(geo.y2, cy + markerPx / 2);
+      svg.appendChild(svgEl('line', { x1: geo.x1, y1: y0, x2: geo.x1, y2: y1v, stroke: color, 'stroke-width': 5 }));
+    }
+  }
+
+  (Array.isArray(config.windows) ? config.windows.slice(0, 40) : []).forEach(function (w) { placeMarker(w, 'window'); });
+  (Array.isArray(config.doors) ? config.doors.slice(0, 10) : []).forEach(function (d) { placeMarker(d, 'door'); });
+
+  return svg;
+}
+
+function renderFloorPlan(config, container) {
+  if (!container) return;
+  var svg = buildFloorPlanSVG(config);
+  if (!svg) return;
+
+  var label = document.createElement('div');
+  label.className = 'doc-label';
+  label.textContent = 'Floor Plan';
+  container.appendChild(label);
+
+  var wrap = document.createElement('div');
+  wrap.className = 'floorplan-wrap';
+  wrap.appendChild(svg);
+
+  var legend = document.createElement('div');
+  legend.className = 'floorplan-legend';
+  legend.innerHTML =
+    '<span><span class="legend-swatch" style="background:#2cc0fd"></span>Door</span>' +
+    '<span><span class="legend-swatch" style="background:#f6941f"></span>Window</span>';
+  wrap.appendChild(legend);
+
+  container.appendChild(wrap);
 }
 
 if (token && submissionId) {

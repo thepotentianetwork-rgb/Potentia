@@ -316,10 +316,51 @@ async function handlePublicPricing(request, env, origin) {
   return json({ pricing: results }, 200, origin);
 }
 
+// Decodes a data: URL image into raw bytes for an R2 put(). Returns null for
+// anything that isn't a plain base64 JPEG/PNG data URL.
+function dataUrlToBytes(dataUrl) {
+  if (typeof dataUrl !== "string") return null;
+  const match = /^data:image\/(jpeg|jpg|png);base64,([A-Za-z0-9+/=]+)$/i.exec(dataUrl);
+  if (!match) return null;
+  const ext = match[1].toLowerCase() === "png" ? "png" : "jpg";
+  let bin;
+  try {
+    bin = atob(match[2]);
+  } catch (e) {
+    return null;
+  }
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { bytes, ext, contentType: ext === "png" ? "image/png" : "image/jpeg" };
+}
+
+const ALLOWED_RENDER_VIEWS = ["perspective", "front", "back", "left", "right"];
+
+// Uploads submitted 3D renders to R2 and returns { view: publicUrl }. Never
+// throws — a broken/oversized image is just skipped, it doesn't fail the
+// whole submission.
+async function uploadRenders(env, renders) {
+  if (!Array.isArray(renders) || !env.RENDERS || !env.RENDERS_PUBLIC_BASE) return null;
+  const out = {};
+  for (const r of renders.slice(0, 6)) {
+    if (!r || typeof r.view !== "string" || !ALLOWED_RENDER_VIEWS.includes(r.view)) continue;
+    const decoded = dataUrlToBytes(r.dataUrl);
+    if (!decoded || decoded.bytes.length > 3_000_000) continue;
+    const key = `submissions/${Date.now()}-${crypto.randomUUID()}-${r.view}.${decoded.ext}`;
+    try {
+      await env.RENDERS.put(key, decoded.bytes, { httpMetadata: { contentType: decoded.contentType } });
+      out[r.view] = env.RENDERS_PUBLIC_BASE.replace(/\/$/, "") + "/" + key;
+    } catch (e) {
+      // skip this image
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 async function handleShedSubmit(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   // Accepts either the designer tool's shape ({contact:{...}, config, permalink,
-  // quotedPrice, redline, page}) or a plain {name, email, phone, details} shape.
+  // quotedPrice, redline, renders, page}) or a plain {name, email, phone, details} shape.
   const contact = body.contact || {};
   const name = String(contact.name || body.name || "").slice(0, 200);
   const email = String(contact.email || body.email || "").slice(0, 200);
@@ -339,6 +380,7 @@ async function handleShedSubmit(request, env, origin) {
           permalink: body.permalink || null,
           quotedPrice: body.quotedPrice != null ? body.quotedPrice : null,
           redline: body.redline || null, // internal cost/margin breakdown — admin dashboard only, never public
+          renders: await uploadRenders(env, body.renders),
           page: body.page || null
         };
   const details = JSON.stringify(detailsPayload).slice(0, 20000);
