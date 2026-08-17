@@ -64,9 +64,12 @@ var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var form = document.getElementById('login-form');
 var errorEl = document.getElementById('error');
 var submitBtn = document.getElementById('submit-btn');
+var rawNext = new URLSearchParams(location.search).get('next');
+// Only allow a same-site relative path — never redirect off-site (open redirect guard).
+var nextUrl = rawNext && /^[a-zA-Z0-9_-]+\.html(\?[^\s]*)?$/.test(rawNext) ? rawNext : 'admin.html';
 
-if (sessionStorage.getItem('potentia_admin_token')) {
-  window.location.href = 'admin.html';
+if (localStorage.getItem('potentia_admin_token')) {
+  window.location.href = nextUrl;
 }
 
 form.addEventListener('submit', function (e) {
@@ -83,8 +86,8 @@ form.addEventListener('submit', function (e) {
     .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
     .then(function (r) {
       if (!r.ok) throw new Error(r.data && r.data.error ? r.data.error : 'Login failed');
-      sessionStorage.setItem('potentia_admin_token', r.data.token);
-      window.location.href = 'admin.html';
+      localStorage.setItem('potentia_admin_token', r.data.token);
+      window.location.href = nextUrl;
     })
     .catch(function (err) {
       errorEl.textContent = err.message === 'Invalid credentials' ? 'Incorrect password.' : 'Something went wrong — try again.';

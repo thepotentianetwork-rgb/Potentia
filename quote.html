@@ -85,17 +85,18 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
-var token = sessionStorage.getItem('potentia_admin_token');
+var token = localStorage.getItem('potentia_admin_token');
 var submissionId = new URLSearchParams(location.search).get('id');
+var selfUrl = 'quote.html' + location.search;
 
-if (!token) window.location.href = 'admin-login.html';
+if (!token) window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
 if (!submissionId) document.getElementById('doc').innerHTML = '<p class="empty">No quote specified.</p>';
 
 function authFetch(path) {
   return fetch(API_BASE + path, { headers: { 'Authorization': 'Bearer ' + token } }).then(function (res) {
     if (res.status === 401) {
-      sessionStorage.removeItem('potentia_admin_token');
-      window.location.href = 'admin-login.html';
+      localStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
       throw new Error('Session expired');
     }
     return res.json().then(function (data) { return { ok: res.ok, data: data }; });
