@@ -169,12 +169,99 @@ async function handleAdminLogin(request, env, origin) {
   return json({ token }, 200, origin);
 }
 
-// ---- /admin/submissions ----
-async function handleListSubmissions(request, env, origin) {
+// ---- customers: find-or-create by email/phone match ----
+async function findOrCreateCustomer(env, { name, email, phone, address, city, state, zip }) {
+  const now = new Date().toISOString();
+  let existing = null;
+  if (email) {
+    existing = await env.DB.prepare("SELECT id FROM customers WHERE email = ? LIMIT 1").bind(email).first();
+  }
+  if (!existing && phone) {
+    existing = await env.DB.prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1").bind(phone).first();
+  }
+  if (existing) {
+    await env.DB.prepare(
+      "UPDATE customers SET name = ?, email = ?, phone = ?, address = ?, city = ?, state = ?, zip = ?, updated_at = ? WHERE id = ?"
+    )
+      .bind(name || null, email || null, phone || null, address || null, city || null, state || null, zip || null, now, existing.id)
+      .run();
+    return existing.id;
+  }
+  const res = await env.DB.prepare(
+    "INSERT INTO customers (name, email, phone, address, city, state, zip, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+  )
+    .bind(name || null, email || null, phone || null, address || null, city || null, state || null, zip || null, now, now)
+    .run();
+  return res.meta.last_row_id;
+}
+
+// ---- /admin/customers: one row per customer, with their latest order + note ----
+async function handleListCustomers(request, env, origin) {
   const { results } = await env.DB.prepare(
-    "SELECT id, name, email, phone, details, status, created_at FROM submissions ORDER BY created_at DESC LIMIT 200"
+    `SELECT c.id, c.name, c.email, c.phone, c.city, c.state, c.created_at, c.updated_at,
+       (SELECT s.id FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_submission_id,
+       (SELECT s.details FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_details,
+       (SELECT s.status FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_status,
+       (SELECT s.created_at FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_submission_at,
+       (SELECT COUNT(*) FROM submissions s WHERE s.customer_id = c.id) AS submission_count,
+       (SELECT n.text FROM notes n WHERE n.customer_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
+       (SELECT n.created_at FROM notes n WHERE n.customer_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at
+     FROM customers c
+     ORDER BY latest_submission_at DESC
+     LIMIT 200`
   ).all();
-  return json({ submissions: results }, 200, origin);
+
+  const customers = results.map((c) => {
+    let quotedPrice = null;
+    try {
+      const d = JSON.parse(c.latest_details);
+      if (d && d.quotedPrice != null) quotedPrice = d.quotedPrice;
+    } catch (e) {}
+    const { latest_details, ...rest } = c;
+    return { ...rest, latest_quoted_price: quotedPrice };
+  });
+
+  return json({ customers }, 200, origin);
+}
+
+// ---- /admin/customers/:id: full detail — customer + all their submissions + notes ----
+async function handleGetCustomer(request, env, origin, id) {
+  const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(id).first();
+  if (!customer) return json({ error: "Not found" }, 404, origin);
+
+  const { results: submissions } = await env.DB.prepare(
+    "SELECT id, details, status, created_at FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
+  )
+    .bind(id)
+    .all();
+
+  const { results: notes } = await env.DB.prepare(
+    "SELECT id, text, created_at FROM notes WHERE customer_id = ? ORDER BY created_at DESC"
+  )
+    .bind(id)
+    .all();
+
+  return json({ customer, submissions, notes }, 200, origin);
+}
+
+// ---- /admin/customers/:id/notes ----
+async function handleAddNote(request, env, origin, customerId) {
+  const body = await request.json().catch(() => ({}));
+  const text = String(body.text || "").trim().slice(0, 2000);
+  if (!text) return json({ error: "text required" }, 400, origin);
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare("INSERT INTO notes (customer_id, text, created_at) VALUES (?,?,?)")
+    .bind(customerId, text, now)
+    .run();
+  return json({ ok: true, id: res.meta.last_row_id, created_at: now }, 200, origin);
+}
+
+// ---- /admin/submissions/:id: single order, for the quote document ----
+async function handleGetSubmission(request, env, origin, id) {
+  const submission = await env.DB.prepare("SELECT * FROM submissions WHERE id = ?").bind(id).first();
+  if (!submission) return json({ error: "Not found" }, 404, origin);
+  const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(submission.customer_id).first();
+  return json({ submission, customer: customer || null }, 200, origin);
 }
 
 async function handleUpdateSubmissionStatus(request, env, origin) {
@@ -256,8 +343,18 @@ async function handleShedSubmit(request, env, origin) {
         };
   const details = JSON.stringify(detailsPayload).slice(0, 20000);
 
-  await env.DB.prepare("INSERT INTO submissions (name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?)")
-    .bind(name, email, phone, details, "new", new Date().toISOString())
+  const customerId = await findOrCreateCustomer(env, {
+    name,
+    email,
+    phone,
+    address: contact.address,
+    city: contact.city,
+    state: contact.state,
+    zip: contact.zip
+  });
+
+  await env.DB.prepare("INSERT INTO submissions (customer_id, name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?,?)")
+    .bind(customerId, name, email, phone, details, "new", new Date().toISOString())
     .run();
   return json({ ok: true }, 200, origin);
 }
@@ -309,13 +406,32 @@ export default {
         return await handleAdminLogin(request, env, origin);
       }
 
-      if (path === "/admin/submissions" && request.method === "GET") {
+      if (path === "/admin/customers" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
-        return await handleListSubmissions(request, env, origin);
+        return await handleListCustomers(request, env, origin);
       }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/notes") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/customers/".length, -"/notes".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleAddNote(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/customers/") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/customers/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleGetCustomer(request, env, origin, id);
+      }
+
       if (path === "/admin/submissions/status" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleUpdateSubmissionStatus(request, env, origin);
+      }
+      if (path.startsWith("/admin/submissions/") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleGetSubmission(request, env, origin, id);
       }
 
       if (path === "/admin/pricing" && request.method === "GET") {

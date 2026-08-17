@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quote — ShedPro</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;padding:40px 20px}
+
+.toolbar{max-width:800px;margin:0 auto 20px;display:flex;justify-content:space-between}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
+.print-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--sp-blue);border:none;padding:10px 20px;text-transform:uppercase;cursor:pointer;font-weight:700}
+.print-btn:hover{background:#5ad0ff}
+
+.doc{max-width:800px;margin:0 auto;background:var(--deep);border:1px solid var(--dim);padding:48px}
+.doc::before{content:'';display:block;height:2px;background:linear-gradient(90deg,var(--sp-blue),var(--sp-orange));margin:-48px -48px 40px}
+
+.doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;flex-wrap:wrap;gap:20px}
+.doc-brand{display:flex;align-items:center;gap:16px}
+.doc-brand img{width:56px;height:56px;object-fit:contain}
+.doc-brand-name{font-family:'Syncopate',sans-serif;font-size:16px;letter-spacing:0.15em;color:var(--bright)}
+.doc-brand-contact{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);margin-top:6px;line-height:1.6}
+.doc-meta{text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);line-height:1.8}
+.doc-meta strong{color:var(--bright)}
+
+.doc-section{margin-bottom:32px}
+.doc-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;border-bottom:1px solid var(--dim);padding-bottom:8px}
+
+.doc-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px 32px}
+.doc-field .fl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:4px}
+.doc-field .fv{font-size:17px;color:var(--chrome);font-weight:300}
+
+.price-box{background:rgba(44,192,253,0.06);border:1px solid var(--sp-blue-deep);padding:24px 28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.price-label{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
+.price-value{font-size:40px;color:var(--bright);font-weight:300}
+
+.design-link{display:inline-block;margin-top:14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--sp-blue);text-decoration:none}
+.design-link:hover{color:var(--bright)}
+
+.doc-footer{margin-top:40px;padding-top:24px;border-top:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);line-height:1.8}
+
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
+
+@media print{
+  body{background:#fff;color:#111;padding:0}
+  .toolbar{display:none}
+  .doc{border:none;background:#fff;max-width:100%}
+  .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong{color:#111}
+  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer{color:#555}
+  .price-box{background:#f5f9fc;border-color:#bcdcf0}
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <a href="#" class="back-link" id="back-link">← Back</a>
+  <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+</div>
+
+<div class="doc" id="doc">
+  <p class="empty">Loading…</p>
+</div>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = sessionStorage.getItem('potentia_admin_token');
+var submissionId = new URLSearchParams(location.search).get('id');
+
+if (!token) window.location.href = 'admin-login.html';
+if (!submissionId) document.getElementById('doc').innerHTML = '<p class="empty">No quote specified.</p>';
+
+function authFetch(path) {
+  return fetch(API_BASE + path, { headers: { 'Authorization': 'Bearer ' + token } }).then(function (res) {
+    if (res.status === 401) {
+      sessionStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html';
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function field(label, value) {
+  return '<div class="doc-field"><div class="fl">' + esc(label) + '</div><div class="fv">' + (value ? esc(value) : '—') + '</div></div>';
+}
+
+function render(submission, customer) {
+  var details = {};
+  try { details = JSON.parse(submission.details) || {}; } catch (e) {}
+  var config = (details.config && typeof details.config === 'object') ? details.config : {};
+
+  if (customer) document.getElementById('back-link').href = 'admin-customer.html?id=' + encodeURIComponent(customer.id);
+
+  var addressLine = [details.address, [details.city, details.state, details.zip].filter(Boolean).join(', ')]
+    .filter(Boolean).join(', ');
+
+  var fields = '';
+  if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
+  if (config.style) fields += field('Style', config.style);
+  if (config.siding) fields += field('Siding', config.siding);
+  if (config.roofType) fields += field('Roof', config.roofType);
+  if (Array.isArray(config.doors)) fields += field('Doors', config.doors.length);
+  if (Array.isArray(config.windows)) fields += field('Windows', config.windows.length);
+  if (config.foundation) fields += field('Foundation', config.foundation);
+  if (config.loft) fields += field('Loft', config.loft);
+  if (config.elec) fields += field('Electrical', config.elec);
+  if (!fields) fields = '<p class="empty">No design details captured for this order.</p>';
+
+  var safePermalink = null;
+  if (typeof details.permalink === 'string' && /^https:\/\//i.test(details.permalink)) {
+    safePermalink = details.permalink;
+  }
+
+  var html = ''
+    + '<div class="doc-header">'
+    +   '<div class="doc-brand">'
+    +     '<img src="shedpro-logo.png" alt="ShedPro">'
+    +     '<div>'
+    +       '<div class="doc-brand-name">SHEDPRO</div>'
+    +       '<div class="doc-brand-contact">435-232-9516<br>shedprollc.utah@gmail.com</div>'
+    +     '</div>'
+    +   '</div>'
+    +   '<div class="doc-meta">'
+    +     'Quote #' + esc(submission.id) + '<br>'
+    +     esc(new Date(submission.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })) + '<br>'
+    +     '<strong>Status: ' + esc(submission.status || 'new') + '</strong>'
+    +   '</div>'
+    + '</div>'
+
+    + '<div class="doc-section">'
+    +   '<div class="doc-label">Customer</div>'
+    +   '<div class="doc-grid">'
+    +     field('Name', submission.name)
+    +     field('Email', submission.email)
+    +     field('Phone', submission.phone)
+    +     field('Address', addressLine)
+    +   '</div>'
+    + '</div>'
+
+    + '<div class="doc-section">'
+    +   '<div class="doc-label">Building Design</div>'
+    +   '<div class="doc-grid">' + fields + '</div>'
+    +   (safePermalink ? '<a class="design-link" href="' + esc(safePermalink) + '" target="_blank" rel="noopener">View this exact 3D design ↗</a>' : '')
+    + '</div>'
+
+    + '<div class="doc-section">'
+    +   '<div class="price-box">'
+    +     '<span class="price-label">Quoted Price</span>'
+    +     '<span class="price-value">' + (details.quotedPrice != null && isFinite(Number(details.quotedPrice)) ? '$' + Number(details.quotedPrice).toLocaleString() : 'Pending review') + '</span>'
+    +   '</div>'
+    + '</div>'
+
+    + (details.notes ? '<div class="doc-section"><div class="doc-label">Customer Notes</div><div class="fv" style="font-size:15px">' + esc(details.notes) + '</div></div>' : '')
+
+    + '<div class="doc-footer">'
+    +   'Pricing is reviewed and confirmed by a ShedPro representative before order. Current promotions will be included in your final quote.<br>'
+    +   'Questions? Call or text 435-232-9516, or email shedprollc.utah@gmail.com.'
+    + '</div>';
+
+  document.getElementById('doc').innerHTML = html;
+}
+
+if (token && submissionId) {
+  authFetch('/admin/submissions/' + submissionId).then(function (r) {
+    if (!r.ok) {
+      document.getElementById('doc').innerHTML = '<p class="empty">Quote not found.</p>';
+      return;
+    }
+    render(r.data.submission, r.data.customer);
+  });
+}
+</script>
+</body>
+</html>

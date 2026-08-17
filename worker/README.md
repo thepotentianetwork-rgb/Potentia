@@ -142,6 +142,45 @@ the `ALLOWED_ORIGINS` list near the top of `worker/index.js` (there's a
 placeholder comment marking where), then redeploy — otherwise the
 browser blocks these requests as cross-origin.
 
+## CRM upgrade: customers, order history, notes, quote documents
+
+The dashboard now groups submissions by **customer** (matched by email or
+phone, so the same person submitting multiple designs doesn't create
+duplicate entries), keeps their **full order history**, supports
+**notes** with a visible history, and can generate a **printable quote
+document** per order. New pages: `admin-customer.html` (customer detail
++ notes + order history) and `quote.html` (the printable/PDF quote).
+
+### Migrate the existing database
+
+Since the live database already has data, run this **once** in the D1
+console instead of `schema.sql` (running it twice will duplicate
+customers):
+
+Paste in the contents of `worker/migrate_customers.sql` and run it. This
+adds the `customers` and `notes` tables, links your existing
+submissions to a customer record, and is safe to run even with the one
+test submission already in there.
+
+### Redeploy the Worker
+
+The code changed again — paste the latest `worker/index.js` into
+**Edit code** and Deploy, same as before. No new secrets or bindings are
+needed for this part.
+
+### Using it
+
+- `admin.html` now lists **customers**, not raw submissions — columns for
+  name, email, phone, latest quote, status, and latest note.
+- Click **View →** on a customer to see their full order history (every
+  design they've submitted, oldest to newest) and their notes.
+- **Generate Quote** on any order opens `quote.html` — a clean,
+  ShedPro-branded document with customer info, design specs, and price.
+  Click **Print / Save as PDF** to get a file to email or text the
+  customer.
+- Notes: type in the box and hit **Add Note** — the most recent shows
+  first with an orange accent, older notes stay below it.
+
 ## Simple flat `/admin/pricing` table (not currently used by the designer)
 
 The `pricing` table and the "Pricing" section in `admin.html` were built

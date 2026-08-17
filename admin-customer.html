@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Customer — ShedPro Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:12px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--sp-blue);color:var(--bright)}
+
+main{max-width:1100px;margin:0 auto;padding:48px 40px 100px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:8px}
+
+.info-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin:28px 0 56px;padding:24px 0;border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
+.info-item .il{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.info-item .iv{font-size:18px;color:var(--bright);font-weight:300}
+
+section{margin-bottom:56px}
+
+/* order history */
+.order-card{border:1px solid var(--dim);margin-bottom:16px;padding:20px 24px}
+.order-top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px}
+.order-date{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim)}
+.order-price{font-size:24px;color:var(--bright);font-weight:300}
+.order-summary{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);margin-bottom:14px;line-height:1.6}
+.order-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.order-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--sp-blue);text-decoration:none;text-transform:uppercase}
+.order-link:hover{color:var(--bright)}
+select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 10px;outline:none}
+select:focus{border-color:var(--sp-blue)}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px}
+.status-new{background:var(--sp-blue)}
+.status-contacted,.status-quoted{background:var(--sp-orange)}
+.status-won{background:#5fd08a}
+.status-lost{background:var(--dim)}
+
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:8px 16px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;font-weight:700;text-decoration:none;display:inline-block}
+.btn:hover{background:#5ad0ff}
+
+/* notes */
+.note-form{display:flex;gap:10px;margin-bottom:28px}
+.note-form textarea{flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:12px 14px;outline:none;resize:vertical;min-height:44px}
+.note-form textarea:focus{border-color:var(--sp-blue)}
+.note-item{padding:14px 0;border-bottom:1px solid var(--dim)}
+.note-item:first-child{padding-top:0}
+.note-item.latest{border-left:2px solid var(--sp-orange);padding-left:16px}
+.note-text{font-size:16px;color:var(--chrome);font-weight:300;line-height:1.5;margin-bottom:6px}
+.note-time{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);text-transform:uppercase}
+
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="shedpro-logo.png" alt="ShedPro">
+    <div class="h-brand-text">
+      <span class="h-title">SHEDPRO ADMIN</span>
+      <span class="h-sub">Built &amp; managed by Potentia</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <a href="admin.html" class="back-link">← All Customers</a>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <p class="sec-label">Customer</p>
+  <h2 id="customer-name">Loading…</h2>
+
+  <div class="info-grid">
+    <div class="info-item"><div class="il">Email</div><div class="iv" id="c-email">—</div></div>
+    <div class="info-item"><div class="il">Phone</div><div class="iv" id="c-phone">—</div></div>
+    <div class="info-item"><div class="il">Location</div><div class="iv" id="c-location">—</div></div>
+    <div class="info-item"><div class="il">Customer Since</div><div class="iv" id="c-since">—</div></div>
+  </div>
+
+  <section>
+    <p class="sec-label">History</p>
+    <h2>Order History</h2>
+    <div id="orders-list"><p class="empty">Loading…</p></div>
+  </section>
+
+  <section>
+    <p class="sec-label">Interactions</p>
+    <h2>Notes</h2>
+    <form class="note-form" id="note-form">
+      <textarea id="note-text" placeholder="Add a note — call notes, follow-ups, anything worth remembering…" required></textarea>
+      <button type="submit" class="btn">Add Note</button>
+    </form>
+    <div id="notes-list"><p class="empty">Loading…</p></div>
+  </section>
+</main>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = sessionStorage.getItem('potentia_admin_token');
+var customerId = new URLSearchParams(location.search).get('id');
+
+if (!token) window.location.href = 'admin-login.html';
+if (!customerId) window.location.href = 'admin.html';
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      sessionStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html';
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  sessionStorage.removeItem('potentia_admin_token');
+  window.location.href = 'admin-login.html';
+});
+
+function summarizeConfig(config) {
+  if (!config) return '';
+  var parts = [];
+  if (config.w && config.l) parts.push(config.w + 'x' + config.l + ' ft');
+  if (config.style) parts.push(config.style);
+  if (config.siding) parts.push(config.siding);
+  return parts.join(' · ');
+}
+
+function renderOrders(submissions) {
+  var wrap = document.getElementById('orders-list');
+  wrap.innerHTML = '';
+  if (!submissions.length) {
+    wrap.innerHTML = '<p class="empty">No orders yet.</p>';
+    return;
+  }
+  submissions.forEach(function (s) {
+    var details = {};
+    try { details = JSON.parse(s.details) || {}; } catch (e) {}
+
+    var card = document.createElement('div');
+    card.className = 'order-card';
+
+    var top = document.createElement('div');
+    top.className = 'order-top';
+    var date = document.createElement('div');
+    date.className = 'order-date';
+    date.textContent = new Date(s.created_at).toLocaleString();
+    var price = document.createElement('div');
+    price.className = 'order-price';
+    price.textContent = details.quotedPrice != null ? '$' + Number(details.quotedPrice).toLocaleString() : '—';
+    top.appendChild(date);
+    top.appendChild(price);
+
+    var summary = document.createElement('div');
+    summary.className = 'order-summary';
+    var summaryText = summarizeConfig(details.config);
+    summary.textContent = summaryText || 'No design details captured.';
+
+    var actions = document.createElement('div');
+    actions.className = 'order-actions';
+
+    var dot = document.createElement('span');
+    dot.className = 'status-dot status-' + s.status;
+    var select = document.createElement('select');
+    ['new', 'contacted', 'quoted', 'won', 'lost'].forEach(function (opt) {
+      var o = document.createElement('option');
+      o.value = opt;
+      o.textContent = opt;
+      if (opt === s.status) o.selected = true;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', function () {
+      dot.className = 'status-dot status-' + select.value;
+      authFetch('/admin/submissions/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: s.id, status: select.value })
+      }).catch(function () {});
+    });
+    var statusWrap = document.createElement('span');
+    statusWrap.style.display = 'inline-flex';
+    statusWrap.style.alignItems = 'center';
+    statusWrap.appendChild(dot);
+    statusWrap.appendChild(select);
+    actions.appendChild(statusWrap);
+
+    if (details.permalink) {
+      var designLink = document.createElement('a');
+      designLink.className = 'order-link';
+      designLink.href = details.permalink;
+      designLink.target = '_blank';
+      designLink.rel = 'noopener';
+      designLink.textContent = 'View 3D Design ↗';
+      actions.appendChild(designLink);
+    }
+
+    var quoteLink = document.createElement('a');
+    quoteLink.className = 'btn';
+    quoteLink.href = 'quote.html?id=' + s.id;
+    quoteLink.target = '_blank';
+    quoteLink.textContent = 'Generate Quote';
+    actions.appendChild(quoteLink);
+
+    card.appendChild(top);
+    card.appendChild(summary);
+    card.appendChild(actions);
+    wrap.appendChild(card);
+  });
+}
+
+function renderNotes(notes) {
+  var wrap = document.getElementById('notes-list');
+  wrap.innerHTML = '';
+  if (!notes.length) {
+    wrap.innerHTML = '<p class="empty">No notes yet.</p>';
+    return;
+  }
+  notes.forEach(function (n, i) {
+    var item = document.createElement('div');
+    item.className = 'note-item' + (i === 0 ? ' latest' : '');
+    var text = document.createElement('div');
+    text.className = 'note-text';
+    text.textContent = n.text;
+    var time = document.createElement('div');
+    time.className = 'note-time';
+    time.textContent = (i === 0 ? 'Latest — ' : '') + new Date(n.created_at).toLocaleString();
+    item.appendChild(text);
+    item.appendChild(time);
+    wrap.appendChild(item);
+  });
+}
+
+function loadCustomer() {
+  authFetch('/admin/customers/' + customerId).then(function (r) {
+    if (!r.ok) {
+      document.getElementById('customer-name').textContent = 'Not found';
+      return;
+    }
+    var c = r.data.customer;
+    document.getElementById('customer-name').textContent = c.name || 'Unnamed customer';
+    document.title = (c.name || 'Customer') + ' — ShedPro Admin';
+    document.getElementById('c-email').textContent = c.email || '—';
+    document.getElementById('c-phone').textContent = c.phone || '—';
+    var loc = [c.city, c.state].filter(Boolean).join(', ');
+    document.getElementById('c-location').textContent = loc || '—';
+    document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
+
+    renderOrders(r.data.submissions || []);
+    renderNotes(r.data.notes || []);
+  });
+}
+
+document.getElementById('note-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var textarea = document.getElementById('note-text');
+  var text = textarea.value.trim();
+  if (!text) return;
+  authFetch('/admin/customers/' + customerId + '/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text })
+  }).then(function (r) {
+    if (r.ok) {
+      textarea.value = '';
+      loadCustomer();
+    }
+  });
+});
+
+if (token && customerId) loadCustomer();
+</script>
+</body>
+</html>

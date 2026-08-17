@@ -1,14 +1,38 @@
--- Shed Co. admin — D1 schema.
--- Run this once in the D1 console (Cloudflare dashboard) after creating
--- the database. See README.md for the exact steps.
+-- ShedPro admin — D1 schema (fresh install).
+-- If you already ran the older version of this file, use migrate_customers.sql
+-- instead — this file's CREATE TABLE statements won't alter existing tables.
 
+CREATE TABLE IF NOT EXISTS customers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  email TEXT,
+  phone TEXT,
+  address TEXT,
+  city TEXT,
+  state TEXT,
+  zip TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- One row per design/quote a customer has submitted — never overwritten, so
+-- past designs stay accessible even after a customer submits changes.
 CREATE TABLE IF NOT EXISTS submissions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
   name TEXT NOT NULL,
   email TEXT NOT NULL,
   phone TEXT,
   details TEXT,
   status TEXT NOT NULL DEFAULT 'new',
+  created_at TEXT NOT NULL
+);
+
+-- Interaction log per customer — append-only, newest first in the UI.
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  text TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 

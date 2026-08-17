@@ -35,17 +35,22 @@ th{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:va
 td{padding:12px;border-bottom:1px solid var(--dim);font-size:15px;font-weight:300;vertical-align:top}
 tr:hover td{background:rgba(255,255,255,0.02)}
 .empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:24px 12px}
-.details-pre{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);white-space:pre-wrap;max-width:320px;max-height:120px;overflow-y:auto}
 
 select,input.cell{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 10px;outline:none}
 select:focus,input.cell:focus{border-color:var(--sp-blue)}
 input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 
-.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:8px;flex-shrink:0}
 .status-new{background:var(--sp-blue)}
 .status-contacted,.status-quoted{background:var(--sp-orange)}
 .status-won{background:#5fd08a}
 .status-lost{background:var(--dim)}
+.status-cell{display:flex;align-items:center}
+
+.note-cell{font-size:13px;color:var(--silver);max-width:220px}
+.note-cell .note-time{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:2px}
+.view-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--sp-blue);text-decoration:none;text-transform:uppercase;white-space:nowrap}
+.view-link:hover{color:var(--bright)}
 
 .pricing-row td{padding:8px 12px}
 .btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 14px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;font-weight:700}
@@ -82,13 +87,13 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 <main>
   <section>
     <p class="sec-label">ShedPro Partner</p>
-    <h2>Customer Submissions</h2>
+    <h2>Customers</h2>
     <table>
       <thead>
-        <tr><th>Received</th><th>Name</th><th>Email</th><th>Phone</th><th>Details</th><th>Status</th></tr>
+        <tr><th>Last Activity</th><th>Name</th><th>Email</th><th>Phone</th><th>Latest Quote</th><th>Status</th><th>Latest Note</th><th></th></tr>
       </thead>
-      <tbody id="submissions-body">
-        <tr><td class="empty" colspan="6">Loading…</td></tr>
+      <tbody id="customers-body">
+        <tr><td class="empty" colspan="8">Loading…</td></tr>
       </tbody>
     </table>
   </section>
@@ -142,96 +147,90 @@ document.getElementById('logout-btn').addEventListener('click', function () {
   window.location.href = 'admin-login.html';
 });
 
-// ---- Submissions ----
-function renderSubmissions(list) {
-  var body = document.getElementById('submissions-body');
+// ---- Customers ----
+function renderCustomers(list) {
+  var body = document.getElementById('customers-body');
   body.innerHTML = '';
   if (!list.length) {
-    body.innerHTML = '<tr><td class="empty" colspan="6">No submissions yet.</td></tr>';
+    body.innerHTML = '<tr><td class="empty" colspan="8">No customers yet.</td></tr>';
     return;
   }
-  list.forEach(function (s) {
+  list.forEach(function (c) {
     var tr = document.createElement('tr');
 
     var tdDate = document.createElement('td');
-    tdDate.textContent = new Date(s.created_at).toLocaleString();
+    tdDate.textContent = c.latest_submission_at ? new Date(c.latest_submission_at).toLocaleString() : '—';
+
     var tdName = document.createElement('td');
-    tdName.textContent = s.name;
+    tdName.textContent = c.name || '—';
+
     var tdEmail = document.createElement('td');
-    tdEmail.textContent = s.email;
+    tdEmail.textContent = c.email || '—';
+
     var tdPhone = document.createElement('td');
-    tdPhone.textContent = s.phone || '—';
+    tdPhone.textContent = c.phone || '—';
 
-    var tdDetails = document.createElement('td');
-    var parsedDetails = null;
-    try { parsedDetails = JSON.parse(s.details); } catch (e) {}
-
-    if (parsedDetails && (parsedDetails.permalink || parsedDetails.quotedPrice != null)) {
-      var summary = document.createElement('div');
-      summary.style.marginBottom = '8px';
-      if (parsedDetails.quotedPrice != null) {
-        var price = document.createElement('div');
-        price.style.color = 'var(--bright)';
-        price.style.fontSize = '16px';
-        price.textContent = '$' + Number(parsedDetails.quotedPrice).toLocaleString();
-        summary.appendChild(price);
-      }
-      if (parsedDetails.permalink) {
-        var link = document.createElement('a');
-        link.href = parsedDetails.permalink;
-        link.target = '_blank';
-        link.rel = 'noopener';
-        link.textContent = 'View 3D design ↗';
-        link.style.color = 'var(--sp-blue)';
-        link.style.fontFamily = "'DM Mono',monospace";
-        link.style.fontSize = '11px';
-        summary.appendChild(link);
-      }
-      tdDetails.appendChild(summary);
+    var tdQuote = document.createElement('td');
+    if (c.latest_quoted_price != null) {
+      tdQuote.textContent = '$' + Number(c.latest_quoted_price).toLocaleString();
+    } else {
+      tdQuote.textContent = '—';
+    }
+    if (c.submission_count > 1) {
+      var countTag = document.createElement('span');
+      countTag.style.display = 'block';
+      countTag.style.fontFamily = "'DM Mono',monospace";
+      countTag.style.fontSize = '10px';
+      countTag.style.color = 'var(--dim)';
+      countTag.textContent = c.submission_count + ' designs';
+      tdQuote.appendChild(countTag);
     }
 
-    var pre = document.createElement('div');
-    pre.className = 'details-pre';
-    pre.textContent = parsedDetails ? JSON.stringify(parsedDetails, null, 2) : (s.details || '');
-    tdDetails.appendChild(pre);
-
     var tdStatus = document.createElement('td');
-    tdStatus.style.display = 'flex';
-    tdStatus.style.alignItems = 'center';
+    tdStatus.className = 'status-cell';
     var dot = document.createElement('span');
-    dot.className = 'status-dot status-' + s.status;
-    var select = document.createElement('select');
-    ['new', 'contacted', 'quoted', 'won', 'lost'].forEach(function (opt) {
-      var o = document.createElement('option');
-      o.value = opt;
-      o.textContent = opt;
-      if (opt === s.status) o.selected = true;
-      select.appendChild(o);
-    });
-    select.addEventListener('change', function () {
-      dot.className = 'status-dot status-' + select.value;
-      authFetch('/admin/submissions/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: s.id, status: select.value })
-      }).catch(function () {});
-    });
+    dot.className = 'status-dot status-' + (c.latest_status || 'new');
+    var statusText = document.createElement('span');
+    statusText.textContent = c.latest_status || '—';
     tdStatus.appendChild(dot);
-    tdStatus.appendChild(select);
+    tdStatus.appendChild(statusText);
+
+    var tdNote = document.createElement('td');
+    tdNote.className = 'note-cell';
+    if (c.latest_note) {
+      var noteText = document.createElement('span');
+      noteText.textContent = c.latest_note.length > 80 ? c.latest_note.slice(0, 80) + '…' : c.latest_note;
+      tdNote.appendChild(noteText);
+      var noteTime = document.createElement('span');
+      noteTime.className = 'note-time';
+      noteTime.textContent = new Date(c.latest_note_at).toLocaleDateString();
+      tdNote.appendChild(noteTime);
+    } else {
+      tdNote.textContent = '—';
+    }
+
+    var tdView = document.createElement('td');
+    var viewLink = document.createElement('a');
+    viewLink.className = 'view-link';
+    viewLink.href = 'admin-customer.html?id=' + c.id;
+    viewLink.textContent = 'View →';
+    tdView.appendChild(viewLink);
 
     tr.appendChild(tdDate);
     tr.appendChild(tdName);
     tr.appendChild(tdEmail);
     tr.appendChild(tdPhone);
-    tr.appendChild(tdDetails);
+    tr.appendChild(tdQuote);
     tr.appendChild(tdStatus);
+    tr.appendChild(tdNote);
+    tr.appendChild(tdView);
     body.appendChild(tr);
   });
 }
 
-function loadSubmissions() {
-  authFetch('/admin/submissions').then(function (r) {
-    if (r.ok) renderSubmissions(r.data.submissions || []);
+function loadCustomers() {
+  authFetch('/admin/customers').then(function (r) {
+    if (r.ok) renderCustomers(r.data.customers || []);
   });
 }
 
@@ -340,7 +339,7 @@ document.getElementById('add-pricing-form').addEventListener('submit', function 
 });
 
 if (token) {
-  loadSubmissions();
+  loadCustomers();
   loadPricing();
 }
 </script>
