@@ -52,6 +52,17 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 .view-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--sp-blue);text-decoration:none;text-transform:uppercase;white-space:nowrap}
 .view-link:hover{color:var(--bright)}
 
+tr.lead-new{background:linear-gradient(90deg,rgba(246,148,31,0.09),rgba(246,148,31,0.01) 55%)}
+tr.lead-new:hover td{background:rgba(246,148,31,0.05)}
+tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
+.name-cell{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.new-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--sp-orange);background:rgba(246,148,31,0.14);border:1px solid rgba(246,148,31,0.45);padding:3px 9px;border-radius:20px;text-transform:uppercase;animation:new-pulse 2s ease-in-out infinite}
+.new-badge::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--sp-orange)}
+@keyframes new-pulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(246,148,31,0.4)}
+  50%{box-shadow:0 0 0 5px rgba(246,148,31,0)}
+}
+
 .pricing-row td{padding:8px 12px}
 .btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 14px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;font-weight:700}
 .btn:hover{background:#5ad0ff}
@@ -157,12 +168,25 @@ function renderCustomers(list) {
   }
   list.forEach(function (c) {
     var tr = document.createElement('tr');
+    var isNew = c.latest_status === 'new';
+    if (isNew) tr.className = 'lead-new';
 
     var tdDate = document.createElement('td');
     tdDate.textContent = c.latest_submission_at ? new Date(c.latest_submission_at).toLocaleString() : '—';
 
     var tdName = document.createElement('td');
-    tdName.textContent = c.name || '—';
+    var nameWrap = document.createElement('div');
+    nameWrap.className = 'name-cell';
+    var nameText = document.createElement('span');
+    nameText.textContent = c.name || '—';
+    nameWrap.appendChild(nameText);
+    if (isNew) {
+      var badge = document.createElement('span');
+      badge.className = 'new-badge';
+      badge.textContent = 'New Lead';
+      nameWrap.appendChild(badge);
+    }
+    tdName.appendChild(nameWrap);
 
     var tdEmail = document.createElement('td');
     tdEmail.textContent = c.email || '—';
