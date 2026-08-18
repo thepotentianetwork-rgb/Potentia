@@ -125,6 +125,22 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
     <p class="sec-label">Base Price by Size</p>
     <h2>Shed Styles</h2>
     <p class="sec-intro">A porch isn't an add-on here — it switches which table gets read. Fill in what applies to each style; blank cells fall back to an estimate and get flagged internally until you set a real price.</p>
+
+    <details class="sheet-panel" id="import-panel">
+      <summary>
+        <div class="sheet-title"><span class="sheet-arrow">▶</span><span class="sheet-name">Bulk Import</span></div>
+        <span class="count-tag partial">Paste from another source</span>
+      </summary>
+      <div style="padding:0 20px 20px">
+        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"barn":{"4x4":2311,"4x6":2661},"3peak":{...}}</code> — fills in the grids below so you can review against your source, then hit Save Pricing when it looks right. Nothing is saved until you click Save.</p>
+        <textarea id="import-text" class="add-form input" style="width:100%;min-height:120px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:10px 12px;outline:none" placeholder='{"barn":{"4x4":2311,"4x6":2661,"5x6":2764}}'></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+          <button class="save-btn" id="import-btn" type="button">Import Into Grids</button>
+          <span class="status-msg" id="import-msg"></span>
+        </div>
+      </div>
+    </details>
+
     <div id="base-prices-host"></div>
   </section>
 
@@ -164,8 +180,8 @@ document.getElementById('logout-btn').addEventListener('click', function () {
 });
 
 // ---- Data model (mirrors designer.html's SELL.baseSheets / SELL groups) ----
-var GRID_WIDTHS = [6, 8, 10, 11, 12, 14, 16];
-var GRID_LENGTHS = [6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
+var GRID_WIDTHS = [4, 5, 6, 8, 10, 11, 12, 14, 16];
+var GRID_LENGTHS = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
 var SHEET_ORDER = ['aframe', 'aframe-front', 'aframe-side', 'barn', 'leanto', 'poolhouse', '3peak', '4peak'];
 var SHEET_LABELS = {
   'aframe': 'A-Frame Style', 'aframe-front': 'A-Frame Cabin', 'aframe-side': 'Side Porch A-Frame',
@@ -454,6 +470,38 @@ document.getElementById('save-btn').addEventListener('click', function () {
     .finally(function () {
       btn.disabled = false;
     });
+});
+
+document.getElementById('import-btn').addEventListener('click', function () {
+  var textEl = document.getElementById('import-text');
+  var msg = document.getElementById('import-msg');
+  var parsed;
+  try {
+    parsed = JSON.parse(textEl.value);
+  } catch (e) {
+    msg.textContent = 'Not valid JSON — check for a stray comma or quote.';
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    msg.textContent = 'Expected an object keyed by style.';
+    return;
+  }
+  var styleCount = 0, cellCount = 0;
+  Object.keys(parsed).forEach(function (sheetKey) {
+    if (SHEET_ORDER.indexOf(sheetKey) === -1) return;
+    if (!config.baseSheets[sheetKey]) config.baseSheets[sheetKey] = {};
+    var incoming = parsed[sheetKey] || {};
+    Object.keys(incoming).forEach(function (sizeKey) {
+      var v = Number(incoming[sizeKey]);
+      if (isFinite(v) && v > 0) {
+        config.baseSheets[sheetKey][sizeKey] = v;
+        cellCount++;
+      }
+    });
+    styleCount++;
+  });
+  renderBasePrices();
+  msg.textContent = 'Imported ' + cellCount + ' prices across ' + styleCount + ' style(s). Review the grids, then Save.';
 });
 
 if (token) loadConfig();
