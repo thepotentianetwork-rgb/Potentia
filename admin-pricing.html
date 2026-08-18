@@ -228,6 +228,7 @@ function sheetDims(sheetKey) {
 var FLAT_GROUPS = [
   { key: 'doors', label: 'Doors', unit: '' },
   { key: 'windows', label: 'Windows', unit: '' },
+  { key: 'dormers', label: 'Shed Dormers (item name = width in ft, e.g. "6")', unit: 'flat, per side' },
   { key: 'siding', label: 'Siding', unit: '/ sq ft of wall' },
   { key: 'electrical', label: 'Electrical Packages', unit: '' }
 ];
@@ -575,7 +576,7 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
     msg.textContent = 'Expected an object keyed by group (doors, windows, ...).';
     return;
   }
-  var FLAT_KEYS = ['doors', 'windows', 'siding', 'electrical'];
+  var FLAT_KEYS = ['doors', 'windows', 'dormers', 'siding', 'electrical'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {
