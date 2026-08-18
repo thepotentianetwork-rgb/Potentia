@@ -65,6 +65,7 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
 .cell-inp:focus{border-color:var(--sp-blue)}
 .cell-inp.missing{border-color:rgba(224,104,79,0.5);background:rgba(224,104,79,0.06)}
 .cell-inp.missing::placeholder{color:rgba(224,104,79,0.6)}
+.cell-na{display:block;width:76px;text-align:center;color:var(--dim);padding:7px 6px}
 
 .comp-group{border:1px solid var(--dim);margin-bottom:20px}
 .comp-group-head{padding:16px 20px;border-bottom:1px solid var(--dim);display:flex;justify-content:space-between;align-items:center}
@@ -124,7 +125,7 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
   <section>
     <p class="sec-label">Base Price by Size</p>
     <h2>Shed Styles</h2>
-    <p class="sec-intro">A porch isn't an add-on here — it switches which table gets read. Fill in what applies to each style; blank cells fall back to an estimate and get flagged internally until you set a real price.</p>
+    <p class="sec-intro">A porch isn't an add-on here — it switches which table gets read. Each style only shows the sizes ShedPro actually offers — dots mark sizes that aren't sold for that style. Blank cells among the real sizes fall back to an estimate and get flagged internally until you set a real price.</p>
 
     <details class="sheet-panel" id="import-panel">
       <summary>
@@ -188,6 +189,26 @@ var SHEET_LABELS = {
   'barn': 'Barn Style', 'leanto': 'Single Slope', 'poolhouse': 'Poolhouse',
   '3peak': '3 Peak', '4peak': '4 Peak'
 };
+// The exact width x length combos ShedPro actually sells, per style. Anything
+// outside this list isn't a real size — it's shown as a blank, non-editable
+// cell instead of a "missing price" so the grid only asks for prices on sizes
+// that are really offered.
+var SHEET_SIZES = {"barn":["4x4","4x6","5x6","6x6","4x8","5x8","6x8","8x8","4x10","5x10","6x10","8x10","10x10","4x12","5x12","6x12","8x12","10x12","11x12","12x12","6x14","8x14","10x14","11x14","12x14","14x14","8x16","10x16","11x16","12x16","14x16","16x16","8x18","10x18","11x18","12x18","14x18","16x18","8x20","10x20","11x20","12x20","14x20","16x20","8x22","10x22","11x22","12x22","14x22","16x22","8x24","10x24","11x24","12x24","14x24","16x24","8x26","10x26","11x26","12x26","14x26","16x26","8x28","10x28","11x28","12x28","14x28","16x28","8x30","10x30","11x30","12x30","14x30","16x30"],"3peak":["5x6","6x6","5x8","6x8","8x8","5x10","6x10","8x10","10x10","5x12","6x12","8x12","10x12","11x12","12x12","6x14","8x14","10x14","11x14","12x14","14x14","8x16","10x16","11x16","12x16","14x16","16x16","8x18","10x18","11x18","12x18","14x18","16x18","8x20","10x20","12x20","14x20","16x20","8x22","10x22","12x22","14x22","16x22","10x24","12x24","14x24","16x24","12x26","14x26","12x28","12x30"],"4peak":["5x6","6x6","5x8","6x8","8x8","5x10","6x10","8x10","10x10","5x12","6x12","8x12","10x12","11x12","12x12","6x14","8x14","10x14","11x14","12x14","14x14","8x16","10x16","11x16","12x16","14x16","16x16","8x18","10x18","12x18","14x18","16x18","8x20","10x20","12x20","14x20","16x20","8x22","10x22","12x22","14x22","16x22","10x24","12x24","14x24","16x24","12x26","14x26","12x28","12x30"],"aframe":["4x4","4x6","5x6","6x6","4x8","5x8","6x8","8x8","4x10","5x10","6x10","8x10","10x10","4x12","5x12","6x12","8x12","10x12","11x12","12x12","5x14","6x14","8x14","10x14","11x14","12x14","14x14","5x16","6x16","8x16","10x16","11x16","12x16","14x16","16x16","8x18","10x18","11x18","12x18","14x18","16x18","8x20","10x20","11x20","12x20","14x20","16x20","8x22","10x22","11x22","12x22","14x22","16x22","8x24","10x24","11x24","12x24","14x24","16x24","8x26","10x26","11x26","12x26","14x26","16x26","8x28","10x28","11x28","12x28","14x28","16x28","8x30","10x30","11x30","12x30","14x30","16x30"],"leanto":["4x4","4x6","5x6","6x6","5x8","6x8","8x8","4x10","5x10","6x10","8x10","10x10","4x12","5x12","6x12","8x12","10x12","11x12","12x12","6x14","8x14","10x14","11x14","12x14","14x14","8x16","10x16","11x16","12x16","14x16","16x16","8x18","10x18","11x18","12x18","14x18","16x18","8x20","10x20","12x20","14x20","16x20","8x22","10x22","12x22","14x22","16x22","10x24","12x24","14x24","16x24","12x26","14x26","12x28","12x30"],"poolhouse":["8x12","10x12","8x14","10x14","12x14","8x16","10x16","12x16","10x18","12x18","8x20","10x20","12x20"],"aframe-side":["6x6","6x8","8x8","6x10","8x10","10x10","6x12","8x12","10x12","11x12","12x12","6x14","8x14","10x14","11x14","12x14","14x14","8x16","10x16","11x16","12x16","14x16","16x16","8x18","10x18","11x18","12x18","14x18","16x18","8x20","10x20","12x20","14x20","16x20","8x22","10x22","12x22","14x22","16x22","10x24","12x24","14x24","16x24","12x26","14x26","12x28","12x30"],"aframe-front":["6x6","6x8","8x8","6x10","8x10","10x10","6x12","8x12","10x12","11x12","12x12","6x14","8x14","10x14","11x14","12x14","14x14","8x16","10x16","11x16","12x16","14x16","16x16","8x18","10x18","11x18","12x18","14x18","16x18","8x20","10x20","12x20","14x20","16x20","8x22","10x22","12x22","14x22","16x22","10x24","12x24","14x24","16x24","12x26","14x26","12x28","12x30"]};
+
+function sheetDims(sheetKey) {
+  var sizes = SHEET_SIZES[sheetKey];
+  if (!sizes) return { widths: GRID_WIDTHS, lengths: GRID_LENGTHS, valid: null };
+  var wSet = {}, lSet = {}, validSet = {};
+  sizes.forEach(function (key) {
+    var parts = key.split('x');
+    wSet[Number(parts[0])] = true;
+    lSet[Number(parts[1])] = true;
+    validSet[key] = true;
+  });
+  var widths = Object.keys(wSet).map(Number).sort(function (a, b) { return a - b; });
+  var lengths = Object.keys(lSet).map(Number).sort(function (a, b) { return a - b; });
+  return { widths: widths, lengths: lengths, valid: validSet };
+}
 var FLAT_GROUPS = [
   { key: 'doors', label: 'Doors', unit: '' },
   { key: 'windows', label: 'Windows', unit: '' },
@@ -217,12 +238,16 @@ function renderBasePrices() {
   SHEET_ORDER.forEach(function (sheetKey) {
     if (!config.baseSheets[sheetKey]) config.baseSheets[sheetKey] = {};
     var sheetData = config.baseSheets[sheetKey];
+    var dims = sheetDims(sheetKey);
+    var sheetWidths = dims.widths, sheetLengths = dims.lengths, validSet = dims.valid;
 
     var filled = 0;
-    var total = GRID_WIDTHS.length * GRID_LENGTHS.length;
-    GRID_WIDTHS.forEach(function (w) {
-      GRID_LENGTHS.forEach(function (l) {
-        var v = Number(sheetData[w + 'x' + l]);
+    var total = validSet ? Object.keys(validSet).length : sheetWidths.length * sheetLengths.length;
+    sheetWidths.forEach(function (w) {
+      sheetLengths.forEach(function (l) {
+        var key = w + 'x' + l;
+        if (validSet && !validSet[key]) return;
+        var v = Number(sheetData[key]);
         if (isFinite(v) && v > 0) filled++;
       });
     });
@@ -249,16 +274,22 @@ function renderBasePrices() {
     var thead = el('thead');
     var headRow = el('tr');
     headRow.appendChild(el('th', { class: 'corner', text: 'Length \\ Width' }));
-    GRID_WIDTHS.forEach(function (w) { headRow.appendChild(el('th', { text: w + "'" })); });
+    sheetWidths.forEach(function (w) { headRow.appendChild(el('th', { text: w + "'" })); });
     thead.appendChild(headRow);
     table.appendChild(thead);
 
     var tbody = el('tbody');
-    GRID_LENGTHS.forEach(function (l) {
+    sheetLengths.forEach(function (l) {
       var row = el('tr');
       row.appendChild(el('td', { class: 'rowhead', text: l + "'" }));
-      GRID_WIDTHS.forEach(function (w) {
+      sheetWidths.forEach(function (w) {
         var key = w + 'x' + l;
+        var td = el('td');
+        if (validSet && !validSet[key]) {
+          td.appendChild(el('span', { class: 'cell-na', text: '·' }));
+          row.appendChild(td);
+          return;
+        }
         var val = Number(sheetData[key]);
         var hasVal = isFinite(val) && val > 0;
         var input = el('input', { class: 'cell-inp' + (hasVal ? '' : ' missing'), type: 'number', min: '0', step: '1', placeholder: hasVal ? '' : '—' });
@@ -274,7 +305,6 @@ function renderBasePrices() {
           }
           updateSheetCount(sheetKey);
         });
-        var td = el('td');
         td.appendChild(input);
         row.appendChild(td);
       });
@@ -290,15 +320,26 @@ function renderBasePrices() {
   document.getElementById('sum-empty-sheets').textContent = emptySheets + ' of ' + SHEET_ORDER.length;
 }
 
-function updateSheetCount(sheetKey) {
+function countFilled(sheetKey) {
   var sheetData = config.baseSheets[sheetKey] || {};
-  var filled = 0, total = GRID_WIDTHS.length * GRID_LENGTHS.length;
-  GRID_WIDTHS.forEach(function (w) {
-    GRID_LENGTHS.forEach(function (l) {
-      var v = Number(sheetData[w + 'x' + l]);
+  var dims = sheetDims(sheetKey);
+  var validSet = dims.valid;
+  var total = validSet ? Object.keys(validSet).length : dims.widths.length * dims.lengths.length;
+  var filled = 0;
+  dims.widths.forEach(function (w) {
+    dims.lengths.forEach(function (l) {
+      var key = w + 'x' + l;
+      if (validSet && !validSet[key]) return;
+      var v = Number(sheetData[key]);
       if (isFinite(v) && v > 0) filled++;
     });
   });
+  return { filled: filled, total: total };
+}
+
+function updateSheetCount(sheetKey) {
+  var counts = countFilled(sheetKey);
+  var filled = counts.filled, total = counts.total;
   var tag = document.getElementById('count-' + sheetKey);
   if (tag) {
     tag.textContent = filled + ' / ' + total + ' filled';
@@ -307,10 +348,8 @@ function updateSheetCount(sheetKey) {
   // refresh the top summary too
   var totalFilled = 0, totalCells = 0, emptySheets = 0;
   SHEET_ORDER.forEach(function (sk) {
-    var sd = config.baseSheets[sk] || {};
-    var f = 0, t = GRID_WIDTHS.length * GRID_LENGTHS.length;
-    GRID_WIDTHS.forEach(function (w) { GRID_LENGTHS.forEach(function (l) { var v = Number(sd[w + 'x' + l]); if (isFinite(v) && v > 0) f++; }); });
-    totalFilled += f; totalCells += t; if (f === 0) emptySheets++;
+    var c = countFilled(sk);
+    totalFilled += c.filled; totalCells += c.total; if (c.filled === 0) emptySheets++;
   });
   document.getElementById('sum-base').textContent = totalFilled + ' / ' + totalCells;
   document.getElementById('sum-empty-sheets').textContent = emptySheets + ' of ' + SHEET_ORDER.length;
@@ -486,12 +525,14 @@ document.getElementById('import-btn').addEventListener('click', function () {
     msg.textContent = 'Expected an object keyed by style.';
     return;
   }
-  var styleCount = 0, cellCount = 0;
+  var styleCount = 0, cellCount = 0, skipped = 0;
   Object.keys(parsed).forEach(function (sheetKey) {
     if (SHEET_ORDER.indexOf(sheetKey) === -1) return;
     if (!config.baseSheets[sheetKey]) config.baseSheets[sheetKey] = {};
+    var validSet = sheetDims(sheetKey).valid;
     var incoming = parsed[sheetKey] || {};
     Object.keys(incoming).forEach(function (sizeKey) {
+      if (validSet && !validSet[sizeKey]) { skipped++; return; }
       var v = Number(incoming[sizeKey]);
       if (isFinite(v) && v > 0) {
         config.baseSheets[sheetKey][sizeKey] = v;
@@ -501,7 +542,7 @@ document.getElementById('import-btn').addEventListener('click', function () {
     styleCount++;
   });
   renderBasePrices();
-  msg.textContent = 'Imported ' + cellCount + ' prices across ' + styleCount + ' style(s). Review the grids, then Save.';
+  msg.textContent = 'Imported ' + cellCount + ' prices across ' + styleCount + ' style(s).' + (skipped ? ' Skipped ' + skipped + ' size(s) not offered for that style.' : '') + ' Review the grids, then Save.';
 });
 
 if (token) loadConfig();
