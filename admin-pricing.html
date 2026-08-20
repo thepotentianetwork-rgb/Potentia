@@ -16,7 +16,7 @@
 }
 body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
 
-header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:var(--black);z-index:10}
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;position:sticky;top:0;background:var(--black);z-index:10}
 .h-brand{display:flex;align-items:center;gap:14px}
 .h-brand img{width:34px;height:34px;object-fit:contain}
 .h-brand-text{display:flex;flex-direction:column;gap:2px}
@@ -93,6 +93,16 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
 .status-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);margin-top:8px;text-align:right}
 .note{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);line-height:1.6;margin-top:8px}
 .empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:20px}
+
+@media (max-width:760px){
+  header{padding:16px 20px}
+  .h-actions{gap:8px}
+  main{padding:32px 18px 100px}
+  h2{font-size:24px}
+  .summary-bar{gap:20px;padding:16px 18px}
+  .add-form{flex-wrap:wrap}
+  .add-form input.price-field{flex:1 1 100px}
+}
 </style>
 </head>
 <body>

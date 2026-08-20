@@ -16,7 +16,7 @@
 }
 body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
 
-header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center}
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
 .h-brand{display:flex;align-items:center;gap:14px}
 .h-brand img{width:34px;height:34px;object-fit:contain}
 .h-brand-text{display:flex;flex-direction:column;gap:2px}
@@ -66,6 +66,28 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   50%{box-shadow:0 0 0 5px rgba(246,148,31,0)}
 }
 
+.table-wrap{overflow-x:auto}
+@media (max-width:760px){
+  header{padding:16px 20px}
+  .h-actions{gap:8px}
+  main{padding:32px 18px 80px}
+  h2{font-size:24px}
+  .table-wrap{overflow-x:visible}
+  table,thead,tbody,tr,td{display:block;width:100%}
+  thead{display:none}
+  tbody tr{border:1px solid var(--dim);padding:14px 16px;margin-bottom:14px}
+  tr.lead-new{border-color:rgba(246,148,31,0.45)}
+  tr.lead-new td:first-child{box-shadow:none}
+  td{border-bottom:none;padding:6px 0}
+  td::before{content:attr(data-label);display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:3px}
+  td.view-cell{padding-top:12px}
+  td.view-cell::before{display:none}
+  td.view-cell .view-link{display:block;text-align:center;border:1px solid var(--dim);padding:10px;font-size:12px}
+  .note-cell{max-width:none}
+  td.empty{padding:10px 0}
+  td.empty::before{display:none}
+}
+
 </style>
 </head>
 <body>
@@ -88,6 +110,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   <section>
     <p class="sec-label">ShedPro Partner</p>
     <h2>Customers</h2>
+    <div class="table-wrap">
     <table>
       <thead>
         <tr><th>Last Activity</th><th>Name</th><th>Email</th><th>Phone</th><th>Latest Quote</th><th>Status</th><th>Latest Note</th><th></th></tr>
@@ -96,6 +119,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
         <tr><td class="empty" colspan="8">Loading…</td></tr>
       </tbody>
     </table>
+    </div>
   </section>
 </main>
 
@@ -139,9 +163,11 @@ function renderCustomers(list) {
     if (isNew) tr.className = 'lead-new';
 
     var tdDate = document.createElement('td');
+    tdDate.setAttribute('data-label', 'Last Activity');
     tdDate.textContent = c.latest_submission_at ? new Date(c.latest_submission_at).toLocaleString() : '—';
 
     var tdName = document.createElement('td');
+    tdName.setAttribute('data-label', 'Name');
     var nameWrap = document.createElement('div');
     nameWrap.className = 'name-cell';
     var nameText = document.createElement('span');
@@ -156,12 +182,15 @@ function renderCustomers(list) {
     tdName.appendChild(nameWrap);
 
     var tdEmail = document.createElement('td');
+    tdEmail.setAttribute('data-label', 'Email');
     tdEmail.textContent = c.email || '—';
 
     var tdPhone = document.createElement('td');
+    tdPhone.setAttribute('data-label', 'Phone');
     tdPhone.textContent = c.phone || '—';
 
     var tdQuote = document.createElement('td');
+    tdQuote.setAttribute('data-label', 'Latest Quote');
     if (c.latest_quoted_price != null) {
       tdQuote.textContent = '$' + Number(c.latest_quoted_price).toLocaleString();
     } else {
@@ -179,6 +208,7 @@ function renderCustomers(list) {
 
     var tdStatus = document.createElement('td');
     tdStatus.className = 'status-cell';
+    tdStatus.setAttribute('data-label', 'Status');
     var dot = document.createElement('span');
     dot.className = 'status-dot status-' + (c.latest_status || 'new');
     var statusText = document.createElement('span');
@@ -188,6 +218,7 @@ function renderCustomers(list) {
 
     var tdNote = document.createElement('td');
     tdNote.className = 'note-cell';
+    tdNote.setAttribute('data-label', 'Latest Note');
     if (c.latest_note) {
       var noteText = document.createElement('span');
       noteText.textContent = c.latest_note.length > 80 ? c.latest_note.slice(0, 80) + '…' : c.latest_note;
@@ -201,6 +232,7 @@ function renderCustomers(list) {
     }
 
     var tdView = document.createElement('td');
+    tdView.className = 'view-cell';
     var viewLink = document.createElement('a');
     viewLink.className = 'view-link';
     viewLink.href = 'admin-customer.html?id=' + c.id;
