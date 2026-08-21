@@ -73,6 +73,7 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .symbol-legend-row{display:flex;padding:5px 10px;border-top:1px solid var(--dim);gap:10px}
 .symbol-legend-code{color:var(--sp-blue);font-weight:700;min-width:22px}
 .symbol-legend-desc{color:var(--chrome);text-align:left;flex:1}
+.fp-dim-bg{fill:var(--deep)}
 
 @media print{
   body{background:#fff;color:#111;padding:0}
@@ -90,6 +91,7 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
   .symbol-legend-desc{color:#333}
   .fp-dim-text,.fp-label{fill:#333 !important}
   .fp-wall{stroke:#111 !important}
+  .fp-dim-bg{fill:#fff !important}
 }
 </style>
 </head>
@@ -633,6 +635,30 @@ function buildFloorPlan(config, frontWall) {
     svg.appendChild(t);
     return t;
   }
+  // A dimension number with its own background "halo" so whatever's behind
+  // it — the dimension line it's labeling, a tick mark, a neighboring
+  // number on a tight wall — can't visually run through the digits. This is
+  // the normal fix for reading measurements off a real dimension line, and
+  // matters here more than usual: a door/window segment can easily be
+  // narrower than its own measurement text (e.g. a 20" gap labeled
+  // "1' 8""), so the label routinely overlaps whatever sits next to it.
+  function dimText(str, x, y, opts) {
+    opts = opts || {};
+    var size = opts.size || 9;
+    var w = str.length * size * 0.64 + 3; // DM Mono is ~0.64em per glyph
+    var h = size + 2;
+    var rectAttrs = { width: w, height: h, 'class': 'fp-dim-bg' };
+    if (opts.rotate) {
+      rectAttrs.x = -w / 2; rectAttrs.y = -h * 0.78;
+      rectAttrs.transform = 'translate(' + x + ' ' + y + ') rotate(' + opts.rotate + ')';
+    } else {
+      var anchor = opts.anchor || 'middle';
+      rectAttrs.x = anchor === 'start' ? x : anchor === 'end' ? x - w : x - w / 2;
+      rectAttrs.y = y - h * 0.78;
+    }
+    svg.appendChild(svgEl('rect', rectAttrs));
+    return text(str, x, y, opts);
+  }
   function line(x1, y1, x2, y2, opts) {
     opts = opts || {};
     var e = svgEl('line', { x1: x1, y1: y1, x2: x2, y2: y2, stroke: opts.stroke || '#8a909e', 'stroke-width': opts.w || 1, 'class': opts.cls || '' });
@@ -698,7 +724,7 @@ function buildFloorPlan(config, frontWall) {
     geo.items.forEach(function (o) {
       var c = pt((o.start + o.end) / 2);
       var offX = horiz ? 0 : -outward * 12, offY = horiz ? -outward * 12 : 0;
-      text(o.code, c.x + offX, c.y + offY + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+      dimText(o.code, c.x + offX, c.y + offY + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
     });
 
     // Fine dimension chain: corner -> edge -> edge -> ... -> corner, to 1/8",
@@ -710,18 +736,25 @@ function buildFloorPlan(config, frontWall) {
         if (segLen <= 0.001) continue;
         var mid = (bounds[i] + bounds[i + 1]) / 2;
         var p1 = pt(bounds[i]), p2 = pt(bounds[i + 1]), pm = pt(mid);
+        // The number sits further out than its own dimension line (past it,
+        // away from the wall) with a real gap — not centered on the line —
+        // so the line reads as underlining the number instead of striking
+        // through it, and a background halo (dimText) covers the rest: a
+        // segment shorter than its own label text (a tight door/window gap
+        // labeled e.g. "1' 8"") will still overlap a neighboring tick or
+        // number, and the halo is what keeps THAT legible too.
         if (horiz) {
           var y = p1.y + outward * chainBand;
           line(p1.x, y, p2.x, y, { w: 0.75 });
           line(p1.x, p1.y + outward * 4, p1.x, y, { w: 0.5 });
           line(p2.x, p2.y + outward * 4, p2.x, y, { w: 0.5 });
-          text(formatFtIn(segLen * 12), pm.x, y + (outward > 0 ? 11 : -4), { size: 8 });
+          dimText(formatFtIn(segLen * 12), pm.x, y + outward * 10, { size: 8 });
         } else {
           var x = p1.x + outward * chainBand;
           line(x, p1.y, x, p2.y, { w: 0.75 });
           line(p1.x + outward * 4, p1.y, x, p1.y, { w: 0.5 });
           line(p2.x + outward * 4, p2.y, x, p2.y, { w: 0.5 });
-          text(formatFtIn(segLen * 12), x + (outward > 0 ? 4 : -4), pm.y + 3, { size: 8, anchor: outward > 0 ? 'start' : 'end' });
+          dimText(formatFtIn(segLen * 12), x + outward * 6, pm.y + 3, { size: 8, anchor: outward > 0 ? 'start' : 'end' });
         }
       }
     }
@@ -741,7 +774,7 @@ function buildFloorPlan(config, frontWall) {
     var pr = svgEl('rect', { x: Math.min(pa.x, pb.x), y: Math.min(pa.y, pb.y), width: Math.abs(pb.x - pa.x), height: Math.abs(pb.y - pa.y), fill: 'rgba(44,192,253,0.05)', stroke: '#2cc0fd', 'stroke-width': 1.25 });
     pr.setAttribute('stroke-dasharray', '4,3');
     svg.appendChild(pr);
-    text('C1', (pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+    dimText('C1', (pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
 
     // Support posts, on the porch's outer edge (where the header beam that
     // carries the roof lands) — same placement rule as the designer's own
@@ -766,7 +799,7 @@ function buildFloorPlan(config, frontWall) {
     var lr = svgEl('rect', { x: Math.min(la.x, lb.x) + 3, y: Math.min(la.y, lb.y) + 3, width: Math.abs(lb.x - la.x) - 6, height: Math.abs(lb.y - la.y) - 6, fill: 'none', stroke: '#8a909e', 'stroke-width': 1 });
     lr.setAttribute('stroke-dasharray', '3,3');
     svg.appendChild(lr);
-    text('L1', (la.x + lb.x) / 2, (la.y + lb.y) / 2 + 3, { size: 9, fill: '#8a909e', cls: 'fp-label' });
+    dimText('L1', (la.x + lb.x) / 2, (la.y + lb.y) / 2 + 3, { size: 9, fill: '#8a909e', cls: 'fp-label' });
   });
 
   // ---- Orientation labels ----
@@ -812,14 +845,14 @@ function buildFloorPlan(config, frontWall) {
   line(fL.x, fL.y, fR.x, fR.y, { w: 1 });
   line(fL.x, fL.y - 5, fL.x, fL.y + 5, { w: 0.75 });
   line(fR.x, fR.y - 5, fR.x, fR.y + 5, { w: 0.75 });
-  text(bottomLen + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
+  dimText(bottomLen + "'", (fL.x + fR.x) / 2, fY - 8, { size: 10, fill: '#c8cdd6' });
 
   var rX = Math.max(rightPair[0].x, rightPair[1].x) + chainBand + totalBand;
   var rT = { x: rX, y: Math.min(rightPair[0].y, rightPair[1].y) }, rB = { x: rX, y: Math.max(rightPair[0].y, rightPair[1].y) };
   line(rT.x, rT.y, rB.x, rB.y, { w: 1 });
   line(rT.x - 5, rT.y, rT.x + 5, rT.y, { w: 0.75 });
   line(rB.x - 5, rB.y, rB.x + 5, rB.y, { w: 0.75 });
-  text(rightLen + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
+  dimText(rightLen + "'", rX + 14, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
 
   return { svg: svg, legendItems: legendItems };
 }
