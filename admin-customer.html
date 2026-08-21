@@ -130,6 +130,22 @@ select:focus{border-color:var(--sp-blue)}
     </form>
     <div id="notes-list"><p class="empty">Loading…</p></div>
   </section>
+
+  <section id="danger-zone" style="border:1px solid rgba(224,104,79,0.4);padding:24px">
+    <p class="sec-label" style="color:#e0684f">Danger Zone</p>
+    <h2 style="font-size:20px;margin-bottom:12px;color:#e0684f">Delete Customer</h2>
+    <p style="font-size:14px;color:var(--silver);margin-bottom:16px;max-width:520px">Permanently deletes this customer along with every order and note on file. This cannot be undone.</p>
+    <button class="btn" id="delete-btn" type="button" style="background:#e0684f">Delete Customer…</button>
+    <div id="delete-confirm" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid var(--dim)">
+      <p style="font-size:13px;color:var(--silver);margin-bottom:10px">Type <strong id="delete-name-target" style="color:var(--bright)"></strong> to confirm — this deletes their record, <span id="delete-order-count"></span> order(s), and <span id="delete-note-count"></span> note(s).</p>
+      <input id="delete-confirm-input" type="text" placeholder="Type the customer's name" autocomplete="off"
+        style="width:100%;max-width:360px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:15px;padding:10px 12px;outline:none">
+      <div style="margin-top:14px;display:flex;gap:10px">
+        <button class="btn" id="delete-confirm-btn" type="button" disabled style="background:#e0684f;opacity:0.4;pointer-events:none">Permanently Delete</button>
+        <button class="logout" id="delete-cancel-btn" type="button">Cancel</button>
+      </div>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -287,13 +303,17 @@ function renderNotes(notes) {
   });
 }
 
+var CUSTOMER_NAME = '';
+
 function loadCustomer() {
   authFetch('/admin/customers/' + customerId).then(function (r) {
     if (!r.ok) {
       document.getElementById('customer-name').textContent = 'Not found';
+      document.getElementById('danger-zone').style.display = 'none';
       return;
     }
     var c = r.data.customer;
+    CUSTOMER_NAME = c.name || '';
     document.getElementById('customer-name').textContent = c.name || 'Unnamed customer';
     document.title = (c.name || 'Customer') + ' — ShedPro Admin';
     document.getElementById('c-email').textContent = c.email || '—';
@@ -302,10 +322,58 @@ function loadCustomer() {
     document.getElementById('c-location').textContent = loc || '—';
     document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
 
-    renderOrders(r.data.submissions || []);
-    renderNotes(r.data.notes || []);
+    var submissions = r.data.submissions || [], notes = r.data.notes || [];
+    renderOrders(submissions);
+    renderNotes(notes);
+
+    document.getElementById('delete-order-count').textContent = submissions.length;
+    document.getElementById('delete-note-count').textContent = notes.length;
   });
 }
+
+document.getElementById('delete-btn').addEventListener('click', function () {
+  document.getElementById('delete-name-target').textContent = CUSTOMER_NAME || 'this customer';
+  document.getElementById('delete-confirm-input').value = '';
+  var confirmBtn = document.getElementById('delete-confirm-btn');
+  confirmBtn.disabled = true;
+  confirmBtn.style.pointerEvents = 'none';
+  confirmBtn.style.opacity = '0.4';
+  confirmBtn.textContent = 'Permanently Delete';
+  document.getElementById('delete-confirm').style.display = 'block';
+  document.getElementById('delete-confirm-input').focus();
+});
+
+document.getElementById('delete-cancel-btn').addEventListener('click', function () {
+  document.getElementById('delete-confirm').style.display = 'none';
+});
+
+document.getElementById('delete-confirm-input').addEventListener('input', function () {
+  var match = CUSTOMER_NAME.trim().length > 0 && this.value.trim() === CUSTOMER_NAME.trim();
+  var btn = document.getElementById('delete-confirm-btn');
+  btn.disabled = !match;
+  btn.style.pointerEvents = match ? 'auto' : 'none';
+  btn.style.opacity = match ? '1' : '0.4';
+});
+
+document.getElementById('delete-confirm-btn').addEventListener('click', function () {
+  if (!confirm('This is permanent and cannot be undone. Delete ' + CUSTOMER_NAME + ' and all their orders and notes?')) return;
+  var btn = this;
+  btn.textContent = 'Deleting...';
+  btn.style.pointerEvents = 'none';
+  authFetch('/admin/customers/' + customerId, { method: 'DELETE' }).then(function (r) {
+    if (r.ok) {
+      window.location.href = 'admin.html';
+    } else {
+      btn.textContent = 'Permanently Delete';
+      btn.style.pointerEvents = 'auto';
+      alert('Could not delete — please try again.');
+    }
+  }).catch(function () {
+    btn.textContent = 'Permanently Delete';
+    btn.style.pointerEvents = 'auto';
+    alert('Could not delete — check your connection.');
+  });
+});
 
 document.getElementById('note-form').addEventListener('submit', function (e) {
   e.preventDefault();

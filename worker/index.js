@@ -244,6 +244,22 @@ async function handleGetCustomer(request, env, origin, id) {
   return json({ customer, submissions, notes }, 200, origin);
 }
 
+// ---- DELETE /admin/customers/:id — permanently removes the customer and
+// every submission/note tied to them. No soft-delete: the admin UI requires
+// typing the customer's name plus a second confirm before this ever fires.
+async function handleDeleteCustomer(request, env, origin, id) {
+  const customer = await env.DB.prepare("SELECT id FROM customers WHERE id = ?").bind(id).first();
+  if (!customer) return json({ error: "Not found" }, 404, origin);
+
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM notes WHERE customer_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM submissions WHERE customer_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM customers WHERE id = ?").bind(id)
+  ]);
+
+  return json({ ok: true }, 200, origin);
+}
+
 // ---- /admin/customers/:id/notes ----
 async function handleAddNote(request, env, origin, customerId) {
   const body = await request.json().catch(() => ({}));
@@ -559,6 +575,12 @@ export default {
         const id = Number(path.slice("/admin/customers/".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleGetCustomer(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/customers/") && request.method === "DELETE") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/customers/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleDeleteCustomer(request, env, origin, id);
       }
 
       if (path === "/admin/submissions/status" && request.method === "POST") {
