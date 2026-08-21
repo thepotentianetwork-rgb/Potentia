@@ -793,7 +793,16 @@ function buildFloorPlan(config, frontWall) {
     var pr = svgEl('rect', { x: Math.min(pa.x, pb.x), y: Math.min(pa.y, pb.y), width: Math.abs(pb.x - pa.x), height: Math.abs(pb.y - pa.y), fill: 'rgba(44,192,253,0.05)', stroke: '#2cc0fd', 'stroke-width': 1.25 });
     pr.setAttribute('stroke-dasharray', '4,3');
     svg.appendChild(pr);
-    dimText('C1', (pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+    // The room wall's fine dimension chain lives in the near-wall part of
+    // this same box (see drawWall — its chain isn't pushed past the porch,
+    // it's drawn inside it, since that space is otherwise empty). Centering
+    // C1 in the box put it right in that band for any shallow porch, on top
+    // of a measurement. Biased 70% of the way to the box's OUTER edge
+    // instead, comfortably clear of it.
+    var nearPt = (porchWall === 'front') ? project((pRect.x0 + pRect.x1) / 2, pRect.z0) : project(pRect.x0, (pRect.z0 + pRect.z1) / 2);
+    var farPt = (porchWall === 'front') ? project((pRect.x0 + pRect.x1) / 2, pRect.z1) : project(pRect.x1, (pRect.z0 + pRect.z1) / 2);
+    var labelX = nearPt.x + (farPt.x - nearPt.x) * 0.7, labelY = nearPt.y + (farPt.y - nearPt.y) * 0.7;
+    dimText('C1', labelX, labelY + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
 
     // Support posts, on the porch's outer edge (where the header beam that
     // carries the roof lands) — same placement rule as the designer's own
