@@ -351,20 +351,29 @@ function render(submission, customer) {
 
   document.getElementById('doc').innerHTML = html;
 
-  renderImages(details.renders, document.getElementById('renders-section'));
-  renderFloorPlan(config, document.getElementById('floorplan-section'));
+  var frontWall = pickFrontWall(config.doors, config.windows);
+  renderImages(details.renders, document.getElementById('renders-section'), frontWall);
+  renderFloorPlan(config, document.getElementById('floorplan-section'), frontWall);
 }
 
 // ---- Building Images (from R2, if this order has captured renders) ----
-function renderImages(renders, container) {
+// Captioned by frontWall, same as the floor plan, so a viewer isn't told
+// "Front" here and shown a different wall as FRONT two sections down.
+function renderImages(renders, container, frontWall) {
   if (!container || !renders || typeof renders !== 'object') return;
+  var rot = WALL_ROTATIONS[frontWall] || WALL_ROTATIONS.front;
+  var byNewKey = {};
+  ['front', 'right', 'back', 'left'].forEach(function (oldKey) {
+    var url = renders[oldKey];
+    if (typeof url === 'string' && /^https:\/\//i.test(url)) byNewKey[rot[oldKey]] = url;
+  });
   var order = ['perspective', 'front', 'right', 'back', 'left'];
   var grid = document.createElement('div');
   grid.className = 'render-grid';
   var any = false;
 
   order.forEach(function (view) {
-    var url = renders[view];
+    var url = (view === 'perspective') ? renders.perspective : byNewKey[view];
     if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return;
     any = true;
     var cell = document.createElement('div');
@@ -451,6 +460,36 @@ function windowLabel(wd) {
   return wi + 'x' + hi + ' Window';
 }
 
+// ---- Which wall reads as "the front" ----
+// The designer's own front/back/left/right are just whichever walls the
+// customer happened to be facing while placing openings in the 3D tool —
+// not necessarily the wall that belongs at the front of a real elevation.
+// The wall carrying the most doors/windows is almost always the true
+// facade, so that one gets displayed as FRONT (both here and in the
+// Building Images captions below), regardless of what it's labeled
+// internally. Ties keep the designer's own 'front' as-is rather than
+// rotating on a coin flip.
+function pickFrontWall(doors, windows) {
+  var counts = { front: 0, back: 0, left: 0, right: 0 };
+  (doors || []).concat(windows || []).forEach(function (o) {
+    if (o && counts.hasOwnProperty(o.wall)) counts[o.wall]++;
+  });
+  var best = 'front', bestN = counts.front;
+  ['back', 'left', 'right'].forEach(function (w) {
+    if (counts[w] > bestN) { best = w; bestN = counts[w]; }
+  });
+  return best;
+}
+// Old designer-wall -> new displayed-wall, one table per choice of which
+// wall becomes the front. 'left'/'right' swap width and depth (a 90°
+// turn); 'back' only flips front/back and left/right in place (180°).
+var WALL_ROTATIONS = {
+  front: { front: 'front', right: 'right', back: 'back', left: 'left' },
+  back: { back: 'front', left: 'right', front: 'back', right: 'left' },
+  left: { left: 'front', front: 'right', right: 'back', back: 'left' },
+  right: { right: 'front', back: 'right', left: 'back', front: 'left' }
+};
+
 // ---- Room geometry, in feet. front=+Z, back=-Z, left=-X, right=+X. ----
 // A porch is carved OUT of the shed's own w/l, not added beyond it — the
 // designer's own 3D model builds the enclosed room at encWft()/encLft()
@@ -489,10 +528,11 @@ function wallPointAtLocal(wall, localFt, room) {
   }
 }
 
-function buildFloorPlan(config) {
+function buildFloorPlan(config, frontWall) {
   var w = Number(config.w), l = Number(config.l);
   if (!isFinite(w) || !isFinite(l) || w <= 0 || l <= 0 || w > 200 || l > 200) return null;
   var validWalls = ['front', 'back', 'left', 'right'];
+  frontWall = validWalls.indexOf(frontWall) !== -1 ? frontWall : 'front';
 
   // Porch: carved out of the shed's own w/l (see roomRect() above), not an
   // attached extension of it. Side porch always opens onto 'right'
@@ -538,15 +578,33 @@ function buildFloorPlan(config) {
   // The porch fits inside the shed's own w x l (see roomRect() above), so
   // unlike the building itself the canvas doesn't need extra room for it —
   // only the usual dimension-text padding on every side.
-  var scale = 16;                      // px per ft for the building itself
-  var wPx = w * scale, lPx = l * scale;
+  //
+  // project(x, z) turns a world point into a screen point, choosing among
+  // four rotations so that frontWall always lands at the bottom of the
+  // page (labeled FRONT). All the geometry above (room, porch, loft,
+  // opening positions) stays in the designer's own front=+Z/back=-Z/
+  // left=-X/right=+X coordinates — only this projection changes, so a
+  // relabel can never drift out of sync with the geometry it's drawing.
+  // 'left'/'right' becoming front is a 90° turn, which swaps which of w/l
+  // reads as the screen's width vs height; 'back' is a straight 180°, so
+  // width/height don't swap.
+  var scale = 16; // px per ft
+  var swapAxes = (frontWall === 'left' || frontWall === 'right');
+  var screenW = swapAxes ? l : w, screenL = swapAxes ? w : l;
+  var wPx = screenW * scale, lPx = screenL * scale;
   var chainBand = 30, totalBand = 34, labelBand = 14; // px reserved per side for dimension text
   var pad = labelBand + chainBand + totalBand + 26; // +26: room for the total's own label text before the outer BACK/FRONT/LEFT/RIGHT band
   var svgW = wPx + pad * 2;
   var svgH = lPx + pad * 2;
 
-  function toX(worldX) { return pad + (worldX + w / 2) * scale; }
-  function toY(worldZ) { return pad + (worldZ + l / 2) * scale; }
+  function project(worldX, worldZ) {
+    var sx, sz;
+    if (frontWall === 'front') { sx = worldX; sz = worldZ; }
+    else if (frontWall === 'back') { sx = -worldX; sz = -worldZ; }
+    else if (frontWall === 'left') { sx = worldZ; sz = -worldX; }
+    else { sx = -worldZ; sz = worldX; } // 'right'
+    return { x: pad + (sx + screenW / 2) * scale, y: pad + (sz + screenL / 2) * scale };
+  }
 
   var svg = svgEl('svg', { viewBox: '0 0 ' + svgW + ' ' + svgH, width: '100%' });
   svg.style.maxWidth = '520px';
@@ -610,7 +668,7 @@ function buildFloorPlan(config) {
     var horiz = (wall === 'front' || wall === 'back');
     var outward = (wall === 'front') ? 1 : (wall === 'back') ? -1 : (wall === 'right') ? 1 : -1;
 
-    function pt(localFt) { var p = wallPointAtLocal(wall, localFt, room); return { x: toX(p.x), y: toY(p.z) }; }
+    function pt(localFt) { var p = wallPointAtLocal(wall, localFt, room); return project(p.x, p.z); }
 
     // Wall line itself: solid where closed, a gap at each opening (window
     // gets a thin line across the gap to read as glazing, a door gets none).
@@ -669,7 +727,7 @@ function buildFloorPlan(config) {
     var pRect;
     if (porchWall === 'front') pRect = { x0: room.x0, x1: room.x1, z0: room.z1, z1: l / 2 };
     else pRect = { x0: room.x1, x1: w / 2, z0: room.z0, z1: room.z1 };
-    var pa = { x: toX(pRect.x0), y: toY(pRect.z0) }, pb = { x: toX(pRect.x1), y: toY(pRect.z1) };
+    var pa = project(pRect.x0, pRect.z0), pb = project(pRect.x1, pRect.z1);
     var pr = svgEl('rect', { x: Math.min(pa.x, pb.x), y: Math.min(pa.y, pb.y), width: Math.abs(pb.x - pa.x), height: Math.abs(pb.y - pa.y), fill: 'rgba(44,192,253,0.05)', stroke: '#2cc0fd', 'stroke-width': 1.25 });
     pr.setAttribute('stroke-dasharray', '4,3');
     svg.appendChild(pr);
@@ -679,7 +737,7 @@ function buildFloorPlan(config) {
   // ---- Loft zone(s): dashed outline over the covered bay, on the ceiling
   // plane — full ROOM width, same as the porch, not the outer w/l. ----
   loftZones.forEach(function (z) {
-    var la = { x: toX(room.x0), y: toY(z.z0) }, lb = { x: toX(room.x1), y: toY(z.z1) };
+    var la = project(room.x0, z.z0), lb = project(room.x1, z.z1);
     var lr = svgEl('rect', { x: Math.min(la.x, lb.x) + 3, y: Math.min(la.y, lb.y) + 3, width: Math.abs(lb.x - la.x) - 6, height: Math.abs(lb.y - la.y) - 6, fill: 'none', stroke: '#8a909e', 'stroke-width': 1 });
     lr.setAttribute('stroke-dasharray', '3,3');
     svg.appendChild(lr);
@@ -692,31 +750,58 @@ function buildFloorPlan(config) {
   text('LEFT', labelBand - 2, pad + lPx / 2, { size: 9, rotate: -90 });
   text('RIGHT', svgW - labelBand + 6, pad + lPx / 2, { size: 9, rotate: 90 });
 
-  // ---- Overall building dimensions: width along the front, depth along the
-  // right — the shed's own w/l, unchanged by a porch (a porch is carved out
-  // of that footprint, not added past it — see roomRect() above), drawn at
-  // the true outer edge, chainBand+totalBand out past the fine chain so
-  // detail-then-total reads in the conventional near-to-far order. ----
-  var fY = toY(l / 2) + chainBand + totalBand;
-  var fL = { x: toX(-w / 2), y: fY }, fR = { x: toX(w / 2), y: fY };
+  // ---- Overall building dimensions: the shed's own w/l, unchanged by a
+  // porch (carved out of that footprint, not added past it — see
+  // roomRect() above), drawn at the true outer edge, chainBand+totalBand
+  // out past the fine chain so detail-then-total reads near-to-far.
+  //
+  // Which wall's own length is "the width total" (bottom) vs "the depth
+  // total" (right) depends on frontWall, same as everything else on this
+  // page — so these are found by projecting the four true outer corners
+  // and reading off which pair shares a screen coordinate, rather than
+  // assuming bottom=w/right=l the way a fixed, unrotated plan could. ----
+  // Reuses WALL_ROTATIONS (already the single source of truth for "which
+  // old wall is displayed as which new wall") instead of re-deriving the
+  // same rotation a second time by hand here — that duplication is exactly
+  // how a corner-pair mismatch would sneak in unnoticed for one rotation
+  // case while the other three still looked right.
+  function wallCorners(name) {
+    var bl = project(-w / 2, l / 2), br = project(w / 2, l / 2);
+    var kl = project(-w / 2, -l / 2), kr = project(w / 2, -l / 2);
+    switch (name) {
+      case 'front': return [bl, br];
+      case 'back': return [kl, kr];
+      case 'left': return [bl, kl];
+      case 'right': return [br, kr];
+    }
+  }
+  var rot = WALL_ROTATIONS[frontWall];
+  var rightWallOld = Object.keys(rot).filter(function (k) { return rot[k] === 'right'; })[0];
+  var bottomPair = wallCorners(frontWall);
+  var bottomLen = (frontWall === 'front' || frontWall === 'back') ? w : l;
+  var rightPair = wallCorners(rightWallOld);
+  var rightLen = (rightWallOld === 'front' || rightWallOld === 'back') ? w : l;
+
+  var fY = Math.max(bottomPair[0].y, bottomPair[1].y) + chainBand + totalBand;
+  var fL = { x: Math.min(bottomPair[0].x, bottomPair[1].x), y: fY }, fR = { x: Math.max(bottomPair[0].x, bottomPair[1].x), y: fY };
   line(fL.x, fL.y, fR.x, fR.y, { w: 1 });
   line(fL.x, fL.y - 5, fL.x, fL.y + 5, { w: 0.75 });
   line(fR.x, fR.y - 5, fR.x, fR.y + 5, { w: 0.75 });
-  text(w + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
+  text(bottomLen + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
 
-  var rX = toX(w / 2) + chainBand + totalBand;
-  var rT = { x: rX, y: toY(-l / 2) }, rB = { x: rX, y: toY(l / 2) };
+  var rX = Math.max(rightPair[0].x, rightPair[1].x) + chainBand + totalBand;
+  var rT = { x: rX, y: Math.min(rightPair[0].y, rightPair[1].y) }, rB = { x: rX, y: Math.max(rightPair[0].y, rightPair[1].y) };
   line(rT.x, rT.y, rB.x, rB.y, { w: 1 });
   line(rT.x - 5, rT.y, rT.x + 5, rT.y, { w: 0.75 });
   line(rB.x - 5, rB.y, rB.x + 5, rB.y, { w: 0.75 });
-  text(l + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
+  text(rightLen + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
 
   return { svg: svg, legendItems: legendItems };
 }
 
-function renderFloorPlan(config, container) {
+function renderFloorPlan(config, container, frontWall) {
   if (!container) return;
-  var built = buildFloorPlan(config);
+  var built = buildFloorPlan(config, frontWall);
   if (!built) return;
 
   var label = document.createElement('div');
