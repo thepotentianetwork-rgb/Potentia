@@ -280,22 +280,24 @@ async function handleGetSubmission(request, env, origin, id) {
   return json({ submission, customer: customer || null }, 200, origin);
 }
 
-// ---- one-time cleanup: collapse any pre-existing duplicate "new" rows per
-// customer down to just the most recent one. The auto-supersede logic in
-// handleShedSubmit only fires going forward on new submissions — this fixes
-// up old data left over from before that existed.
+// ---- one-time cleanup: for every customer, any "new" submission that
+// isn't their single most-recent submission gets superseded — even if a
+// newer submission from them has already been moved to contacted/quoted/etc.
+// A "new" row lingering behind a submission the admin already acted on is
+// just as stale as a duplicate "new" row; both mean the customer moved on
+// to something newer and this one shouldn't still read as a fresh lead.
 async function handleCleanupSuperseded(request, env, origin) {
   const { results } = await env.DB.prepare(
-    "SELECT id, customer_id FROM submissions WHERE status = 'new' ORDER BY customer_id, created_at DESC"
+    "SELECT id, customer_id, status FROM submissions ORDER BY customer_id, created_at DESC"
   ).all();
 
-  const seen = new Set();
+  const seenCustomer = new Set();
   const staleIds = [];
   for (const row of results) {
-    if (seen.has(row.customer_id)) {
-      staleIds.push(row.id);
+    if (seenCustomer.has(row.customer_id)) {
+      if (row.status === "new") staleIds.push(row.id);
     } else {
-      seen.add(row.customer_id);
+      seenCustomer.add(row.customer_id);
     }
   }
 
