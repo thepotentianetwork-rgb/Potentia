@@ -272,15 +272,12 @@ function render(submission, customer) {
     .filter(Boolean).join(', ');
 
   var fields = '';
-  if (config.w && config.l) {
-    // A porch extends the shed's actual footprint — front porch adds to
-    // length, side porch adds to width — even though the base price is
-    // still keyed off the shed's own size before the porch.
-    var totalW = Number(config.w), totalL = Number(config.l), porchNote = '';
-    if (config.porchLoc === 'front' && config.porchDepth > 0) { totalL += Number(config.porchDepth); porchNote = ' (incl. ' + config.porchDepth + '’ porch)'; }
-    else if (config.porchLoc === 'side' && config.porchDepth > 0) { totalW += Number(config.porchDepth); porchNote = ' (incl. ' + config.porchDepth + '’ porch)'; }
-    fields += field('Size', totalW + '’ x ' + totalL + '’' + porchNote + (config.h ? ' x ' + config.h + '’ wall' : ''));
-  }
+  // The porch is carved out of the shed's own w x l, not added past it — a
+  // 24x16 shed with a 6' front porch is still 24x16 total, with 6' of that
+  // depth being covered porch and the rest enclosed room (verified against
+  // the designer's own enclosure()/wallFrame(), which build the room at
+  // W/L minus the porch depth and hang the porch off the freed-up strip).
+  if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
   if (config.style) fields += field('Style', config.style);
   if (config.siding) fields += field('Siding', config.siding);
   if (config.roofType) fields += field('Roof', config.roofType);
@@ -454,26 +451,40 @@ function windowLabel(wd) {
   return wi + 'x' + hi + ' Window';
 }
 
-// ---- Wall geometry, in feet. front=+Z, back=-Z, left=-X, right=+X. ----
+// ---- Room geometry, in feet. front=+Z, back=-Z, left=-X, right=+X. ----
+// A porch is carved OUT of the shed's own w/l, not added beyond it — the
+// designer's own 3D model builds the enclosed room at encWft()/encLft()
+// (= W or L minus the porch depth) and hangs the porch off whichever wall
+// lost that depth, so the two together land back at exactly the original
+// w/l (verified against the designer's enclosure()/wallFrame() output
+// directly, not assumed). So "24x16 with a 6' porch" is a 24x16 total
+// footprint where 6' of the 16' is covered porch and the rest is room —
+// the porch does NOT push the total past 16'. A side porch always opens
+// onto 'right' (porchMoveDoor() hardcodes that wall in the designer).
+function roomRect(w, l, porchLoc, porchDepth) {
+  var eatW = (porchLoc === 'side') ? porchDepth : 0;
+  var eatL = (porchLoc === 'front') ? porchDepth : 0;
+  return { x0: -w / 2, x1: w / 2 - eatW, z0: -l / 2, z1: l / 2 - eatL };
+}
 // "local" is distance in feet from the wall's own start corner (pos=0), the
 // same reference designer.html's openingDims() uses for its "from the
 // left"/"from the right" callouts, EXCEPT here it stays purely in local
 // units — screen orientation is handled separately by wallPointAtLocal.
-function wallLenFt(wall, w, l) { return (wall === 'front' || wall === 'back') ? w : l; }
-function openingLocalFt(wall, pos, widthFt, w, l) {
-  var lenFt = wallLenFt(wall, w, l);
+function wallLenFt(wall, room) { return (wall === 'front' || wall === 'back') ? (room.x1 - room.x0) : (room.z1 - room.z0); }
+function openingLocalFt(wall, pos, widthFt, room) {
+  var lenFt = wallLenFt(wall, room);
   var marginFt = widthFt / 2 + 0.6; // matches the designer's own edge clearance
   var usableFt = Math.max(0, lenFt - marginFt * 2);
   var p = Math.max(0, Math.min(1, Number(pos)));
   if (!isFinite(p)) p = 0.5;
   return marginFt + p * usableFt;
 }
-function wallPointAtLocal(wall, localFt, w, l) {
+function wallPointAtLocal(wall, localFt, room) {
   switch (wall) {
-    case 'front': return { x: -w / 2 + localFt, z: l / 2 };
-    case 'back': return { x: w / 2 - localFt, z: -l / 2 };
-    case 'left': return { x: -w / 2, z: l / 2 - localFt };
-    case 'right': return { x: w / 2, z: -l / 2 + localFt };
+    case 'front': return { x: room.x0 + localFt, z: room.z1 };
+    case 'back': return { x: room.x1 - localFt, z: room.z0 };
+    case 'left': return { x: room.x0, z: room.z1 - localFt };
+    case 'right': return { x: room.x1, z: room.z0 + localFt };
     default: return null;
   }
 }
@@ -483,21 +494,26 @@ function buildFloorPlan(config) {
   if (!isFinite(w) || !isFinite(l) || w <= 0 || l <= 0 || w > 200 || l > 200) return null;
   var validWalls = ['front', 'back', 'left', 'right'];
 
-  // Porch: an attached room, not a base-sheet switch (see designer.html). Side
-  // porch always opens onto 'right' (porchMoveDoor() hardcodes that wall).
+  // Porch: carved out of the shed's own w/l (see roomRect() above), not an
+  // attached extension of it. Side porch always opens onto 'right'
+  // (porchMoveDoor() hardcodes that wall in the designer).
   var porchDepth = Number(config.porchDepth) || 0;
   var hasPorch = (config.porchLoc === 'front' || config.porchLoc === 'side') && porchDepth > 0;
   var porchWall = config.porchLoc === 'side' ? 'right' : 'front';
+  var room = roomRect(w, l, hasPorch ? config.porchLoc : 'none', porchDepth);
 
-  // Loft: "<depthFt>-<front|back|dual>", full width, depth in from a gable end.
+  // Loft: "<depthFt>-<front|back|dual>", full ROOM width, depth in from a
+  // gable end of the ROOM (not the outer w/l — the designer's own loft code
+  // runs off the same shrunk enclosure the walls do).
   var loftZones = [];
   if (config.loft && config.loft !== 'none') {
     var lp = String(config.loft).split('-');
-    var loftDepthFt = Math.min(parseFloat(lp[0]) || 0, l - 0.5);
+    var roomL = room.z1 - room.z0;
+    var loftDepthFt = Math.min(parseFloat(lp[0]) || 0, roomL - 0.5);
     var loftKind = lp[1] || 'front';
     if (loftDepthFt > 0) {
-      if (loftKind === 'front' || loftKind === 'dual') loftZones.push({ z0: l / 2 - loftDepthFt, z1: l / 2 });
-      if (loftKind === 'back' || loftKind === 'dual') loftZones.push({ z0: -l / 2, z1: -l / 2 + loftDepthFt });
+      if (loftKind === 'front' || loftKind === 'dual') loftZones.push({ z0: room.z1 - loftDepthFt, z1: room.z1 });
+      if (loftKind === 'back' || loftKind === 'dual') loftZones.push({ z0: room.z0, z1: room.z0 + loftDepthFt });
     }
   }
 
@@ -519,13 +535,15 @@ function buildFloorPlan(config) {
   }
 
   // ---- Layout ----
+  // The porch fits inside the shed's own w x l (see roomRect() above), so
+  // unlike the building itself the canvas doesn't need extra room for it —
+  // only the usual dimension-text padding on every side.
   var scale = 16;                      // px per ft for the building itself
   var wPx = w * scale, lPx = l * scale;
-  var porchPx = hasPorch ? porchDepth * scale : 0;
   var chainBand = 30, totalBand = 34, labelBand = 14; // px reserved per side for dimension text
   var pad = labelBand + chainBand + totalBand + 26; // +26: room for the total's own label text before the outer BACK/FRONT/LEFT/RIGHT band
-  var svgW = wPx + pad * 2 + (porchWall === 'right' ? porchPx : 0);
-  var svgH = lPx + pad * 2 + (porchWall === 'front' ? porchPx : 0);
+  var svgW = wPx + pad * 2;
+  var svgH = lPx + pad * 2;
 
   function toX(worldX) { return pad + (worldX + w / 2) * scale; }
   function toY(worldZ) { return pad + (worldZ + l / 2) * scale; }
@@ -556,13 +574,16 @@ function buildFloorPlan(config) {
   }
 
   // ---- Openings per wall, sorted along the wall's own local axis ----
+  // Walls are measured against the ROOM (shrunk by any porch), not the
+  // outer w/l — the wall the porch opens onto is physically shorter/set
+  // back by the porch depth, same as the designer's own wallFrame().
   function wallOpenings(wall) {
-    var lenFt = wallLenFt(wall, w, l);
+    var lenFt = wallLenFt(wall, room);
     var items = [];
     doors.concat(windows).forEach(function (o) {
       if (o.wall !== wall) return;
       var widthFt = (Number(o.w) || (o._code[0] === 'D' ? 36 : 24)) / 12;
-      var centerFt = openingLocalFt(wall, o.pos, widthFt, w, l);
+      var centerFt = openingLocalFt(wall, o.pos, widthFt, room);
       items.push({ code: o._code, kind: o._code[0] === 'D' ? 'door' : 'window', start: centerFt - widthFt / 2, end: centerFt + widthFt / 2, widthFt: widthFt });
     });
     items.sort(function (a, b) { return a.start - b.start; });
@@ -570,10 +591,13 @@ function buildFloorPlan(config) {
   }
 
   // Draw one wall as alternating closed segments / openings, plus its own
-  // dimension chain (to the 1/8") just outside the building line.
+  // dimension chain (to the 1/8") just outside the room line. On the wall a
+  // porch opens onto, that "outside" is the porch itself (mostly empty, so
+  // the chain reads fine there) rather than the true exterior — the porch
+  // sits between this wall and the building's actual outer edge.
   //
-  // "outward" is the screen direction pointing away from the building for
-  // THIS wall — +1/-1 on the Y axis for the horizontal walls (front points
+  // "outward" is the screen direction pointing away from the room for THIS
+  // wall — +1/-1 on the Y axis for the horizontal walls (front points
   // down/+Y since front is drawn at the bottom, back points up/-Y), and
   // +1/-1 on the X axis for the vertical walls (right points right/+X, left
   // points left/-X). This is a different axis per orientation, so it must
@@ -585,14 +609,8 @@ function buildFloorPlan(config) {
     var geo = wallOpenings(wall);
     var horiz = (wall === 'front' || wall === 'back');
     var outward = (wall === 'front') ? 1 : (wall === 'back') ? -1 : (wall === 'right') ? 1 : -1;
-    // A porch attached to this wall sits in the same outside space this
-    // wall's own dimension chain would otherwise use — push the chain out
-    // past the porch's footprint so the two don't render on top of each
-    // other (the overall-total line already does this; the fine chain needs
-    // the same treatment).
-    var clearPorch = (hasPorch && wall === porchWall) ? porchPx : 0;
 
-    function pt(localFt) { var p = wallPointAtLocal(wall, localFt, w, l); return { x: toX(p.x), y: toY(p.z) }; }
+    function pt(localFt) { var p = wallPointAtLocal(wall, localFt, room); return { x: toX(p.x), y: toY(p.z) }; }
 
     // Wall line itself: solid where closed, a gap at each opening (window
     // gets a thin line across the gap to read as glazing, a door gets none).
@@ -625,13 +643,13 @@ function buildFloorPlan(config) {
         var mid = (bounds[i] + bounds[i + 1]) / 2;
         var p1 = pt(bounds[i]), p2 = pt(bounds[i + 1]), pm = pt(mid);
         if (horiz) {
-          var y = p1.y + outward * (chainBand + clearPorch);
+          var y = p1.y + outward * chainBand;
           line(p1.x, y, p2.x, y, { w: 0.75 });
           line(p1.x, p1.y + outward * 4, p1.x, y, { w: 0.5 });
           line(p2.x, p2.y + outward * 4, p2.x, y, { w: 0.5 });
           text(formatFtIn(segLen * 12), pm.x, y + (outward > 0 ? 11 : -4), { size: 8 });
         } else {
-          var x = p1.x + outward * (chainBand + clearPorch);
+          var x = p1.x + outward * chainBand;
           line(x, p1.y, x, p2.y, { w: 0.75 });
           line(p1.x + outward * 4, p1.y, x, p1.y, { w: 0.5 });
           line(p2.x + outward * 4, p2.y, x, p2.y, { w: 0.5 });
@@ -644,11 +662,13 @@ function buildFloorPlan(config) {
   // ---- Building outline (drawn via drawWall so openings break the line) ----
   validWalls.forEach(drawWall);
 
-  // ---- Porch: its own attached, dashed room (posts-and-roof, not a closed wall) ----
+  // ---- Porch: its own dashed room (posts-and-roof, not a closed wall),
+  // filling the strip between the ROOM's wall and the building's true outer
+  // edge — it does not extend past the shed's own w/l. ----
   if (hasPorch) {
     var pRect;
-    if (porchWall === 'front') pRect = { x0: -w / 2, x1: w / 2, z0: l / 2, z1: l / 2 + porchDepth };
-    else pRect = { x0: w / 2, x1: w / 2 + porchDepth, z0: -l / 2, z1: l / 2 };
+    if (porchWall === 'front') pRect = { x0: room.x0, x1: room.x1, z0: room.z1, z1: l / 2 };
+    else pRect = { x0: room.x1, x1: w / 2, z0: room.z0, z1: room.z1 };
     var pa = { x: toX(pRect.x0), y: toY(pRect.z0) }, pb = { x: toX(pRect.x1), y: toY(pRect.z1) };
     var pr = svgEl('rect', { x: Math.min(pa.x, pb.x), y: Math.min(pa.y, pb.y), width: Math.abs(pb.x - pa.x), height: Math.abs(pb.y - pa.y), fill: 'rgba(44,192,253,0.05)', stroke: '#2cc0fd', 'stroke-width': 1.25 });
     pr.setAttribute('stroke-dasharray', '4,3');
@@ -656,9 +676,10 @@ function buildFloorPlan(config) {
     text('C1', (pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
   }
 
-  // ---- Loft zone(s): dashed outline over the covered bay, on the ceiling plane ----
+  // ---- Loft zone(s): dashed outline over the covered bay, on the ceiling
+  // plane — full ROOM width, same as the porch, not the outer w/l. ----
   loftZones.forEach(function (z) {
-    var la = { x: toX(-w / 2), y: toY(z.z0) }, lb = { x: toX(w / 2), y: toY(z.z1) };
+    var la = { x: toX(room.x0), y: toY(z.z0) }, lb = { x: toX(room.x1), y: toY(z.z1) };
     var lr = svgEl('rect', { x: Math.min(la.x, lb.x) + 3, y: Math.min(la.y, lb.y) + 3, width: Math.abs(lb.x - la.x) - 6, height: Math.abs(lb.y - la.y) - 6, fill: 'none', stroke: '#8a909e', 'stroke-width': 1 });
     lr.setAttribute('stroke-dasharray', '3,3');
     svg.appendChild(lr);
@@ -672,35 +693,23 @@ function buildFloorPlan(config) {
   text('RIGHT', svgW - labelBand + 6, pad + lPx / 2, { size: 9, rotate: 90 });
 
   // ---- Overall building dimensions: width along the front, depth along the
-  // right — the outermost line, stacked past both the porch (if any) AND
-  // this wall's own fine chain (chainBand), so detail-then-total reads in
-  // the conventional near-to-far order instead of crossing each other.
-  //
-  // A porch extends the real footprint on whichever axis it opens onto — a
-  // front porch adds to depth, a side porch adds to width — same rule as
-  // footprintLabel() in the designer and the Size field on this quote (the
-  // shed is priced off its own size, but what gets built, and submitted to
-  // the city, is the porch-inclusive footprint). So the total shown here has
-  // to be w/l + the porch, not just the shed's own two numbers, or this
-  // dimension quietly stops at the wall the porch is hanging off of. ----
-  var totalW = w + (porchWall === 'right' ? porchDepth : 0);
-  var totalL = l + (porchWall === 'front' ? porchDepth : 0);
-
-  var fY = toY(l / 2) + (porchWall === 'front' ? porchPx : 0) + chainBand + totalBand;
-  var fFarX = toX(w / 2) + (porchWall === 'right' ? porchPx : 0);
-  var fL = { x: toX(-w / 2), y: fY }, fR = { x: fFarX, y: fY };
+  // right — the shed's own w/l, unchanged by a porch (a porch is carved out
+  // of that footprint, not added past it — see roomRect() above), drawn at
+  // the true outer edge, chainBand+totalBand out past the fine chain so
+  // detail-then-total reads in the conventional near-to-far order. ----
+  var fY = toY(l / 2) + chainBand + totalBand;
+  var fL = { x: toX(-w / 2), y: fY }, fR = { x: toX(w / 2), y: fY };
   line(fL.x, fL.y, fR.x, fR.y, { w: 1 });
   line(fL.x, fL.y - 5, fL.x, fL.y + 5, { w: 0.75 });
   line(fR.x, fR.y - 5, fR.x, fR.y + 5, { w: 0.75 });
-  text(totalW + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
+  text(w + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
 
-  var rX = toX(w / 2) + (porchWall === 'right' ? porchPx : 0) + chainBand + totalBand;
-  var rFarY = toY(l / 2) + (porchWall === 'front' ? porchPx : 0);
-  var rT = { x: rX, y: toY(-l / 2) }, rB = { x: rX, y: rFarY };
+  var rX = toX(w / 2) + chainBand + totalBand;
+  var rT = { x: rX, y: toY(-l / 2) }, rB = { x: rX, y: toY(l / 2) };
   line(rT.x, rT.y, rB.x, rB.y, { w: 1 });
   line(rT.x - 5, rT.y, rT.x + 5, rT.y, { w: 0.75 });
   line(rB.x - 5, rB.y, rB.x + 5, rB.y, { w: 0.75 });
-  text(totalL + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
+  text(l + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
 
   return { svg: svg, legendItems: legendItems };
 }
