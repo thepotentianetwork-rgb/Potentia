@@ -44,6 +44,11 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .price-label{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
 .price-value{font-size:40px;color:var(--bright);font-weight:300}
 
+.br-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--dim);font-size:15px}
+.br-row:last-child{border-bottom:none}
+.br-label{color:var(--chrome)}
+.br-amt{color:var(--bright);font-family:'DM Mono',monospace;font-size:13px}
+
 .design-link{display:inline-block;margin-top:14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--sp-blue);text-decoration:none}
 .design-link:hover{color:var(--bright)}
 
@@ -64,9 +69,10 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
   body{background:#fff;color:#111;padding:0}
   .toolbar{display:none}
   .doc{border:none;background:#fff;max-width:100%}
-  .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong{color:#111}
-  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend{color:#555}
+  .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong,.br-amt{color:#111}
+  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label{color:#333}
   .price-box{background:#f5f9fc;border-color:#bcdcf0}
+  .br-row{border-color:#ddd}
   .render-cell{border-color:#ccc}
   .render-grid{break-inside:avoid}
 }
@@ -111,6 +117,38 @@ function esc(s) {
 
 function field(label, value) {
   return '<div class="doc-field"><div class="fl">' + esc(label) + '</div><div class="fv">' + (value ? esc(value) : '—') + '</div></div>';
+}
+function money2(n) { return '$' + Math.round(n).toLocaleString(); }
+
+// Only the customer-facing SELL-side fields of the redline go here — never
+// the cost/margin fields (framing, siding cost, trueTotalCost, profit, etc.)
+// that live alongside them in the same object for the admin dashboard.
+function buildBreakdown(redline) {
+  if (!redline || typeof redline !== 'object') return '';
+  var rows = [];
+  function add(label, amt) { if (label && amt) rows.push([label, Number(amt)]); }
+  function addLines(lines, labelKey, amtKey) {
+    (lines || []).forEach(function (l) { add(l[labelKey], l[amtKey]); });
+  }
+  add('Base Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), redline.marginPrice);
+  addLines(redline.doorUpLines, 'label', 'up');
+  addLines(redline.windowSellLines, 'label', 'price');
+  addLines(redline.dormerSellLines, 'label', 'price');
+  add(redline.sidingSellName, redline.sidingSell);
+  add(redline.heightSellName, redline.heightSell);
+  add(redline.intSellName, redline.intSell);
+  add(redline.foundName, redline.foundSell);
+  add(redline.elecSellName, redline.elecSell);
+  add(redline.loftSellName, redline.loftSell);
+  addLines(redline.shelfSellLines, 'label', 'price');
+  addLines(redline.addonLines, 'name', 'amt');
+
+  if (!rows.length) return '';
+  var rowsHtml = rows.map(function (r) {
+    return '<div class="br-row"><span class="br-label">' + esc(r[0]) + '</span>'
+      + '<span class="br-amt">' + money2(r[1]) + '</span></div>';
+  }).join('');
+  return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>';
 }
 
 function render(submission, customer) {
@@ -174,6 +212,8 @@ function render(submission, customer) {
 
     + '<div class="doc-section" id="renders-section"></div>'
     + '<div class="doc-section" id="floorplan-section"></div>'
+
+    + buildBreakdown(details.redline)
 
     + '<div class="doc-section">'
     +   '<div class="price-box">'
