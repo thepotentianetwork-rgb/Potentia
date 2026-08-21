@@ -174,7 +174,13 @@ function taxBreakdown(redline) {
   // this order, each its own phase.
   var rows = [];
   function add(phase, label, amt) { if (label && amt) rows.push({ phase: phase, label: 'Phase ' + phase + ' — ' + label, amt: Number(amt) }); }
-  add(1, redline.foundName || 'Concrete', redline.foundSell);
+  // The pad spec (4" poured slab) belongs on every quote regardless of when
+  // its redline snapshot was taken, so it's added here at display time
+  // rather than depending on redline.foundName having been generated with
+  // it baked in already.
+  var foundLabel = redline.foundName || 'Concrete';
+  if (config.foundation === 'pad' && foundLabel.indexOf('4"') === -1) foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
+  add(1, foundLabel, redline.foundSell);
   add(2, 'Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
   add(3, redline.intSellName || 'Interior Finishing', redline.intSell);
 
@@ -283,7 +289,7 @@ function render(submission, customer) {
   if (config.roofType) fields += field('Roof', config.roofType);
   if (Array.isArray(config.doors)) fields += field('Doors', config.doors.length);
   if (Array.isArray(config.windows)) fields += field('Windows', config.windows.length);
-  if (config.foundation) fields += field('Foundation', config.foundation);
+  if (config.foundation) fields += field('Foundation', config.foundation === 'pad' ? '4" Poured Concrete Pad' : config.foundation === 'blocks' ? 'Leveled on Cinder Blocks' : config.foundation);
   if (config.loft) fields += field('Loft', config.loft);
   if (config.elec) fields += field('Electrical', config.elec);
   if (!fields) fields = '<p class="empty">No design details captured for this order.</p>';
@@ -732,6 +738,21 @@ function buildFloorPlan(config, frontWall) {
     pr.setAttribute('stroke-dasharray', '4,3');
     svg.appendChild(pr);
     text('C1', (pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+
+    // Support posts, on the porch's outer edge (where the header beam that
+    // carries the roof lands) — same placement rule as the designer's own
+    // 3D build: two posts inset from the corners, plus a center post once
+    // the span gets too wide for two to carry it alone. A front porch's
+    // posts run the shed's own width (unaffected by the porch, which only
+    // eats depth); a side porch's run its depth, for the same reason.
+    var postSpan = (porchWall === 'front') ? w : l; // the axis the porch does NOT eat into
+    var postInset = (porchWall === 'front') ? 0.25 : 0.5; // ft — matches the designer's fp/sp post seating
+    var postSeats = [-postSpan / 2 + postInset, postSpan / 2 - postInset];
+    if (postSpan > (porchWall === 'front' ? 11 : 13)) postSeats.push(0);
+    postSeats.forEach(function (t) {
+      var pt = (porchWall === 'front') ? project(t, l / 2) : project(w / 2, t);
+      svg.appendChild(svgEl('rect', { x: pt.x - 2.5, y: pt.y - 2.5, width: 5, height: 5, fill: '#2cc0fd' }));
+    });
   }
 
   // ---- Loft zone(s): dashed outline over the covered bay, on the ceiling
