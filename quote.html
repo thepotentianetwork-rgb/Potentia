@@ -261,7 +261,15 @@ function render(submission, customer) {
     .filter(Boolean).join(', ');
 
   var fields = '';
-  if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
+  if (config.w && config.l) {
+    // A porch extends the shed's actual footprint — front porch adds to
+    // length, side porch adds to width — even though the base price is
+    // still keyed off the shed's own size before the porch.
+    var totalW = Number(config.w), totalL = Number(config.l), porchNote = '';
+    if (config.porchLoc === 'front' && config.porchDepth > 0) { totalL += Number(config.porchDepth); porchNote = ' (incl. ' + config.porchDepth + '’ porch)'; }
+    else if (config.porchLoc === 'side' && config.porchDepth > 0) { totalW += Number(config.porchDepth); porchNote = ' (incl. ' + config.porchDepth + '’ porch)'; }
+    fields += field('Size', totalW + '’ x ' + totalL + '’' + porchNote + (config.h ? ' x ' + config.h + '’ wall' : ''));
+  }
   if (config.style) fields += field('Style', config.style);
   if (config.siding) fields += field('Siding', config.siding);
   if (config.roofType) fields += field('Roof', config.roofType);

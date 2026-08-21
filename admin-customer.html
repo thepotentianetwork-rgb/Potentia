@@ -252,7 +252,13 @@ function appendContactParams(permalink, submission, details) {
 function summarizeConfig(config) {
   if (!config) return '';
   var parts = [];
-  if (config.w && config.l) parts.push(config.w + 'x' + config.l + ' ft');
+  if (config.w && config.l) {
+    // Porch extends the actual footprint — front adds to length, side adds to width.
+    var totalW = Number(config.w), totalL = Number(config.l);
+    if (config.porchLoc === 'front' && config.porchDepth > 0) totalL += Number(config.porchDepth);
+    else if (config.porchLoc === 'side' && config.porchDepth > 0) totalW += Number(config.porchDepth);
+    parts.push(totalW + 'x' + totalL + ' ft' + (config.porchLoc && config.porchLoc !== 'none' ? ' (w/ porch)' : ''));
+  }
   if (config.style) parts.push(config.style);
   if (config.siding) parts.push(config.siding);
   return parts.join(' · ');
