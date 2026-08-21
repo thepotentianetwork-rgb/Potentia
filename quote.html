@@ -157,11 +157,14 @@ function taxBreakdown(redline) {
     + sumLines(redline.shelfSellLines, 'price')
     + sumLines(redline.addonLines, 'amt');
 
+  // Build order matches how the job is actually run and billed: concrete
+  // goes in first, then the shed, then interior finishing — always in
+  // this order, each its own phase.
   var rows = [];
-  function add(label, amt) { if (label && amt) rows.push({ label: label, amt: Number(amt) }); }
-  add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
-  add(redline.foundName, redline.foundSell);
-  add(redline.intSellName, redline.intSell);
+  function add(phase, label, amt) { if (label && amt) rows.push({ phase: phase, label: 'Phase ' + phase + ' — ' + label, amt: Number(amt) }); }
+  add(1, redline.foundName || 'Concrete', redline.foundSell);
+  add(2, 'Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
+  add(3, redline.intSellName || 'Interior Finishing', redline.intSell);
 
   if (!rows.length) return null;
   rows.forEach(function (r) {
@@ -185,7 +188,7 @@ function buildBreakdown(bd) {
   rowsHtml += '<div class="br-row"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
 
   var depositRowsHtml = bd.rows.map(function (r) {
-    return '<div class="br-row"><span class="br-label">' + esc(r.label) + ' — Deposit (' + PCT_LABEL(DEPOSIT_RATE) + '%)</span>'
+    return '<div class="br-row"><span class="br-label">Phase ' + r.phase + ' Deposit (' + PCT_LABEL(DEPOSIT_RATE) + '%)</span>'
       + '<span class="br-amt">' + money2(r.deposit) + '</span></div>';
   }).join('');
   depositRowsHtml += '<div class="br-row"><span class="br-label">Total Deposit Due</span><span class="br-amt">' + money2(bd.depositTotal) + '</span></div>';
