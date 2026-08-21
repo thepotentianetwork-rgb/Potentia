@@ -576,7 +576,15 @@ function buildFloorPlan(config, frontWall) {
   doors.forEach(function (d, i) { d._code = 'D' + (i + 1); legendItems.push({ code: d._code, desc: doorLabel(d) }); });
   windows.forEach(function (d, i) { d._code = 'W' + (i + 1); legendItems.push({ code: d._code, desc: windowLabel(d) }); });
   if (hasPorch) {
-    var porchName = (config.porchLoc === 'side' ? porchDepth + "' Side Porch" : porchDepth + "' Front Porch") +
+    // Named by where it's actually drawn (displayedWall), not by porchLoc's
+    // raw 'front'/'side' — the wall the porch is really on can rotate to
+    // any of the four positions once frontWall isn't 'front', and calling
+    // it a "Side Porch" while it's drawn spanning the front (or a "Front
+    // Porch" spanning a side wall) is exactly the kind of thing a permit
+    // reviewer would flag as not matching the drawing.
+    var displayedWall = (WALL_ROTATIONS[frontWall] || WALL_ROTATIONS.front)[porchWall];
+    var porchKind = displayedWall === 'front' ? 'Front Porch' : displayedWall === 'back' ? 'Back Porch' : 'Side Porch';
+    var porchName = porchDepth + "' " + porchKind +
       (config.porchTier && config.porchTier !== 'standard' ? ' — ' + config.porchTier : '');
     legendItems.push({ code: 'C1', desc: porchName });
   }
@@ -690,19 +698,30 @@ function buildFloorPlan(config, frontWall) {
   // the chain reads fine there) rather than the true exterior — the porch
   // sits between this wall and the building's actual outer edge.
   //
-  // "outward" is the screen direction pointing away from the room for THIS
-  // wall — +1/-1 on the Y axis for the horizontal walls (front points
-  // down/+Y since front is drawn at the bottom, back points up/-Y), and
-  // +1/-1 on the X axis for the vertical walls (right points right/+X, left
-  // points left/-X). This is a different axis per orientation, so it must
-  // stay a single "which way is outside" concept, not one sign reused for
-  // both axes — reusing one sign for both caused the right wall's dimension
-  // chain to draw backwards, inside the building, the first time this was
-  // built (caught by rendering and eyeballing the SVG before shipping it).
+  // "horiz"/"outward" describe how THIS wall sits on screen: horiz = does
+  // it render as a horizontal line (true) or vertical (false); outward =
+  // which screen direction points away from the room. These used to be a
+  // fixed lookup by wall identity (front/back always horizontal, etc.),
+  // which is only true when frontWall === 'front'. Any other frontWall
+  // rotates a 'left' or 'right' wall onto the horizontal axis (or vice
+  // versa) and flips which screen direction is "outward" — a fixed lookup
+  // silently mislabeled and mispositioned the fine chain, tick marks, and
+  // opening codes on a rotated plan (caught from a real submitted quote:
+  // door codes were missing and a side porch was drawn spanning the front
+  // like a front porch, because their offsets were computed on the wrong
+  // axis). So this is derived straight from the projection instead: step a
+  // half-foot outward from the wall's own midpoint and see which screen
+  // axis actually moved.
   function drawWall(wall) {
     var geo = wallOpenings(wall);
-    var horiz = (wall === 'front' || wall === 'back');
-    var outward = (wall === 'front') ? 1 : (wall === 'back') ? -1 : (wall === 'right') ? 1 : -1;
+    var normal = { front: { x: 0, z: 1 }, back: { x: 0, z: -1 }, left: { x: -1, z: 0 }, right: { x: 1, z: 0 } }[wall];
+    var midLocal = wallLenFt(wall, room) / 2;
+    var midWorld = wallPointAtLocal(wall, midLocal, room);
+    var atWall = project(midWorld.x, midWorld.z);
+    var beyond = project(midWorld.x + normal.x * 0.5, midWorld.z + normal.z * 0.5);
+    var dx = beyond.x - atWall.x, dy = beyond.y - atWall.y;
+    var horiz = Math.abs(dy) > Math.abs(dx); // stepping outward moved mostly vertically -> the wall itself runs horizontally
+    var outward = horiz ? (dy > 0 ? 1 : -1) : (dx > 0 ? 1 : -1);
 
     function pt(localFt) { var p = wallPointAtLocal(wall, localFt, room); return project(p.x, p.z); }
 
