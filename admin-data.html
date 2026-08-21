@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data — ShedPro Admin</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:12px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--sp-blue);color:var(--bright)}
+
+main{max-width:1200px;margin:0 auto;padding:48px 40px 100px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
+section{margin-bottom:56px}
+
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;margin-bottom:56px}
+.stat-tile{border:1px solid var(--dim);padding:22px 24px}
+.stat-tile .sl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+.stat-tile .sv{font-size:32px;color:var(--bright);font-weight:300}
+.stat-tile .sv small{font-size:14px;color:var(--silver);font-weight:300}
+
+.map-wrap{border:1px solid var(--dim);overflow:hidden}
+#hotmap{height:440px;width:100%;background:#0a0a10}
+.map-empty{padding:60px 24px;text-align:center;font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
+.leaflet-container{background:#0a0a10 !important}
+
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+@media (max-width:900px){.two-col{grid-template-columns:1fr}.stat-row{grid-template-columns:repeat(2,1fr)}}
+
+.bar-panel{border:1px solid var(--dim);padding:20px 24px}
+.bar-panel h3{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;font-weight:400;margin-bottom:18px}
+.bar-row{margin-bottom:12px}
+.bar-row:last-child{margin-bottom:0}
+.bar-label{display:flex;justify-content:space-between;font-size:13px;color:var(--chrome);margin-bottom:4px}
+.bar-label .bn{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim)}
+.bar-track{height:6px;background:rgba(255,255,255,0.04);position:relative}
+.bar-fill{height:100%;background:linear-gradient(90deg,var(--sp-blue-deep),var(--sp-blue))}
+
+.timeline{border:1px solid var(--dim);padding:24px}
+.timeline h3{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;font-weight:400;margin-bottom:20px}
+.timeline-bars{display:flex;align-items:flex-end;gap:2px;height:120px}
+.tbar{flex:1;background:var(--sp-blue-deep);min-height:1px;position:relative}
+.tbar:hover{background:var(--sp-blue)}
+.timeline-axis{display:flex;justify-content:space-between;margin-top:8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
+
+.funnel{display:flex;gap:2px;margin-bottom:20px}
+.funnel-seg{flex:1;text-align:center;padding:16px 8px;font-family:'DM Mono',monospace}
+.funnel-seg .fn{font-size:24px;color:var(--bright);font-weight:300;display:block;margin-bottom:4px}
+.funnel-seg .fl{font-size:9px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase}
+.funnel-new{background:rgba(44,192,253,0.08);border-bottom:2px solid var(--sp-blue)}
+.funnel-contacted,.funnel-quoted{background:rgba(246,148,31,0.08);border-bottom:2px solid var(--sp-orange)}
+.funnel-won{background:rgba(95,208,138,0.08);border-bottom:2px solid #5fd08a}
+.funnel-lost{background:rgba(138,144,158,0.06);border-bottom:2px solid var(--dim)}
+
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:20px 0}
+.loading{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="shedpro-logo.png" alt="ShedPro">
+    <div class="h-brand-text">
+      <span class="h-title">SHEDPRO ADMIN</span>
+      <span class="h-sub">Built &amp; managed by Potentia</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <a href="admin.html" class="back-link">← All Customers</a>
+    <a href="admin-pricing.html" class="back-link">Pricing →</a>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <p class="sec-label">ShedPro Partner</p>
+  <h2>Data</h2>
+
+  <div id="loading" class="loading">Loading…</div>
+
+  <div id="content" style="display:none">
+    <div class="stat-row">
+      <div class="stat-tile"><div class="sl">Total Submissions</div><div class="sv" id="st-total">—</div></div>
+      <div class="stat-tile"><div class="sl">Total Customers</div><div class="sv" id="st-customers">—</div></div>
+      <div class="stat-tile"><div class="sl">Avg Quoted Price</div><div class="sv" id="st-avg">—</div></div>
+      <div class="stat-tile"><div class="sl">Median Quoted Price</div><div class="sv" id="st-median">—</div></div>
+    </div>
+
+    <section>
+      <p class="sec-label">Pipeline</p>
+      <h2 style="font-size:20px;margin-bottom:16px">Status Funnel</h2>
+      <div class="funnel" id="funnel"></div>
+    </section>
+
+    <section>
+      <p class="sec-label">Activity</p>
+      <h2 style="font-size:20px;margin-bottom:16px">Submissions — Last 60 Days</h2>
+      <div class="timeline">
+        <div class="timeline-bars" id="tl-bars"></div>
+        <div class="timeline-axis" id="tl-axis"></div>
+      </div>
+    </section>
+
+    <section>
+      <p class="sec-label">Geography</p>
+      <h2 style="font-size:20px;margin-bottom:16px">Where Submissions Come From</h2>
+      <div class="map-wrap">
+        <div id="hotmap"></div>
+        <div id="map-empty" class="map-empty" style="display:none">No location data yet — this fills in as new submissions come in.</div>
+      </div>
+    </section>
+
+    <section style="margin-bottom:0">
+      <p class="sec-label">What People Are Building</p>
+      <h2 style="font-size:20px;margin-bottom:16px">Design Preferences</h2>
+      <div class="two-col">
+        <div class="bar-panel">
+          <h3>Shed Style</h3>
+          <div id="bar-style"></div>
+        </div>
+        <div class="bar-panel">
+          <h3>Siding</h3>
+          <div id="bar-siding"></div>
+        </div>
+        <div class="bar-panel">
+          <h3>Popular Sizes</h3>
+          <div id="bar-size"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_admin_token');
+var selfUrl = 'admin-data.html';
+
+if (!token) window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      localStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('potentia_admin_token');
+  window.location.href = 'admin-login.html';
+});
+
+function el(tag, attrs, children) {
+  var e = document.createElement(tag);
+  for (var k in attrs || {}) {
+    if (k === 'class') e.className = attrs[k];
+    else if (k === 'text') e.textContent = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  }
+  (children || []).forEach(function (c) { e.appendChild(c); });
+  return e;
+}
+function money(n) { return n == null ? '—' : '$' + Math.round(n).toLocaleString(); }
+
+var STYLE_LABELS = {
+  'aframe': 'A-Frame Style', 'aframe-front': 'A-Frame Cabin', 'aframe-side': 'Side Porch A-Frame',
+  'barn': 'Barn Style', 'leanto': 'Single Slope', 'poolhouse': 'Poolhouse',
+  '3peak': '3 Peak', '4peak': '4 Peak', 'gable': 'Gable'
+};
+
+function renderBars(hostId, counts, labelMap) {
+  var host = document.getElementById(hostId);
+  host.innerHTML = '';
+  var entries = Object.keys(counts || {}).map(function (k) { return [k, counts[k]]; });
+  entries.sort(function (a, b) { return b[1] - a[1]; });
+  entries = entries.slice(0, 8);
+  if (!entries.length) { host.appendChild(el('p', { class: 'empty', text: 'No data yet.' })); return; }
+  var max = entries[0][1];
+  entries.forEach(function (pair) {
+    var name = labelMap && labelMap[pair[0]] ? labelMap[pair[0]] : pair[0];
+    var row = el('div', { class: 'bar-row' });
+    var label = el('div', { class: 'bar-label' });
+    label.appendChild(el('span', { text: name }));
+    label.appendChild(el('span', { class: 'bn', text: String(pair[1]) }));
+    row.appendChild(label);
+    var track = el('div', { class: 'bar-track' });
+    var fill = el('div', { class: 'bar-fill' });
+    fill.style.width = Math.max(4, (pair[1] / max) * 100) + '%';
+    track.appendChild(fill);
+    row.appendChild(track);
+    host.appendChild(row);
+  });
+}
+
+function renderFunnel(statusCounts) {
+  var host = document.getElementById('funnel');
+  host.innerHTML = '';
+  var order = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
+  order.forEach(function (pair) {
+    var key = pair[0], label = pair[1];
+    var seg = el('div', { class: 'funnel-seg funnel-' + key });
+    seg.appendChild(el('span', { class: 'fn', text: String((statusCounts && statusCounts[key]) || 0) }));
+    seg.appendChild(el('span', { class: 'fl', text: label }));
+    host.appendChild(seg);
+  });
+}
+
+function renderTimeline(byDay) {
+  var bars = document.getElementById('tl-bars');
+  var axis = document.getElementById('tl-axis');
+  bars.innerHTML = ''; axis.innerHTML = '';
+  var days = [];
+  var today = new Date();
+  for (var i = 59; i >= 0; i--) {
+    var d = new Date(today);
+    d.setDate(d.getDate() - i);
+    var key = d.toISOString().slice(0, 10);
+    days.push({ key: key, count: (byDay && byDay[key]) || 0, date: d });
+  }
+  var max = Math.max.apply(null, days.map(function (d) { return d.count; }).concat([1]));
+  days.forEach(function (d) {
+    var bar = el('div', { class: 'tbar' });
+    bar.style.height = (d.count === 0 ? 1 : Math.max(4, (d.count / max) * 100)) + '%';
+    bar.setAttribute('title', d.date.toLocaleDateString() + ' — ' + d.count + ' submission' + (d.count === 1 ? '' : 's'));
+    bars.appendChild(bar);
+  });
+  axis.appendChild(el('span', { text: days[0].date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) }));
+  axis.appendChild(el('span', { text: 'Today' }));
+}
+
+function renderMap(points) {
+  var mapEmpty = document.getElementById('map-empty');
+  var mapEl = document.getElementById('hotmap');
+  if (!points || !points.length) {
+    mapEl.style.display = 'none';
+    mapEmpty.style.display = 'block';
+    return;
+  }
+  var map = L.map('hotmap', { scrollWheelZoom: false }).setView([39.3, -111.7], 6);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+    maxZoom: 18
+  }).addTo(map);
+
+  var heatPoints = points.map(function (p) { return [p.lat, p.lng, 0.6]; });
+  L.heatLayer(heatPoints, { radius: 28, blur: 22, maxZoom: 10, minOpacity: 0.35 }).addTo(map);
+
+  points.forEach(function (p) {
+    var label = (p.city ? p.city + (p.region ? ', ' + p.region : '') : 'Unknown location') +
+      (p.price != null ? '<br>' + money(p.price) : '') + (p.status ? '<br>' + p.status : '');
+    L.circleMarker([p.lat, p.lng], { radius: 3, color: '#2cc0fd', weight: 1, fillOpacity: 0.6 })
+      .bindPopup(label)
+      .addTo(map);
+  });
+
+  if (points.length > 1) {
+    var bounds = L.latLngBounds(points.map(function (p) { return [p.lat, p.lng]; }));
+    map.fitBounds(bounds.pad(0.3));
+  }
+}
+
+authFetch('/admin/analytics').then(function (r) {
+  document.getElementById('loading').style.display = 'none';
+  if (!r.ok) {
+    document.getElementById('loading').textContent = 'Could not load data.';
+    document.getElementById('loading').style.display = 'block';
+    return;
+  }
+  var d = r.data;
+  document.getElementById('content').style.display = 'block';
+  document.getElementById('st-total').textContent = d.totalSubmissions != null ? d.totalSubmissions : '—';
+  document.getElementById('st-customers').textContent = d.totalCustomers != null ? d.totalCustomers : '—';
+  document.getElementById('st-avg').textContent = money(d.avgPrice);
+  document.getElementById('st-median').textContent = money(d.medianPrice);
+
+  renderFunnel(d.statusCounts);
+  renderTimeline(d.byDay);
+  renderMap(d.points);
+  renderBars('bar-style', d.styleCounts, STYLE_LABELS);
+  renderBars('bar-siding', d.sidingCounts, { vertical: 'Vertical T11', horizontal: 'Horizontal Lap', 'board-batten': 'Board & Batten', pine: 'Pine T&G' });
+  renderBars('bar-size', d.sizeCounts, null);
+});
+</script>
+</body>
+</html>
