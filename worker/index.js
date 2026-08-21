@@ -280,6 +280,32 @@ async function handleGetSubmission(request, env, origin, id) {
   return json({ submission, customer: customer || null }, 200, origin);
 }
 
+// ---- one-time cleanup: collapse any pre-existing duplicate "new" rows per
+// customer down to just the most recent one. The auto-supersede logic in
+// handleShedSubmit only fires going forward on new submissions — this fixes
+// up old data left over from before that existed.
+async function handleCleanupSuperseded(request, env, origin) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, customer_id FROM submissions WHERE status = 'new' ORDER BY customer_id, created_at DESC"
+  ).all();
+
+  const seen = new Set();
+  const staleIds = [];
+  for (const row of results) {
+    if (seen.has(row.customer_id)) {
+      staleIds.push(row.id);
+    } else {
+      seen.add(row.customer_id);
+    }
+  }
+
+  if (staleIds.length) {
+    await env.DB.batch(staleIds.map((id) => env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE id = ?").bind(id)));
+  }
+
+  return json({ ok: true, updated: staleIds.length }, 200, origin);
+}
+
 async function handleUpdateSubmissionStatus(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   const id = Number(body.id);
@@ -600,6 +626,10 @@ export default {
       if (path === "/admin/submissions/status" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleUpdateSubmissionStatus(request, env, origin);
+      }
+      if (path === "/admin/submissions/cleanup-superseded" && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleCleanupSuperseded(request, env, origin);
       }
       if (path.startsWith("/admin/submissions/") && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

@@ -103,6 +103,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   <div class="h-actions">
     <a href="admin-data.html" class="back-link">Data →</a>
     <a href="admin-pricing.html" class="back-link">Pricing →</a>
+    <button class="logout" id="cleanup-btn" style="font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer">Clean Up Duplicate Leads</button>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
 </header>
@@ -148,6 +149,23 @@ function authFetch(path, options) {
 document.getElementById('logout-btn').addEventListener('click', function () {
   localStorage.removeItem('potentia_admin_token');
   window.location.href = 'admin-login.html';
+});
+
+document.getElementById('cleanup-btn').addEventListener('click', function () {
+  var btn = this;
+  btn.textContent = 'Cleaning up...';
+  btn.disabled = true;
+  authFetch('/admin/submissions/cleanup-superseded', { method: 'POST' }).then(function (r) {
+    btn.disabled = false;
+    if (r.ok) {
+      btn.textContent = 'Clean Up Duplicate Leads';
+      alert(r.data.updated ? ('Cleaned up ' + r.data.updated + ' duplicate lead' + (r.data.updated === 1 ? '' : 's') + '.') : 'No duplicates found — nothing to clean up.');
+      loadCustomers();
+    } else {
+      btn.textContent = 'Clean Up Duplicate Leads';
+      alert('Something went wrong. Try again.');
+    }
+  });
 });
 
 // ---- Customers ----
