@@ -124,6 +124,14 @@ section{margin-bottom:56px}
     </section>
 
     <section>
+      <p class="sec-label">Attribution</p>
+      <h2 style="font-size:20px;margin-bottom:16px">How They Heard About Us</h2>
+      <div class="bar-panel" style="max-width:520px">
+        <div id="bar-heard"></div>
+      </div>
+    </section>
+
+    <section>
       <p class="sec-label">Geography</p>
       <h2 style="font-size:20px;margin-bottom:16px">Where Submissions Come From</h2>
       <div class="map-wrap">
@@ -192,6 +200,10 @@ function el(tag, attrs, children) {
 }
 function money(n) { return n == null ? '—' : '$' + Math.round(n).toLocaleString(); }
 
+var HEARD_LABELS = {
+  'word-of-mouth': 'Word of Mouth', 'facebook': 'Facebook', 'google': 'Google',
+  'display-shed': 'Our Display Shed'
+};
 var STYLE_LABELS = {
   'aframe': 'A-Frame Style', 'aframe-front': 'A-Frame Cabin', 'aframe-side': 'Side Porch A-Frame',
   'barn': 'Barn Style', 'leanto': 'Single Slope', 'poolhouse': 'Poolhouse',
@@ -306,6 +318,7 @@ authFetch('/admin/analytics').then(function (r) {
   renderFunnel(d.statusCounts);
   renderTimeline(d.byDay);
   renderMap(d.points);
+  renderBars('bar-heard', d.heardCounts, HEARD_LABELS);
   renderBars('bar-style', d.styleCounts, STYLE_LABELS);
   renderBars('bar-siding', d.sidingCounts, { vertical: 'Vertical T11', horizontal: 'Horizontal Lap', 'board-batten': 'Board & Batten', pine: 'Pine T&G' });
   renderBars('bar-size', d.sizeCounts, null);

@@ -159,6 +159,11 @@ document.getElementById('logout-btn').addEventListener('click', function () {
   window.location.href = 'admin-login.html';
 });
 
+var HEARD_LABELS = {
+  'word-of-mouth': 'Word of Mouth', 'facebook': 'Facebook', 'google': 'Google',
+  'display-shed': 'Our Display Shed'
+};
+
 function summarizeConfig(config) {
   if (!config) return '';
   var parts = [];
@@ -197,6 +202,15 @@ function renderOrders(submissions) {
     summary.className = 'order-summary';
     var summaryText = summarizeConfig(details.config);
     summary.textContent = summaryText || 'No design details captured.';
+    if (details.heardAbout) {
+      var heardText = HEARD_LABELS[details.heardAbout] || details.heardAbout;
+      if (details.heardAbout === 'other' && details.heardAboutOther) heardText += ': ' + details.heardAboutOther;
+      var heard = document.createElement('div');
+      heard.className = 'order-summary';
+      heard.style.marginBottom = '14px';
+      heard.textContent = 'Heard about us: ' + heardText;
+      summary.style.marginBottom = '2px';
+    }
 
     var actions = document.createElement('div');
     actions.className = 'order-actions';
@@ -245,6 +259,7 @@ function renderOrders(submissions) {
 
     card.appendChild(top);
     card.appendChild(summary);
+    if (details.heardAbout) card.appendChild(heard);
     card.appendChild(actions);
     wrap.appendChild(card);
   });

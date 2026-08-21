@@ -397,7 +397,9 @@ async function handleShedSubmit(request, env, origin) {
           redline: body.redline || null, // internal cost/margin breakdown — admin dashboard only, never public
           renders: await uploadRenders(env, body.renders),
           page: body.page || null,
-          geo
+          geo,
+          heardAbout: body.heardAbout || null,
+          heardAboutOther: body.heardAboutOther || null
         };
   const details = JSON.stringify(detailsPayload).slice(0, 20000);
 
@@ -430,6 +432,7 @@ async function handleAnalytics(request, env, origin) {
   const points = [];
   const prices = [];
   const sizeCounts = {};
+  const heardCounts = {};
 
   for (const row of results) {
     const day = (row.created_at || "").slice(0, 10);
@@ -448,6 +451,10 @@ async function handleAnalytics(request, env, origin) {
       if (config.w && config.l) {
         const key = config.w + "x" + config.l;
         sizeCounts[key] = (sizeCounts[key] || 0) + 1;
+      }
+      if (d.heardAbout) {
+        const key = d.heardAbout === "other" && d.heardAboutOther ? "other: " + d.heardAboutOther : d.heardAbout;
+        heardCounts[key] = (heardCounts[key] || 0) + 1;
       }
       const price = d.quotedPrice != null ? Number(d.quotedPrice) : null;
       if (price != null && isFinite(price)) prices.push(price);
@@ -479,6 +486,7 @@ async function handleAnalytics(request, env, origin) {
       styleCounts,
       sidingCounts,
       sizeCounts,
+      heardCounts,
       avgPrice,
       medianPrice,
       pricedCount: prices.length,
