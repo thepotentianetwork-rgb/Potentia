@@ -68,6 +68,11 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .floorplan-wrap{text-align:center}
 .floorplan-legend{display:flex;justify-content:center;gap:24px;margin-top:14px;font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);text-transform:uppercase}
 .legend-swatch{display:inline-block;width:14px;height:4px;margin-right:6px;vertical-align:middle}
+.symbol-legend{max-width:420px;margin:18px auto 0;border:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:11px}
+.symbol-legend-head{background:var(--dim);color:var(--bright);letter-spacing:0.15em;text-transform:uppercase;font-size:9px;padding:6px 10px}
+.symbol-legend-row{display:flex;padding:5px 10px;border-top:1px solid var(--dim);gap:10px}
+.symbol-legend-code{color:var(--sp-blue);font-weight:700;min-width:22px}
+.symbol-legend-desc{color:var(--chrome);text-align:left;flex:1}
 
 @media print{
   body{background:#fff;color:#111;padding:0}
@@ -79,6 +84,12 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
   .br-row{border-color:#ddd}
   .render-cell{border-color:#ccc}
   .render-grid{break-inside:avoid}
+  .symbol-legend{border-color:#ccc}
+  .symbol-legend-head{background:#eee;color:#111}
+  .symbol-legend-row{border-color:#ddd}
+  .symbol-legend-desc{color:#333}
+  .fp-dim-text,.fp-label{fill:#333 !important}
+  .fp-wall{stroke:#111 !important}
 }
 </style>
 </head>
@@ -381,7 +392,24 @@ function renderImages(renders, container) {
   container.appendChild(grid);
 }
 
-// ---- Floor Plan (drawn from door/window wall+position data we already capture) ----
+// ---- Floor Plan ----
+// Permit-grade: a symbol legend (D1/D2/C1/L1...), a chained dimension string
+// to the 1/8" between every opening on a wall (matching how the designer's
+// own editor already measures a door "from the left"/"from the right"), the
+// porch drawn as its own attached room, and the loft as a labeled zone.
+//
+// This is a from-scratch geometry model, not a port of designer.html's
+// three.js math (this page has no access to that running instance — it only
+// ever sees the saved config JSON). The wall-local -> world mapping below
+// was verified against the designer's actual wallFrame()/openingDims()
+// output for all four walls before writing this: front and right run
+// "local 0" at their own screen-near corner, but back and left are mirrored
+// (local 0 is at the FAR screen corner), because a real elevation is always
+// dimensioned as seen by someone standing outside, facing that specific
+// wall — back and left face the opposite way from front and right. Getting
+// this backwards would put a door on the wrong side of a wall on a plan a
+// customer submits to their city, so this mapping should not be "simplified"
+// without re-verifying it against the designer the same way.
 var SVG_NS = 'http://www.w3.org/2000/svg';
 function svgEl(tag, attrs) {
   var e = document.createElementNS(SVG_NS, tag);
@@ -389,75 +417,285 @@ function svgEl(tag, attrs) {
   return e;
 }
 
-function buildFloorPlanSVG(config) {
+// ---- Dimension formatting: inches -> "X' Y⅝"" to the nearest 1/8" ----
+var _EIGHTHS = ['', '⅛', '¼', '⅜', '½', '⅝', '¾', '⅞'];
+function formatFtIn(totalIn) {
+  totalIn = Math.max(0, totalIn || 0);
+  var eighths = Math.round(totalIn * 8);
+  var wholeIn = Math.floor(eighths / 8);
+  var frac = eighths % 8;
+  var ft = Math.floor(wholeIn / 12);
+  var inch = wholeIn % 12;
+  var inchStr = inch + (frac ? _EIGHTHS[frac] : '') + '"';
+  if (inch === 0 && !frac) return ft > 0 ? ft + "'" : '0"';
+  return ft > 0 ? (ft + "' " + inchStr) : inchStr;
+}
+
+// ---- Door / window naming (mirrors designer.html's sellDoorName; ported
+// because this page never runs alongside the designer, only its saved data) ----
+function doorLabel(dd) {
+  var w = Number(dd.w) || 60, st = dd.style || 'basic';
+  if (st === 'rollup') { var gl = w <= 76 ? "6'" : w <= 90 ? "7'" : "8'"; return gl + ' Roll Up Door'; }
+  if (st === 'cedar') { var cl = w <= 64 ? "5'" : w <= 78 ? "6'" : w <= 90 ? "7'" : "8'"; return cl + ' Cedar Double Door'; }
+  if (st === 'fairytale') return 'Fairytale Entry Door';
+  var RESID = {
+    res6: '36" Residential 6 Panel Door', reshalf: '36" Residential Half Lite Door', resfull: '36" Residential Full Lite Door',
+    res6B: '36" Residential 6 Panel Door (Black)', reshalfB: '36" Residential Half Lite Door (Black)', resfullB: '36" Residential Full Lite Door (Black)'
+  };
+  if (RESID[st]) return RESID[st];
+  var wl = w <= 38 ? "3'" : w <= 46 ? '3\'6"' : w <= 64 ? "5'" : w <= 78 ? "6'" : "7'";
+  var kind = w <= 46 ? 'Single' : 'Double';
+  var suf = st === 'craftsman' ? ' Craftsman' : st === 'xtrim' ? ' (X-Trim)' : st === 'arch' ? ' (Arch Trim)' : st === 'panel4' ? ' (4 Panel)' : '';
+  return wl + ' ' + kind + ' Door' + suf;
+}
+function windowLabel(wd) {
+  if (wd.type) return String(wd.type).replace(/^(White|Black|Brown)\s+/, '') + ' Window';
+  var wi = Number(wd.w) || 24, hi = Number(wd.h) || 30;
+  return wi + 'x' + hi + ' Window';
+}
+
+// ---- Wall geometry, in feet. front=+Z, back=-Z, left=-X, right=+X. ----
+// "local" is distance in feet from the wall's own start corner (pos=0), the
+// same reference designer.html's openingDims() uses for its "from the
+// left"/"from the right" callouts, EXCEPT here it stays purely in local
+// units — screen orientation is handled separately by wallPointAtLocal.
+function wallLenFt(wall, w, l) { return (wall === 'front' || wall === 'back') ? w : l; }
+function openingLocalFt(wall, pos, widthFt, w, l) {
+  var lenFt = wallLenFt(wall, w, l);
+  var marginFt = widthFt / 2 + 0.6; // matches the designer's own edge clearance
+  var usableFt = Math.max(0, lenFt - marginFt * 2);
+  var p = Math.max(0, Math.min(1, Number(pos)));
+  if (!isFinite(p)) p = 0.5;
+  return marginFt + p * usableFt;
+}
+function wallPointAtLocal(wall, localFt, w, l) {
+  switch (wall) {
+    case 'front': return { x: -w / 2 + localFt, z: l / 2 };
+    case 'back': return { x: w / 2 - localFt, z: -l / 2 };
+    case 'left': return { x: -w / 2, z: l / 2 - localFt };
+    case 'right': return { x: w / 2, z: -l / 2 + localFt };
+    default: return null;
+  }
+}
+
+function buildFloorPlan(config) {
   var w = Number(config.w), l = Number(config.l);
   if (!isFinite(w) || !isFinite(l) || w <= 0 || l <= 0 || w > 200 || l > 200) return null;
-
   var validWalls = ['front', 'back', 'left', 'right'];
-  var pad = 46, scale = 22;
-  var wPx = w * scale, lPx = l * scale;
-  var svgW = wPx + pad * 2, svgH = lPx + pad * 2 + 20;
 
-  var svg = svgEl('svg', { viewBox: '0 0 ' + svgW + ' ' + svgH, width: '100%' });
-  svg.style.maxWidth = '380px';
-  svg.style.display = 'block';
-  svg.style.margin = '0 auto';
+  // Porch: an attached room, not a base-sheet switch (see designer.html). Side
+  // porch always opens onto 'right' (porchMoveDoor() hardcodes that wall).
+  var porchDepth = Number(config.porchDepth) || 0;
+  var hasPorch = (config.porchLoc === 'front' || config.porchLoc === 'side') && porchDepth > 0;
+  var porchWall = config.porchLoc === 'side' ? 'right' : 'front';
 
-  svg.appendChild(svgEl('rect', { x: pad, y: pad, width: wPx, height: lPx, fill: 'none', stroke: '#8a909e', 'stroke-width': 2.5 }));
-
-  function label(text, x, y, rotate) {
-    var attrs = { x: x, y: y, 'font-family': 'DM Mono, monospace', 'font-size': '10px', fill: '#8a909e', 'text-anchor': 'middle' };
-    if (rotate) attrs.transform = 'rotate(' + rotate + ' ' + x + ' ' + y + ')';
-    var t = svgEl('text', attrs);
-    t.textContent = text;
-    svg.appendChild(t);
-  }
-  label('BACK', pad + wPx / 2, pad - 12);
-  label('FRONT · ' + w + '’ x ' + l + '’', pad + wPx / 2, pad + lPx + 30);
-  label('LEFT', pad - 26, pad + lPx / 2, -90);
-  label('RIGHT', pad + wPx + 26, pad + lPx / 2, 90);
-
-  function wallGeometry(wall) {
-    if (wall === 'back') return { x1: pad, y1: pad, x2: pad + wPx, y2: pad, horiz: true };
-    if (wall === 'front') return { x1: pad, y1: pad + lPx, x2: pad + wPx, y2: pad + lPx, horiz: true };
-    if (wall === 'left') return { x1: pad, y1: pad, x2: pad, y2: pad + lPx, horiz: false };
-    if (wall === 'right') return { x1: pad + wPx, y1: pad, x2: pad + wPx, y2: pad + lPx, horiz: false };
-    return null;
-  }
-
-  function placeMarker(item, kind) {
-    if (!item || typeof item !== 'object' || validWalls.indexOf(item.wall) === -1) return;
-    var geo = wallGeometry(item.wall);
-    if (!geo) return;
-    var pos = Number(item.pos);
-    if (!isFinite(pos)) pos = 0.5;
-    pos = Math.max(0, Math.min(1, pos));
-    var widthIn = Number(item.w);
-    var widthFt = isFinite(widthIn) && widthIn > 0 ? Math.min(widthIn, 300) / 12 : (kind === 'door' ? 3 : 2);
-    var markerPx = widthFt * scale;
-    var color = kind === 'door' ? '#2cc0fd' : '#f6941f';
-
-    if (geo.horiz) {
-      var cx = geo.x1 + (geo.x2 - geo.x1) * pos;
-      var x0 = Math.max(geo.x1, cx - markerPx / 2), x1 = Math.min(geo.x2, cx + markerPx / 2);
-      svg.appendChild(svgEl('line', { x1: x0, y1: geo.y1, x2: x1, y2: geo.y1, stroke: color, 'stroke-width': 5 }));
-    } else {
-      var cy = geo.y1 + (geo.y2 - geo.y1) * pos;
-      var y0 = Math.max(geo.y1, cy - markerPx / 2), y1v = Math.min(geo.y2, cy + markerPx / 2);
-      svg.appendChild(svgEl('line', { x1: geo.x1, y1: y0, x2: geo.x1, y2: y1v, stroke: color, 'stroke-width': 5 }));
+  // Loft: "<depthFt>-<front|back|dual>", full width, depth in from a gable end.
+  var loftZones = [];
+  if (config.loft && config.loft !== 'none') {
+    var lp = String(config.loft).split('-');
+    var loftDepthFt = Math.min(parseFloat(lp[0]) || 0, l - 0.5);
+    var loftKind = lp[1] || 'front';
+    if (loftDepthFt > 0) {
+      if (loftKind === 'front' || loftKind === 'dual') loftZones.push({ z0: l / 2 - loftDepthFt, z1: l / 2 });
+      if (loftKind === 'back' || loftKind === 'dual') loftZones.push({ z0: -l / 2, z1: -l / 2 + loftDepthFt });
     }
   }
 
-  (Array.isArray(config.windows) ? config.windows.slice(0, 40) : []).forEach(function (w) { placeMarker(w, 'window'); });
-  (Array.isArray(config.doors) ? config.doors.slice(0, 10) : []).forEach(function (d) { placeMarker(d, 'door'); });
+  // ---- Symbol codes: assigned in array order, D1/D2.../W1/W2.../C1/L1 ----
+  var doors = (Array.isArray(config.doors) ? config.doors : []).filter(function (d) { return d && validWalls.indexOf(d.wall) !== -1; }).slice(0, 20);
+  var windows = (Array.isArray(config.windows) ? config.windows : []).filter(function (d) { return d && validWalls.indexOf(d.wall) !== -1; }).slice(0, 40);
+  var legendItems = [];
+  doors.forEach(function (d, i) { d._code = 'D' + (i + 1); legendItems.push({ code: d._code, desc: doorLabel(d) }); });
+  windows.forEach(function (d, i) { d._code = 'W' + (i + 1); legendItems.push({ code: d._code, desc: windowLabel(d) }); });
+  if (hasPorch) {
+    var porchName = (config.porchLoc === 'side' ? porchDepth + "' Side Porch" : porchDepth + "' Front Porch") +
+      (config.porchTier && config.porchTier !== 'standard' ? ' — ' + config.porchTier : '');
+    legendItems.push({ code: 'C1', desc: porchName });
+  }
+  if (loftZones.length) {
+    var loftDepthTxt = String(config.loft).split('-')[0];
+    var loftKindTxt = String(config.loft).split('-')[1] === 'dual' ? 'Dual Loft' : String(config.loft).split('-')[1] === 'back' ? 'Back Gable' : 'Front Gable';
+    legendItems.push({ code: 'L1', desc: 'Loft: ' + loftDepthTxt + "' " + loftKindTxt });
+  }
 
-  return svg;
+  // ---- Layout ----
+  var scale = 16;                      // px per ft for the building itself
+  var wPx = w * scale, lPx = l * scale;
+  var porchPx = hasPorch ? porchDepth * scale : 0;
+  var chainBand = 30, totalBand = 34, labelBand = 14; // px reserved per side for dimension text
+  var pad = labelBand + chainBand + totalBand + 26; // +26: room for the total's own label text before the outer BACK/FRONT/LEFT/RIGHT band
+  var svgW = wPx + pad * 2 + (porchWall === 'right' ? porchPx : 0);
+  var svgH = lPx + pad * 2 + (porchWall === 'front' ? porchPx : 0);
+
+  function toX(worldX) { return pad + (worldX + w / 2) * scale; }
+  function toY(worldZ) { return pad + (worldZ + l / 2) * scale; }
+
+  var svg = svgEl('svg', { viewBox: '0 0 ' + svgW + ' ' + svgH, width: '100%' });
+  svg.style.maxWidth = '520px';
+  svg.style.display = 'block';
+  svg.style.margin = '0 auto';
+
+  function text(str, x, y, opts) {
+    opts = opts || {};
+    var attrs = {
+      x: x, y: y, 'font-family': 'DM Mono, monospace', 'font-size': (opts.size || 9) + 'px',
+      fill: opts.fill || '#8a909e', 'text-anchor': opts.anchor || 'middle', 'class': opts.cls || 'fp-dim-text'
+    };
+    if (opts.rotate) attrs.transform = 'rotate(' + opts.rotate + ' ' + x + ' ' + y + ')';
+    var t = svgEl('text', attrs);
+    t.textContent = str;
+    svg.appendChild(t);
+    return t;
+  }
+  function line(x1, y1, x2, y2, opts) {
+    opts = opts || {};
+    var e = svgEl('line', { x1: x1, y1: y1, x2: x2, y2: y2, stroke: opts.stroke || '#8a909e', 'stroke-width': opts.w || 1, 'class': opts.cls || '' });
+    if (opts.dash) e.setAttribute('stroke-dasharray', opts.dash);
+    svg.appendChild(e);
+    return e;
+  }
+
+  // ---- Openings per wall, sorted along the wall's own local axis ----
+  function wallOpenings(wall) {
+    var lenFt = wallLenFt(wall, w, l);
+    var items = [];
+    doors.concat(windows).forEach(function (o) {
+      if (o.wall !== wall) return;
+      var widthFt = (Number(o.w) || (o._code[0] === 'D' ? 36 : 24)) / 12;
+      var centerFt = openingLocalFt(wall, o.pos, widthFt, w, l);
+      items.push({ code: o._code, kind: o._code[0] === 'D' ? 'door' : 'window', start: centerFt - widthFt / 2, end: centerFt + widthFt / 2, widthFt: widthFt });
+    });
+    items.sort(function (a, b) { return a.start - b.start; });
+    return { lenFt: lenFt, items: items };
+  }
+
+  // Draw one wall as alternating closed segments / openings, plus its own
+  // dimension chain (to the 1/8") just outside the building line.
+  //
+  // "outward" is the screen direction pointing away from the building for
+  // THIS wall — +1/-1 on the Y axis for the horizontal walls (front points
+  // down/+Y since front is drawn at the bottom, back points up/-Y), and
+  // +1/-1 on the X axis for the vertical walls (right points right/+X, left
+  // points left/-X). This is a different axis per orientation, so it must
+  // stay a single "which way is outside" concept, not one sign reused for
+  // both axes — reusing one sign for both caused the right wall's dimension
+  // chain to draw backwards, inside the building, the first time this was
+  // built (caught by rendering and eyeballing the SVG before shipping it).
+  function drawWall(wall) {
+    var geo = wallOpenings(wall);
+    var horiz = (wall === 'front' || wall === 'back');
+    var outward = (wall === 'front') ? 1 : (wall === 'back') ? -1 : (wall === 'right') ? 1 : -1;
+    // A porch attached to this wall sits in the same outside space this
+    // wall's own dimension chain would otherwise use — push the chain out
+    // past the porch's footprint so the two don't render on top of each
+    // other (the overall-total line already does this; the fine chain needs
+    // the same treatment).
+    var clearPorch = (hasPorch && wall === porchWall) ? porchPx : 0;
+
+    function pt(localFt) { var p = wallPointAtLocal(wall, localFt, w, l); return { x: toX(p.x), y: toY(p.z) }; }
+
+    // Wall line itself: solid where closed, a gap at each opening (window
+    // gets a thin line across the gap to read as glazing, a door gets none).
+    var cursor = 0;
+    geo.items.forEach(function (o) {
+      var a = pt(Math.max(cursor, o.start)), b = pt(o.start);
+      line(a.x, a.y, b.x, b.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
+      var oa = pt(o.start), ob = pt(o.end);
+      if (o.kind === 'window') line(oa.x, oa.y, ob.x, ob.y, { stroke: '#f6941f', w: 1.5 });
+      cursor = o.end;
+    });
+    var endPt = pt(geo.lenFt), curPt = pt(cursor);
+    line(curPt.x, curPt.y, endPt.x, endPt.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
+
+    // Opening code labels, centered on each opening, offset slightly INWARD
+    // (away from the outside dimension chain) so the two never overlap.
+    geo.items.forEach(function (o) {
+      var c = pt((o.start + o.end) / 2);
+      var offX = horiz ? 0 : -outward * 12, offY = horiz ? -outward * 12 : 0;
+      text(o.code, c.x + offX, c.y + offY + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+    });
+
+    // Fine dimension chain: corner -> edge -> edge -> ... -> corner, to 1/8",
+    // drawn in the padding OUTSIDE the wall (toward +outward).
+    if (geo.items.length) {
+      var bounds = [0].concat(geo.items.reduce(function (acc, o) { acc.push(o.start, o.end); return acc; }, [])).concat([geo.lenFt]);
+      for (var i = 0; i < bounds.length - 1; i++) {
+        var segLen = bounds[i + 1] - bounds[i];
+        if (segLen <= 0.001) continue;
+        var mid = (bounds[i] + bounds[i + 1]) / 2;
+        var p1 = pt(bounds[i]), p2 = pt(bounds[i + 1]), pm = pt(mid);
+        if (horiz) {
+          var y = p1.y + outward * (chainBand + clearPorch);
+          line(p1.x, y, p2.x, y, { w: 0.75 });
+          line(p1.x, p1.y + outward * 4, p1.x, y, { w: 0.5 });
+          line(p2.x, p2.y + outward * 4, p2.x, y, { w: 0.5 });
+          text(formatFtIn(segLen * 12), pm.x, y + (outward > 0 ? 11 : -4), { size: 8 });
+        } else {
+          var x = p1.x + outward * (chainBand + clearPorch);
+          line(x, p1.y, x, p2.y, { w: 0.75 });
+          line(p1.x + outward * 4, p1.y, x, p1.y, { w: 0.5 });
+          line(p2.x + outward * 4, p2.y, x, p2.y, { w: 0.5 });
+          text(formatFtIn(segLen * 12), x + (outward > 0 ? 4 : -4), pm.y + 3, { size: 8, anchor: outward > 0 ? 'start' : 'end' });
+        }
+      }
+    }
+  }
+
+  // ---- Building outline (drawn via drawWall so openings break the line) ----
+  validWalls.forEach(drawWall);
+
+  // ---- Porch: its own attached, dashed room (posts-and-roof, not a closed wall) ----
+  if (hasPorch) {
+    var pRect;
+    if (porchWall === 'front') pRect = { x0: -w / 2, x1: w / 2, z0: l / 2, z1: l / 2 + porchDepth };
+    else pRect = { x0: w / 2, x1: w / 2 + porchDepth, z0: -l / 2, z1: l / 2 };
+    var pa = { x: toX(pRect.x0), y: toY(pRect.z0) }, pb = { x: toX(pRect.x1), y: toY(pRect.z1) };
+    var pr = svgEl('rect', { x: Math.min(pa.x, pb.x), y: Math.min(pa.y, pb.y), width: Math.abs(pb.x - pa.x), height: Math.abs(pb.y - pa.y), fill: 'rgba(44,192,253,0.05)', stroke: '#2cc0fd', 'stroke-width': 1.25 });
+    pr.setAttribute('stroke-dasharray', '4,3');
+    svg.appendChild(pr);
+    text('C1', (pa.x + pb.x) / 2, (pa.y + pb.y) / 2 + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+  }
+
+  // ---- Loft zone(s): dashed outline over the covered bay, on the ceiling plane ----
+  loftZones.forEach(function (z) {
+    var la = { x: toX(-w / 2), y: toY(z.z0) }, lb = { x: toX(w / 2), y: toY(z.z1) };
+    var lr = svgEl('rect', { x: Math.min(la.x, lb.x) + 3, y: Math.min(la.y, lb.y) + 3, width: Math.abs(lb.x - la.x) - 6, height: Math.abs(lb.y - la.y) - 6, fill: 'none', stroke: '#8a909e', 'stroke-width': 1 });
+    lr.setAttribute('stroke-dasharray', '3,3');
+    svg.appendChild(lr);
+    text('L1', (la.x + lb.x) / 2, (la.y + lb.y) / 2 + 3, { size: 9, fill: '#8a909e', cls: 'fp-label' });
+  });
+
+  // ---- Orientation labels ----
+  text('BACK', pad + wPx / 2, labelBand - 2, { size: 9 });
+  text('FRONT', pad + wPx / 2, svgH - labelBand + 6, { size: 9 });
+  text('LEFT', labelBand - 2, pad + lPx / 2, { size: 9, rotate: -90 });
+  text('RIGHT', svgW - labelBand + 6, pad + lPx / 2, { size: 9, rotate: 90 });
+
+  // ---- Overall building dimensions: width along the front, depth along the
+  // right — the outermost line, stacked past both the porch (if any) AND
+  // this wall's own fine chain (chainBand), so detail-then-total reads in
+  // the conventional near-to-far order instead of crossing each other. ----
+  var fY = toY(l / 2) + (porchWall === 'front' ? porchPx : 0) + chainBand + totalBand;
+  var fL = { x: toX(-w / 2), y: fY }, fR = { x: toX(w / 2), y: fY };
+  line(fL.x, fL.y, fR.x, fR.y, { w: 1 });
+  line(fL.x, fL.y - 5, fL.x, fL.y + 5, { w: 0.75 });
+  line(fR.x, fR.y - 5, fR.x, fR.y + 5, { w: 0.75 });
+  text(w + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
+
+  var rX = toX(w / 2) + (porchWall === 'right' ? porchPx : 0) + chainBand + totalBand;
+  var rT = { x: rX, y: toY(-l / 2) }, rB = { x: rX, y: toY(l / 2) };
+  line(rT.x, rT.y, rB.x, rB.y, { w: 1 });
+  line(rT.x - 5, rT.y, rT.x + 5, rT.y, { w: 0.75 });
+  line(rB.x - 5, rB.y, rB.x + 5, rB.y, { w: 0.75 });
+  text(l + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
+
+  return { svg: svg, legendItems: legendItems };
 }
 
 function renderFloorPlan(config, container) {
   if (!container) return;
-  var svg = buildFloorPlanSVG(config);
-  if (!svg) return;
+  var built = buildFloorPlan(config);
+  if (!built) return;
 
   var label = document.createElement('div');
   label.className = 'doc-label';
@@ -466,16 +704,24 @@ function renderFloorPlan(config, container) {
 
   var wrap = document.createElement('div');
   wrap.className = 'floorplan-wrap';
-  wrap.appendChild(svg);
-
-  var legend = document.createElement('div');
-  legend.className = 'floorplan-legend';
-  legend.innerHTML =
-    '<span><span class="legend-swatch" style="background:#2cc0fd"></span>Door</span>' +
-    '<span><span class="legend-swatch" style="background:#f6941f"></span>Window</span>';
-  wrap.appendChild(legend);
-
+  wrap.appendChild(built.svg);
   container.appendChild(wrap);
+
+  if (built.legendItems.length) {
+    var lg = document.createElement('div');
+    lg.className = 'symbol-legend';
+    var head = document.createElement('div');
+    head.className = 'symbol-legend-head';
+    head.textContent = 'Symbol Legend';
+    lg.appendChild(head);
+    built.legendItems.forEach(function (it) {
+      var row = document.createElement('div');
+      row.className = 'symbol-legend-row';
+      row.innerHTML = '<span class="symbol-legend-code">' + esc(it.code) + '</span><span class="symbol-legend-desc">' + esc(it.desc) + '</span>';
+      lg.appendChild(row);
+    });
+    container.appendChild(lg);
+  }
 }
 
 if (token && submissionId) {
