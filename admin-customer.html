@@ -32,7 +32,7 @@ main{max-width:1100px;margin:0 auto;padding:48px 40px 100px}
 .sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
 h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:8px}
 
-.info-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin:28px 0 56px;padding:24px 0;border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
+.info-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin:28px 0 56px;padding:24px 0;border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
 .info-item .il{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
 .info-item .iv{font-size:18px;color:var(--bright);font-weight:300}
 
@@ -111,6 +111,7 @@ select:focus{border-color:var(--sp-blue)}
   <div class="info-grid">
     <div class="info-item"><div class="il">Email</div><div class="iv" id="c-email">—</div></div>
     <div class="info-item"><div class="il">Phone</div><div class="iv" id="c-phone">—</div></div>
+    <div class="info-item"><div class="il">Address</div><div class="iv" id="c-address">—</div></div>
     <div class="info-item"><div class="il">Location</div><div class="iv" id="c-location">—</div></div>
     <div class="info-item"><div class="il">Customer Since</div><div class="iv" id="c-since">—</div></div>
   </div>
@@ -179,6 +180,31 @@ var HEARD_LABELS = {
   'word-of-mouth': 'Word of Mouth', 'facebook': 'Facebook', 'google': 'Google',
   'display-shed': 'Our Display Shed'
 };
+
+// Carries the customer's contact info into the designer link as query params
+// (before the #hash the design config lives in) so re-opening a design to
+// tweak and re-quote it doesn't mean retyping name/email/phone/address by hand.
+function appendContactParams(permalink, submission, details) {
+  var fields = {
+    name: submission.name || '',
+    email: submission.email || '',
+    phone: submission.phone || '',
+    address: details.address || '',
+    city: details.city || '',
+    state: details.state || '',
+    zip: details.zip || ''
+  };
+  var qs = Object.keys(fields)
+    .filter(function (k) { return fields[k]; })
+    .map(function (k) { return 'prefill_' + k + '=' + encodeURIComponent(fields[k]); })
+    .join('&');
+  if (!qs) return permalink;
+  var hashIdx = permalink.indexOf('#');
+  var base = hashIdx === -1 ? permalink : permalink.slice(0, hashIdx);
+  var hash = hashIdx === -1 ? '' : permalink.slice(hashIdx);
+  var sep = base.indexOf('?') === -1 ? '?' : '&';
+  return base + sep + qs + hash;
+}
 
 function summarizeConfig(config) {
   if (!config) return '';
@@ -259,7 +285,7 @@ function renderOrders(submissions) {
     if (details.permalink) {
       var designLink = document.createElement('a');
       designLink.className = 'order-link';
-      designLink.href = details.permalink;
+      designLink.href = appendContactParams(details.permalink, s, details);
       designLink.target = '_blank';
       designLink.rel = 'noopener';
       designLink.textContent = 'View 3D Design ↗';
@@ -318,6 +344,7 @@ function loadCustomer() {
     document.title = (c.name || 'Customer') + ' — ShedPro Admin';
     document.getElementById('c-email').textContent = c.email || '—';
     document.getElementById('c-phone').textContent = c.phone || '—';
+    document.getElementById('c-address').textContent = c.address || '—';
     var loc = [c.city, c.state].filter(Boolean).join(', ');
     document.getElementById('c-location').textContent = loc || '—';
     document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
