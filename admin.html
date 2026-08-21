@@ -211,12 +211,37 @@ function renderCustomers(list) {
     var tdStatus = document.createElement('td');
     tdStatus.className = 'status-cell';
     tdStatus.setAttribute('data-label', 'Status');
-    var dot = document.createElement('span');
-    dot.className = 'status-dot status-' + (c.latest_status || 'new');
-    var statusText = document.createElement('span');
-    statusText.textContent = c.latest_status || '—';
-    tdStatus.appendChild(dot);
-    tdStatus.appendChild(statusText);
+    if (c.latest_status === 'superseded') {
+      var supTag = document.createElement('span');
+      supTag.style.fontFamily = "'DM Mono',monospace";
+      supTag.style.fontSize = '11px';
+      supTag.style.color = 'var(--dim)';
+      supTag.textContent = 'Replaced';
+      tdStatus.appendChild(supTag);
+    } else {
+      var dot = document.createElement('span');
+      dot.className = 'status-dot status-' + (c.latest_status || 'new');
+      var select = document.createElement('select');
+      ['new', 'contacted', 'quoted', 'won', 'lost'].forEach(function (opt) {
+        var o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        if (opt === (c.latest_status || 'new')) o.selected = true;
+        select.appendChild(o);
+      });
+      select.addEventListener('change', function () {
+        dot.className = 'status-dot status-' + select.value;
+        if (c.latest_submission_id) {
+          authFetch('/admin/submissions/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: c.latest_submission_id, status: select.value })
+          }).catch(function () {});
+        }
+      });
+      tdStatus.appendChild(dot);
+      tdStatus.appendChild(select);
+    }
 
     var tdNote = document.createElement('td');
     tdNote.className = 'note-cell';

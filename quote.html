@@ -249,8 +249,7 @@ function render(submission, customer) {
     +   '</div>'
     +   '<div class="doc-meta">'
     +     'Quote #' + esc(submission.id) + '<br>'
-    +     esc(new Date(submission.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })) + '<br>'
-    +     '<strong>Status: ' + esc(submission.status || 'new') + '</strong>'
+    +     esc(new Date(submission.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }))
     +   '</div>'
     + '</div>'
 
