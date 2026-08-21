@@ -210,7 +210,7 @@ document.getElementById('logout-btn').addEventListener('click', function () {
 // ---- Data model (mirrors designer.html's SELL.baseSheets / SELL groups) ----
 var GRID_WIDTHS = [4, 5, 6, 8, 10, 11, 12, 14, 16];
 var GRID_LENGTHS = [4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
-var SHEET_ORDER = ['aframe', 'aframe-front', 'aframe-side', 'barn', 'leanto', 'poolhouse', '3peak', '4peak'];
+var SHEET_ORDER = ['aframe', 'barn', 'leanto', 'poolhouse', '3peak', '4peak'];
 var SHEET_LABELS = {
   'aframe': 'A-Frame Style', 'aframe-front': 'A-Frame Cabin', 'aframe-side': 'Side Porch A-Frame',
   'barn': 'Barn Style', 'leanto': 'Single Slope', 'poolhouse': 'Poolhouse',
@@ -242,7 +242,10 @@ var FLAT_GROUPS = [
   { key: 'dormers', label: 'Shed Dormers (item name = width in ft, e.g. "6")', unit: 'flat, per side' },
   { key: 'wallHeight', label: 'Wall Height (item name = height in ft, e.g. "9"; "8" is the included standard)', unit: '/ sq ft of wall' },
   { key: 'siding', label: 'Siding', unit: '/ sq ft of wall' },
-  { key: 'electrical', label: 'Electrical Packages', unit: '' }
+  { key: 'electrical', label: 'Electrical Packages', unit: '' },
+  { key: 'porchFrontFlat', label: 'Porch — Front, Standard finish (item name = depth ft, e.g. "4"; only 4 & 6 are offered)', unit: 'flat' },
+  { key: 'porchFrontSqft', label: 'Porch — Front, Upgraded Finish Tiers (item name = tier name, e.g. "Composite Awning")', unit: '/ sq ft (depth × shed width)' },
+  { key: 'porchSideFlat', label: 'Porch — Side, fixed 4×6 (item name = depth ft; only "4" is currently offered)', unit: 'flat' }
 ];
 
 var config = null; // full fetched snapshot; only baseSheets + SELL are edited here
@@ -588,7 +591,7 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
     msg.textContent = 'Expected an object keyed by group (doors, windows, ...).';
     return;
   }
-  var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical'];
+  var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical', 'porchFrontFlat', 'porchFrontSqft', 'porchSideFlat'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {

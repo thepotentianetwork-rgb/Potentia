@@ -143,13 +143,14 @@ function taxBreakdown(redline) {
     return (lines || []).reduce(function (t, l) { return t + num(l[amtKey]); }, 0);
   }
 
-  // Everything about the shed itself (base, doors, windows, dormers, siding,
-  // wall height, electrical, loft, shelves, add-ons) is rolled into one
-  // "Shed" line. Only foundation and interior finishing are broken out.
+  // Everything about the shed itself (base, doors, windows, dormers, porch,
+  // siding, wall height, electrical, loft, shelves, add-ons) is rolled into
+  // one "Shed" line. Only foundation and interior finishing are broken out.
   var shedTotal = num(redline.marginPrice)
     + sumLines(redline.doorUpLines, 'up')
     + sumLines(redline.windowSellLines, 'price')
     + sumLines(redline.dormerSellLines, 'price')
+    + num(redline.porchSell)
     + num(redline.sidingSell)
     + num(redline.heightSell)
     + num(redline.elecSell)
