@@ -51,6 +51,7 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .spec-val{color:var(--chrome);font-family:'Cormorant Garamond',serif;font-size:15px}
 
 .sub-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.br-note{font-family:'Cormorant Garamond',serif;font-size:13px;color:var(--silver);margin-top:10px;line-height:1.5}
 
 .design-link{display:inline-block;margin-top:14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--sp-blue);text-decoration:none}
 .design-link:hover{color:var(--bright)}
@@ -73,7 +74,7 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
   .toolbar{display:none}
   .doc{border:none;background:#fff;max-width:100%}
   .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong,.br-amt,.spec-val{color:#111}
-  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label,.sub-label{color:#333}
+  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label,.sub-label,.br-note{color:#333}
   .price-box{background:#f5f9fc;border-color:#bcdcf0}
   .br-row{border-color:#ddd}
   .render-cell{border-color:#ccc}
@@ -126,6 +127,10 @@ function money2(n) { return '$' + Math.round(n).toLocaleString(); }
 // Utah sales tax — applied to the shed and to each separately-billed item
 // (concrete, interior finishing) since each is invoiced as its own sale.
 var TAX_RATE = 0.0725;
+// Each item is invoiced as its own stage of work, and a 30% deposit is
+// collected against that item's tax-included price when its stage starts.
+var DEPOSIT_RATE = 0.30;
+var PCT_LABEL = function (r) { return (r * 100).toFixed(2).replace(/\.?0+$/, ''); };
 
 // Only the customer-facing SELL-side fields of the redline go here — never
 // the cost/margin fields (framing, siding cost, trueTotalCost, profit, etc.)
@@ -153,26 +158,42 @@ function taxBreakdown(redline) {
     + sumLines(redline.addonLines, 'amt');
 
   var rows = [];
-  function add(label, amt) { if (label && amt) rows.push([label, Number(amt)]); }
+  function add(label, amt) { if (label && amt) rows.push({ label: label, amt: Number(amt) }); }
   add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
   add(redline.foundName, redline.foundSell);
   add(redline.intSellName, redline.intSell);
 
   if (!rows.length) return null;
-  var subtotal = rows.reduce(function (t, r) { return t + r[1]; }, 0);
+  rows.forEach(function (r) {
+    r.tax = r.amt * TAX_RATE;
+    r.total = r.amt + r.tax;
+    r.deposit = r.total * DEPOSIT_RATE;
+  });
+  var subtotal = rows.reduce(function (t, r) { return t + r.amt; }, 0);
   var tax = subtotal * TAX_RATE;
-  return { rows: rows, subtotal: subtotal, tax: tax, total: subtotal + tax };
+  var depositTotal = rows.reduce(function (t, r) { return t + r.deposit; }, 0);
+  return { rows: rows, subtotal: subtotal, tax: tax, total: subtotal + tax, depositTotal: depositTotal };
 }
 
 function buildBreakdown(bd) {
   if (!bd) return '';
   var rowsHtml = bd.rows.map(function (r) {
-    return '<div class="br-row"><span class="br-label">' + esc(r[0]) + '</span>'
-      + '<span class="br-amt">' + money2(r[1]) + '</span></div>';
+    return '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
+      + '<span class="br-amt">' + money2(r.amt) + '</span></div>';
   }).join('');
   rowsHtml += '<div class="br-row"><span class="br-label">Subtotal</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
-  rowsHtml += '<div class="br-row"><span class="br-label">Sales Tax (' + (TAX_RATE * 100).toFixed(2).replace(/\.?0+$/, '') + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
-  return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>';
+  rowsHtml += '<div class="br-row"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
+
+  var depositRowsHtml = bd.rows.map(function (r) {
+    return '<div class="br-row"><span class="br-label">' + esc(r.label) + ' — Deposit (' + PCT_LABEL(DEPOSIT_RATE) + '%)</span>'
+      + '<span class="br-amt">' + money2(r.deposit) + '</span></div>';
+  }).join('');
+  depositRowsHtml += '<div class="br-row"><span class="br-label">Total Deposit Due</span><span class="br-amt">' + money2(bd.depositTotal) + '</span></div>';
+
+  return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>'
+    + '<div class="doc-section"><div class="doc-label">Deposits Due</div>' + depositRowsHtml
+    +   '<div class="br-note">Each item is invoiced separately as its stage of work begins — a 30% deposit (tax included) is collected per item, with the balance due on completion.</div>'
+    + '</div>';
 }
 
 // Mirrors the door naming used to price it in the designer (same width
