@@ -367,6 +367,21 @@ async function handleShedSubmit(request, env, origin) {
   const phone = String(contact.phone || body.phone || "").slice(0, 60);
   if (!name || !email) return json({ error: "name and email required" }, 400, origin);
 
+  // Cloudflare gives every request approximate geolocation for free (IP-based) —
+  // used for the admin data page's hotspot map. Captured regardless of whether
+  // the customer filled in an address, so every submission gets a point.
+  const cf = request.cf || {};
+  const geo =
+    cf.latitude != null && cf.longitude != null
+      ? {
+          lat: Number(cf.latitude),
+          lng: Number(cf.longitude),
+          city: cf.city || null,
+          region: cf.region || null,
+          country: cf.country || null
+        }
+      : null;
+
   const detailsPayload =
     body.details !== undefined
       ? body.details
@@ -381,7 +396,8 @@ async function handleShedSubmit(request, env, origin) {
           quotedPrice: body.quotedPrice != null ? body.quotedPrice : null,
           redline: body.redline || null, // internal cost/margin breakdown — admin dashboard only, never public
           renders: await uploadRenders(env, body.renders),
-          page: body.page || null
+          page: body.page || null,
+          geo
         };
   const details = JSON.stringify(detailsPayload).slice(0, 20000);
 
@@ -399,6 +415,78 @@ async function handleShedSubmit(request, env, origin) {
     .bind(customerId, name, email, phone, details, "new", new Date().toISOString())
     .run();
   return json({ ok: true }, 200, origin);
+}
+
+// ---- /admin/analytics: aggregated stats + geo points for the data dashboard ----
+async function handleAnalytics(request, env, origin) {
+  const { results } = await env.DB.prepare(
+    "SELECT customer_id, details, status, created_at FROM submissions ORDER BY created_at DESC LIMIT 3000"
+  ).all();
+
+  const byDay = {};
+  const statusCounts = {};
+  const styleCounts = {};
+  const sidingCounts = {};
+  const points = [];
+  const prices = [];
+  const sizeCounts = {};
+
+  for (const row of results) {
+    const day = (row.created_at || "").slice(0, 10);
+    if (day) byDay[day] = (byDay[day] || 0) + 1;
+    const status = row.status || "new";
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+
+    let d = null;
+    try {
+      d = JSON.parse(row.details);
+    } catch (e) {}
+    if (d) {
+      const config = d.config || {};
+      if (config.style) styleCounts[config.style] = (styleCounts[config.style] || 0) + 1;
+      if (config.siding) sidingCounts[config.siding] = (sidingCounts[config.siding] || 0) + 1;
+      if (config.w && config.l) {
+        const key = config.w + "x" + config.l;
+        sizeCounts[key] = (sizeCounts[key] || 0) + 1;
+      }
+      const price = d.quotedPrice != null ? Number(d.quotedPrice) : null;
+      if (price != null && isFinite(price)) prices.push(price);
+      if (d.geo && d.geo.lat != null && d.geo.lng != null) {
+        points.push({
+          lat: d.geo.lat,
+          lng: d.geo.lng,
+          city: d.geo.city || null,
+          region: d.geo.region || null,
+          status,
+          price
+        });
+      }
+    }
+  }
+
+  prices.sort((a, b) => a - b);
+  const avgPrice = prices.length ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : null;
+  const medianPrice = prices.length ? prices[Math.floor(prices.length / 2)] : null;
+
+  const custRow = await env.DB.prepare("SELECT COUNT(*) AS n FROM customers").first();
+
+  return json(
+    {
+      totalSubmissions: results.length,
+      totalCustomers: custRow ? custRow.n : 0,
+      byDay,
+      statusCounts,
+      styleCounts,
+      sidingCounts,
+      sizeCounts,
+      avgPrice,
+      medianPrice,
+      pricedCount: prices.length,
+      points
+    },
+    200,
+    origin
+  );
 }
 
 // ---- /shed/pricing-config: the designer's full pricing engine snapshot ----
@@ -474,6 +562,11 @@ export default {
         const id = Number(path.slice("/admin/submissions/".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleGetSubmission(request, env, origin, id);
+      }
+
+      if (path === "/admin/analytics" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleAnalytics(request, env, origin);
       }
 
       if (path === "/admin/pricing" && request.method === "GET") {
