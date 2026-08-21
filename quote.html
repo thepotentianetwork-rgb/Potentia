@@ -128,23 +128,30 @@ function money2(n) { return '$' + Math.round(n).toLocaleString(); }
 // that live alongside them in the same object for the admin dashboard.
 function buildBreakdown(redline) {
   if (!redline || typeof redline !== 'object') return '';
+  var num = function (n) { return Number(n) || 0; };
+  function sumLines(lines, amtKey) {
+    return (lines || []).reduce(function (t, l) { return t + num(l[amtKey]); }, 0);
+  }
+
+  // Everything about the shed itself (base, doors, windows, dormers, siding,
+  // wall height, electrical, loft, shelves, add-ons) is rolled into one
+  // "Shed" line. Only foundation and interior finishing are broken out.
+  var shedTotal = num(redline.marginPrice)
+    + sumLines(redline.doorUpLines, 'up')
+    + sumLines(redline.windowSellLines, 'price')
+    + sumLines(redline.dormerSellLines, 'price')
+    + num(redline.sidingSell)
+    + num(redline.heightSell)
+    + num(redline.elecSell)
+    + num(redline.loftSell)
+    + sumLines(redline.shelfSellLines, 'price')
+    + sumLines(redline.addonLines, 'amt');
+
   var rows = [];
   function add(label, amt) { if (label && amt) rows.push([label, Number(amt)]); }
-  function addLines(lines, labelKey, amtKey) {
-    (lines || []).forEach(function (l) { add(l[labelKey], l[amtKey]); });
-  }
-  add('Base Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), redline.marginPrice);
-  addLines(redline.doorUpLines, 'label', 'up');
-  addLines(redline.windowSellLines, 'label', 'price');
-  addLines(redline.dormerSellLines, 'label', 'price');
-  add(redline.sidingSellName, redline.sidingSell);
-  add(redline.heightSellName, redline.heightSell);
-  add(redline.intSellName, redline.intSell);
+  add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
   add(redline.foundName, redline.foundSell);
-  add(redline.elecSellName, redline.elecSell);
-  add(redline.loftSellName, redline.loftSell);
-  addLines(redline.shelfSellLines, 'label', 'price');
-  addLines(redline.addonLines, 'name', 'amt');
+  add(redline.intSellName, redline.intSell);
 
   if (!rows.length) return '';
   var rowsHtml = rows.map(function (r) {
