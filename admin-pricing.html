@@ -167,7 +167,7 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
         <span class="count-tag partial">Paste from another source</span>
       </summary>
       <div style="padding:0 20px 20px">
-        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
+        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>foundation</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
         <textarea id="comp-import-text" class="add-form input" style="width:100%;min-height:120px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:10px 12px;outline:none" placeholder='{"doors":{"5\' Double":0,"5\' Double Craftsman":50}}'></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <button class="save-btn" id="comp-import-btn" type="button">Import Into Components</button>
@@ -236,6 +236,26 @@ function sheetDims(sheetKey) {
   var lengths = Object.keys(lSet).map(Number).sort(function (a, b) { return a - b; });
   return { widths: widths, lengths: lengths, valid: validSet };
 }
+// Seed values for groups that are new here and have never been saved to the
+// pricing-config endpoint before — mirrors designer.html's own hardcoded
+// defaults exactly. Without this, a never-touched group would render as all
+// blanks/zeros (looking like real $0 pricing) instead of the numbers that
+// are actually live. Existing groups (doors, windows, ...) don't need this;
+// they've been saved through this page for a while and already carry real
+// data server-side, or intentionally start empty for the admin to fill in.
+var SELL_DEFAULTS = {
+  porchFrontSqft: {
+    "standard": 8.33,
+    "Basic Awning": 13, "Wood Floor Awning": 15, "Composite Awning": 25,
+    "Posts & Beam, Finished Ceiling": 28, "Posts, Beams & Composite Floor": 35
+  },
+  porchSideSqft: { "standard": 8.33 },
+  foundation: { pad: 3000, blocks: 0 },
+  foundationFinish: { plain: 0, coated: 300 },
+  broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
+  interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 }
+};
+
 var FLAT_GROUPS = [
   { key: 'doors', label: 'Doors', unit: '' },
   { key: 'windows', label: 'Windows', unit: '' },
@@ -243,9 +263,42 @@ var FLAT_GROUPS = [
   { key: 'wallHeight', label: 'Wall Height (item name = height in ft, e.g. "9"; "8" is the included standard)', unit: '/ sq ft of wall' },
   { key: 'siding', label: 'Siding', unit: '/ sq ft of wall' },
   { key: 'electrical', label: 'Electrical Packages', unit: '' },
-  { key: 'porchFrontFlat', label: 'Porch — Front, Standard finish (item name = depth ft, e.g. "4"; only 4 & 6 are offered)', unit: 'flat' },
-  { key: 'porchFrontSqft', label: 'Porch — Front, Upgraded Finish Tiers (item name = tier name, e.g. "Composite Awning")', unit: '/ sq ft (depth × shed width)' },
-  { key: 'porchSideFlat', label: 'Porch — Side, fixed 4×6 (item name = depth ft; only "4" is currently offered)', unit: 'flat' }
+  { key: 'porchFrontSqft', label: 'Porch — Front (item name = "standard" for the base finish, or a tier name like "Composite Awning")', unit: '/ sq ft (depth × shed width)' },
+  { key: 'porchSideSqft', label: 'Porch — Side (item name = "standard"; only that one tier is offered)', unit: '/ sq ft (depth × shed length)' },
+  { key: 'foundation', label: 'Foundation (item names: "pad", "blocks")', unit: 'flat' },
+  { key: 'foundationFinish', label: 'Foundation Floor Finish — Plain & Coated (item names: "plain", "coated"; Broom is tiered, edited below)', unit: 'flat' }
+];
+
+// Fixed-shape tier tables — a flat job price banded by sqft, same pattern as
+// interior drywall/paint and the broom concrete finish. Unlike FLAT_GROUPS
+// these are NOT a free-form named list: the designer's code reads these exact
+// keys (under/mid/over/breakLo/breakHi, ...), so the editor below only lets
+// you change the numbers, never add or remove a field.
+var TIER_GROUPS = [
+  {
+    key: 'broomTiers', label: 'Broom Finish (Concrete Pad) — Tiered by Pad Sq Ft',
+    note: 'A flat job price banded by the pad’s square footage (width × length of the enclosed room). Boundaries are inclusive at the bottom: a pad exactly at "Break — Mid at" pays the Mid price.',
+    fields: [
+      { key: 'under', label: 'Under the first break', unit: '$', prefix: true },
+      { key: 'mid', label: 'Break — Mid at', unit: '$', prefix: true },
+      { key: 'over', label: 'Break — Over at', unit: '$', prefix: true },
+      { key: 'breakLo', label: 'First break point', unit: 'sq ft' },
+      { key: 'breakHi', label: 'Second break point', unit: 'sq ft' }
+    ]
+  },
+  {
+    key: 'interior', label: 'Interior Finish — Drywall, Mud & Paint — Tiered by Floor Sq Ft',
+    note: 'A flat job price banded by the shed’s floor area (width × depth). "Drywall & Mud" (no paint) bills at a percentage off the painted tier, then snaps to the nearest rounding step.',
+    fields: [
+      { key: 'under', label: 'Under the first break', unit: '$', prefix: true },
+      { key: 'mid', label: 'Break — Mid at', unit: '$', prefix: true },
+      { key: 'over', label: 'Break — Over at', unit: '$', prefix: true },
+      { key: 'breakLo', label: 'First break point', unit: 'sq ft' },
+      { key: 'breakHi', label: 'Second break point', unit: 'sq ft' },
+      { key: 'unpaintedPct', label: 'Drywall & Mud discount (no paint)', unit: '%' },
+      { key: 'roundTo', label: 'Round the discounted price to nearest', unit: '$' }
+    ]
+  }
 ];
 
 var config = null; // full fetched snapshot; only baseSheets + SELL are edited here
@@ -393,8 +446,17 @@ function renderComponents() {
   host.innerHTML = '';
 
   FLAT_GROUPS.forEach(function (g) {
-    if (!config.SELL[g.key] || typeof config.SELL[g.key] !== 'object') config.SELL[g.key] = {};
+    if (!config.SELL[g.key] || typeof config.SELL[g.key] !== 'object') {
+      config.SELL[g.key] = SELL_DEFAULTS[g.key] ? Object.assign({}, SELL_DEFAULTS[g.key]) : {};
+    }
     host.appendChild(buildFlatGroup(g.key, g.label, g.unit, config.SELL[g.key]));
+  });
+
+  TIER_GROUPS.forEach(function (g) {
+    if (!config.SELL[g.key] || typeof config.SELL[g.key] !== 'object' || !Object.keys(config.SELL[g.key]).length) {
+      config.SELL[g.key] = SELL_DEFAULTS[g.key] ? Object.assign({}, SELL_DEFAULTS[g.key]) : {};
+    }
+    host.appendChild(buildTierGroup(g.label, g.note, g.fields, config.SELL[g.key]));
   });
 
   if (!config.SELL.options) config.SELL.options = {};
@@ -470,6 +532,38 @@ function buildFlatGroup(groupKey, label, unit, dataObj) {
   wrap.appendChild(addForm);
   wrap.appendChild(el('p', { class: 'note', text: 'Adding an item here prices it, but making it selectable in the designer itself may need a separate code change.' }));
 
+  return wrap;
+}
+
+// Fixed-shape tier table editor (broom finish, interior finish, ...): a
+// small set of named number fields the designer's pricing code reads by
+// exact key, so — unlike buildFlatGroup — there is no add/remove, just the
+// numbers themselves.
+function buildTierGroup(label, note, fields, dataObj) {
+  var wrap = el('div', { class: 'comp-group' });
+  var head = el('div', { class: 'comp-group-head' });
+  head.appendChild(el('span', { class: 'comp-group-title', text: label }));
+  wrap.appendChild(head);
+  if (note) wrap.appendChild(el('p', { class: 'note', text: note, style: 'margin:2px 0 12px' }));
+
+  var list = el('div', { class: 'comp-list' });
+  fields.forEach(function (f) {
+    var row = el('div', { class: 'comp-row' });
+    row.appendChild(el('span', { class: 'comp-name', text: f.label }));
+    var priceWrap = el('div', { class: 'comp-price-wrap' });
+    if (f.prefix) priceWrap.appendChild(el('span', { text: f.unit }));
+    var inp = el('input', { class: 'comp-price', type: 'number', step: '0.01' });
+    inp.value = dataObj[f.key] != null ? dataObj[f.key] : 0;
+    inp.addEventListener('input', function () {
+      var n = Number(inp.value);
+      dataObj[f.key] = isFinite(n) ? n : 0;
+    });
+    priceWrap.appendChild(inp);
+    if (!f.prefix) priceWrap.appendChild(el('span', { text: f.unit }));
+    row.appendChild(priceWrap);
+    list.appendChild(row);
+  });
+  wrap.appendChild(list);
   return wrap;
 }
 
@@ -591,7 +685,8 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
     msg.textContent = 'Expected an object keyed by group (doors, windows, ...).';
     return;
   }
-  var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical', 'porchFrontFlat', 'porchFrontSqft', 'porchSideFlat'];
+  var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical',
+    'porchFrontSqft', 'porchSideSqft', 'foundation', 'foundationFinish', 'broomTiers', 'interior'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {
