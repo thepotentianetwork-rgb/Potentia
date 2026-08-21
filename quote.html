@@ -48,6 +48,9 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .br-row:last-child{border-bottom:none}
 .br-label{color:var(--chrome)}
 .br-amt{color:var(--bright);font-family:'DM Mono',monospace;font-size:13px}
+.spec-val{color:var(--chrome);font-family:'Cormorant Garamond',serif;font-size:15px}
+
+.sub-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
 
 .design-link{display:inline-block;margin-top:14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--sp-blue);text-decoration:none}
 .design-link:hover{color:var(--bright)}
@@ -69,8 +72,8 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
   body{background:#fff;color:#111;padding:0}
   .toolbar{display:none}
   .doc{border:none;background:#fff;max-width:100%}
-  .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong,.br-amt{color:#111}
-  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label{color:#333}
+  .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong,.br-amt,.spec-val{color:#111}
+  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label,.sub-label{color:#333}
   .price-box{background:#f5f9fc;border-color:#bcdcf0}
   .br-row{border-color:#ddd}
   .render-cell{border-color:#ccc}
@@ -151,6 +154,56 @@ function buildBreakdown(redline) {
   return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>';
 }
 
+// Mirrors the door naming used to price it in the designer (same width
+// breakpoints and style keys) so the spec list reads the same way the quote
+// was actually priced, without needing the designer's pricing engine here.
+var DOOR_STYLE_NAMES = { basic: 'Standard', craftsman: 'Craftsman', xtrim: 'X-Trim', arch: 'Arch Trim', panel4: '4-Panel' };
+var DOOR_RESID_NAMES = {
+  res6: '36" Residential 6-Panel', reshalf: '36" Residential Half Lite', resfull: '36" Residential Full Lite',
+  res6B: '36" Residential 6-Panel (Black)', reshalfB: '36" Residential Half Lite (Black)', resfullB: '36" Residential Full Lite (Black)'
+};
+function doorLabel(dd) {
+  var w = dd.w || 60, st = dd.style || 'basic';
+  if (st === 'rollup') {
+    var gl = (w <= 76) ? "6'" : (w <= 90) ? "7'" : "8'";
+    return gl + ' Roll-Up Garage Door';
+  }
+  if (st === 'cedar') {
+    var cl = (w <= 64) ? "5'" : (w <= 78) ? "6'" : (w <= 90) ? "7'" : "8'";
+    return cl + ' Cedar Double Door';
+  }
+  if (st === 'fairytale') return 'Fairytale Entry Door';
+  if (DOOR_RESID_NAMES[st]) return DOOR_RESID_NAMES[st];
+  var wl = (w <= 38) ? "3'" : (w <= 46) ? '3\'6"' : (w <= 64) ? "5'" : (w <= 78) ? "6'" : "7'";
+  var kind = (w <= 46) ? 'Single' : 'Double';
+  return wl + ' ' + kind + ' — ' + (DOOR_STYLE_NAMES[st] || st);
+}
+function wallLabel(w) { return w ? w.charAt(0).toUpperCase() + w.slice(1) : '—'; }
+
+function buildSpecs(config) {
+  var doors = Array.isArray(config.doors) ? config.doors : [];
+  var windows = Array.isArray(config.windows) ? config.windows : [];
+  if (!doors.length && !windows.length) return '';
+
+  function rows(items, labelFn) {
+    return items.map(function (it) {
+      return '<div class="br-row"><span class="br-label">' + esc(wallLabel(it.wall)) + '</span>'
+        + '<span class="spec-val">' + esc(labelFn(it)) + '</span></div>';
+    }).join('');
+  }
+
+  var html = '<div class="doc-section"><div class="doc-label">Doors &amp; Windows</div>';
+  if (doors.length) {
+    html += '<div class="sub-label">Doors</div>' + rows(doors, doorLabel);
+  }
+  if (windows.length) {
+    html += '<div class="sub-label" style="margin-top:' + (doors.length ? '18px' : '0') + '">Windows</div>'
+      + rows(windows, function (wd) { return wd.type || 'Window'; });
+  }
+  html += '</div>';
+  return html;
+}
+
 function render(submission, customer) {
   var details = {};
   try { details = JSON.parse(submission.details) || {}; } catch (e) {}
@@ -209,6 +262,8 @@ function render(submission, customer) {
     +   '<div class="doc-grid">' + fields + '</div>'
     +   (safePermalink ? '<a class="design-link" href="' + esc(safePermalink) + '" target="_blank" rel="noopener">View this exact 3D design ↗</a>' : '')
     + '</div>'
+
+    + buildSpecs(config)
 
     + '<div class="doc-section" id="renders-section"></div>'
     + '<div class="doc-section" id="floorplan-section"></div>'
