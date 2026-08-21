@@ -177,9 +177,13 @@ function taxBreakdown(redline) {
   // The pad spec (4" poured slab) belongs on every quote regardless of when
   // its redline snapshot was taken, so it's added here at display time
   // rather than depending on redline.foundName having been generated with
-  // it baked in already.
+  // it baked in already. redline.foundName only ever starts with "Concrete
+  // Pad" when FOUNDATION was 'pad' (see computePricing() in the designer),
+  // so that's checked directly rather than taking a config param this
+  // function was never passed — a prior version of this fix referenced
+  // config here and threw ReferenceError, which blanked the whole page.
   var foundLabel = redline.foundName || 'Concrete';
-  if (config.foundation === 'pad' && foundLabel.indexOf('4"') === -1) foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
+  if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
   add(1, foundLabel, redline.foundSell);
   add(2, 'Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
   add(3, redline.intSellName || 'Interior Finishing', redline.intSell);
