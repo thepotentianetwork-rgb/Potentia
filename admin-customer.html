@@ -70,6 +70,25 @@ select:focus{border-color:var(--sp-blue)}
 
 .empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
 
+/* payments */
+.payment-form{display:flex;gap:10px;margin-bottom:28px;flex-wrap:wrap}
+.payment-form input,.payment-form select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:15px;padding:10px 12px;outline:none}
+.payment-form input:focus,.payment-form select:focus{border-color:var(--sp-blue)}
+.payment-form #pay-amount{width:110px}
+.payment-form #pay-method{width:140px;font-family:'DM Mono',monospace;font-size:12px}
+.payment-form #pay-date{width:150px;font-family:'DM Mono',monospace;font-size:12px}
+.payment-form #pay-note{flex:1;min-width:160px}
+.payment-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--dim)}
+.payment-row:first-child{padding-top:0}
+.payment-main{display:flex;flex-direction:column;gap:3px}
+.payment-amt{font-size:18px;color:var(--bright);font-weight:300}
+.payment-meta{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);text-transform:uppercase;letter-spacing:0.05em}
+.payment-note{font-size:13px;color:var(--silver);margin-top:2px}
+.payment-del{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:6px 10px;cursor:pointer;flex-shrink:0}
+.payment-del:hover{border-color:#e0684f;color:#e0684f}
+.payment-total{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);margin-bottom:16px;text-transform:uppercase;letter-spacing:0.05em}
+.payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
+
 @media (max-width:760px){
   header{padding:16px 20px}
   .h-actions{gap:8px}
@@ -79,6 +98,8 @@ select:focus{border-color:var(--sp-blue)}
   .order-card{padding:16px}
   .order-price{font-size:20px}
   .note-form{flex-direction:column}
+  .payment-form{flex-direction:column}
+  .payment-form input,.payment-form select{width:100%}
 }
 @media (max-width:420px){
   .h-title{font-size:11px}
@@ -130,6 +151,28 @@ select:focus{border-color:var(--sp-blue)}
       <button type="submit" class="btn">Add Note</button>
     </form>
     <div id="notes-list"><p class="empty">Loading…</p></div>
+  </section>
+
+  <section>
+    <p class="sec-label">Billing</p>
+    <h2>Payments</h2>
+    <form class="payment-form" id="payment-form">
+      <input id="pay-amount" type="number" step="0.01" min="0.01" placeholder="Amount" required>
+      <select id="pay-method" required>
+        <option value="">Method…</option>
+        <option value="cash">Cash</option>
+        <option value="check">Check</option>
+        <option value="venmo">Venmo</option>
+        <option value="zelle">Zelle</option>
+        <option value="invoice2go">Invoice2Go</option>
+        <option value="card">Card</option>
+        <option value="other">Other</option>
+      </select>
+      <input id="pay-date" type="date">
+      <input id="pay-note" type="text" placeholder="Note (optional) — e.g. Phase 1 deposit">
+      <button type="submit" class="btn">Add Payment</button>
+    </form>
+    <div id="payments-list"><p class="empty">Loading…</p></div>
   </section>
 
   <section id="danger-zone" style="border:1px solid rgba(224,104,79,0.4);padding:24px">
@@ -342,6 +385,63 @@ function renderNotes(notes) {
   });
 }
 
+var PAYMENT_METHOD_LABELS = {
+  cash: 'Cash', check: 'Check', venmo: 'Venmo', zelle: 'Zelle',
+  invoice2go: 'Invoice2Go', card: 'Card', other: 'Other'
+};
+
+function renderPayments(payments) {
+  var wrap = document.getElementById('payments-list');
+  wrap.innerHTML = '';
+  if (!payments.length) {
+    wrap.innerHTML = '<p class="empty">No payments logged yet.</p>';
+    return;
+  }
+
+  var total = payments.reduce(function (t, p) { return t + Number(p.amount || 0); }, 0);
+  var totalTag = document.createElement('div');
+  totalTag.className = 'payment-total';
+  totalTag.innerHTML = 'Total Received: <strong>$' + total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</strong>';
+  wrap.appendChild(totalTag);
+
+  payments.forEach(function (p) {
+    var row = document.createElement('div');
+    row.className = 'payment-row';
+
+    var main = document.createElement('div');
+    main.className = 'payment-main';
+    var amt = document.createElement('div');
+    amt.className = 'payment-amt';
+    amt.textContent = '$' + Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    var meta = document.createElement('div');
+    meta.className = 'payment-meta';
+    meta.textContent = (PAYMENT_METHOD_LABELS[p.method] || p.method) + ' · ' + new Date(p.paid_at).toLocaleDateString();
+    main.appendChild(amt);
+    main.appendChild(meta);
+    if (p.note) {
+      var note = document.createElement('div');
+      note.className = 'payment-note';
+      note.textContent = p.note;
+      main.appendChild(note);
+    }
+
+    var delBtn = document.createElement('button');
+    delBtn.className = 'payment-del';
+    delBtn.type = 'button';
+    delBtn.textContent = 'Remove';
+    delBtn.addEventListener('click', function () {
+      if (!confirm('Remove this payment entry?')) return;
+      authFetch('/admin/payments/' + p.id, { method: 'DELETE' }).then(function (r) {
+        if (r.ok) loadCustomer();
+      });
+    });
+
+    row.appendChild(main);
+    row.appendChild(delBtn);
+    wrap.appendChild(row);
+  });
+}
+
 var CUSTOMER_NAME = '';
 
 function loadCustomer() {
@@ -362,9 +462,10 @@ function loadCustomer() {
     document.getElementById('c-location').textContent = loc || '—';
     document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
 
-    var submissions = r.data.submissions || [], notes = r.data.notes || [];
+    var submissions = r.data.submissions || [], notes = r.data.notes || [], payments = r.data.payments || [];
     renderOrders(submissions);
     renderNotes(notes);
+    renderPayments(payments);
 
     document.getElementById('delete-order-count').textContent = submissions.length;
     document.getElementById('delete-note-count').textContent = notes.length;
@@ -427,6 +528,39 @@ document.getElementById('note-form').addEventListener('submit', function (e) {
   }).then(function (r) {
     if (r.ok) {
       textarea.value = '';
+      loadCustomer();
+    }
+  });
+});
+
+var payDateInput = document.getElementById('pay-date');
+if (payDateInput) payDateInput.value = new Date().toISOString().slice(0, 10);
+
+document.getElementById('payment-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var amountInput = document.getElementById('pay-amount');
+  var methodInput = document.getElementById('pay-method');
+  var dateInput = document.getElementById('pay-date');
+  var noteInput = document.getElementById('pay-note');
+  var amount = Number(amountInput.value);
+  var method = methodInput.value;
+  if (!amount || amount <= 0 || !method) return;
+
+  authFetch('/admin/customers/' + customerId + '/payments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount: amount,
+      method: method,
+      note: noteInput.value.trim(),
+      paid_at: dateInput.value ? new Date(dateInput.value).toISOString() : undefined
+    })
+  }).then(function (r) {
+    if (r.ok) {
+      amountInput.value = '';
+      methodInput.value = '';
+      noteInput.value = '';
+      dateInput.value = new Date().toISOString().slice(0, 10);
       loadCustomer();
     }
   });

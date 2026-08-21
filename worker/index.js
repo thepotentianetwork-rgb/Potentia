@@ -224,7 +224,24 @@ async function handleListCustomers(request, env, origin) {
   return json({ customers }, 200, origin);
 }
 
-// ---- /admin/customers/:id: full detail — customer + all their submissions + notes ----
+// Lazily creates the payments table on first use — avoids requiring a
+// manual D1 migration step for a table that didn't exist when the DB was
+// first set up. Cheap no-op once it already exists.
+async function ensurePaymentsTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      amount REAL NOT NULL,
+      method TEXT NOT NULL,
+      note TEXT,
+      paid_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+}
+
+// ---- /admin/customers/:id: full detail — customer + all their submissions + notes + payments ----
 async function handleGetCustomer(request, env, origin, id) {
   const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(id).first();
   if (!customer) return json({ error: "Not found" }, 404, origin);
@@ -241,18 +258,28 @@ async function handleGetCustomer(request, env, origin, id) {
     .bind(id)
     .all();
 
-  return json({ customer, submissions, notes }, 200, origin);
+  await ensurePaymentsTable(env);
+  const { results: payments } = await env.DB.prepare(
+    "SELECT id, amount, method, note, paid_at, created_at FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+  )
+    .bind(id)
+    .all();
+
+  return json({ customer, submissions, notes, payments }, 200, origin);
 }
 
 // ---- DELETE /admin/customers/:id — permanently removes the customer and
-// every submission/note tied to them. No soft-delete: the admin UI requires
-// typing the customer's name plus a second confirm before this ever fires.
+// every submission/note/payment tied to them. No soft-delete: the admin UI
+// requires typing the customer's name plus a second confirm before this
+// ever fires.
 async function handleDeleteCustomer(request, env, origin, id) {
   const customer = await env.DB.prepare("SELECT id FROM customers WHERE id = ?").bind(id).first();
   if (!customer) return json({ error: "Not found" }, 404, origin);
 
+  await ensurePaymentsTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM notes WHERE customer_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM payments WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM submissions WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM customers WHERE id = ?").bind(id)
   ]);
@@ -270,6 +297,36 @@ async function handleAddNote(request, env, origin, customerId) {
     .bind(customerId, text, now)
     .run();
   return json({ ok: true, id: res.meta.last_row_id, created_at: now }, 200, origin);
+}
+
+// ---- /admin/customers/:id/payments ----
+// A single collection is sometimes split across two methods (e.g. part cash,
+// part Venmo) — the UI handles that by just logging two separate entries
+// rather than needing a special multi-method row.
+const PAYMENT_METHODS = ["cash", "check", "venmo", "zelle", "invoice2go", "card", "other"];
+async function handleAddPayment(request, env, origin, customerId) {
+  const body = await request.json().catch(() => ({}));
+  const amount = Number(body.amount);
+  const method = String(body.method || "").toLowerCase().trim();
+  const note = String(body.note || "").slice(0, 500);
+  const paidAt = body.paid_at ? String(body.paid_at).slice(0, 40) : new Date().toISOString();
+  if (!Number.isFinite(amount) || amount <= 0) return json({ error: "valid amount required" }, 400, origin);
+  if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
+
+  await ensurePaymentsTable(env);
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at) VALUES (?,?,?,?,?,?)"
+  )
+    .bind(customerId, amount, method, note || null, paidAt, now)
+    .run();
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+async function handleDeletePayment(request, env, origin, id) {
+  await ensurePaymentsTable(env);
+  await env.DB.prepare("DELETE FROM payments WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
 }
 
 // ---- /admin/submissions/:id: single order, for the quote document ----
@@ -611,6 +668,18 @@ export default {
         const id = Number(path.slice("/admin/customers/".length, -"/notes".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleAddNote(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/payments") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/customers/".length, -"/payments".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleAddPayment(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/payments/") && request.method === "DELETE") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/payments/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleDeletePayment(request, env, origin, id);
       }
       if (path.startsWith("/admin/customers/") && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

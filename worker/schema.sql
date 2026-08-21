@@ -36,6 +36,20 @@ CREATE TABLE IF NOT EXISTS notes (
   created_at TEXT NOT NULL
 );
 
+-- Payment log per customer. A single collection split across two methods
+-- (e.g. part cash, part Venmo) is just two separate rows here. The worker
+-- also creates this table lazily on first use, so this only matters for a
+-- fresh install.
+CREATE TABLE IF NOT EXISTS payments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  amount REAL NOT NULL,
+  method TEXT NOT NULL,
+  note TEXT,
+  paid_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pricing (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   label TEXT NOT NULL,
