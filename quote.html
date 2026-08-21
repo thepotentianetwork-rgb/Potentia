@@ -123,11 +123,16 @@ function field(label, value) {
 }
 function money2(n) { return '$' + Math.round(n).toLocaleString(); }
 
+// Utah sales tax — applied to the shed and to each separately-billed item
+// (concrete, interior finishing) since each is invoiced as its own sale.
+var TAX_RATE = 0.0725;
+
 // Only the customer-facing SELL-side fields of the redline go here — never
 // the cost/margin fields (framing, siding cost, trueTotalCost, profit, etc.)
 // that live alongside them in the same object for the admin dashboard.
-function buildBreakdown(redline) {
-  if (!redline || typeof redline !== 'object') return '';
+// Shared by buildBreakdown() and the price box so both show the same total.
+function taxBreakdown(redline) {
+  if (!redline || typeof redline !== 'object') return null;
   var num = function (n) { return Number(n) || 0; };
   function sumLines(lines, amtKey) {
     return (lines || []).reduce(function (t, l) { return t + num(l[amtKey]); }, 0);
@@ -153,11 +158,20 @@ function buildBreakdown(redline) {
   add(redline.foundName, redline.foundSell);
   add(redline.intSellName, redline.intSell);
 
-  if (!rows.length) return '';
-  var rowsHtml = rows.map(function (r) {
+  if (!rows.length) return null;
+  var subtotal = rows.reduce(function (t, r) { return t + r[1]; }, 0);
+  var tax = subtotal * TAX_RATE;
+  return { rows: rows, subtotal: subtotal, tax: tax, total: subtotal + tax };
+}
+
+function buildBreakdown(bd) {
+  if (!bd) return '';
+  var rowsHtml = bd.rows.map(function (r) {
     return '<div class="br-row"><span class="br-label">' + esc(r[0]) + '</span>'
       + '<span class="br-amt">' + money2(r[1]) + '</span></div>';
   }).join('');
+  rowsHtml += '<div class="br-row"><span class="br-label">Subtotal</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
+  rowsHtml += '<div class="br-row"><span class="br-label">Sales Tax (' + (TAX_RATE * 100).toFixed(2).replace(/\.?0+$/, '') + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
   return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>';
 }
 
@@ -238,6 +252,10 @@ function render(submission, customer) {
     safePermalink = details.permalink;
   }
 
+  var breakdown = taxBreakdown(details.redline);
+  var totalDue = breakdown ? breakdown.total
+    : (details.quotedPrice != null && isFinite(Number(details.quotedPrice)) ? Number(details.quotedPrice) * (1 + TAX_RATE) : null);
+
   var html = ''
     + '<div class="doc-header">'
     +   '<div class="doc-brand">'
@@ -274,12 +292,12 @@ function render(submission, customer) {
     + '<div class="doc-section" id="renders-section"></div>'
     + '<div class="doc-section" id="floorplan-section"></div>'
 
-    + buildBreakdown(details.redline)
+    + buildBreakdown(breakdown)
 
     + '<div class="doc-section">'
     +   '<div class="price-box">'
-    +     '<span class="price-label">Quoted Price</span>'
-    +     '<span class="price-value">' + (details.quotedPrice != null && isFinite(Number(details.quotedPrice)) ? '$' + Number(details.quotedPrice).toLocaleString() : 'Pending review') + '</span>'
+    +     '<span class="price-label">Total Due (Tax Included)</span>'
+    +     '<span class="price-value">' + (totalDue != null ? money2(totalDue) : 'Pending review') + '</span>'
     +   '</div>'
     + '</div>'
 
