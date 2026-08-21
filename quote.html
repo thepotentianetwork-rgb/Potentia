@@ -674,20 +674,33 @@ function buildFloorPlan(config) {
   // ---- Overall building dimensions: width along the front, depth along the
   // right — the outermost line, stacked past both the porch (if any) AND
   // this wall's own fine chain (chainBand), so detail-then-total reads in
-  // the conventional near-to-far order instead of crossing each other. ----
+  // the conventional near-to-far order instead of crossing each other.
+  //
+  // A porch extends the real footprint on whichever axis it opens onto — a
+  // front porch adds to depth, a side porch adds to width — same rule as
+  // footprintLabel() in the designer and the Size field on this quote (the
+  // shed is priced off its own size, but what gets built, and submitted to
+  // the city, is the porch-inclusive footprint). So the total shown here has
+  // to be w/l + the porch, not just the shed's own two numbers, or this
+  // dimension quietly stops at the wall the porch is hanging off of. ----
+  var totalW = w + (porchWall === 'right' ? porchDepth : 0);
+  var totalL = l + (porchWall === 'front' ? porchDepth : 0);
+
   var fY = toY(l / 2) + (porchWall === 'front' ? porchPx : 0) + chainBand + totalBand;
-  var fL = { x: toX(-w / 2), y: fY }, fR = { x: toX(w / 2), y: fY };
+  var fFarX = toX(w / 2) + (porchWall === 'right' ? porchPx : 0);
+  var fL = { x: toX(-w / 2), y: fY }, fR = { x: fFarX, y: fY };
   line(fL.x, fL.y, fR.x, fR.y, { w: 1 });
   line(fL.x, fL.y - 5, fL.x, fL.y + 5, { w: 0.75 });
   line(fR.x, fR.y - 5, fR.x, fR.y + 5, { w: 0.75 });
-  text(w + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
+  text(totalW + "'", (fL.x + fR.x) / 2, fY - 5, { size: 10, fill: '#c8cdd6' });
 
   var rX = toX(w / 2) + (porchWall === 'right' ? porchPx : 0) + chainBand + totalBand;
-  var rT = { x: rX, y: toY(-l / 2) }, rB = { x: rX, y: toY(l / 2) };
+  var rFarY = toY(l / 2) + (porchWall === 'front' ? porchPx : 0);
+  var rT = { x: rX, y: toY(-l / 2) }, rB = { x: rX, y: rFarY };
   line(rT.x, rT.y, rB.x, rB.y, { w: 1 });
   line(rT.x - 5, rT.y, rT.x + 5, rT.y, { w: 0.75 });
   line(rB.x - 5, rB.y, rB.x + 5, rB.y, { w: 0.75 });
-  text(l + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
+  text(totalL + "'", rX + 12, (rT.y + rB.y) / 2, { size: 10, fill: '#c8cdd6', rotate: 90 });
 
   return { svg: svg, legendItems: legendItems };
 }
