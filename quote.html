@@ -803,10 +803,10 @@ function buildFloorPlan(config, frontWall) {
   });
 
   // ---- Orientation labels ----
-  text('BACK', pad + wPx / 2, labelBand - 2, { size: 9 });
-  text('FRONT', pad + wPx / 2, svgH - labelBand + 6, { size: 9 });
-  text('LEFT', labelBand - 2, pad + lPx / 2, { size: 9, rotate: -90 });
-  text('RIGHT', svgW - labelBand + 6, pad + lPx / 2, { size: 9, rotate: 90 });
+  dimText('BACK', pad + wPx / 2, labelBand - 2, { size: 9 });
+  dimText('FRONT', pad + wPx / 2, svgH - labelBand + 6, { size: 9 });
+  dimText('LEFT', labelBand - 2, pad + lPx / 2, { size: 9, rotate: -90 });
+  dimText('RIGHT', svgW - labelBand + 6, pad + lPx / 2, { size: 9, rotate: 90 });
 
   // ---- Overall building dimensions: the shed's own w/l, unchanged by a
   // porch (carved out of that footprint, not added past it — see
