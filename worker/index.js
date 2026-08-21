@@ -203,7 +203,7 @@ async function handleListCustomers(request, env, origin) {
        (SELECT s.details FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_details,
        (SELECT s.status FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_status,
        (SELECT s.created_at FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_submission_at,
-       (SELECT COUNT(*) FROM submissions s WHERE s.customer_id = c.id) AS submission_count,
+       (SELECT COUNT(*) FROM submissions s WHERE s.customer_id = c.id AND s.status != 'superseded') AS submission_count,
        (SELECT n.text FROM notes n WHERE n.customer_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
        (SELECT n.created_at FROM notes n WHERE n.customer_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at
      FROM customers c
@@ -429,6 +429,16 @@ async function handleShedSubmit(request, env, origin) {
     zip: contact.zip
   });
 
+  // A customer working through design iterations can submit several times
+  // in a row. Only the newest untouched submission should ever count as a
+  // "new" lead — once a fresh one lands, mark any still-"new" ones from
+  // this same customer as superseded so they stop inflating the New count.
+  // Submissions the admin already moved past "new" (contacted/quoted/etc.)
+  // are left alone — that's real pipeline progress, not noise.
+  await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
+    .bind(customerId)
+    .run();
+
   await env.DB.prepare("INSERT INTO submissions (customer_id, name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?,?)")
     .bind(customerId, name, email, phone, details, "new", new Date().toISOString())
     .run();
@@ -492,10 +502,14 @@ async function handleAnalytics(request, env, origin) {
   const medianPrice = prices.length ? prices[Math.floor(prices.length / 2)] : null;
 
   const custRow = await env.DB.prepare("SELECT COUNT(*) AS n FROM customers").first();
+  // Superseded rows are earlier, never-actioned resubmissions from the same
+  // customer — they stay in the DB for history but shouldn't inflate the
+  // headline submission count.
+  const activeSubmissionCount = results.filter((row) => row.status !== "superseded").length;
 
   return json(
     {
-      totalSubmissions: results.length,
+      totalSubmissions: activeSubmissionCount,
       totalCustomers: custRow ? custRow.n : 0,
       byDay,
       statusCounts,
