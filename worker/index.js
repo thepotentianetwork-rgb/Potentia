@@ -365,6 +365,49 @@ async function handleCleanupSuperseded(request, env, origin) {
   return json({ ok: true, updated: staleIds.length }, 200, origin);
 }
 
+// One-time fix for the hotspot map showing dots at wherever a customer's
+// internet connection happened to route through instead of their actual
+// address (see geocodeAddress). Every existing row's details.geo was written
+// by the old IP-based logic (or is missing entirely) — this re-derives it
+// from the SAME address fields already stored on the row (details.address/
+// city/state/zip) and overwrites details.geo, or clears it to null if there
+// still isn't a usable address. New submissions get this automatically going
+// forward; this is only for the ones already in the database.
+// Sequential, not parallel, and capped — polite to the free geocoding API
+// and this is a run-once maintenance action, not a hot path.
+async function handleRegeocodeSubmissions(request, env, origin) {
+  const { results } = await env.DB.prepare("SELECT id, details FROM submissions ORDER BY id DESC LIMIT 3000").all();
+
+  let updated = 0;
+  let cleared = 0;
+  let unchanged = 0;
+  for (const row of results) {
+    let d;
+    try {
+      d = JSON.parse(row.details);
+    } catch (e) {
+      continue;
+    }
+    const newGeo = await geocodeAddress({ address: d.address, city: d.city, state: d.state, zip: d.zip });
+    const oldGeo = d.geo || null;
+    const same =
+      (newGeo == null && oldGeo == null) ||
+      (newGeo != null && oldGeo != null && newGeo.lat === oldGeo.lat && newGeo.lng === oldGeo.lng);
+    if (same) {
+      unchanged++;
+      continue;
+    }
+    d.geo = newGeo;
+    if (newGeo == null) cleared++;
+    else updated++;
+    await env.DB.prepare("UPDATE submissions SET details = ? WHERE id = ?")
+      .bind(JSON.stringify(d).slice(0, 20000), row.id)
+      .run();
+  }
+
+  return json({ ok: true, total: results.length, updated, clearedNoAddress: cleared, unchanged }, 200, origin);
+}
+
 async function handleUpdateSubmissionStatus(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   const id = Number(body.id);
@@ -458,6 +501,59 @@ async function uploadRenders(env, renders) {
   return Object.keys(out).length ? out : null;
 }
 
+// Turns the customer's OWN submitted address into a map point for the admin
+// data page's hotspot map — this used to be the requester's IP-based
+// geolocation instead, which puts the dot wherever their phone/ISP happened
+// to route through at the moment they hit submit (often a different city
+// than the actual delivery address, sometimes a different state entirely).
+// Zippopotam.us is free and keyless — no signup, no API key to manage — and
+// resolves to a ZIP centroid, which is the same precision the old IP
+// geolocation gave anyway, just anchored to the right place. Falls back from
+// zip -> city+state -> null; a submission with no usable address gets no
+// dot rather than a wrong one.
+async function geocodeAddress(contact) {
+  const zip = String((contact && contact.zip) || "").trim().slice(0, 10);
+  const state = String((contact && contact.state) || "").trim().slice(0, 2);
+  const city = String((contact && contact.city) || "").trim();
+  try {
+    if (zip) {
+      const r = await fetch("https://api.zippopotam.us/us/" + encodeURIComponent(zip));
+      if (r.ok) {
+        const d = await r.json();
+        const p = d.places && d.places[0];
+        if (p && p.latitude != null && p.longitude != null) {
+          return {
+            lat: Number(p.latitude),
+            lng: Number(p.longitude),
+            city: p["place name"] || city || null,
+            region: p["state abbreviation"] || state || null,
+            country: "US"
+          };
+        }
+      }
+    }
+    if (city && state) {
+      const r = await fetch("https://api.zippopotam.us/us/" + encodeURIComponent(state) + "/" + encodeURIComponent(city));
+      if (r.ok) {
+        const d = await r.json();
+        const p = d.places && d.places[0];
+        if (p && p.latitude != null && p.longitude != null) {
+          return {
+            lat: Number(p.latitude),
+            lng: Number(p.longitude),
+            city: d["place name"] || city,
+            region: d["state abbreviation"] || state,
+            country: "US"
+          };
+        }
+      }
+    }
+  } catch (e) {
+    // network hiccup — fall through to null, no dot rather than a wrong one
+  }
+  return null;
+}
+
 async function handleShedSubmit(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   // Accepts either the designer tool's shape ({contact:{...}, config, permalink,
@@ -468,20 +564,10 @@ async function handleShedSubmit(request, env, origin) {
   const phone = String(contact.phone || body.phone || "").slice(0, 60);
   if (!name || !email) return json({ error: "name and email required" }, 400, origin);
 
-  // Cloudflare gives every request approximate geolocation for free (IP-based) —
-  // used for the admin data page's hotspot map. Captured regardless of whether
-  // the customer filled in an address, so every submission gets a point.
-  const cf = request.cf || {};
-  const geo =
-    cf.latitude != null && cf.longitude != null
-      ? {
-          lat: Number(cf.latitude),
-          lng: Number(cf.longitude),
-          city: cf.city || null,
-          region: cf.region || null,
-          country: cf.country || null
-        }
-      : null;
+  // Map point for the admin data page's hotspot map — geocoded from the
+  // customer's own submitted address, not from where their connection
+  // happened to be (see geocodeAddress above).
+  const geo = await geocodeAddress(contact);
 
   const detailsPayload =
     body.details !== undefined
@@ -701,6 +787,10 @@ export default {
       if (path === "/admin/submissions/cleanup-superseded" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleCleanupSuperseded(request, env, origin);
+      }
+      if (path === "/admin/submissions/regeocode" && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleRegeocodeSubmissions(request, env, origin);
       }
       if (path.startsWith("/admin/submissions/") && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

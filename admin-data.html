@@ -133,11 +133,21 @@ section{margin-bottom:56px}
 
     <section>
       <p class="sec-label">Geography</p>
-      <h2 style="font-size:20px;margin-bottom:16px">Where Submissions Come From</h2>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+        <h2 style="font-size:20px;margin-bottom:0">Where Submissions Come From</h2>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="regeo-status" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--silver)"></span>
+          <button id="regeo-btn" style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:7px 14px;cursor:pointer">Fix map locations</button>
+        </div>
+      </div>
       <div class="map-wrap">
         <div id="hotmap"></div>
         <div id="map-empty" class="map-empty" style="display:none">No location data yet — this fills in as new submissions come in.</div>
       </div>
+      <p style="font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:8px;line-height:1.6">
+        Dots use each submission's own address. "Fix map locations" re-checks every
+        existing submission — only needs running once after an update, safe to run again anytime.
+      </p>
     </section>
 
     <section style="margin-bottom:0">
@@ -186,6 +196,20 @@ function authFetch(path, options) {
 document.getElementById('logout-btn').addEventListener('click', function () {
   localStorage.removeItem('potentia_admin_token');
   window.location.href = 'admin-login.html';
+});
+
+document.getElementById('regeo-btn').addEventListener('click', function () {
+  var btn = document.getElementById('regeo-btn');
+  var status = document.getElementById('regeo-status');
+  btn.disabled = true;
+  status.textContent = 'Checking every submission — this can take a moment...';
+  authFetch('/admin/submissions/regeocode', { method: 'POST' }).then(function (r) {
+    btn.disabled = false;
+    if (!r.ok) { status.textContent = 'Could not finish — try again.'; return; }
+    var d = r.data;
+    status.textContent = d.updated + ' moved, ' + d.clearedNoAddress + ' cleared (no address on file), ' + d.unchanged + ' already correct.';
+    setTimeout(function () { location.reload(); }, 2200);
+  }).catch(function () { btn.disabled = false; status.textContent = 'Could not reach the server.'; });
 });
 
 function el(tag, attrs, children) {
