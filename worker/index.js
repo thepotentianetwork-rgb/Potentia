@@ -241,7 +241,30 @@ async function ensurePaymentsTable(env) {
   ).run();
 }
 
-// ---- /admin/customers/:id: full detail — customer + all their submissions + notes + payments ----
+// Lazily creates the installs table on first use — same reasoning as
+// ensurePaymentsTable: avoids a manual D1 migration for a table that didn't
+// exist when the DB was first set up.
+// One row per install EVENT, not per order — a submission can have both a
+// concrete row and a shed row (or, if a job is redone, two rows for the same
+// item), so this is an append-only log like payments/notes, not a pair of
+// columns on submissions. item is 'concrete' or 'shed' today but nothing
+// here assumes only those two, so a third item type later is just a new
+// string, no schema change.
+async function ensureInstallsTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS installs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      submission_id INTEGER NOT NULL,
+      item TEXT NOT NULL,
+      install_date TEXT NOT NULL,
+      days REAL,
+      note TEXT,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+}
+
+// ---- /admin/customers/:id: full detail — customer + all their submissions + notes + payments + installs ----
 async function handleGetCustomer(request, env, origin, id) {
   const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(id).first();
   if (!customer) return json({ error: "Not found" }, 404, origin);
@@ -265,7 +288,18 @@ async function handleGetCustomer(request, env, origin, id) {
     .bind(id)
     .all();
 
-  return json({ customer, submissions, notes, payments }, 200, origin);
+  // installs are keyed by submission (order), not customer — join through so
+  // a repeat customer's install log for order A never bleeds into order B.
+  await ensureInstallsTable(env);
+  const { results: installs } = await env.DB.prepare(
+    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at
+     FROM installs i JOIN submissions s ON i.submission_id = s.id
+     WHERE s.customer_id = ? ORDER BY i.install_date DESC, i.id DESC`
+  )
+    .bind(id)
+    .all();
+
+  return json({ customer, submissions, notes, payments, installs }, 200, origin);
 }
 
 // ---- DELETE /admin/customers/:id — permanently removes the customer and
@@ -326,6 +360,34 @@ async function handleAddPayment(request, env, origin, customerId) {
 async function handleDeletePayment(request, env, origin, id) {
   await ensurePaymentsTable(env);
   await env.DB.prepare("DELETE FROM payments WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- /admin/submissions/:id/installs ----
+const INSTALL_ITEMS = ["concrete", "shed"];
+async function handleAddInstall(request, env, origin, submissionId) {
+  const body = await request.json().catch(() => ({}));
+  const item = String(body.item || "").toLowerCase().trim();
+  const installDate = body.install_date ? String(body.install_date).slice(0, 40) : "";
+  const days = body.days != null && body.days !== "" ? Number(body.days) : null;
+  const note = String(body.note || "").slice(0, 500);
+  if (!INSTALL_ITEMS.includes(item)) return json({ error: "valid item required" }, 400, origin);
+  if (!installDate) return json({ error: "install_date required" }, 400, origin);
+  if (days != null && (!Number.isFinite(days) || days < 0)) return json({ error: "days must be a non-negative number" }, 400, origin);
+
+  await ensureInstallsTable(env);
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    "INSERT INTO installs (submission_id, item, install_date, days, note, created_at) VALUES (?,?,?,?,?,?)"
+  )
+    .bind(submissionId, item, installDate, days, note || null, now)
+    .run();
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+async function handleDeleteInstall(request, env, origin, id) {
+  await ensureInstallsTable(env);
+  await env.DB.prepare("DELETE FROM installs WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, origin);
 }
 
@@ -766,6 +828,18 @@ export default {
         const id = Number(path.slice("/admin/payments/".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleDeletePayment(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/installs") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/installs".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleAddInstall(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/installs/") && request.method === "DELETE") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/installs/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleDeleteInstall(request, env, origin, id);
       }
       if (path.startsWith("/admin/customers/") && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

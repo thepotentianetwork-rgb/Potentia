@@ -87,6 +87,22 @@ select:focus{border-color:var(--sp-blue)}
 .payment-del{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:6px 10px;cursor:pointer;flex-shrink:0}
 .payment-del:hover{border-color:#e0684f;color:#e0684f}
 .payment-total{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);margin-bottom:16px;text-transform:uppercase;letter-spacing:0.05em}
+
+.install-block{margin-top:16px;padding-top:14px;border-top:1px solid var(--dim)}
+.install-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:10px}
+.install-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}
+.install-row:last-child{margin-bottom:0}
+.install-item{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);text-transform:uppercase;letter-spacing:0.05em;width:70px;flex-shrink:0}
+.install-done{font-size:14px;color:var(--bright);flex:1}
+.install-del{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:5px 9px;cursor:pointer;flex-shrink:0}
+.install-del:hover{border-color:#e0684f;color:#e0684f}
+.install-form{display:flex;gap:8px;align-items:center;flex:1;flex-wrap:wrap}
+.install-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 9px;outline:none}
+.install-form input:focus{border-color:var(--sp-blue)}
+.install-form input[type="date"]{width:140px}
+.install-form input[type="number"]{width:80px}
+.install-form button{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 12px;border:none;text-transform:uppercase;cursor:pointer;font-weight:700}
+.install-form button:hover{background:#5ad0ff}
 .payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
 
 @media (max-width:760px){
@@ -260,7 +276,98 @@ function summarizeConfig(config) {
   return parts.join(' · ');
 }
 
-function renderOrders(submissions) {
+var INSTALL_ITEM_LABELS = { concrete: 'Concrete', shed: 'Shed' };
+
+// One order card can carry several install rows (concrete + shed, possibly
+// more than one of each if a job got redone) — group by submission so each
+// card only shows its own, and take the newest per item (installs already
+// come back sorted newest-first from the API).
+function installsForOrder(installs, submissionId, item) {
+  return installs.filter(function (i) { return i.submission_id === submissionId && i.item === item; });
+}
+
+function installDateLabel(i) {
+  var d = new Date(i.install_date + 'T00:00:00');
+  var label = isNaN(d.getTime()) ? i.install_date : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  if (i.days != null) label += ' · ' + i.days + ' day' + (Number(i.days) === 1 ? '' : 's');
+  return label;
+}
+
+function renderInstallBlock(card, s, details, installs) {
+  var hasConcrete = details.config && details.config.foundation === 'pad';
+  var items = hasConcrete ? ['concrete', 'shed'] : ['shed'];
+
+  var block = document.createElement('div');
+  block.className = 'install-block';
+  var label = document.createElement('div');
+  label.className = 'install-label';
+  label.textContent = 'Install';
+  block.appendChild(label);
+
+  items.forEach(function (item) {
+    var existing = installsForOrder(installs, s.id, item);
+    var row = document.createElement('div');
+    row.className = 'install-row';
+    var itemLabel = document.createElement('span');
+    itemLabel.className = 'install-item';
+    itemLabel.textContent = INSTALL_ITEM_LABELS[item];
+    row.appendChild(itemLabel);
+
+    if (existing.length) {
+      var latest = existing[0];
+      var done = document.createElement('span');
+      done.className = 'install-done';
+      done.textContent = installDateLabel(latest);
+      var del = document.createElement('button');
+      del.className = 'install-del';
+      del.type = 'button';
+      del.textContent = 'Remove';
+      del.addEventListener('click', function () {
+        if (!confirm('Remove this ' + INSTALL_ITEM_LABELS[item].toLowerCase() + ' install date?')) return;
+        authFetch('/admin/installs/' + latest.id, { method: 'DELETE' }).then(function (r) {
+          if (r.ok) loadCustomer();
+        });
+      });
+      row.appendChild(done);
+      row.appendChild(del);
+    } else {
+      var form = document.createElement('div');
+      form.className = 'install-form';
+      var dateInput = document.createElement('input');
+      dateInput.type = 'date';
+      var daysInput = document.createElement('input');
+      daysInput.type = 'number';
+      daysInput.min = '0';
+      daysInput.step = '0.5';
+      daysInput.placeholder = 'Days';
+      var logBtn = document.createElement('button');
+      logBtn.type = 'button';
+      logBtn.textContent = 'Log';
+      logBtn.addEventListener('click', function () {
+        if (!dateInput.value) { dateInput.focus(); return; }
+        logBtn.disabled = true;
+        authFetch('/admin/submissions/' + s.id + '/installs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item: item, install_date: dateInput.value, days: daysInput.value || null })
+        }).then(function (r) {
+          logBtn.disabled = false;
+          if (r.ok) loadCustomer();
+        });
+      });
+      form.appendChild(dateInput);
+      form.appendChild(daysInput);
+      form.appendChild(logBtn);
+      row.appendChild(form);
+    }
+    block.appendChild(row);
+  });
+
+  card.appendChild(block);
+}
+
+function renderOrders(submissions, installs) {
+  installs = installs || [];
   var wrap = document.getElementById('orders-list');
   wrap.innerHTML = '';
   if (!submissions.length) {
@@ -361,6 +468,10 @@ function renderOrders(submissions) {
     card.appendChild(summary);
     if (details.heardAbout) card.appendChild(heard);
     card.appendChild(actions);
+    // Install dates only matter once the job is actually won — showing them
+    // on a still-pipeline order would just be an empty form nobody can fill
+    // in yet.
+    if (s.status === 'won') renderInstallBlock(card, s, details, installs);
     wrap.appendChild(card);
   });
 }
@@ -464,8 +575,8 @@ function loadCustomer() {
     document.getElementById('c-location').textContent = loc || '—';
     document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
 
-    var submissions = r.data.submissions || [], notes = r.data.notes || [], payments = r.data.payments || [];
-    renderOrders(submissions);
+    var submissions = r.data.submissions || [], notes = r.data.notes || [], payments = r.data.payments || [], installs = r.data.installs || [];
+    renderOrders(submissions, installs);
     renderNotes(notes);
     renderPayments(payments);
 

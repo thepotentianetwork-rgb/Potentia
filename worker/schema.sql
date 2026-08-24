@@ -50,6 +50,21 @@ CREATE TABLE IF NOT EXISTS payments (
   created_at TEXT NOT NULL
 );
 
+-- Install log, one row per install EVENT (e.g. the concrete pour, the shed
+-- itself), tied to the specific order (submission), not the customer as a
+-- whole — a repeat customer's second shed gets its own install rows. The
+-- worker also creates this table lazily on first use, so this only matters
+-- for a fresh install.
+CREATE TABLE IF NOT EXISTS installs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  submission_id INTEGER NOT NULL,
+  item TEXT NOT NULL,        -- 'concrete' | 'shed'
+  install_date TEXT NOT NULL,
+  days REAL,
+  note TEXT,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS pricing (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   label TEXT NOT NULL,
