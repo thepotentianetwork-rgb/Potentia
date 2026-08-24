@@ -253,7 +253,8 @@ var SELL_DEFAULTS = {
   foundation: { pad: 3000, blocks: 0 },
   foundationFinish: { plain: 0, coated: 300 },
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
-  interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 }
+  interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 },
+  exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 }
 };
 
 var FLAT_GROUPS = [
@@ -297,6 +298,17 @@ var TIER_GROUPS = [
       { key: 'breakHi', label: 'Second break point', unit: 'sq ft' },
       { key: 'unpaintedPct', label: 'Drywall & Mud discount (no paint)', unit: '%' },
       { key: 'roundTo', label: 'Round the discounted price to nearest', unit: '$' }
+    ]
+  },
+  {
+    key: 'exteriorPaint', label: 'Exterior Paint — Tiered $/Sq Ft of Wall Area',
+    note: 'A rate per sq ft of exterior WALL area (not floor footprint) — covers siding and trim in one rate. Never charged on pine siding, which gets stained instead. Boundaries inclusive at the bottom: a wall area exactly at "Break — Mid at" pays the Mid rate.',
+    fields: [
+      { key: 'under', label: 'Under the first break', unit: '$/sq ft', prefix: true },
+      { key: 'mid', label: 'Break — Mid at', unit: '$/sq ft', prefix: true },
+      { key: 'over', label: 'Break — Over at', unit: '$/sq ft', prefix: true },
+      { key: 'breakLo', label: 'First break point', unit: 'sq ft' },
+      { key: 'breakHi', label: 'Second break point', unit: 'sq ft' }
     ]
   }
 ];
