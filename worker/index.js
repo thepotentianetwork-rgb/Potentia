@@ -6,6 +6,38 @@
 //     /shed/submit      — public: customer design submissions land here
 //
 // See README.md for full deployment steps (secrets, D1 database, etc).
+//
+// worker/pricing.js holds the whole SELL/COST pricing engine — it never
+// ships to a browser. This is a static import (not per-request dynamic
+// import) so it's evaluated once when the isolate boots, same as every
+// other module-level const here.
+
+import { computePricing, applyPricingOverrides, SELL, interiorPrice, foundationFinishPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft } from "./pricing.js";
+
+// Every (style, width) combination the designer's DOOR_SIZES catalog offers
+// a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
+// is kept in sync with pricing.js. Only style+width are needed: sellDoorUpcharge
+// buckets purely off those two, never off the shed's own config.
+const DOOR_PRICE_ENTRIES = [
+  ["basic", 36], ["craftsman", 36], ["xtrim", 36], ["arch", 36], ["panel4", 36],
+  ["basic", 42], ["craftsman", 42], ["xtrim", 42], ["arch", 42], ["panel4", 42],
+  ["basic", 60], ["craftsman", 60], ["xtrim", 60], ["arch", 60], ["panel4", 60],
+  ["basic", 72], ["craftsman", 72], ["xtrim", 72], ["arch", 72], ["panel4", 72],
+  ["basic", 84], ["craftsman", 84], ["xtrim", 84], ["arch", 84], ["panel4", 84],
+  ["res6", 36], ["reshalf", 36], ["resfull", 36], ["res6B", 36], ["reshalfB", 36], ["resfullB", 36],
+  ["resDouble", 72], ["resDoubleFull", 72], ["resDoubleFullB", 72],
+  ["slideglass", 70], ["slideglassB", 70],
+  ["rollup", 72], ["rollup", 84], ["rollup", 96],
+  ["cedar", 60], ["cedar", 72], ["cedar", 84], ["cedar", 96],
+  ["fairytale", 36]
+];
+function computeDoorPrices() {
+  const out = {};
+  DOOR_PRICE_ENTRIES.forEach(([style, w]) => {
+    out[style + "@" + w] = sellDoorUpcharge({ style, w });
+  });
+  return out;
+}
 
 const ALLOWED_ORIGINS = [
   "https://potentianetwork.com",
@@ -761,8 +793,14 @@ async function handleAnalytics(request, env, origin) {
 }
 
 // ---- /shed/pricing-config: the designer's full pricing engine snapshot ----
-// GET is public (every visitor's designer loads live prices on boot).
-// POST is admin-only (this is what the designer's own #admin screen saves).
+// GATED — this is the entire SELL/COST sheet (every price, every margin
+// number). It used to be public ("every visitor's designer loads live
+// prices on boot"), which was the actual hole: view-source hid nothing a
+// competitor couldn't just fetch directly. Now the designer no longer has
+// its own SELL/COST at all (see /shed/quote below, which computes off
+// pricing.js server-side) so this endpoint has exactly one legitimate
+// caller left — admin-pricing.html — and it's authenticated like every
+// other admin route.
 async function handleGetPricingConfig(request, env, origin) {
   const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
   if (!row) return json({}, 200, origin);
@@ -786,6 +824,222 @@ async function handleSavePricingConfig(request, env, origin) {
     .bind(data, now)
     .run();
   return json({ ok: true }, 200, origin);
+}
+
+// ---- /shed/quote: the ONLY place a price is computed. SELL/COST live in
+// pricing.js, which never ships to a browser — this endpoint is how the
+// designer gets a number instead. Loads the admin-edited pricing snapshot
+// fresh on every call (D1 reads are cheap; a stale cached snapshot serving
+// a price the admin just corrected would be worse) and applies it on top
+// of pricing.js's hardcoded defaults before computing. ----
+const SHED_STYLES = ["gable", "barn", "leanto", "hip", "3peak", "4peak"];
+const SHED_SIDING = ["vertical", "horizontal", "board-batten", "pine"];
+const SHED_ROOFTYPE = ["shingle", "metal"];
+const SHED_OVTYPE = ["gable", "all4"];
+const SHED_PORCHLOC = ["none", "front", "side"];
+const SHED_FOUNDATION = ["blocks", "pad"];
+const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
+const SHED_ELEC = ["none", "basic", "standard", "core", "essential"];
+const SHED_INT_FINISH = ["none", "drywall", "painted"];
+
+function clampNum(v, lo, hi, fallback) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+}
+function enumOr(v, allowed, fallback) {
+  return allowed.includes(v) ? v : fallback;
+}
+function capArray(a, max) {
+  return Array.isArray(a) ? a.slice(0, max) : [];
+}
+// Matches the designer's own sliders/pickers — see the wsteps markup in
+// designer.html (width/length/height ranges) and the style/siding/etc.
+// option lists. A request outside these isn't a build the designer could
+// actually produce, so it's clamped rather than trusted.
+function validateShedConfig(raw) {
+  raw = raw && typeof raw === "object" ? raw : {};
+  return {
+    style: enumOr(raw.style, SHED_STYLES, "gable"),
+    w: clampNum(raw.w, 6, 20, 8),
+    l: clampNum(raw.l, 6, 32, 12),
+    h: clampNum(raw.h, 6, 12, 8),
+    pitch: clampNum(raw.pitch, 3, 12, 6),
+    siding: enumOr(raw.siding, SHED_SIDING, "vertical"),
+    roofType: enumOr(raw.roofType, SHED_ROOFTYPE, "shingle"),
+    ovType: enumOr(raw.ovType, SHED_OVTYPE, "gable"),
+    ovh: clampNum(raw.ovh, 0, 24, 4),
+    porchLoc: enumOr(raw.porchLoc, SHED_PORCHLOC, "none"),
+    porchDepth: clampNum(raw.porchDepth, 0, 20, 0),
+    porchTier: typeof raw.porchTier === "string" ? raw.porchTier.slice(0, 60) : "standard",
+    dormerL: clampNum(raw.dormerL, 0, 12, 0),
+    dormerR: clampNum(raw.dormerR, 0, 12, 0),
+    foundation: enumOr(raw.foundation, SHED_FOUNDATION, "blocks"),
+    foundationFinish: enumOr(raw.foundationFinish, SHED_FOUNDATION_FINISH, "plain"),
+    loft: typeof raw.loft === "string" ? raw.loft.slice(0, 20) : "none",
+    elec: enumOr(raw.elec, SHED_ELEC, "none"),
+    intFinish: enumOr(raw.intFinish, SHED_INT_FINISH, "none"),
+    addons: raw.addons && typeof raw.addons === "object" ? raw.addons : {},
+    doors: capArray(raw.doors, 30),
+    windows: capArray(raw.windows, 30),
+    vents: capArray(raw.vents, 30),
+    shelves: capArray(raw.shelves, 30)
+  };
+}
+
+// The handful of prices the client needs a NUMBER for before the customer
+// has finished a build — dormer width buttons, interior finish buttons,
+// foundation finish buttons, and every window catalog tile — computed off
+// the real (possibly admin-overridden) tables, so the client never needs
+// SELL itself to render a label. Porch prices are the shed's own current
+// width/length at the 'standard' depth ladder, plus every finish tier at
+// whatever depth is currently selected (the two moments the porch page
+// actually shows a price for).
+function computeOptionPrices(cfg) {
+  const encEat = cfg.style === "gable" && cfg.porchLoc !== "none" && cfg.porchDepth > 0
+    ? (cfg.porchLoc === "front" ? { w: 0, l: cfg.porchDepth } : { w: cfg.porchDepth, l: 0 })
+    : { w: 0, l: 0 };
+  const encW = Math.max(6, cfg.w - encEat.w), encD = Math.max(6, cfg.l - encEat.l);
+
+  const windows = Object.assign({}, SELL.windows);
+
+  const interior = { drywall: interiorPrice("drywall", encW, encD), painted: interiorPrice("painted", encW, encD) };
+
+  const padSqft = Math.round(encW * encD);
+  const foundationFinish = {
+    plain: foundationFinishPrice("plain", 0),
+    coated: foundationFinishPrice("coated", 0),
+    broom: foundationFinishPrice("broom", padSqft)
+  };
+
+  // Depth buttons price at the shed's CURRENTLY selected finish tier (the
+  // tier ladder itself is priced separately below, at the current depth) —
+  // both pages read the same build, just holding a different dimension fixed.
+  const curTier = cfg.porchTier || "standard";
+  const maxPorchFront = Math.max(0, cfg.l - 6);
+  const maxPorchSide = Math.max(0, cfg.w - 6);
+  const frontDepths = {};
+  [4, 6, 8].filter((ft) => ft <= maxPorchFront).forEach((ft) => {
+    const line = porchLineFor("front", ft, curTier, cfg.w);
+    if (line) frontDepths[ft] = line.price;
+  });
+  const sideDepths = {};
+  [4, 6, 8].filter((ft) => ft <= maxPorchSide).forEach((ft) => {
+    const line = porchLineFor("side", ft, "standard", cfg.l);
+    if (line) sideDepths[ft] = line.price;
+  });
+  const frontTiers = {};
+  if (cfg.porchLoc === "front" && cfg.porchDepth > 0) {
+    Object.keys(SELL.porchFrontSqft).forEach((tier) => {
+      const line = porchLineFor("front", cfg.porchDepth, tier, cfg.w);
+      if (line) frontTiers[tier] = line.price;
+    });
+  }
+
+  const wallHeight = {};
+  Object.keys(SELL.wallHeight).forEach((h) => {
+    const rate = SELL.wallHeight[h];
+    wallHeight[h] = rate > 0 ? rate * wallAreaFt(cfg.w, cfg.l, Number(h)) : 0;
+  });
+
+  // Add-ons list (Upgrades step): flat items pass the SELL.options.flat price
+  // straight through; per-sqft items are computed against THIS shed's own
+  // floor/roof/wall area, same as wallHeight above — the client never gets
+  // handed the $/sqft rate itself, only what it comes to for this build.
+  const ADDON_FLAT_KEYS = {
+    shutters: "Shutters", flowerboxes: "Flowerboxes", ridgeVent: "Roof Ridge Vent",
+    skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder",
+    atticLadder: "Attic Pull-Down Ladder"
+  };
+  const ADDON_PERSQFT_KEYS = {
+    weatherGuard: "Floor Weather Guard", radiantBarrier: "Radiant Roof Barrier",
+    houseWrap: "House Wrap", hurricaneTies: "Hurricane Ties"
+  };
+  const addons = {};
+  Object.keys(ADDON_FLAT_KEYS).forEach((k) => { addons[k] = SELL.options.flat[ADDON_FLAT_KEYS[k]] || 0; });
+  Object.keys(ADDON_PERSQFT_KEYS).forEach((k) => {
+    addons[k] = sellPerSqft(ADDON_PERSQFT_KEYS[k], cfg.w, cfg.l, cfg.h);
+  });
+  addons.cupola = {
+    black: SELL.options.flat['Cupola 16" Black Roof'] || 0,
+    copper: SELL.options.flat['Cupola 16" Copper Roof'] || 0
+  };
+
+  // Siding upcharge, computed against THIS shed's own wall area — the
+  // client used to hardcode the $/sqft rates straight into the Siding
+  // step's markup (a rate table baked into served HTML, worse than an
+  // option price). Now it's a dollar amount per siding choice, like wallHeight.
+  const siding = {};
+  Object.keys(SELL.siding).forEach((k) => {
+    const rate = SELL.siding[k];
+    siding[k] = rate > 0 ? rate * wallAreaFt(cfg.w, cfg.l, cfg.h) : 0;
+  });
+
+  // Electrical tiers are flat (no size dependency) — same ELEC_MAP pricing.js uses.
+  const ELEC_MAP = { basic: "Basic", standard: "Standard", core: "Core", essential: "Essential" };
+  const electrical = {};
+  Object.keys(ELEC_MAP).forEach((k) => { electrical[k] = SELL.electrical[ELEC_MAP[k]] || 0; });
+
+  // Shelving: rate × length, capped to the wall it's on — same as
+  // computePricing's own SHELVES block. One {16, 24} pair per placed shelf
+  // (index-matched to cfg.shelves) so the depth picker can show what
+  // switching depth would cost THIS shelf at its own current length,
+  // without the client ever holding the $/ft rate itself.
+  const shelfRate16 = SELL.options.perLinFt['16" Deep Shelving'] || 0;
+  const shelfRate24 = SELL.options.perLinFt['24" Deep Shelving'] || 0;
+  const shelving = (cfg.shelves || []).map((sd) => {
+    const wallLen = (sd.wall === "front" || sd.wall === "back") ? cfg.w : cfg.l;
+    const lenFt = Math.min(sd.len || wallLen, wallLen);
+    return { 16: lenFt * shelfRate16, 24: lenFt * shelfRate24 };
+  });
+
+  return {
+    dormers: Object.assign({}, SELL.dormers),
+    windows: windows,
+    doors: computeDoorPrices(),
+    interior: interior,
+    foundation: Object.assign({}, SELL.foundation),
+    foundationFinish: foundationFinish,
+    wallHeight: wallHeight,
+    siding: siding,
+    electrical: electrical,
+    shelving: shelving,
+    addons: addons,
+    porch: { frontDepths: frontDepths, sideDepths: sideDepths, frontTiers: frontTiers }
+  };
+}
+
+async function handleShedQuote(request, env, origin) {
+  const body = await request.json().catch(() => ({}));
+  const cfg = validateShedConfig(body.config);
+
+  const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
+  if (row) {
+    let saved;
+    try {
+      saved = JSON.parse(row.data);
+    } catch (e) {
+      saved = null;
+    }
+    if (saved) applyPricingOverrides(saved);
+  }
+
+  const opts = body.overrides && typeof body.overrides === "object" ? body.overrides : undefined;
+  let result;
+  try {
+    result = computePricing(cfg, opts);
+  } catch (e) {
+    return json({ error: "Could not price this build" }, 400, origin);
+  }
+
+  const url = new URL(request.url);
+  const wantsRedline = url.searchParams.get("redline") === "1";
+  if (wantsRedline) {
+    if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+    return json({ total: result.customer, redline: result.redline }, 200, origin);
+  }
+
+  return json({ total: result.customer, optionPrices: computeOptionPrices(cfg) }, 200, origin);
 }
 
 export default {
@@ -900,11 +1154,15 @@ export default {
         return await handleShedSubmit(request, env, origin);
       }
       if (path === "/shed/pricing-config" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleGetPricingConfig(request, env, origin);
       }
       if (path === "/shed/pricing-config" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleSavePricingConfig(request, env, origin);
+      }
+      if (path === "/shed/quote" && request.method === "POST") {
+        return await handleShedQuote(request, env, origin);
       }
 
       return json({ error: "Not found" }, 404, origin);

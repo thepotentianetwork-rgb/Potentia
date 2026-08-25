@@ -614,9 +614,10 @@ function buildPerSqftGroup(dataObj) {
 
 // ---- Load + Save ----
 function loadConfig() {
-  fetch(API_BASE + '/shed/pricing-config')
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
+  authFetch('/shed/pricing-config')
+    .then(function (r) {
+      if (!r.ok) throw new Error('load failed');
+      var data = r.data;
       config = (data && typeof data === 'object') ? data : {};
       if (!config.baseSheets) config.baseSheets = {};
       if (!config.SELL) config.SELL = {};

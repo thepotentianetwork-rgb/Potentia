@@ -230,6 +230,41 @@ images automatically — nothing else to wire up. Orders submitted before
 this was set up just won't have images (floor plan still works for
 those, since it doesn't depend on R2).
 
+## Pricing moved server-side — deploy now needs one extra step
+
+The whole price sheet (`SELL`/`COST`, every rate and cost the designer used
+to compute prices with) used to live in `designer.html` itself — anyone
+could view-source the page and read it. It now lives in **`worker/pricing.js`**,
+a second file the Worker imports, and never ships to a browser. The
+designer just POSTs the current build to `POST /shed/quote` and gets back
+a total (and, for logged-in staff, the full cost/margin breakdown).
+
+This changes how you redeploy. Cloudflare's dashboard **Edit code** box only
+accepts one file, so pasting `worker/index.js` alone will fail — it can't
+find `./pricing.js`. Two ways to redeploy from here:
+
+**Easiest — paste the bundled file (same workflow as before):**
+Paste the contents of **`worker/dist/index.bundle.js`** into Edit code
+and Deploy, exactly like you always pasted `index.js`. That file has
+`pricing.js` folded into it automatically — nothing else changes about
+how you deploy.
+
+If you ever ask me for a code change to `worker/index.js` or
+`worker/pricing.js`, I'll regenerate `worker/dist/index.bundle.js` (via
+`node worker/build-bundle.mjs`) as part of that change, so it's always
+the one to grab and paste.
+
+**Alternative — `wrangler deploy` from a terminal:** if you're ever set up
+with Node and the `wrangler` CLI, `cd worker && wrangler deploy` reads
+both files directly from `wrangler.toml`'s `main = "index.js"` and needs
+no bundling step. Not required — just mentioned in case it's ever more
+convenient than the dashboard.
+
+Either way, `GET /shed/pricing-config` (the admin pricing editor's data
+endpoint) is now behind the same login as everything else in `/admin/*` —
+it used to be public, which made moving the designer's own copy
+server-side pointless (the same numbers were one fetch away).
+
 ## Simple flat `/admin/pricing` table (not currently used by the designer)
 
 The `pricing` table and the "Pricing" section in `admin.html` were built
