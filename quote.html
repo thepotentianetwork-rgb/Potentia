@@ -175,7 +175,12 @@ function taxBreakdown(redline) {
   // goes in first, then the shed, then interior finishing — always in
   // this order, each its own phase.
   var rows = [];
-  function add(phase, label, amt) { if (label && amt) rows.push({ phase: phase, label: 'Phase ' + phase + ' — ' + label, amt: Number(amt) }); }
+  function add(phase, label, amt) {
+    if (!label || !amt) return null;
+    var row = { phase: phase, label: 'Phase ' + phase + ' — ' + label, amt: Number(amt) };
+    rows.push(row);
+    return row;
+  }
   // The pad spec (4" poured slab) belongs on every quote regardless of when
   // its redline snapshot was taken, so it's added here at display time
   // rather than depending on redline.foundName having been generated with
@@ -187,8 +192,16 @@ function taxBreakdown(redline) {
   var foundLabel = redline.foundName || 'Concrete';
   if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
   add(1, foundLabel, redline.foundSell);
-  add(2, 'Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
+  var shedRow = add(2, 'Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
   add(3, redline.intSellName || 'Interior Finishing', redline.intSell);
+
+  // Electrical is still billed and deposited as part of the Shed phase
+  // (its dollars stay inside shedTotal above) — this just breaks it out as
+  // its own line in the Price Breakdown so the customer can see what the
+  // package itself costs, without changing invoicing/deposit schedule.
+  if (shedRow && redline.elecSell) {
+    shedRow.subLines = [{ label: redline.elecSellName || 'Electrical', amt: num(redline.elecSell) }];
+  }
 
   if (!rows.length) return null;
   rows.forEach(function (r) {
@@ -205,8 +218,17 @@ function taxBreakdown(redline) {
 function buildBreakdown(bd) {
   if (!bd) return '';
   var rowsHtml = bd.rows.map(function (r) {
-    return '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
+    var html = '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
       + '<span class="br-amt">' + money2(r.amt) + '</span></div>';
+    // Sub-lines (e.g. Electrical inside the Shed phase) are shown indented,
+    // already-included-in-the-row-above dollars — not their own deposit
+    // phase, just a customer-facing breakout of what's in that total.
+    (r.subLines || []).forEach(function (s) {
+      html += '<div class="br-row" style="padding-left:20px;font-size:13px;color:var(--silver)">'
+        + '<span class="br-label">&nbsp;&nbsp;+ ' + esc(s.label) + '</span>'
+        + '<span class="br-amt">' + money2(s.amt) + '</span></div>';
+    });
+    return html;
   }).join('');
   rowsHtml += '<div class="br-row"><span class="br-label">Subtotal</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
   rowsHtml += '<div class="br-row"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
