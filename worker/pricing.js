@@ -269,7 +269,7 @@ export let SELL = {
   },
 
   // ── FOUNDATION (flat) ── Levelling on blocks is complimentary.
-  foundation: { pad: 3000, blocks: 0 },
+  foundation: { pad: 3000, blocks: 0, existing: 0 },
 
   // ── FOUNDATION FLOOR FINISH ── 'plain'/'coated' are flat; 'broom' is
   // tiered by pad sqft — see broomTiers below, not this table.

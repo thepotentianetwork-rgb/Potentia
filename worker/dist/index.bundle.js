@@ -284,7 +284,7 @@ let SELL = {
   },
 
   // ── FOUNDATION (flat) ── Levelling on blocks is complimentary.
-  foundation: { pad: 3000, blocks: 0 },
+  foundation: { pad: 3000, blocks: 0, existing: 0 },
 
   // ── FOUNDATION FLOOR FINISH ── 'plain'/'coated' are flat; 'broom' is
   // tiered by pad sqft — see broomTiers below, not this table.
@@ -2087,7 +2087,7 @@ const SHED_SIDING = ["vertical", "horizontal", "board-batten", "pine"];
 const SHED_ROOFTYPE = ["shingle", "metal"];
 const SHED_OVTYPE = ["gable", "all4"];
 const SHED_PORCHLOC = ["none", "front", "side"];
-const SHED_FOUNDATION = ["blocks", "pad"];
+const SHED_FOUNDATION = ["blocks", "pad", "existing"];
 const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
 const SHED_ELEC = ["none", "basic", "standard", "core", "essential"];
 const SHED_INT_FINISH = ["none", "drywall", "painted"];
