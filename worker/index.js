@@ -663,6 +663,27 @@ async function handleShedSubmit(request, env, origin) {
   // happened to be (see geocodeAddress above).
   const geo = await geocodeAddress(contact);
 
+  // Price it ourselves rather than trusting body.quotedPrice/body.redline —
+  // the client can't compute a redline any more (pricing.js never ships to
+  // it), so quoteCache.redline is only ever non-null for staff who had the
+  // redline panel open at submit time. Every ordinary customer quote used to
+  // arrive with redline:null, which is why the stored order was missing
+  // line items (electrical, interior finish) that only ever lived in the
+  // redline breakdown. Computing it here means every submission gets the
+  // real, current numbers regardless of what the browser sent.
+  let quotedPrice = body.quotedPrice != null ? body.quotedPrice : null;
+  let redline = body.redline || null;
+  if (body.config) {
+    try {
+      const { result } = await computeQuoteResult(body.config, undefined, env);
+      quotedPrice = result.customer;
+      redline = result.redline;
+    } catch (e) {
+      // Malformed config — fall back to whatever the client sent (if anything)
+      // rather than losing the submission over a pricing error.
+    }
+  }
+
   const detailsPayload =
     body.details !== undefined
       ? body.details
@@ -674,8 +695,8 @@ async function handleShedSubmit(request, env, origin) {
           notes: contact.notes || null,
           config: body.config || null,
           permalink: body.permalink || null,
-          quotedPrice: body.quotedPrice != null ? body.quotedPrice : null,
-          redline: body.redline || null, // internal cost/margin breakdown — admin dashboard only, never public
+          quotedPrice: quotedPrice,
+          redline: redline, // internal cost/margin breakdown — admin dashboard only, never public
           renders: await uploadRenders(env, body.renders),
           page: body.page || null,
           geo,
@@ -1009,9 +1030,15 @@ function computeOptionPrices(cfg) {
   };
 }
 
-async function handleShedQuote(request, env, origin) {
-  const body = await request.json().catch(() => ({}));
-  const cfg = validateShedConfig(body.config);
+// Shared by /shed/quote and /shed/submit: validate the raw config, layer in
+// whatever admin overrides are currently saved in D1, and price it. Both
+// callers need the same "what would this build actually cost right now"
+// answer — /shed/submit should never trust a client-supplied price or
+// redline (the client can't compute either any more, and even if it could,
+// a submitted quote's numbers need to be the real ones, not whatever the
+// browser was told to send).
+async function computeQuoteResult(rawConfig, overrides, env) {
+  const cfg = validateShedConfig(rawConfig);
 
   const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
   if (row) {
@@ -1024,10 +1051,17 @@ async function handleShedQuote(request, env, origin) {
     if (saved) applyPricingOverrides(saved);
   }
 
-  const opts = body.overrides && typeof body.overrides === "object" ? body.overrides : undefined;
-  let result;
+  const opts = overrides && typeof overrides === "object" ? overrides : undefined;
+  const result = computePricing(cfg, opts);
+  return { cfg, result };
+}
+
+async function handleShedQuote(request, env, origin) {
+  const body = await request.json().catch(() => ({}));
+
+  let cfg, result;
   try {
-    result = computePricing(cfg, opts);
+    ({ cfg, result } = await computeQuoteResult(body.config, body.overrides, env));
   } catch (e) {
     return json({ error: "Could not price this build" }, 400, origin);
   }
