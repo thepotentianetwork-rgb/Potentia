@@ -150,6 +150,25 @@ section{margin-bottom:56px}
       </p>
     </section>
 
+    <section>
+      <p class="sec-label">Maintenance</p>
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+        <h2 style="font-size:20px;margin-bottom:0">Quote Details</h2>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="backfill-status" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--silver)"></span>
+          <button id="backfill-btn" style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.1em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:7px 14px;cursor:pointer">Fix quote details</button>
+        </div>
+      </div>
+      <p style="font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);line-height:1.6">
+        A batch of quotes went out missing their itemized cost breakdown (interior finishing,
+        electrical) — they only ever had a total, not a line-by-line total. This recomputes and
+        fills in what's missing on every existing submission, but only where the recomputed total
+        still matches what the customer was actually quoted — if pricing changed since, that quote
+        is left alone rather than showing a different number than what was promised. Safe to run
+        more than once.
+      </p>
+    </section>
+
     <section style="margin-bottom:0">
       <p class="sec-label">What People Are Building</p>
       <h2 style="font-size:20px;margin-bottom:16px">Design Preferences</h2>
@@ -209,6 +228,21 @@ document.getElementById('regeo-btn').addEventListener('click', function () {
     var d = r.data;
     status.textContent = d.updated + ' moved, ' + d.clearedNoAddress + ' cleared (no address on file), ' + d.unchanged + ' already correct.';
     setTimeout(function () { location.reload(); }, 2200);
+  }).catch(function () { btn.disabled = false; status.textContent = 'Could not reach the server.'; });
+});
+
+document.getElementById('backfill-btn').addEventListener('click', function () {
+  var btn = document.getElementById('backfill-btn');
+  var status = document.getElementById('backfill-status');
+  btn.disabled = true;
+  status.textContent = 'Recomputing every submission — this can take a moment...';
+  authFetch('/admin/submissions/backfill-redline', { method: 'POST' }).then(function (r) {
+    btn.disabled = false;
+    if (!r.ok) { status.textContent = 'Could not finish — try again.'; return; }
+    var d = r.data;
+    var msg = d.updated + ' fixed, ' + d.alreadyHad + ' already had it, ' + d.noConfig + ' no design on file';
+    if (d.priceChanged) msg += ', ' + d.priceChanged + ' left alone (pricing changed since — #' + d.priceChangedIds.join(', #') + ')';
+    status.textContent = msg + '.';
   }).catch(function () { btn.disabled = false; status.textContent = 'Could not reach the server.'; });
 });
 

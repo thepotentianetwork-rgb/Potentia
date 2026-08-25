@@ -1731,6 +1731,73 @@ async function handleRegeocodeSubmissions(request, env, origin) {
   return json({ ok: true, total: results.length, updated, clearedNoAddress: cleared, unchanged }, 200, origin);
 }
 
+// One-time fix for quotes submitted while pricing was mid-migration to the
+// server-side engine: /shed/submit used to store whatever redline the
+// client sent, which was null for every ordinary customer (only staff with
+// the redline panel open ever had one) — so those rows are missing their
+// itemized breakdown (interior finish, electrical, everything quote.html
+// only shows via redline). This recomputes redline from each row's own
+// stored config and writes it back, but ONLY when the recomputed total
+// still matches the price that customer was actually quoted — if pricing
+// has changed since (an admin edited rates), backfilling would silently
+// show a different total than what was promised, so those rows are left
+// alone and counted separately instead. Safe to run more than once: rows
+// that already have a redline are skipped.
+async function handleBackfillQuoteRedline(request, env, origin) {
+  const { results } = await env.DB.prepare("SELECT id, details FROM submissions ORDER BY id DESC LIMIT 3000").all();
+
+  let updated = 0;
+  let alreadyHad = 0;
+  let noConfig = 0;
+  let priceChanged = 0;
+  let failed = 0;
+  const priceChangedIds = [];
+
+  for (const row of results) {
+    let d;
+    try {
+      d = JSON.parse(row.details);
+    } catch (e) {
+      failed++;
+      continue;
+    }
+    if (d.redline) {
+      alreadyHad++;
+      continue;
+    }
+    if (!d.config || typeof d.config !== "object" || d.quotedPrice == null) {
+      noConfig++;
+      continue;
+    }
+    let result;
+    try {
+      ({ result } = await computeQuoteResult(d.config, undefined, env));
+    } catch (e) {
+      failed++;
+      continue;
+    }
+    // Compare to the cent — anything closer than that is float/rounding
+    // noise, not an actual price difference.
+    const matches = Math.abs(result.customer - Number(d.quotedPrice)) < 0.01;
+    if (!matches) {
+      priceChanged++;
+      priceChangedIds.push(row.id);
+      continue;
+    }
+    d.redline = result.redline;
+    await env.DB.prepare("UPDATE submissions SET details = ? WHERE id = ?")
+      .bind(JSON.stringify(d).slice(0, 200000), row.id)
+      .run();
+    updated++;
+  }
+
+  return json(
+    { ok: true, total: results.length, updated, alreadyHad, noConfig, priceChanged, priceChangedIds, failed },
+    200,
+    origin
+  );
+}
+
 async function handleUpdateSubmissionStatus(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   const id = Number(body.id);
@@ -2382,6 +2449,10 @@ export default {
       if (path === "/admin/submissions/regeocode" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleRegeocodeSubmissions(request, env, origin);
+      }
+      if (path === "/admin/submissions/backfill-redline" && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleBackfillQuoteRedline(request, env, origin);
       }
       if (path.startsWith("/admin/submissions/") && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
