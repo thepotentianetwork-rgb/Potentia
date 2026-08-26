@@ -1063,8 +1063,13 @@ function computeOptionPrices(cfg) {
     siding[k] = rate > 0 ? rate * wallAreaFt(cfg.w, cfg.l, cfg.h) : 0;
   });
 
-  // Electrical tiers are flat (no size dependency) — same ELEC_MAP pricing.js uses.
-  const ELEC_MAP = { basic: "Basic", standard: "Standard", core: "Core", essential: "Essential" };
+  // Electrical tiers are flat (no size dependency). "Standard" is retired
+  // from the designer's own tier list (ShedPro's real packages are now just
+  // Basic/Core/Essential — see gallery page) but stays priceable in
+  // pricing.js/SELL.electrical so an old permalink or stored quote with
+  // elec:'standard' still prices correctly; it's just not offered here any
+  // more, so there's no reason to hand the client a price for it.
+  const ELEC_MAP = { basic: "Basic", core: "Core", essential: "Essential" };
   const electrical = {};
   Object.keys(ELEC_MAP).forEach((k) => { electrical[k] = SELL.electrical[ELEC_MAP[k]] || 0; });
 
