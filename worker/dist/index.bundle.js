@@ -239,6 +239,16 @@ function foundationFinishPrice(kind, sqft){
   return (SELL.foundationFinish[kind]||0);
 }
 
+/* GRAVEL FOUNDATION PRICE — flat job price banded by the shed's own
+   footprint (enclosure sqft, same basis as padSqft/broom), from
+   SELL.gravelTiers. Only sheds LARGER than breakSqft pay the higher tier —
+   exactly at the break point still pays 'under', same "inclusive at the
+   bottom" convention broom/interior use for their own break points. */
+function gravelFoundationPrice(sqft){
+  var t=SELL.gravelTiers;
+  return (sqft>t.breakSqft) ? t.over : t.under;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    ★★★  CUSTOMER SELL PRICES  (from Shed Pro Client Workbook, Jul 2026)  ★★★
    What the CUSTOMER pays — upcharges & option prices, NOT your cost.
@@ -284,8 +294,13 @@ let SELL = {
   },
 
   // ── FOUNDATION (flat) ── Levelling on blocks is complimentary. Gravel is
-  // blocks levelling PLUS pouring gravel over the site first, flat $500.
-  foundation: { pad: 3000, blocks: 0, existing: 0, gravel: 500 },
+  // blocks levelling PLUS pouring gravel over the site first — tiered by
+  // shed sqft, see gravelTiers below, not this table.
+  foundation: { pad: 3000, blocks: 0, existing: 0 },
+
+  // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
+  // sqft). $500 at 100 sqft and under, $750 over 100 sqft.
+  gravelTiers: { under: 500, over: 750, breakSqft: 100 },
 
   // ── FOUNDATION FLOOR FINISH ── 'plain'/'coated' are flat; 'broom' is
   // tiered by pad sqft — see broomTiers below, not this table.
@@ -1158,8 +1173,9 @@ function computePricing(cfgIn, opts){
       else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
     }
   } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='gravel'){
-    foundSell = SELL.foundation.gravel||0;
-    foundName = 'Gravel Pad + Leveled on Cinder Blocks';
+    var _gsq=(typeof padSqft==='function')?padSqft():(Wf*Df);
+    foundSell = gravelFoundationPrice(_gsq);
+    foundName = 'Gravel Pad + Leveled on Cinder Blocks ('+_gsq+' sqft)';
   }
   customerPrice += foundSell;
 
@@ -1225,7 +1241,7 @@ function applyPricingOverrides(o){
   if(o.DEFAULTS) Object.keys(o.DEFAULTS).forEach(function(k){ DEFAULTS[k]=o.DEFAULTS[k]; });
   if(o.SELL){
     ['doors','windows','siding','exteriorPaint','electrical','dormers','wallHeight',
-     'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers'].forEach(function(group){
+     'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'].forEach(function(group){
       if(o.SELL[group]) Object.keys(o.SELL[group]).forEach(function(k){
         SELL[group][k]=o.SELL[group][k];
       });
@@ -2324,7 +2340,11 @@ function computeOptionPrices(cfg) {
     windows: windows,
     doors: computeDoorPrices(),
     interior: interior,
-    foundation: Object.assign({}, SELL.foundation),
+    // 'gravel' isn't a flat SELL.foundation entry — it's tiered by THIS
+    // shed's own footprint (gravelTiers), same as foundationFinish.broom
+    // below is tiered by pad sqft. Computed fresh here so the tile always
+    // shows what this exact build would actually be charged.
+    foundation: Object.assign({}, SELL.foundation, { gravel: gravelFoundationPrice(padSqft) }),
     foundationFinish: foundationFinish,
     wallHeight: wallHeight,
     siding: siding,

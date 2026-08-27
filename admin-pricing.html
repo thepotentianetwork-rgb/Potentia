@@ -167,7 +167,7 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
         <span class="count-tag partial">Paste from another source</span>
       </summary>
       <div style="padding:0 20px 20px">
-        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>foundation</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
+        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>foundation</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>gravelTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
         <textarea id="comp-import-text" class="add-form input" style="width:100%;min-height:120px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:10px 12px;outline:none" placeholder='{"doors":{"5\' Double":0,"5\' Double Craftsman":50}}'></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <button class="save-btn" id="comp-import-btn" type="button">Import Into Components</button>
@@ -250,9 +250,10 @@ var SELL_DEFAULTS = {
     "Posts & Beam, Finished Ceiling": 28, "Posts, Beams & Composite Floor": 35
   },
   porchSideSqft: { "standard": 8.33 },
-  foundation: { pad: 3000, blocks: 0, existing: 0, gravel: 500 },
+  foundation: { pad: 3000, blocks: 0, existing: 0 },
   foundationFinish: { plain: 0, coated: 300 },
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
+  gravelTiers: { under: 500, over: 750, breakSqft: 100 },
   interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 },
   exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 }
 };
@@ -266,7 +267,7 @@ var FLAT_GROUPS = [
   { key: 'electrical', label: 'Electrical Packages', unit: '' },
   { key: 'porchFrontSqft', label: 'Porch — Front (item name = "standard" for the base finish, or a tier name like "Composite Awning")', unit: '/ sq ft (depth × shed width)' },
   { key: 'porchSideSqft', label: 'Porch — Side (item name = "standard"; only that one tier is offered)', unit: '/ sq ft (depth × shed length)' },
-  { key: 'foundation', label: 'Foundation (item names: "pad", "blocks", "existing", "gravel")', unit: 'flat' },
+  { key: 'foundation', label: 'Foundation (item names: "pad", "blocks", "existing")', unit: 'flat' },
   { key: 'foundationFinish', label: 'Foundation Floor Finish — Plain & Coated (item names: "plain", "coated"; Broom is tiered, edited below)', unit: 'flat' }
 ];
 
@@ -298,6 +299,15 @@ var TIER_GROUPS = [
       { key: 'breakHi', label: 'Second break point', unit: 'sq ft' },
       { key: 'unpaintedPct', label: 'Drywall & Mud discount (no paint)', unit: '%' },
       { key: 'roundTo', label: 'Round the discounted price to nearest', unit: '$' }
+    ]
+  },
+  {
+    key: 'gravelTiers', label: 'Gravel Pad (with Block Leveling) — Tiered by Shed Sq Ft',
+    note: 'A flat job price banded by the shed’s own footprint (enclosed room width × length). Only sheds LARGER than the break point pay the Over price — a shed exactly at the break point still pays Under.',
+    fields: [
+      { key: 'under', label: 'At the break point and under', unit: '$', prefix: true },
+      { key: 'over', label: 'Over the break point', unit: '$', prefix: true },
+      { key: 'breakSqft', label: 'Break point', unit: 'sq ft' }
     ]
   },
   {
@@ -699,7 +709,7 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
     return;
   }
   var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical',
-    'porchFrontSqft', 'porchSideSqft', 'foundation', 'foundationFinish', 'broomTiers', 'interior'];
+    'porchFrontSqft', 'porchSideSqft', 'foundation', 'foundationFinish', 'broomTiers', 'gravelTiers', 'interior'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {

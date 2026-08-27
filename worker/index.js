@@ -12,7 +12,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, applyPricingOverrides, SELL, interiorPrice, foundationFinishPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft } from "./pricing.js";
+import { computePricing, applyPricingOverrides, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft } from "./pricing.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -1091,7 +1091,11 @@ function computeOptionPrices(cfg) {
     windows: windows,
     doors: computeDoorPrices(),
     interior: interior,
-    foundation: Object.assign({}, SELL.foundation),
+    // 'gravel' isn't a flat SELL.foundation entry — it's tiered by THIS
+    // shed's own footprint (gravelTiers), same as foundationFinish.broom
+    // below is tiered by pad sqft. Computed fresh here so the tile always
+    // shows what this exact build would actually be charged.
+    foundation: Object.assign({}, SELL.foundation, { gravel: gravelFoundationPrice(padSqft) }),
     foundationFinish: foundationFinish,
     wallHeight: wallHeight,
     siding: siding,
