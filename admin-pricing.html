@@ -250,7 +250,7 @@ var SELL_DEFAULTS = {
     "Posts & Beam, Finished Ceiling": 28, "Posts, Beams & Composite Floor": 35
   },
   porchSideSqft: { "standard": 8.33 },
-  foundation: { pad: 3000, blocks: 0 },
+  foundation: { pad: 3000, blocks: 0, existing: 0, gravel: 500 },
   foundationFinish: { plain: 0, coated: 300 },
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
   interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 },
@@ -266,7 +266,7 @@ var FLAT_GROUPS = [
   { key: 'electrical', label: 'Electrical Packages', unit: '' },
   { key: 'porchFrontSqft', label: 'Porch — Front (item name = "standard" for the base finish, or a tier name like "Composite Awning")', unit: '/ sq ft (depth × shed width)' },
   { key: 'porchSideSqft', label: 'Porch — Side (item name = "standard"; only that one tier is offered)', unit: '/ sq ft (depth × shed length)' },
-  { key: 'foundation', label: 'Foundation (item names: "pad", "blocks")', unit: 'flat' },
+  { key: 'foundation', label: 'Foundation (item names: "pad", "blocks", "existing", "gravel")', unit: 'flat' },
   { key: 'foundationFinish', label: 'Foundation Floor Finish — Plain & Coated (item names: "plain", "coated"; Broom is tiered, edited below)', unit: 'flat' }
 ];
 

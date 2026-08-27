@@ -268,8 +268,9 @@ export let SELL = {
     roundTo:      5      // $ step the unpainted figure snaps to
   },
 
-  // ── FOUNDATION (flat) ── Levelling on blocks is complimentary.
-  foundation: { pad: 3000, blocks: 0, existing: 0 },
+  // ── FOUNDATION (flat) ── Levelling on blocks is complimentary. Gravel is
+  // blocks levelling PLUS pouring gravel over the site first, flat $500.
+  foundation: { pad: 3000, blocks: 0, existing: 0, gravel: 500 },
 
   // ── FOUNDATION FLOOR FINISH ── 'plain'/'coated' are flat; 'broom' is
   // tiered by pad sqft — see broomTiers below, not this table.
@@ -1141,6 +1142,9 @@ export function computePricing(cfgIn, opts){
       if(FOUNDATION_FINISH==='broom') foundName+=' + Broom Finish ('+_sq+' sqft)';
       else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
     }
+  } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='gravel'){
+    foundSell = SELL.foundation.gravel||0;
+    foundName = 'Gravel Pad + Leveled on Cinder Blocks';
   }
   customerPrice += foundSell;
 
