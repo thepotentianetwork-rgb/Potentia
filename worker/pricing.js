@@ -226,12 +226,15 @@ export function foundationFinishPrice(kind, sqft){
 
 /* GRAVEL FOUNDATION PRICE — flat job price banded by the shed's own
    footprint (enclosure sqft, same basis as padSqft/broom), from
-   SELL.gravelTiers. Only sheds LARGER than breakSqft pay the higher tier —
-   exactly at the break point still pays 'under', same "inclusive at the
-   bottom" convention broom/interior use for their own break points. */
+   SELL.gravelTiers. Only sheds LARGER than a break pay the next tier up —
+   exactly at a break point still pays the lower tier, same "inclusive at
+   the bottom" convention broom/interior use for their own break points.
+   Past maxSqft we don't offer a gravel pad at all — returns null so the
+   caller can fall back / refuse rather than silently pricing it. */
 export function gravelFoundationPrice(sqft){
   var t=SELL.gravelTiers;
-  return (sqft>t.breakSqft) ? t.over : t.under;
+  if(sqft>t.maxSqft) return null;
+  return (sqft>t.break2) ? t.tier3 : (sqft>t.break1) ? t.tier2 : t.tier1;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -284,8 +287,9 @@ export let SELL = {
   foundation: { pad: 3000, blocks: 0, existing: 0 },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
-  // sqft). $500 at 100 sqft and under, $750 over 100 sqft.
-  gravelTiers: { under: 500, over: 750, breakSqft: 100 },
+  // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
+  // sqft. Not offered past 200 sqft — see maxSqft in gravelFoundationPrice.
+  gravelTiers: { tier1: 750, tier2: 1100, tier3: 1500, break1: 75, break2: 150, maxSqft: 200 },
 
   // ── FOUNDATION FLOOR FINISH ── 'plain'/'coated' are flat; 'broom' is
   // tiered by pad sqft — see broomTiers below, not this table.
@@ -1159,8 +1163,14 @@ export function computePricing(cfgIn, opts){
     }
   } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='gravel'){
     var _gsq=(typeof padSqft==='function')?padSqft():(Wf*Df);
-    foundSell = gravelFoundationPrice(_gsq);
-    foundName = 'Gravel Pad + Leveled on Cinder Blocks ('+_gsq+' sqft)';
+    var _gprice = gravelFoundationPrice(_gsq);
+    // Over 200 sqft we don't offer a gravel pad — the UI should already keep
+    // this option from being selected at that size, but fall back to $0/no
+    // line rather than silently charging nothing for a pad we didn't build.
+    foundSell = _gprice||0;
+    foundName = (_gprice==null)
+      ? 'Gravel Pad — not available over 200 sqft'
+      : 'Gravel Pad + Leveled on Cinder Blocks ('+_gsq+' sqft)';
   }
   customerPrice += foundSell;
 

@@ -253,7 +253,7 @@ var SELL_DEFAULTS = {
   foundation: { pad: 3000, blocks: 0, existing: 0 },
   foundationFinish: { plain: 0, coated: 300 },
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
-  gravelTiers: { under: 500, over: 750, breakSqft: 100 },
+  gravelTiers: { tier1: 750, tier2: 1100, tier3: 1500, break1: 75, break2: 150, maxSqft: 200 },
   interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 },
   exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 }
 };
@@ -303,11 +303,14 @@ var TIER_GROUPS = [
   },
   {
     key: 'gravelTiers', label: 'Gravel Pad (with Block Leveling) — Tiered by Shed Sq Ft',
-    note: 'A flat job price banded by the shed’s own footprint (enclosed room width × length). Only sheds LARGER than the break point pay the Over price — a shed exactly at the break point still pays Under.',
+    note: 'A flat job price banded by the shed’s own footprint (enclosed room width × length). Boundaries are inclusive at the bottom: a shed exactly at "Break 1" still pays Tier 1. Not offered at all past the max — the designer should keep gravel from being selected above that size.',
     fields: [
-      { key: 'under', label: 'At the break point and under', unit: '$', prefix: true },
-      { key: 'over', label: 'Over the break point', unit: '$', prefix: true },
-      { key: 'breakSqft', label: 'Break point', unit: 'sq ft' }
+      { key: 'tier1', label: 'Tier 1 — at Break 1 and under', unit: '$', prefix: true },
+      { key: 'tier2', label: 'Tier 2 — over Break 1, at Break 2 and under', unit: '$', prefix: true },
+      { key: 'tier3', label: 'Tier 3 — over Break 2, up to the max', unit: '$', prefix: true },
+      { key: 'break1', label: 'Break 1', unit: 'sq ft' },
+      { key: 'break2', label: 'Break 2', unit: 'sq ft' },
+      { key: 'maxSqft', label: 'Not offered past', unit: 'sq ft' }
     ]
   },
   {
