@@ -619,7 +619,12 @@ el('delete-confirm-btn').addEventListener('click', function () {
 function loadClient() {
   return authFetch('/crm/clients/' + clientId).then(function (r) {
     if (!r.ok) {
-      el('client-name').textContent = 'Client not found';
+      el('client-name').textContent = r.data && r.data.error === 'CRM database not connected'
+        ? 'CRM database not connected'
+        : 'Client not found';
+      if (r.data && r.data.error === 'CRM database not connected') {
+        el('summary-line').textContent = 'Bind the potentia-crm D1 database to the Worker as CRM_DB.';
+      }
       return;
     }
     currentClient = r.data.client;

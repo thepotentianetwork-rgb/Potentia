@@ -13,30 +13,54 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "./index.js";
 
-const db = new DatabaseSync(":memory:");
-// The real schema, so this exercises the same DDL a fresh D1 install gets —
-// including the shed tables, which must keep working alongside the CRM.
-db.exec(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "schema.sql"), "utf8"));
-function shape(sql) {
-  const stmt = db.prepare(sql);
-  const isSelect = /^\s*select/i.test(sql);
-  return (args) => ({
-    first() { return isSelect ? (stmt.get(...args) ?? null) : (stmt.run(...args), null); },
-    all() { return { results: stmt.all(...args) }; },
-    run() {
-      if (isSelect) return { results: stmt.all(...args) };
-      const r = stmt.run(...args);
-      return { meta: { last_row_id: Number(r.lastInsertRowid), changes: Number(r.changes) } };
-    }
-  });
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+// TWO databases, exactly like production: `potentia-shed` (the shed partner's,
+// bound as DB) and `potentia-crm` (Potentia's own, bound as CRM_DB). Keeping
+// them apart here is the point of the test — if a CRM query ever reaches for
+// env.DB, the shed database will end up with CRM tables in it and the
+// "shed database stays clean" checks at the bottom fail.
+function makeD1(db) {
+  function shape(sql) {
+    const stmt = db.prepare(sql);
+    const isSelect = /^\s*select/i.test(sql);
+    return (args) => ({
+      first() { return isSelect ? (stmt.get(...args) ?? null) : (stmt.run(...args), null); },
+      all() { return { results: stmt.all(...args) }; },
+      run() {
+        if (isSelect) return { results: stmt.all(...args) };
+        const r = stmt.run(...args);
+        return { meta: { last_row_id: Number(r.lastInsertRowid), changes: Number(r.changes) } };
+      }
+    });
+  }
+  function prepare(sql) {
+    const make = shape(sql);
+    return { ...make([]), bind: (...args) => ({ ...make(args), _sql: sql }), _sql: sql };
+  }
+  return { prepare, async batch(stmts) { return stmts.map((s) => s.run()); } };
 }
-function prepare(sql) {
-  const make = shape(sql);
-  const bound = make([]);
-  return { ...bound, bind: (...args) => ({ ...make(args), _sql: sql }), _sql: sql };
+function tablesIn(db) {
+  return db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
 }
-const DB = { prepare, async batch(stmts) { return stmts.map((s) => s.run()); } };
-const env = { DB, ADMIN_PASSWORD: "shed-pw", CRM_PASSWORD: "crm-pw", ADMIN_SESSION_SECRET: "s3cr3t-test-key" };
+
+// The shed database gets the real schema.sql, so this runs against the same
+// DDL a live install has. The CRM database starts EMPTY on purpose — its
+// tables should be created lazily by the Worker, with no migration step.
+const shedDb = new DatabaseSync(":memory:");
+shedDb.exec(fs.readFileSync(path.join(here, "schema.sql"), "utf8"));
+const crmDb = new DatabaseSync(":memory:");
+
+const env = {
+  DB: makeD1(shedDb),
+  CRM_DB: makeD1(crmDb),
+  ADMIN_PASSWORD: "shed-pw",
+  CRM_PASSWORD: "crm-pw",
+  ADMIN_SESSION_SECRET: "s3cr3t-test-key"
+};
+
+const CRM_TABLES = ["clients", "client_notes", "client_payments", "client_tasks"];
+const SHED_TABLES = ["customers", "submissions", "installs", "pricing_config"];
 
 const ORIGIN = "https://potentianetwork.com";
 let failures = 0;
@@ -80,10 +104,12 @@ check("CRM password rejected by the shed login", r.status === 401, r);
 // With CRM_PASSWORD unset the CRM must refuse everything — no silent fall back
 // to ADMIN_PASSWORD, which the shed partner knows.
 const noCrmPw = { ...env, CRM_PASSWORD: undefined };
-async function callWith(e, method, path, body) {
+async function callWith(e, method, path, body, tok) {
   const res = await worker.fetch(
     new Request("https://api.test" + path, {
-      method, headers: { Origin: ORIGIN, "Content-Type": "application/json" },
+      method,
+      headers: Object.assign({ Origin: ORIGIN, "Content-Type": "application/json" },
+        tok ? { Authorization: "Bearer " + tok } : {}),
       body: JSON.stringify(body)
     }), e
   );
@@ -210,6 +236,28 @@ r = await call("GET", "/crm/clients/" + leadId, null, crmToken);
 check("deleted client is gone", r.status === 404, r);
 r = await call("DELETE", "/crm/clients/9999", null, crmToken);
 check("deleting a missing client 404s", r.status === 404, r);
+
+console.log("\n-- the two databases stay separate --");
+const shedTables = tablesIn(shedDb);
+const crmTables = tablesIn(crmDb);
+CRM_TABLES.forEach(function (t) {
+  check("shed database has NO " + t + " table", shedTables.indexOf(t) === -1, shedTables);
+});
+SHED_TABLES.forEach(function (t) {
+  check("CRM database has NO " + t + " table", crmTables.indexOf(t) === -1, crmTables);
+});
+check("CRM tables were created lazily in the CRM database",
+  CRM_TABLES.every(function (t) { return crmTables.indexOf(t) !== -1; }), crmTables);
+check("no shed row was written by any CRM call",
+  shedDb.prepare("SELECT COUNT(*) AS n FROM customers").get().n === 0, "customers table not empty");
+
+// Missing binding must fail loudly rather than falling back to the shed DB.
+const noCrmDb = { ...env, CRM_DB: undefined };
+r = await callWith(noCrmDb, "POST", "/crm/clients", { business_name: "Should Not Land" }, crmToken);
+check("CRM_DB unbound → 503, not a write into the shed database",
+  r.status === 503 && r.data.error === "CRM database not connected", r);
+check("still nothing in the shed database after that",
+  tablesIn(shedDb).indexOf("clients") === -1, tablesIn(shedDb));
 
 console.log("\n-- shed side still intact --");
 r = await call("GET", "/admin/customers", null, adminToken);

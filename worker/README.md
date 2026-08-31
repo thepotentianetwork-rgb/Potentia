@@ -300,8 +300,12 @@ integration is confirmed working.
 
 Everything above this line belongs to the **shed partner**. This section is
 Potentia's own CRM — the web-design clients, from first inquiry through
-launch and into their monthly plan. Same Worker, same D1 database, but
-separate tables, separate pages, and its own password.
+launch and into their monthly plan.
+
+It runs in the same Worker, but on **its own D1 database** (`potentia-crm`,
+bound as `CRM_DB`) with its own login page and its own password. No Potentia
+client data is stored in `potentia-shed`. The one thing still shared is the
+Worker itself — same code deploy, same `ANTHROPIC_API_KEY`, same bill.
 
 New pages: `crm-login.html`, `crm.html` (client list + headline numbers),
 `crm-client.html` (one client: details, work, notes, payments).
@@ -336,17 +340,45 @@ request, not just in the browser:
 Different login page, different password, different session. Losing one
 password does not expose the other side.
 
-### 2. Redeploy the Worker
+### 2. Create a second D1 database — Potentia's own
+
+The CRM does **not** share the shed partner's database. `potentia-shed`
+holds their customers, quotes and renders; Potentia's client list, revenue
+and notes go somewhere else entirely, so the two can never be read out of
+one place.
+
+1. Cloudflare sidebar → **Storage & Databases → D1 SQL Database**.
+2. **Create database**, name it `potentia-crm` → Create.
+
+You do **not** need to paste any SQL into its console. The Worker creates
+its four tables the first time you use the CRM. (`worker/schema-crm.sql`
+has them written out if you ever want to read or recreate the schema by
+hand — it is a different file from `schema.sql`, which builds
+`potentia-shed`.)
+
+### 3. Bind it to the Worker
+
+1. `potentia-assistant` Worker → **Settings → Bindings** → **Add binding**.
+2. Type: **D1 database**. Variable name: `CRM_DB` (exactly that — the code
+   refers to `env.CRM_DB`).
+3. Database: pick `potentia-crm`.
+4. Save/Deploy.
+
+The Worker now has two D1 bindings, and they are not interchangeable:
+
+| Binding | Database | Used by |
+|---|---|---|
+| `DB` | `potentia-shed` | `/admin/*`, `/shed/*` — the shed partner |
+| `CRM_DB` | `potentia-crm` | `/crm/*` — Potentia's clients |
+
+If `CRM_DB` is missing, the CRM refuses with "CRM database not connected"
+rather than quietly falling back to the shed database — and the login page
+tells you so. Failing shut, again.
+
+### 4. Redeploy the Worker
 
 Paste `worker/dist/index.bundle.js` into **Edit code** and Deploy, same as
-always. No new bindings.
-
-### 3. That's it — no database migration
-
-The four tables (`clients`, `client_notes`, `client_payments`,
-`client_tasks`) are created automatically the first time the CRM is used,
-the same way `payments` and `installs` are. They're in `schema.sql` too, for
-a fresh install. Nothing to paste into the D1 console.
+always.
 
 Then open `crm-login.html` on the live site and sign in.
 
@@ -394,14 +426,25 @@ a live client doesn't knock them back to "lead".
 
 ## Checking a change didn't break it
 
-`worker/crm.test.mjs` runs every CRM route against a real SQLite database
-standing in for D1 — including that the two logins stay separated:
+`worker/crm.test.mjs` runs every CRM route against **two** real SQLite
+databases standing in for the two D1 bindings, so the separation is
+actually exercised rather than assumed:
 
 ```
 node --experimental-sqlite worker/crm.test.mjs
 ```
 
 It exits non-zero if anything fails. Worth running after any change to the
-`/crm/*` half of `worker/index.js`. Among the 51 checks: the shed password is
-refused by the CRM login, the CRM password is refused by the shed login, and
-with `CRM_PASSWORD` unset nothing gets into the CRM at all.
+`/crm/*` half of `worker/index.js`. Among the 64 checks:
+
+- the shed password is refused by the CRM login, and the CRM password is
+  refused by the shed login
+- with `CRM_PASSWORD` unset, nothing gets into the CRM at all
+- after a full run of CRM activity, the shed database contains **none** of
+  the four CRM tables and not one new row
+- with `CRM_DB` unbound, a CRM write returns 503 instead of landing in the
+  shed database
+
+That fourth one is the guard rail worth keeping: if a query in the CRM half
+of the file ever reaches for `env.DB` instead of `env.CRM_DB`, these checks
+fail loudly.

@@ -460,12 +460,33 @@ function renderStats(s) {
   document.getElementById('s-collected').textContent = money(s.collected_30d || 0);
 }
 
+function showLoadError(text) {
+  var body = document.getElementById('clients-body');
+  body.innerHTML = '';
+  var tr = document.createElement('tr');
+  var td = document.createElement('td');
+  td.className = 'empty';
+  td.colSpan = 8;
+  td.textContent = text;
+  tr.appendChild(td);
+  body.appendChild(tr);
+}
+
 function loadClients() {
   return authFetch('/crm/clients').then(function (r) {
-    if (!r.ok) return;
+    if (!r.ok) {
+      // The most likely cause on a fresh deploy is the CRM_DB binding being
+      // missed, so say that rather than leaving "Loading…" on screen forever.
+      showLoadError(r.data && r.data.error === 'CRM database not connected'
+        ? 'CRM database not connected — bind the potentia-crm D1 database to the Worker as CRM_DB.'
+        : 'Could not load clients — ' + ((r.data && r.data.error) || 'try again.'));
+      return;
+    }
     allClients = r.data.clients || [];
     renderStats(r.data.stats || {});
     render();
+  }).catch(function () {
+    showLoadError('Could not reach the server.');
   });
 }
 

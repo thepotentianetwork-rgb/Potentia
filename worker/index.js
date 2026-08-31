@@ -1172,13 +1172,20 @@ async function handleShedQuote(request, env, origin) {
 // Potentia's own client CRM — /crm/*
 //
 // Separate from the /admin/* shed dashboard above in every way that matters:
-// its own password, its own session scope, its own tables. The shed partner
-// logs into /admin/*; these are Potentia's web-design clients (pipeline,
-// retainers, edit requests) and the partner has no business seeing them.
+// its own password, its own session scope, and — the part worth being loud
+// about — its own DATABASE. Everything here reads and writes env.CRM_DB (the
+// `potentia-crm` D1 database), never env.DB (`potentia-shed`, which belongs to
+// the shed partner). Potentia's client list, revenue and notes are not rows in
+// a client's database.
+//
+// That means every query below must use env.CRM_DB. A stray env.DB in this
+// section would silently write Potentia's data into the shed's database, which
+// is exactly what the split exists to prevent — worker/crm.test.mjs asserts the
+// shed database ends up with none of these tables.
 //
 // Tables are created lazily on first use (same pattern as ensurePaymentsTable)
-// so this needs no manual D1 migration — schema.sql carries them too, for a
-// fresh install.
+// so there's no migration to paste — worker/schema-crm.sql carries them too,
+// for reference.
 // ============================================================================
 
 const CRM_STATUSES = ["lead", "contacted", "proposal", "building", "live", "paused", "lost"];
@@ -1195,8 +1202,8 @@ const CRM_PAYMENT_KINDS = ["build", "monthly", "addon", "other"];
 let crmTablesReady = false;
 async function ensureCrmTables(env) {
   if (crmTablesReady) return;
-  await env.DB.batch([
-    env.DB.prepare(
+  await env.CRM_DB.batch([
+    env.CRM_DB.prepare(
       `CREATE TABLE IF NOT EXISTS clients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         business_name TEXT,
@@ -1218,7 +1225,7 @@ async function ensureCrmTables(env) {
         updated_at TEXT NOT NULL
       )`
     ),
-    env.DB.prepare(
+    env.CRM_DB.prepare(
       `CREATE TABLE IF NOT EXISTS client_notes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER NOT NULL,
@@ -1226,7 +1233,7 @@ async function ensureCrmTables(env) {
         created_at TEXT NOT NULL
       )`
     ),
-    env.DB.prepare(
+    env.CRM_DB.prepare(
       `CREATE TABLE IF NOT EXISTS client_payments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER NOT NULL,
@@ -1238,7 +1245,7 @@ async function ensureCrmTables(env) {
         created_at TEXT NOT NULL
       )`
     ),
-    env.DB.prepare(
+    env.CRM_DB.prepare(
       `CREATE TABLE IF NOT EXISTS client_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER NOT NULL,
@@ -1303,7 +1310,7 @@ async function handleCrmLogin(request, env, origin) {
 // ---- GET /crm/clients — the whole list plus the headline numbers ----
 async function handleCrmListClients(request, env, origin) {
   await ensureCrmTables(env);
-  const { results } = await env.DB.prepare(
+  const { results } = await env.CRM_DB.prepare(
     `SELECT c.*,
        (SELECT n.text FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
        (SELECT n.created_at FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at,
@@ -1316,17 +1323,17 @@ async function handleCrmListClients(request, env, origin) {
   ).all();
 
   const activeList = CRM_ACTIVE_STATUSES.map((s) => `'${s}'`).join(",");
-  const mrrRow = await env.DB.prepare(
+  const mrrRow = await env.CRM_DB.prepare(
     `SELECT COALESCE(SUM(monthly_fee), 0) AS mrr, COUNT(*) AS active
      FROM clients WHERE status IN (${activeList}) AND monthly_fee IS NOT NULL`
   ).first();
-  const activeRow = await env.DB.prepare(
+  const activeRow = await env.CRM_DB.prepare(
     `SELECT COUNT(*) AS n FROM clients WHERE status IN (${activeList})`
   ).first();
-  const leadRow = await env.DB.prepare("SELECT COUNT(*) AS n FROM clients WHERE status = 'lead'").first();
+  const leadRow = await env.CRM_DB.prepare("SELECT COUNT(*) AS n FROM clients WHERE status = 'lead'").first();
 
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const collectedRow = await env.DB.prepare(
+  const collectedRow = await env.CRM_DB.prepare(
     "SELECT COALESCE(SUM(amount), 0) AS total FROM client_payments WHERE paid_at >= ?"
   )
     .bind(cutoff)
@@ -1384,7 +1391,7 @@ async function handleCrmCreateClient(request, env, origin) {
     return json({ error: "Give the client at least a name or an email" }, 400, origin);
   }
   const now = new Date().toISOString();
-  const res = await env.DB.prepare(
+  const res = await env.CRM_DB.prepare(
     `INSERT INTO clients (${CRM_CLIENT_COLUMNS.join(", ")}, created_at, updated_at)
      VALUES (${CRM_CLIENT_COLUMNS.map(() => "?").join(",")},?,?)`
   )
@@ -1396,22 +1403,22 @@ async function handleCrmCreateClient(request, env, origin) {
 // ---- GET /crm/clients/:id ----
 async function handleCrmGetClient(request, env, origin, id) {
   await ensureCrmTables(env);
-  const client = await env.DB.prepare("SELECT * FROM clients WHERE id = ?").bind(id).first();
+  const client = await env.CRM_DB.prepare("SELECT * FROM clients WHERE id = ?").bind(id).first();
   if (!client) return json({ error: "Not found" }, 404, origin);
 
-  const { results: notes } = await env.DB.prepare(
+  const { results: notes } = await env.CRM_DB.prepare(
     "SELECT id, text, created_at FROM client_notes WHERE client_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
     .all();
-  const { results: payments } = await env.DB.prepare(
+  const { results: payments } = await env.CRM_DB.prepare(
     "SELECT id, amount, method, kind, note, paid_at, created_at FROM client_payments WHERE client_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
   // Open work first and by due date, because that's the order it gets done in;
   // finished items fall to the bottom as a record.
-  const { results: tasks } = await env.DB.prepare(
+  const { results: tasks } = await env.CRM_DB.prepare(
     `SELECT id, title, due_date, done, done_at, created_at FROM client_tasks
      WHERE client_id = ?
      ORDER BY done ASC, (due_date IS NULL) ASC, due_date ASC, id DESC`
@@ -1426,7 +1433,7 @@ async function handleCrmGetClient(request, env, origin, id) {
 // above only advertises GET/POST/DELETE) ----
 async function handleCrmUpdateClient(request, env, origin, id) {
   await ensureCrmTables(env);
-  const existing = await env.DB.prepare("SELECT id FROM clients WHERE id = ?").bind(id).first();
+  const existing = await env.CRM_DB.prepare("SELECT id FROM clients WHERE id = ?").bind(id).first();
   if (!existing) return json({ error: "Not found" }, 404, origin);
 
   const body = await request.json().catch(() => ({}));
@@ -1435,14 +1442,14 @@ async function handleCrmUpdateClient(request, env, origin, id) {
   if (Object.keys(body).length === 1 && typeof body.status === "string") {
     const status = crmEnum(body.status, CRM_STATUSES, null);
     if (!status) return json({ error: "Invalid status" }, 400, origin);
-    await env.DB.prepare("UPDATE clients SET status = ?, updated_at = ? WHERE id = ?")
+    await env.CRM_DB.prepare("UPDATE clients SET status = ?, updated_at = ? WHERE id = ?")
       .bind(status, new Date().toISOString(), id)
       .run();
     return json({ ok: true }, 200, origin);
   }
 
   const f = crmClientFields(body);
-  await env.DB.prepare(
+  await env.CRM_DB.prepare(
     `UPDATE clients SET ${CRM_CLIENT_COLUMNS.map((k) => k + " = ?").join(", ")}, updated_at = ? WHERE id = ?`
   )
     .bind(...CRM_CLIENT_COLUMNS.map((k) => f[k]), new Date().toISOString(), id)
@@ -1454,13 +1461,13 @@ async function handleCrmUpdateClient(request, env, origin, id) {
 // them. The UI makes you type the client's name first.
 async function handleCrmDeleteClient(request, env, origin, id) {
   await ensureCrmTables(env);
-  const existing = await env.DB.prepare("SELECT id FROM clients WHERE id = ?").bind(id).first();
+  const existing = await env.CRM_DB.prepare("SELECT id FROM clients WHERE id = ?").bind(id).first();
   if (!existing) return json({ error: "Not found" }, 404, origin);
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM client_notes WHERE client_id = ?").bind(id),
-    env.DB.prepare("DELETE FROM client_payments WHERE client_id = ?").bind(id),
-    env.DB.prepare("DELETE FROM client_tasks WHERE client_id = ?").bind(id),
-    env.DB.prepare("DELETE FROM clients WHERE id = ?").bind(id)
+  await env.CRM_DB.batch([
+    env.CRM_DB.prepare("DELETE FROM client_notes WHERE client_id = ?").bind(id),
+    env.CRM_DB.prepare("DELETE FROM client_payments WHERE client_id = ?").bind(id),
+    env.CRM_DB.prepare("DELETE FROM client_tasks WHERE client_id = ?").bind(id),
+    env.CRM_DB.prepare("DELETE FROM clients WHERE id = ?").bind(id)
   ]);
   return json({ ok: true }, 200, origin);
 }
@@ -1468,7 +1475,7 @@ async function handleCrmDeleteClient(request, env, origin, id) {
 // Every child write touches the parent's updated_at so the list page's
 // "last activity" ordering reflects notes and payments, not just edits.
 async function touchClient(env, id) {
-  await env.DB.prepare("UPDATE clients SET updated_at = ? WHERE id = ?")
+  await env.CRM_DB.prepare("UPDATE clients SET updated_at = ? WHERE id = ?")
     .bind(new Date().toISOString(), id)
     .run();
 }
@@ -1480,7 +1487,7 @@ async function handleCrmAddNote(request, env, origin, clientId) {
   const text = String(body.text || "").trim().slice(0, 4000);
   if (!text) return json({ error: "text required" }, 400, origin);
   const now = new Date().toISOString();
-  const res = await env.DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
+  const res = await env.CRM_DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
     .bind(clientId, text, now)
     .run();
   await touchClient(env, clientId);
@@ -1488,7 +1495,7 @@ async function handleCrmAddNote(request, env, origin, clientId) {
 }
 async function handleCrmDeleteNote(request, env, origin, id) {
   await ensureCrmTables(env);
-  await env.DB.prepare("DELETE FROM client_notes WHERE id = ?").bind(id).run();
+  await env.CRM_DB.prepare("DELETE FROM client_notes WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, origin);
 }
 
@@ -1505,7 +1512,7 @@ async function handleCrmAddPayment(request, env, origin, clientId) {
   if (!method) return json({ error: "valid method required" }, 400, origin);
 
   const now = new Date().toISOString();
-  const res = await env.DB.prepare(
+  const res = await env.CRM_DB.prepare(
     "INSERT INTO client_payments (client_id, amount, method, kind, note, paid_at, created_at) VALUES (?,?,?,?,?,?,?)"
   )
     .bind(clientId, Math.round(amount * 100) / 100, method, kind, note, paidAt, now)
@@ -1515,7 +1522,7 @@ async function handleCrmAddPayment(request, env, origin, clientId) {
 }
 async function handleCrmDeletePayment(request, env, origin, id) {
   await ensureCrmTables(env);
-  await env.DB.prepare("DELETE FROM client_payments WHERE id = ?").bind(id).run();
+  await env.CRM_DB.prepare("DELETE FROM client_payments WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, origin);
 }
 
@@ -1526,7 +1533,7 @@ async function handleCrmAddTask(request, env, origin, clientId) {
   const title = String(body.title || "").trim().slice(0, 300);
   if (!title) return json({ error: "title required" }, 400, origin);
   const now = new Date().toISOString();
-  const res = await env.DB.prepare(
+  const res = await env.CRM_DB.prepare(
     "INSERT INTO client_tasks (client_id, title, due_date, done, done_at, created_at) VALUES (?,?,?,0,NULL,?)"
   )
     .bind(clientId, title, crmDate(body.due_date), now)
@@ -1536,11 +1543,11 @@ async function handleCrmAddTask(request, env, origin, clientId) {
 }
 async function handleCrmToggleTask(request, env, origin, id) {
   await ensureCrmTables(env);
-  const task = await env.DB.prepare("SELECT id, client_id, done FROM client_tasks WHERE id = ?").bind(id).first();
+  const task = await env.CRM_DB.prepare("SELECT id, client_id, done FROM client_tasks WHERE id = ?").bind(id).first();
   if (!task) return json({ error: "Not found" }, 404, origin);
   const body = await request.json().catch(() => ({}));
   const done = typeof body.done === "boolean" ? body.done : !task.done;
-  await env.DB.prepare("UPDATE client_tasks SET done = ?, done_at = ? WHERE id = ?")
+  await env.CRM_DB.prepare("UPDATE client_tasks SET done = ?, done_at = ? WHERE id = ?")
     .bind(done ? 1 : 0, done ? new Date().toISOString() : null, id)
     .run();
   await touchClient(env, task.client_id);
@@ -1548,7 +1555,7 @@ async function handleCrmToggleTask(request, env, origin, id) {
 }
 async function handleCrmDeleteTask(request, env, origin, id) {
   await ensureCrmTables(env);
-  await env.DB.prepare("DELETE FROM client_tasks WHERE id = ?").bind(id).run();
+  await env.CRM_DB.prepare("DELETE FROM client_tasks WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, origin);
 }
 
@@ -1568,23 +1575,23 @@ async function handleCrmLead(request, env, origin) {
 
   const now = new Date().toISOString();
   let existing = null;
-  if (email) existing = await env.DB.prepare("SELECT id FROM clients WHERE email = ? LIMIT 1").bind(email).first();
+  if (email) existing = await env.CRM_DB.prepare("SELECT id FROM clients WHERE email = ? LIMIT 1").bind(email).first();
   if (!existing && phone) {
-    existing = await env.DB.prepare("SELECT id FROM clients WHERE phone = ? LIMIT 1").bind(phone).first();
+    existing = await env.CRM_DB.prepare("SELECT id FROM clients WHERE phone = ? LIMIT 1").bind(phone).first();
   }
 
   if (existing) {
     const parts = ["New website inquiry"];
     if (service) parts.push("Interested in: " + service);
     if (message) parts.push(message);
-    await env.DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
+    await env.CRM_DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
       .bind(existing.id, parts.join(" — "), now)
       .run();
     await touchClient(env, existing.id);
     return json({ ok: true, id: existing.id, existing: true }, 200, origin);
   }
 
-  const res = await env.DB.prepare(
+  const res = await env.CRM_DB.prepare(
     `INSERT INTO clients (business_name, contact_name, email, phone, status, source, service, message, created_at, updated_at)
      VALUES (?,?,?,?,'lead','website',?,?,?,?)`
   )
@@ -1703,6 +1710,12 @@ export default {
       }
 
       // ---- Potentia client CRM ----
+      // Every CRM route but login needs the CRM's own database. Failing here
+      // with a clear message beats a confusing "no such table" from D1 if the
+      // binding was missed during setup.
+      if (path.startsWith("/crm/") && path !== "/crm/login" && !env.CRM_DB) {
+        return json({ error: "CRM database not connected" }, 503, origin);
+      }
       if (path === "/crm/login" && request.method === "POST") {
         return await handleCrmLogin(request, env, origin);
       }
