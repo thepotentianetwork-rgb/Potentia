@@ -87,7 +87,15 @@ form.addEventListener('submit', function (e) {
       window.location.href = nextUrl;
     })
     .catch(function (err) {
-      errorEl.textContent = err.message === 'Invalid credentials' ? 'Incorrect password.' : 'Something went wrong — try again.';
+      if (err.message === 'Invalid credentials') {
+        errorEl.textContent = 'Incorrect password.';
+      } else if (err.message === 'CRM password not configured') {
+        // Deliberate: the CRM has no password until CRM_PASSWORD is set on the
+        // Worker. It never falls back to the ShedPro password.
+        errorEl.textContent = 'No CRM password set yet — add a CRM_PASSWORD secret to the Worker.';
+      } else {
+        errorEl.textContent = 'Something went wrong — try again.';
+      }
       submitBtn.disabled = false;
       submitBtn.textContent = 'Sign In';
     });

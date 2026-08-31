@@ -308,21 +308,33 @@ New pages: `crm-login.html`, `crm.html` (client list + headline numbers),
 
 ## Setup
 
-### 1. Add one secret (recommended, not required)
+### 1. Add one secret — required, the CRM will not open without it
 
 Worker → **Settings → Variables and Secrets** → **Add variable**,
 Type = **Secret**.
 
 | Name | Value |
 |---|---|
-| `CRM_PASSWORD` | The password for `crm-login.html`. |
+| `CRM_PASSWORD` | The password for `crm-login.html`. Make it different from `ADMIN_PASSWORD` — that's the whole point. |
 
-If you skip this, the CRM falls back to `ADMIN_PASSWORD` and works
-immediately — but that's the password the shed partner uses, so anyone with
-it could open your client list, revenue and notes. **Set `CRM_PASSWORD` to
-something different** and the two are properly separated: a shed login can't
-open the CRM, and a CRM login can't open the shed dashboard. The Worker
-enforces that on every request, not just in the browser.
+The CRM has its **own** password. It does not accept `ADMIN_PASSWORD`, not
+even as a fallback: the shed partner knows that one, and it must never open
+Potentia's client list, revenue or notes. Until `CRM_PASSWORD` is set,
+`crm-login.html` refuses every attempt and tells you the secret is missing.
+Failing shut is the right direction here.
+
+The separation runs both ways and is enforced by the Worker on every
+request, not just in the browser:
+
+| | `/admin/*` (ShedPro) | `/crm/*` (Potentia) |
+|---|---|---|
+| `ADMIN_PASSWORD` | opens it | rejected |
+| `CRM_PASSWORD` | rejected | opens it |
+| a logged-in shed session | works | 401 |
+| a logged-in CRM session | 401 | works |
+
+Different login page, different password, different session. Losing one
+password does not expose the other side.
 
 ### 2. Redeploy the Worker
 
@@ -390,4 +402,6 @@ node --experimental-sqlite worker/crm.test.mjs
 ```
 
 It exits non-zero if anything fails. Worth running after any change to the
-`/crm/*` half of `worker/index.js`.
+`/crm/*` half of `worker/index.js`. Among the 51 checks: the shed password is
+refused by the CRM login, the CRM password is refused by the shed login, and
+with `CRM_PASSWORD` unset nothing gets into the CRM at all.

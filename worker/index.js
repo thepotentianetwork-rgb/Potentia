@@ -1277,9 +1277,11 @@ function crmDate(v) {
 }
 
 // ---- POST /crm/login ----
-// Uses CRM_PASSWORD when it's set, and falls back to ADMIN_PASSWORD when it
-// isn't, so the CRM works the moment it's deployed. Setting CRM_PASSWORD is
-// what actually separates it from the shed partner's login — see README.
+// CRM_PASSWORD only — deliberately no fall back to ADMIN_PASSWORD. The shed
+// partner knows that one, and it must not open Potentia's client list. Until
+// the secret is set this endpoint refuses every attempt, which is the safe
+// direction to fail in: the CRM stays shut rather than quietly answering to
+// the partner's password.
 async function handleCrmLogin(request, env, origin) {
   let body;
   try {
@@ -1288,11 +1290,10 @@ async function handleCrmLogin(request, env, origin) {
     return json({ error: "Invalid JSON" }, 400, origin);
   }
   const password = typeof body.password === "string" ? body.password : "";
-  const expected = env.CRM_PASSWORD || env.ADMIN_PASSWORD;
-  if (!expected || !env.ADMIN_SESSION_SECRET) {
-    return json({ error: "Server not configured" }, 500, origin);
+  if (!env.CRM_PASSWORD || !env.ADMIN_SESSION_SECRET) {
+    return json({ error: "CRM password not configured" }, 503, origin);
   }
-  if (!timingSafeEqual(password, expected)) {
+  if (!timingSafeEqual(password, env.CRM_PASSWORD)) {
     return json({ error: "Invalid credentials" }, 401, origin);
   }
   const token = await signToken(env.ADMIN_SESSION_SECRET, { crm: true, exp: Date.now() + SESSION_TTL_MS });

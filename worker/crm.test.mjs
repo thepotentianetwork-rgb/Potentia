@@ -60,6 +60,12 @@ async function call(method, path, body, token) {
 console.log("\n-- login & scoping --");
 let r = await call("POST", "/crm/login", { password: "wrong" });
 check("wrong password rejected", r.status === 401, r);
+
+// The whole point of the separate password: the shed partner's password must
+// not open the CRM, and the CRM password must not open the shed dashboard.
+r = await call("POST", "/crm/login", { password: "shed-pw" });
+check("SHED password rejected by the CRM login", r.status === 401, r);
+
 r = await call("POST", "/crm/login", { password: "crm-pw" });
 check("crm password accepted", r.status === 200 && !!r.data.token, r);
 const crmToken = r.data.token;
@@ -67,6 +73,26 @@ const crmToken = r.data.token;
 r = await call("POST", "/admin/login", { password: "shed-pw" });
 const adminToken = r.data.token;
 check("shed admin login still works", r.status === 200 && !!adminToken, r);
+
+r = await call("POST", "/admin/login", { password: "crm-pw" });
+check("CRM password rejected by the shed login", r.status === 401, r);
+
+// With CRM_PASSWORD unset the CRM must refuse everything — no silent fall back
+// to ADMIN_PASSWORD, which the shed partner knows.
+const noCrmPw = { ...env, CRM_PASSWORD: undefined };
+async function callWith(e, method, path, body) {
+  const res = await worker.fetch(
+    new Request("https://api.test" + path, {
+      method, headers: { Origin: ORIGIN, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }), e
+  );
+  return { status: res.status, data: await res.json().catch(() => null) };
+}
+r = await callWith(noCrmPw, "POST", "/crm/login", { password: "shed-pw" });
+check("no CRM_PASSWORD set → shed password still refused", r.status === 503 && r.data.error === "CRM password not configured", r);
+r = await callWith(noCrmPw, "POST", "/crm/login", { password: "crm-pw" });
+check("no CRM_PASSWORD set → nothing gets in at all", r.status === 503, r);
 
 r = await call("GET", "/crm/clients", null, adminToken);
 check("shed token cannot read the CRM", r.status === 401, r);
