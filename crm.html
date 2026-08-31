@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clients — Potentia CRM</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="Potentia_Logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --warm:#d8a15f;--live:#5fd08a;--build:#6fa8dc;--danger:#c0675a;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:12px;align-items:center}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--silver);color:var(--bright)}
+
+main{max-width:1280px;margin:0 auto;padding:44px 40px 100px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
+
+/* headline numbers */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:40px}
+.stat{background:var(--deep);padding:22px 24px}
+.stat .sl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+.stat .sv{font-size:30px;color:var(--bright);font-weight:300;line-height:1}
+.stat .sn{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);margin-top:6px}
+
+/* toolbar */
+.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.chip{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--silver);background:none;border:1px solid var(--dim);padding:8px 13px;cursor:pointer;text-transform:uppercase;transition:all 0.2s}
+.chip:hover{color:var(--bright)}
+.chip.on{background:var(--chrome);color:var(--black);border-color:var(--chrome)}
+#search{flex:1;min-width:180px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:10px 14px;outline:none}
+#search:focus{border-color:var(--silver)}
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;color:var(--black);background:var(--chrome);padding:11px 18px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;text-decoration:none;display:inline-block}
+.btn:hover{background:var(--bright)}
+.btn.ghost{background:none;border:1px solid var(--dim);color:var(--silver)}
+.btn.ghost:hover{border-color:var(--silver);color:var(--bright)}
+
+/* new client form */
+.new-panel{display:none;border:1px solid var(--dim);background:var(--deep);padding:26px 28px;margin-bottom:30px}
+.new-panel.open{display:block}
+.field-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
+.field label{display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.field input,.field select{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none;appearance:none}
+.field select{font-family:'DM Mono',monospace;font-size:12px;text-transform:uppercase}
+.field input:focus,.field select:focus{border-color:var(--silver)}
+.field select option{background:#0a0a12;color:var(--bright)}
+.panel-actions{display:flex;gap:10px;align-items:center}
+.panel-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--danger)}
+
+table{width:100%;border-collapse:collapse}
+th{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:left;padding:10px 12px;border-bottom:1px solid var(--dim)}
+td{padding:13px 12px;border-bottom:1px solid var(--dim);font-size:15px;font-weight:300;vertical-align:top}
+tr:hover td{background:rgba(255,255,255,0.02)}
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:24px 12px}
+.table-wrap{overflow-x:auto}
+
+select.status-sel{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:11px;padding:6px 8px;outline:none;text-transform:uppercase}
+select.status-sel:focus{border-color:var(--silver)}
+.status-cell{display:flex;align-items:center;gap:8px}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.status-lead{background:var(--bright)}
+.status-contacted,.status-proposal{background:var(--warm)}
+.status-building{background:var(--build)}
+.status-live{background:var(--live)}
+.status-paused{background:var(--silver)}
+.status-lost{background:var(--dim)}
+
+.name-cell{display:flex;flex-direction:column;gap:3px}
+.name-main{color:var(--bright);font-size:17px}
+.name-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:0.1em}
+.contact-line{font-size:14px;color:var(--silver);display:block}
+.fee-main{color:var(--bright)}
+.fee-sub{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--live);margin-top:3px}
+.task-pill{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--warm);border:1px solid rgba(216,161,95,0.45);background:rgba(216,161,95,0.12);padding:3px 9px;border-radius:20px}
+.task-pill.none{color:var(--dim);border-color:var(--dim);background:none}
+.task-due{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:4px}
+.task-due.over{color:var(--danger)}
+.note-cell{font-size:13px;color:var(--silver);max-width:220px}
+.note-cell .note-time{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:2px}
+.view-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--bright);text-decoration:none;text-transform:uppercase;white-space:nowrap}
+.view-link:hover{color:var(--silver)}
+
+tr.is-lead{background:linear-gradient(90deg,rgba(216,161,95,0.09),rgba(216,161,95,0.01) 55%)}
+tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
+.new-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--warm);background:rgba(216,161,95,0.14);border:1px solid rgba(216,161,95,0.45);padding:2px 8px;border-radius:20px;text-transform:uppercase;align-self:flex-start;margin-top:2px}
+
+@media (max-width:960px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .field-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:760px){
+  header{padding:16px 20px}
+  main{padding:30px 18px 80px}
+  h2{font-size:24px}
+  .field-grid{grid-template-columns:1fr}
+  .table-wrap{overflow-x:visible}
+  table,thead,tbody,tr,td{display:block;width:100%}
+  thead{display:none}
+  tbody tr{border:1px solid var(--dim);padding:14px 16px;margin-bottom:14px}
+  tr.is-lead{border-color:rgba(216,161,95,0.45)}
+  tr.is-lead td:first-child{box-shadow:none}
+  td{border-bottom:none;padding:6px 0}
+  td::before{content:attr(data-label);display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:3px}
+  td.view-cell{padding-top:12px}
+  td.view-cell::before{display:none}
+  td.view-cell .view-link{display:block;text-align:center;border:1px solid var(--dim);padding:10px;font-size:12px}
+  .note-cell{max-width:none}
+  td.empty::before{display:none}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    <div class="h-brand-text">
+      <span class="h-title">POTENTIA CRM</span>
+      <span class="h-sub">Website Clients</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <section>
+    <p class="sec-label">Overview</p>
+    <h2>Clients</h2>
+
+    <div class="stats">
+      <div class="stat"><div class="sl">Monthly Recurring</div><div class="sv" id="s-mrr">—</div><div class="sn">Active plans</div></div>
+      <div class="stat"><div class="sl">Active Clients</div><div class="sv" id="s-active">—</div><div class="sn">Building + live</div></div>
+      <div class="stat"><div class="sl">Open Leads</div><div class="sv" id="s-leads">—</div><div class="sn">Not yet contacted</div></div>
+      <div class="stat"><div class="sl">Collected (30d)</div><div class="sv" id="s-collected">—</div><div class="sn">All payments logged</div></div>
+    </div>
+
+    <div class="toolbar">
+      <div class="filters" id="filters"></div>
+      <input id="search" type="search" placeholder="Search name, email, domain…" autocomplete="off">
+      <button class="btn" id="new-btn">+ New Client</button>
+    </div>
+
+    <div class="new-panel" id="new-panel">
+      <div class="field-grid">
+        <div class="field"><label for="n-business">Business Name</label><input id="n-business" type="text" autocomplete="off"></div>
+        <div class="field"><label for="n-contact">Contact Name</label><input id="n-contact" type="text" autocomplete="off"></div>
+        <div class="field"><label for="n-email">Email</label><input id="n-email" type="email" autocomplete="off"></div>
+        <div class="field"><label for="n-phone">Phone</label><input id="n-phone" type="tel" autocomplete="off"></div>
+        <div class="field"><label for="n-package">Package</label><select id="n-package"></select></div>
+        <div class="field"><label for="n-status">Status</label><select id="n-status"></select></div>
+        <div class="field"><label for="n-build">Build Fee ($)</label><input id="n-build" type="number" min="0" step="0.01"></div>
+        <div class="field"><label for="n-monthly">Monthly ($)</label><input id="n-monthly" type="number" min="0" step="0.01"></div>
+        <div class="field"><label for="n-source">Source</label><select id="n-source"></select></div>
+      </div>
+      <div class="panel-actions">
+        <button class="btn" id="n-save">Add Client</button>
+        <button class="btn ghost" id="n-cancel">Cancel</button>
+        <span class="panel-msg" id="n-msg"></span>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Client</th><th>Contact</th><th>Package</th><th>Status</th><th>Value</th><th>Open Work</th><th>Latest Note</th><th></th></tr>
+      </thead>
+      <tbody id="clients-body">
+        <tr><td class="empty" colspan="8">Loading…</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </section>
+</main>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_crm_token');
+if (!token) window.location.href = 'crm-login.html';
+
+var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
+var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
+var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      localStorage.removeItem('potentia_crm_token');
+      window.location.href = 'crm-login.html';
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('potentia_crm_token');
+  window.location.href = 'crm-login.html';
+});
+
+function money(n) {
+  if (n == null || n === '') return null;
+  return '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+function label(v, pairs) {
+  for (var i = 0; i < pairs.length; i++) if (pairs[i][0] === (v || '')) return pairs[i][1];
+  return v || '—';
+}
+function fillSelect(el, pairs) {
+  pairs.forEach(function (p) {
+    var o = document.createElement('option');
+    o.value = p[0];
+    o.textContent = p[1];
+    el.appendChild(o);
+  });
+}
+function today() { return new Date().toISOString().slice(0, 10); }
+
+// ---- new-client panel ----
+fillSelect(document.getElementById('n-package'), PACKAGES);
+fillSelect(document.getElementById('n-source'), SOURCES);
+fillSelect(document.getElementById('n-status'), STATUSES.map(function (s) { return [s, s]; }));
+
+var newPanel = document.getElementById('new-panel');
+document.getElementById('new-btn').addEventListener('click', function () {
+  newPanel.classList.toggle('open');
+  if (newPanel.classList.contains('open')) document.getElementById('n-business').focus();
+});
+document.getElementById('n-cancel').addEventListener('click', function () {
+  newPanel.classList.remove('open');
+});
+document.getElementById('n-save').addEventListener('click', function () {
+  var msg = document.getElementById('n-msg');
+  var payload = {
+    business_name: document.getElementById('n-business').value,
+    contact_name: document.getElementById('n-contact').value,
+    email: document.getElementById('n-email').value,
+    phone: document.getElementById('n-phone').value,
+    package: document.getElementById('n-package').value,
+    status: document.getElementById('n-status').value,
+    source: document.getElementById('n-source').value,
+    build_fee: document.getElementById('n-build').value,
+    monthly_fee: document.getElementById('n-monthly').value
+  };
+  if (!payload.business_name && !payload.contact_name && !payload.email) {
+    msg.textContent = 'Add a name or an email first.';
+    return;
+  }
+  msg.textContent = '';
+  authFetch('/crm/clients', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).then(function (r) {
+    if (!r.ok) { msg.textContent = (r.data && r.data.error) || 'Could not save.'; return; }
+    window.location.href = 'crm-client.html?id=' + r.data.id;
+  }).catch(function () { msg.textContent = 'Could not reach the server.'; });
+});
+
+// ---- list ----
+var allClients = [];
+var activeFilter = 'all';
+var searchTerm = '';
+
+var filterBar = document.getElementById('filters');
+[['all', 'All']].concat(STATUSES.map(function (s) { return [s, s]; })).forEach(function (f) {
+  var b = document.createElement('button');
+  b.className = 'chip' + (f[0] === 'all' ? ' on' : '');
+  b.textContent = f[1];
+  b.dataset.value = f[0];
+  b.addEventListener('click', function () {
+    activeFilter = f[0];
+    filterBar.querySelectorAll('.chip').forEach(function (c) { c.classList.toggle('on', c.dataset.value === activeFilter); });
+    render();
+  });
+  filterBar.appendChild(b);
+});
+document.getElementById('search').addEventListener('input', function (e) {
+  searchTerm = e.target.value.trim().toLowerCase();
+  render();
+});
+
+function matches(c) {
+  if (activeFilter !== 'all' && (c.status || 'lead') !== activeFilter) return false;
+  if (!searchTerm) return true;
+  var hay = [c.business_name, c.contact_name, c.email, c.phone, c.domain, c.website_url]
+    .filter(Boolean).join(' ').toLowerCase();
+  return hay.indexOf(searchTerm) !== -1;
+}
+
+function render() {
+  var body = document.getElementById('clients-body');
+  body.innerHTML = '';
+  var list = allClients.filter(matches);
+  if (!list.length) {
+    var tr0 = document.createElement('tr');
+    var td0 = document.createElement('td');
+    td0.className = 'empty';
+    td0.colSpan = 8;
+    td0.textContent = allClients.length ? 'No clients match that.' : 'No clients yet — add one, or wait for a contact-form lead to land here.';
+    tr0.appendChild(td0);
+    body.appendChild(tr0);
+    return;
+  }
+
+  list.forEach(function (c) {
+    var status = c.status || 'lead';
+    var tr = document.createElement('tr');
+    if (status === 'lead') tr.className = 'is-lead';
+
+    // client
+    var tdName = document.createElement('td');
+    tdName.setAttribute('data-label', 'Client');
+    var wrap = document.createElement('div');
+    wrap.className = 'name-cell';
+    var main = document.createElement('span');
+    main.className = 'name-main';
+    main.textContent = c.business_name || c.contact_name || 'Unnamed';
+    wrap.appendChild(main);
+    if (c.business_name && c.contact_name && c.business_name !== c.contact_name) {
+      var sub = document.createElement('span');
+      sub.className = 'name-sub';
+      sub.textContent = c.contact_name;
+      wrap.appendChild(sub);
+    }
+    if (status === 'lead') {
+      var badge = document.createElement('span');
+      badge.className = 'new-badge';
+      badge.textContent = 'New Lead';
+      wrap.appendChild(badge);
+    }
+    tdName.appendChild(wrap);
+
+    // contact
+    var tdContact = document.createElement('td');
+    tdContact.setAttribute('data-label', 'Contact');
+    [c.email, c.phone, c.domain || c.website_url].filter(Boolean).forEach(function (line) {
+      var s = document.createElement('span');
+      s.className = 'contact-line';
+      s.textContent = line;
+      tdContact.appendChild(s);
+    });
+    if (!tdContact.childNodes.length) tdContact.textContent = '—';
+
+    // package
+    var tdPkg = document.createElement('td');
+    tdPkg.setAttribute('data-label', 'Package');
+    tdPkg.textContent = label(c.package, PACKAGES);
+
+    // status
+    var tdStatus = document.createElement('td');
+    tdStatus.setAttribute('data-label', 'Status');
+    var statusWrap = document.createElement('div');
+    statusWrap.className = 'status-cell';
+    var dot = document.createElement('span');
+    dot.className = 'status-dot status-' + status;
+    var sel = document.createElement('select');
+    sel.className = 'status-sel';
+    STATUSES.forEach(function (s) {
+      var o = document.createElement('option');
+      o.value = s;
+      o.textContent = s;
+      if (s === status) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', function () {
+      dot.className = 'status-dot status-' + sel.value;
+      c.status = sel.value;
+      tr.classList.toggle('is-lead', sel.value === 'lead');
+      authFetch('/crm/clients/' + c.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: sel.value })
+      }).then(loadClients).catch(function () {});
+    });
+    statusWrap.appendChild(dot);
+    statusWrap.appendChild(sel);
+    tdStatus.appendChild(statusWrap);
+
+    // value
+    var tdValue = document.createElement('td');
+    tdValue.setAttribute('data-label', 'Value');
+    var build = document.createElement('span');
+    build.className = 'fee-main';
+    build.textContent = money(c.build_fee) || '—';
+    tdValue.appendChild(build);
+    if (c.monthly_fee) {
+      var m = document.createElement('span');
+      m.className = 'fee-sub';
+      m.textContent = money(c.monthly_fee) + '/mo';
+      tdValue.appendChild(m);
+    }
+
+    // open work
+    var tdWork = document.createElement('td');
+    tdWork.setAttribute('data-label', 'Open Work');
+    var pill = document.createElement('span');
+    var open = Number(c.open_tasks || 0);
+    pill.className = 'task-pill' + (open ? '' : ' none');
+    pill.textContent = open ? open + ' open' : 'clear';
+    tdWork.appendChild(pill);
+    if (c.next_due) {
+      var due = document.createElement('span');
+      due.className = 'task-due' + (c.next_due < today() ? ' over' : '');
+      due.textContent = (c.next_due < today() ? 'overdue ' : 'due ') + c.next_due;
+      tdWork.appendChild(due);
+    }
+
+    // latest note
+    var tdNote = document.createElement('td');
+    tdNote.className = 'note-cell';
+    tdNote.setAttribute('data-label', 'Latest Note');
+    if (c.latest_note) {
+      var nt = document.createElement('span');
+      nt.textContent = c.latest_note.length > 80 ? c.latest_note.slice(0, 80) + '…' : c.latest_note;
+      tdNote.appendChild(nt);
+      var ntime = document.createElement('span');
+      ntime.className = 'note-time';
+      ntime.textContent = new Date(c.latest_note_at).toLocaleDateString();
+      tdNote.appendChild(ntime);
+    } else {
+      tdNote.textContent = '—';
+    }
+
+    var tdView = document.createElement('td');
+    tdView.className = 'view-cell';
+    var link = document.createElement('a');
+    link.className = 'view-link';
+    link.href = 'crm-client.html?id=' + c.id;
+    link.textContent = 'Open →';
+    tdView.appendChild(link);
+
+    [tdName, tdContact, tdPkg, tdStatus, tdValue, tdWork, tdNote, tdView].forEach(function (td) { tr.appendChild(td); });
+    body.appendChild(tr);
+  });
+}
+
+function renderStats(s) {
+  document.getElementById('s-mrr').textContent = money(s.mrr || 0);
+  document.getElementById('s-active').textContent = s.active_clients || 0;
+  document.getElementById('s-leads').textContent = s.open_leads || 0;
+  document.getElementById('s-collected').textContent = money(s.collected_30d || 0);
+}
+
+function loadClients() {
+  return authFetch('/crm/clients').then(function (r) {
+    if (!r.ok) return;
+    allClients = r.data.clients || [];
+    renderStats(r.data.stats || {});
+    render();
+  });
+}
+
+if (token) loadClients();
+</script>
+</body>
+</html>

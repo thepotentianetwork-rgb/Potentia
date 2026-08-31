@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client — Potentia CRM</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="Potentia_Logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --warm:#d8a15f;--live:#5fd08a;--build:#6fa8dc;--danger:#c0675a;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:12px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--silver);color:var(--bright)}
+
+main{max-width:1100px;margin:0 auto;padding:44px 40px 100px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:8px}
+h3{font-size:22px;font-weight:300;color:var(--bright);margin-bottom:18px}
+section{margin-bottom:52px}
+
+.title-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-lead{background:var(--bright)}
+.status-contacted,.status-proposal{background:var(--warm)}
+.status-building{background:var(--build)}
+.status-live{background:var(--live)}
+.status-paused{background:var(--silver)}
+.status-lost{background:var(--dim)}
+.status-tag{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
+.summary-line{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:30px}
+
+/* details form */
+.field-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;padding:24px 0;border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
+.field label{display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.field input,.field select{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none;appearance:none}
+.field select,.field input[type="date"]{font-family:'DM Mono',monospace;font-size:12px;text-transform:uppercase}
+.field input:focus,.field select:focus{border-color:var(--silver)}
+.field select option{background:#0a0a12;color:var(--bright)}
+.save-row{display:flex;gap:12px;align-items:center}
+.save-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--live)}
+.save-msg.err{color:var(--danger)}
+
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;color:var(--black);background:var(--chrome);padding:10px 18px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;text-decoration:none;display:inline-block}
+.btn:hover{background:var(--bright)}
+.btn.ghost{background:none;border:1px solid var(--dim);color:var(--silver)}
+.btn.ghost:hover{border-color:var(--silver);color:var(--bright)}
+
+.inquiry{border-left:2px solid var(--dim);padding:4px 0 4px 18px;margin-bottom:8px}
+.inquiry .iq-meta{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+.inquiry .iq-text{font-size:16px;font-weight:300;color:var(--chrome);line-height:1.6;white-space:pre-wrap}
+
+/* tasks */
+.row-form{display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap}
+.row-form input,.row-form select,.row-form textarea{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:11px 13px;outline:none}
+.row-form input:focus,.row-form select:focus,.row-form textarea:focus{border-color:var(--silver)}
+.row-form input[type="date"],.row-form select{font-family:'DM Mono',monospace;font-size:12px}
+.row-form .grow{flex:1;min-width:180px}
+.task-row{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--dim)}
+.task-check{width:18px;height:18px;border:1px solid var(--silver);background:none;cursor:pointer;flex-shrink:0;position:relative;padding:0}
+.task-check.done{background:var(--live);border-color:var(--live)}
+.task-check.done::after{content:'';position:absolute;left:5px;top:1px;width:5px;height:10px;border:solid var(--black);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.task-title{flex:1;font-size:16px;font-weight:300;color:var(--bright)}
+.task-row.is-done .task-title{color:var(--dim);text-decoration:line-through}
+.task-meta{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;white-space:nowrap}
+.task-meta.over{color:var(--danger)}
+.mini-del{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:5px 9px;cursor:pointer;flex-shrink:0}
+.mini-del:hover{border-color:var(--danger);color:var(--danger)}
+
+/* notes */
+.note-item{padding:14px 0;border-bottom:1px solid var(--dim);display:flex;gap:14px;align-items:flex-start}
+.note-body{flex:1}
+.note-item.latest{border-left:2px solid var(--warm);padding-left:16px}
+.note-text{font-size:16px;color:var(--chrome);font-weight:300;line-height:1.5;margin-bottom:6px;white-space:pre-wrap}
+.note-time{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);text-transform:uppercase}
+
+/* payments */
+.pay-totals{display:flex;gap:28px;flex-wrap:wrap;font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:20px}
+.pay-totals strong{display:block;font-family:'Cormorant Garamond',serif;font-size:22px;color:var(--bright);letter-spacing:normal;text-transform:none;font-weight:300;margin-top:4px}
+.payment-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid var(--dim)}
+.payment-main{display:flex;flex-direction:column;gap:3px}
+.payment-amt{font-size:18px;color:var(--bright);font-weight:300}
+.payment-meta{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);text-transform:uppercase;letter-spacing:0.05em}
+.payment-note{font-size:13px;color:var(--silver);margin-top:2px}
+
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
+
+#danger-zone{border:1px solid rgba(192,103,90,0.4);padding:24px}
+#danger-zone h3{font-size:20px;color:var(--danger);margin-bottom:10px}
+
+@media (max-width:900px){ .field-grid{grid-template-columns:repeat(2,1fr)} }
+@media (max-width:760px){
+  header{padding:16px 20px}
+  main{padding:30px 18px 80px}
+  h2{font-size:24px}
+  .field-grid{grid-template-columns:1fr}
+  .row-form{flex-direction:column}
+  .row-form input,.row-form select{width:100%}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    <div class="h-brand-text">
+      <span class="h-title">POTENTIA CRM</span>
+      <span class="h-sub">Website Clients</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <a href="crm.html" class="back-link">← All Clients</a>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <p class="sec-label">Client</p>
+  <div class="title-row">
+    <h2 id="client-name">Loading…</h2>
+    <span class="status-dot" id="title-dot"></span>
+    <span class="status-tag" id="title-status"></span>
+  </div>
+  <p class="summary-line" id="summary-line"></p>
+
+  <section>
+    <h3>Details</h3>
+    <div class="field-grid">
+      <div class="field"><label for="f-business">Business Name</label><input id="f-business" type="text"></div>
+      <div class="field"><label for="f-contact">Contact Name</label><input id="f-contact" type="text"></div>
+      <div class="field"><label for="f-email">Email</label><input id="f-email" type="email"></div>
+      <div class="field"><label for="f-phone">Phone</label><input id="f-phone" type="tel"></div>
+      <div class="field"><label for="f-status">Status</label><select id="f-status"></select></div>
+      <div class="field"><label for="f-package">Package</label><select id="f-package"></select></div>
+      <div class="field"><label for="f-build">Build Fee ($)</label><input id="f-build" type="number" min="0" step="0.01"></div>
+      <div class="field"><label for="f-monthly">Monthly ($)</label><input id="f-monthly" type="number" min="0" step="0.01"></div>
+      <div class="field"><label for="f-source">Source</label><select id="f-source"></select></div>
+      <div class="field"><label for="f-website">Live Site URL</label><input id="f-website" type="url" placeholder="https://"></div>
+      <div class="field"><label for="f-domain">Domain</label><input id="f-domain" type="text" placeholder="example.com"></div>
+      <div class="field"><label for="f-renews">Domain Renews</label><input id="f-renews" type="date"></div>
+      <div class="field"><label for="f-launched">Launched</label><input id="f-launched" type="date"></div>
+    </div>
+    <div class="save-row">
+      <button class="btn" id="save-btn">Save Changes</button>
+      <a class="btn ghost" id="visit-site" href="#" target="_blank" rel="noopener" style="display:none">Visit Site →</a>
+      <span class="save-msg" id="save-msg"></span>
+    </div>
+  </section>
+
+  <section id="inquiry-section" style="display:none">
+    <h3>Original Inquiry</h3>
+    <div class="inquiry">
+      <p class="iq-meta" id="iq-meta"></p>
+      <p class="iq-text" id="iq-text"></p>
+    </div>
+  </section>
+
+  <section>
+    <h3>Work &amp; Edit Requests</h3>
+    <form class="row-form" id="task-form">
+      <input id="task-title" class="grow" type="text" placeholder="What needs doing — e.g. swap hero photo, add booking page…" required>
+      <input id="task-due" type="date">
+      <button class="btn" type="submit">Add</button>
+    </form>
+    <div id="tasks-list"><p class="empty">Loading…</p></div>
+  </section>
+
+  <section>
+    <h3>Notes</h3>
+    <form class="row-form" id="note-form">
+      <textarea id="note-text" class="grow" rows="2" placeholder="Call notes, decisions, follow-ups…" required></textarea>
+      <button class="btn" type="submit">Add Note</button>
+    </form>
+    <div id="notes-list"><p class="empty">Loading…</p></div>
+  </section>
+
+  <section>
+    <h3>Payments</h3>
+    <form class="row-form" id="payment-form">
+      <input id="pay-amount" type="number" step="0.01" min="0.01" placeholder="Amount" style="width:120px" required>
+      <select id="pay-kind"></select>
+      <select id="pay-method"></select>
+      <input id="pay-date" type="date">
+      <input id="pay-note" class="grow" type="text" placeholder="Note (optional) — e.g. deposit">
+      <button class="btn" type="submit">Log</button>
+    </form>
+    <div class="pay-totals" id="pay-totals"></div>
+    <div id="payments-list"><p class="empty">Loading…</p></div>
+  </section>
+
+  <section id="danger-zone">
+    <p class="sec-label">Danger Zone</p>
+    <h3>Delete Client</h3>
+    <p style="font-size:14px;color:var(--silver);margin-bottom:16px">Removes this client and every note, payment and task attached to them. Cannot be undone.</p>
+    <button class="btn" id="delete-btn" type="button" style="background:var(--danger)">Delete Client…</button>
+    <div id="delete-confirm" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid var(--dim)">
+      <p style="font-size:13px;color:var(--silver);margin-bottom:10px">Type <strong id="delete-name-target" style="color:var(--bright)"></strong> to confirm — this deletes their record, <span id="delete-counts"></span>.</p>
+      <input id="delete-confirm-input" type="text" placeholder="Type the client's name" autocomplete="off"
+        style="background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:11px 13px;outline:none;width:100%;max-width:320px;margin-bottom:14px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn" id="delete-confirm-btn" type="button" disabled style="background:var(--danger);opacity:0.4;pointer-events:none">Permanently Delete</button>
+        <button class="btn ghost" id="delete-cancel-btn" type="button">Cancel</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_crm_token');
+var clientId = Number(new URLSearchParams(location.search).get('id'));
+
+if (!token) window.location.href = 'crm-login.html';
+if (!clientId) window.location.href = 'crm.html';
+
+var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
+var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
+var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
+var PAY_METHODS = ['cash', 'check', 'venmo', 'zelle', 'card', 'stripe', 'paypal', 'invoice', 'other'];
+var PAY_KINDS = [['build', 'Build'], ['monthly', 'Monthly'], ['addon', 'Add-on'], ['other', 'Other']];
+
+var currentClient = null;
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      localStorage.removeItem('potentia_crm_token');
+      window.location.href = 'crm-login.html';
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('potentia_crm_token');
+  window.location.href = 'crm-login.html';
+});
+
+function money(n) {
+  return '$' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function moneyShort(n) {
+  return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+function today() { return new Date().toISOString().slice(0, 10); }
+function fillSelect(el, pairs) {
+  pairs.forEach(function (p) {
+    var o = document.createElement('option');
+    o.value = p[0];
+    o.textContent = p[1];
+    el.appendChild(o);
+  });
+}
+function el(id) { return document.getElementById(id); }
+
+fillSelect(el('f-status'), STATUSES.map(function (s) { return [s, s]; }));
+fillSelect(el('f-package'), PACKAGES);
+fillSelect(el('f-source'), SOURCES);
+fillSelect(el('pay-method'), PAY_METHODS.map(function (m) { return [m, m]; }));
+fillSelect(el('pay-kind'), PAY_KINDS);
+el('pay-date').value = today();
+
+// ---- details ----
+function fillDetails(c) {
+  el('client-name').textContent = c.business_name || c.contact_name || 'Unnamed client';
+  document.title = (c.business_name || c.contact_name || 'Client') + ' — Potentia CRM';
+  var status = c.status || 'lead';
+  el('title-dot').className = 'status-dot status-' + status;
+  el('title-status').textContent = status;
+
+  var bits = [];
+  if (c.package) bits.push(c.package);
+  if (c.monthly_fee) bits.push(moneyShort(c.monthly_fee) + '/mo');
+  if (c.launched_at) bits.push('launched ' + c.launched_at);
+  bits.push('client since ' + new Date(c.created_at).toLocaleDateString());
+  el('summary-line').textContent = bits.join(' · ');
+
+  el('f-business').value = c.business_name || '';
+  el('f-contact').value = c.contact_name || '';
+  el('f-email').value = c.email || '';
+  el('f-phone').value = c.phone || '';
+  el('f-status').value = status;
+  el('f-package').value = c.package || '';
+  el('f-source').value = c.source || '';
+  el('f-build').value = c.build_fee == null ? '' : c.build_fee;
+  el('f-monthly').value = c.monthly_fee == null ? '' : c.monthly_fee;
+  el('f-website').value = c.website_url || '';
+  el('f-domain').value = c.domain || '';
+  el('f-renews').value = c.domain_renews_at || '';
+  el('f-launched').value = c.launched_at || '';
+
+  var visit = el('visit-site');
+  // Only ever link out to a plain http(s) URL — never a javascript: value typed
+  // into the field.
+  if (c.website_url && /^https?:\/\//i.test(c.website_url)) {
+    visit.href = c.website_url;
+    visit.style.display = 'inline-block';
+  } else {
+    visit.style.display = 'none';
+  }
+
+  if (c.service || c.message) {
+    el('inquiry-section').style.display = '';
+    var meta = ['Submitted ' + new Date(c.created_at).toLocaleString()];
+    if (c.service) meta.push('Interested in: ' + c.service);
+    if (c.source) meta.push('via ' + c.source);
+    el('iq-meta').textContent = meta.join('  ·  ');
+    el('iq-text').textContent = c.message || '(no message)';
+  }
+}
+
+el('save-btn').addEventListener('click', function () {
+  var msg = el('save-msg');
+  msg.className = 'save-msg';
+  msg.textContent = 'Saving…';
+  authFetch('/crm/clients/' + clientId, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      business_name: el('f-business').value,
+      contact_name: el('f-contact').value,
+      email: el('f-email').value,
+      phone: el('f-phone').value,
+      status: el('f-status').value,
+      package: el('f-package').value,
+      source: el('f-source').value,
+      build_fee: el('f-build').value,
+      monthly_fee: el('f-monthly').value,
+      website_url: el('f-website').value,
+      domain: el('f-domain').value,
+      domain_renews_at: el('f-renews').value,
+      launched_at: el('f-launched').value,
+      // carried through so a details save never wipes the original inquiry
+      service: currentClient ? currentClient.service : null,
+      message: currentClient ? currentClient.message : null
+    })
+  }).then(function (r) {
+    if (!r.ok) { msg.className = 'save-msg err'; msg.textContent = (r.data && r.data.error) || 'Could not save.'; return; }
+    msg.textContent = 'Saved.';
+    setTimeout(function () { msg.textContent = ''; }, 2500);
+    loadClient();
+  }).catch(function () {
+    msg.className = 'save-msg err';
+    msg.textContent = 'Could not reach the server.';
+  });
+});
+
+// ---- tasks ----
+function renderTasks(tasks) {
+  var box = el('tasks-list');
+  box.innerHTML = '';
+  if (!tasks.length) {
+    box.innerHTML = '<p class="empty">Nothing open — add the next edit request or milestone.</p>';
+    return;
+  }
+  tasks.forEach(function (t) {
+    var row = document.createElement('div');
+    row.className = 'task-row' + (t.done ? ' is-done' : '');
+
+    var check = document.createElement('button');
+    check.type = 'button';
+    check.className = 'task-check' + (t.done ? ' done' : '');
+    check.setAttribute('aria-label', t.done ? 'Mark as not done' : 'Mark as done');
+    check.addEventListener('click', function () {
+      authFetch('/crm/tasks/' + t.id, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ done: !t.done })
+      }).then(loadClient).catch(function () {});
+    });
+
+    var title = document.createElement('span');
+    title.className = 'task-title';
+    title.textContent = t.title;
+
+    var meta = document.createElement('span');
+    meta.className = 'task-meta';
+    if (t.done) {
+      meta.textContent = t.done_at ? 'done ' + new Date(t.done_at).toLocaleDateString() : 'done';
+    } else if (t.due_date) {
+      meta.textContent = (t.due_date < today() ? 'overdue · ' : 'due ') + t.due_date;
+      if (t.due_date < today()) meta.className += ' over';
+    }
+
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'mini-del';
+    del.textContent = 'Delete';
+    del.addEventListener('click', function () {
+      if (!confirm('Delete this item?')) return;
+      authFetch('/crm/tasks/' + t.id, { method: 'DELETE' }).then(loadClient).catch(function () {});
+    });
+
+    row.appendChild(check);
+    row.appendChild(title);
+    row.appendChild(meta);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
+el('task-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var title = el('task-title').value.trim();
+  if (!title) return;
+  authFetch('/crm/clients/' + clientId + '/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: title, due_date: el('task-due').value })
+  }).then(function (r) {
+    if (r.ok) {
+      el('task-title').value = '';
+      el('task-due').value = '';
+      loadClient();
+    }
+  }).catch(function () {});
+});
+
+// ---- notes ----
+function renderNotes(notes) {
+  var box = el('notes-list');
+  box.innerHTML = '';
+  if (!notes.length) {
+    box.innerHTML = '<p class="empty">No notes yet.</p>';
+    return;
+  }
+  notes.forEach(function (n, i) {
+    var item = document.createElement('div');
+    item.className = 'note-item' + (i === 0 ? ' latest' : '');
+
+    var body = document.createElement('div');
+    body.className = 'note-body';
+    var text = document.createElement('p');
+    text.className = 'note-text';
+    text.textContent = n.text;
+    var time = document.createElement('p');
+    time.className = 'note-time';
+    time.textContent = new Date(n.created_at).toLocaleString();
+    body.appendChild(text);
+    body.appendChild(time);
+
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'mini-del';
+    del.textContent = 'Delete';
+    del.addEventListener('click', function () {
+      if (!confirm('Delete this note?')) return;
+      authFetch('/crm/notes/' + n.id, { method: 'DELETE' }).then(loadClient).catch(function () {});
+    });
+
+    item.appendChild(body);
+    item.appendChild(del);
+    box.appendChild(item);
+  });
+}
+
+el('note-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var text = el('note-text').value.trim();
+  if (!text) return;
+  authFetch('/crm/clients/' + clientId + '/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text })
+  }).then(function (r) {
+    if (r.ok) { el('note-text').value = ''; loadClient(); }
+  }).catch(function () {});
+});
+
+// ---- payments ----
+function renderPayments(payments) {
+  var totalsBox = el('pay-totals');
+  var box = el('payments-list');
+  totalsBox.innerHTML = '';
+  box.innerHTML = '';
+
+  var total = 0, monthly = 0;
+  payments.forEach(function (p) {
+    total += Number(p.amount || 0);
+    if (p.kind === 'monthly') monthly += Number(p.amount || 0);
+  });
+
+  function addTotal(labelText, value) {
+    var d = document.createElement('div');
+    d.textContent = labelText;
+    var s = document.createElement('strong');
+    s.textContent = money(value);
+    d.appendChild(s);
+    totalsBox.appendChild(d);
+  }
+  addTotal('Collected — all time', total);
+  addTotal('Of that, retainers', monthly);
+  if (currentClient && currentClient.build_fee != null) {
+    var buildPaid = payments.filter(function (p) { return p.kind === 'build'; })
+      .reduce(function (t, p) { return t + Number(p.amount || 0); }, 0);
+    addTotal('Build balance', Math.max(0, Number(currentClient.build_fee) - buildPaid));
+  }
+
+  if (!payments.length) {
+    box.innerHTML = '<p class="empty">No payments logged yet.</p>';
+    return;
+  }
+
+  payments.forEach(function (p) {
+    var row = document.createElement('div');
+    row.className = 'payment-row';
+
+    var main = document.createElement('div');
+    main.className = 'payment-main';
+    var amt = document.createElement('span');
+    amt.className = 'payment-amt';
+    amt.textContent = money(p.amount);
+    var meta = document.createElement('span');
+    meta.className = 'payment-meta';
+    meta.textContent = [p.kind, p.method, p.paid_at].filter(Boolean).join(' · ');
+    main.appendChild(amt);
+    main.appendChild(meta);
+    if (p.note) {
+      var note = document.createElement('span');
+      note.className = 'payment-note';
+      note.textContent = p.note;
+      main.appendChild(note);
+    }
+
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'mini-del';
+    del.textContent = 'Delete';
+    del.addEventListener('click', function () {
+      if (!confirm('Delete this payment?')) return;
+      authFetch('/crm/payments/' + p.id, { method: 'DELETE' }).then(loadClient).catch(function () {});
+    });
+
+    row.appendChild(main);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
+el('payment-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var amount = Number(el('pay-amount').value);
+  if (!(amount > 0)) return;
+  authFetch('/crm/clients/' + clientId + '/payments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      amount: amount,
+      method: el('pay-method').value,
+      kind: el('pay-kind').value,
+      paid_at: el('pay-date').value,
+      note: el('pay-note').value
+    })
+  }).then(function (r) {
+    if (r.ok) {
+      el('pay-amount').value = '';
+      el('pay-note').value = '';
+      el('pay-date').value = today();
+      loadClient();
+    }
+  }).catch(function () {});
+});
+
+// ---- delete ----
+el('delete-btn').addEventListener('click', function () {
+  el('delete-confirm').style.display = 'block';
+  el('delete-confirm-input').focus();
+});
+el('delete-cancel-btn').addEventListener('click', function () {
+  el('delete-confirm').style.display = 'none';
+  el('delete-confirm-input').value = '';
+  el('delete-confirm-btn').disabled = true;
+  el('delete-confirm-btn').style.opacity = '0.4';
+  el('delete-confirm-btn').style.pointerEvents = 'none';
+});
+el('delete-confirm-input').addEventListener('input', function () {
+  var target = (currentClient && (currentClient.business_name || currentClient.contact_name)) || '';
+  var ok = this.value.trim().toLowerCase() === target.trim().toLowerCase() && target !== '';
+  var btn = el('delete-confirm-btn');
+  btn.disabled = !ok;
+  btn.style.opacity = ok ? '1' : '0.4';
+  btn.style.pointerEvents = ok ? 'auto' : 'none';
+});
+el('delete-confirm-btn').addEventListener('click', function () {
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  authFetch('/crm/clients/' + clientId, { method: 'DELETE' }).then(function (r) {
+    if (r.ok) { window.location.href = 'crm.html'; return; }
+    btn.textContent = 'Permanently Delete';
+    btn.disabled = false;
+    alert('Could not delete — try again.');
+  }).catch(function () {
+    btn.textContent = 'Permanently Delete';
+    btn.disabled = false;
+  });
+});
+
+// ---- load ----
+function loadClient() {
+  return authFetch('/crm/clients/' + clientId).then(function (r) {
+    if (!r.ok) {
+      el('client-name').textContent = 'Client not found';
+      return;
+    }
+    currentClient = r.data.client;
+    fillDetails(currentClient);
+    renderTasks(r.data.tasks || []);
+    renderNotes(r.data.notes || []);
+    renderPayments(r.data.payments || []);
+
+    el('delete-name-target').textContent = currentClient.business_name || currentClient.contact_name || '(unnamed)';
+    el('delete-counts').textContent =
+      (r.data.notes || []).length + ' note(s), ' +
+      (r.data.payments || []).length + ' payment(s) and ' +
+      (r.data.tasks || []).length + ' task(s)';
+  });
+}
+
+if (token && clientId) loadClient();
+</script>
+</body>
+</html>

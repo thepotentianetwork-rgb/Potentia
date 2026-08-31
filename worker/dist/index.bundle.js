@@ -1,9 +1,14 @@
-// Potentia backend Worker — serves two things from one place:
+// Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
 //  2. /admin/*          — password-gated dashboard for the shed company
 //                         partner: view submissions, edit pricing
 //     /shed/pricing     — public: current pricing (for their site to read)
 //     /shed/submit      — public: customer design submissions land here
+//  3. /crm/*            — Potentia's own client CRM (web-design clients:
+//                         pipeline, retainers, edit requests). Its own
+//                         password and its own session scope — the shed
+//                         partner's login does not open it. See the CRM
+//                         section near the bottom of this file.
 //
 // See README.md for full deployment steps (secrets, D1 database, etc).
 //
@@ -1394,10 +1399,21 @@ function timingSafeEqual(a, b) {
   }
   return mismatch === 0;
 }
-async function requireAuth(request, env) {
+function bearerToken(request) {
   const auth = request.headers.get("Authorization") || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  return await verifyToken(env.ADMIN_SESSION_SECRET, token);
+  return auth.startsWith("Bearer ") ? auth.slice(7) : "";
+}
+// Shed-partner admin session. Scoped: a Potentia CRM token is signed with the
+// same secret, so the payload check is what keeps the two apart — logging into
+// the CRM must never hand you the shed dashboard, and vice versa.
+async function requireAuth(request, env) {
+  const payload = await verifyToken(env.ADMIN_SESSION_SECRET, bearerToken(request));
+  return payload && payload.admin === true ? payload : null;
+}
+// Potentia's own client CRM session — see the CRM section further down.
+async function requireCrmAuth(request, env) {
+  const payload = await verifyToken(env.ADMIN_SESSION_SECRET, bearerToken(request));
+  return payload && payload.crm === true ? payload : null;
 }
 
 // ---- /chat: AI assistant ----
@@ -2411,6 +2427,430 @@ async function handleShedQuote(request, env, origin) {
   return json({ total: result.customer, optionPrices: computeOptionPrices(cfg) }, 200, origin);
 }
 
+// ============================================================================
+// Potentia's own client CRM — /crm/*
+//
+// Separate from the /admin/* shed dashboard above in every way that matters:
+// its own password, its own session scope, its own tables. The shed partner
+// logs into /admin/*; these are Potentia's web-design clients (pipeline,
+// retainers, edit requests) and the partner has no business seeing them.
+//
+// Tables are created lazily on first use (same pattern as ensurePaymentsTable)
+// so this needs no manual D1 migration — schema.sql carries them too, for a
+// fresh install.
+// ============================================================================
+
+const CRM_STATUSES = ["lead", "contacted", "proposal", "building", "live", "paused", "lost"];
+// Statuses that count as a paying client for MRR — a build in progress is
+// already on its monthly plan, a paused or lost one is not.
+const CRM_ACTIVE_STATUSES = ["building", "live"];
+const CRM_PACKAGES = ["", "foundation", "booking", "gallery", "operator", "custom"];
+const CRM_SOURCES = ["", "website", "referral", "instagram", "facebook", "google", "outreach", "repeat", "other"];
+const CRM_PAYMENT_METHODS = ["cash", "check", "venmo", "zelle", "card", "stripe", "paypal", "invoice", "other"];
+// What a payment was for. Keeps a $150/mo retainer from being read as another
+// build fee when totalling what a client has actually paid.
+const CRM_PAYMENT_KINDS = ["build", "monthly", "addon", "other"];
+
+let crmTablesReady = false;
+async function ensureCrmTables(env) {
+  if (crmTablesReady) return;
+  await env.DB.batch([
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS clients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        business_name TEXT,
+        contact_name TEXT,
+        email TEXT,
+        phone TEXT,
+        website_url TEXT,
+        package TEXT,
+        status TEXT NOT NULL DEFAULT 'lead',
+        source TEXT,
+        service TEXT,
+        message TEXT,
+        build_fee REAL,
+        monthly_fee REAL,
+        domain TEXT,
+        domain_renews_at TEXT,
+        launched_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS client_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS client_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        method TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'build',
+        note TEXT,
+        paid_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`
+    ),
+    env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS client_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        due_date TEXT,
+        done INTEGER NOT NULL DEFAULT 0,
+        done_at TEXT,
+        created_at TEXT NOT NULL
+      )`
+    )
+  ]);
+  crmTablesReady = true;
+}
+
+function crmStr(v, max) {
+  if (v == null) return null;
+  const s = String(v).trim().slice(0, max);
+  return s === "" ? null : s;
+}
+function crmMoney(v) {
+  if (v === "" || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+}
+function crmEnum(v, allowed, fallback) {
+  const s = v == null ? "" : String(v).toLowerCase().trim();
+  return allowed.includes(s) ? s : fallback;
+}
+// Accepts a plain YYYY-MM-DD from a date input, and tolerates a full ISO
+// timestamp by keeping just the date part. Anything else becomes null rather
+// than a string that would sort strangely against the others.
+function crmDate(v) {
+  if (!v) return null;
+  const s = String(v).trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
+// ---- POST /crm/login ----
+// Uses CRM_PASSWORD when it's set, and falls back to ADMIN_PASSWORD when it
+// isn't, so the CRM works the moment it's deployed. Setting CRM_PASSWORD is
+// what actually separates it from the shed partner's login — see README.
+async function handleCrmLogin(request, env, origin) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (e) {
+    return json({ error: "Invalid JSON" }, 400, origin);
+  }
+  const password = typeof body.password === "string" ? body.password : "";
+  const expected = env.CRM_PASSWORD || env.ADMIN_PASSWORD;
+  if (!expected || !env.ADMIN_SESSION_SECRET) {
+    return json({ error: "Server not configured" }, 500, origin);
+  }
+  if (!timingSafeEqual(password, expected)) {
+    return json({ error: "Invalid credentials" }, 401, origin);
+  }
+  const token = await signToken(env.ADMIN_SESSION_SECRET, { crm: true, exp: Date.now() + SESSION_TTL_MS });
+  return json({ token }, 200, origin);
+}
+
+// ---- GET /crm/clients — the whole list plus the headline numbers ----
+async function handleCrmListClients(request, env, origin) {
+  await ensureCrmTables(env);
+  const { results } = await env.DB.prepare(
+    `SELECT c.*,
+       (SELECT n.text FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
+       (SELECT n.created_at FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at,
+       (SELECT COUNT(*) FROM client_tasks t WHERE t.client_id = c.id AND t.done = 0) AS open_tasks,
+       (SELECT MIN(t.due_date) FROM client_tasks t WHERE t.client_id = c.id AND t.done = 0 AND t.due_date IS NOT NULL) AS next_due,
+       (SELECT COALESCE(SUM(p.amount), 0) FROM client_payments p WHERE p.client_id = c.id) AS collected
+     FROM clients c
+     ORDER BY c.updated_at DESC
+     LIMIT 500`
+  ).all();
+
+  const activeList = CRM_ACTIVE_STATUSES.map((s) => `'${s}'`).join(",");
+  const mrrRow = await env.DB.prepare(
+    `SELECT COALESCE(SUM(monthly_fee), 0) AS mrr, COUNT(*) AS active
+     FROM clients WHERE status IN (${activeList}) AND monthly_fee IS NOT NULL`
+  ).first();
+  const activeRow = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM clients WHERE status IN (${activeList})`
+  ).first();
+  const leadRow = await env.DB.prepare("SELECT COUNT(*) AS n FROM clients WHERE status = 'lead'").first();
+
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const collectedRow = await env.DB.prepare(
+    "SELECT COALESCE(SUM(amount), 0) AS total FROM client_payments WHERE paid_at >= ?"
+  )
+    .bind(cutoff)
+    .first();
+
+  return json(
+    {
+      clients: results,
+      stats: {
+        mrr: mrrRow ? mrrRow.mrr : 0,
+        active_clients: activeRow ? activeRow.n : 0,
+        open_leads: leadRow ? leadRow.n : 0,
+        collected_30d: collectedRow ? collectedRow.total : 0
+      }
+    },
+    200,
+    origin
+  );
+}
+
+// Field whitelist shared by create and update — anything not listed here can't
+// be written from the browser, so a stray key in a POST body can't reach a
+// column it has no business touching.
+function crmClientFields(body) {
+  return {
+    business_name: crmStr(body.business_name, 160),
+    contact_name: crmStr(body.contact_name, 120),
+    email: crmStr(body.email, 200),
+    phone: crmStr(body.phone, 40),
+    website_url: crmStr(body.website_url, 300),
+    package: crmEnum(body.package, CRM_PACKAGES, "") || null,
+    status: crmEnum(body.status, CRM_STATUSES, "lead"),
+    source: crmEnum(body.source, CRM_SOURCES, "") || null,
+    service: crmStr(body.service, 120),
+    message: crmStr(body.message, 5000),
+    build_fee: crmMoney(body.build_fee),
+    monthly_fee: crmMoney(body.monthly_fee),
+    domain: crmStr(body.domain, 200),
+    domain_renews_at: crmDate(body.domain_renews_at),
+    launched_at: crmDate(body.launched_at)
+  };
+}
+const CRM_CLIENT_COLUMNS = [
+  "business_name", "contact_name", "email", "phone", "website_url", "package",
+  "status", "source", "service", "message", "build_fee", "monthly_fee",
+  "domain", "domain_renews_at", "launched_at"
+];
+
+// ---- POST /crm/clients ----
+async function handleCrmCreateClient(request, env, origin) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+  const f = crmClientFields(body);
+  if (!f.business_name && !f.contact_name && !f.email) {
+    return json({ error: "Give the client at least a name or an email" }, 400, origin);
+  }
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    `INSERT INTO clients (${CRM_CLIENT_COLUMNS.join(", ")}, created_at, updated_at)
+     VALUES (${CRM_CLIENT_COLUMNS.map(() => "?").join(",")},?,?)`
+  )
+    .bind(...CRM_CLIENT_COLUMNS.map((k) => f[k]), now, now)
+    .run();
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+// ---- GET /crm/clients/:id ----
+async function handleCrmGetClient(request, env, origin, id) {
+  await ensureCrmTables(env);
+  const client = await env.DB.prepare("SELECT * FROM clients WHERE id = ?").bind(id).first();
+  if (!client) return json({ error: "Not found" }, 404, origin);
+
+  const { results: notes } = await env.DB.prepare(
+    "SELECT id, text, created_at FROM client_notes WHERE client_id = ? ORDER BY created_at DESC"
+  )
+    .bind(id)
+    .all();
+  const { results: payments } = await env.DB.prepare(
+    "SELECT id, amount, method, kind, note, paid_at, created_at FROM client_payments WHERE client_id = ? ORDER BY paid_at DESC, id DESC"
+  )
+    .bind(id)
+    .all();
+  // Open work first and by due date, because that's the order it gets done in;
+  // finished items fall to the bottom as a record.
+  const { results: tasks } = await env.DB.prepare(
+    `SELECT id, title, due_date, done, done_at, created_at FROM client_tasks
+     WHERE client_id = ?
+     ORDER BY done ASC, (due_date IS NULL) ASC, due_date ASC, id DESC`
+  )
+    .bind(id)
+    .all();
+
+  return json({ client, notes, payments, tasks }, 200, origin);
+}
+
+// ---- POST /crm/clients/:id — update (POST, not PATCH: the CORS allow-list
+// above only advertises GET/POST/DELETE) ----
+async function handleCrmUpdateClient(request, env, origin, id) {
+  await ensureCrmTables(env);
+  const existing = await env.DB.prepare("SELECT id FROM clients WHERE id = ?").bind(id).first();
+  if (!existing) return json({ error: "Not found" }, 404, origin);
+
+  const body = await request.json().catch(() => ({}));
+  // A status-only change (the dropdown on the list page) shouldn't have to
+  // resend every other field and risk blanking them.
+  if (Object.keys(body).length === 1 && typeof body.status === "string") {
+    const status = crmEnum(body.status, CRM_STATUSES, null);
+    if (!status) return json({ error: "Invalid status" }, 400, origin);
+    await env.DB.prepare("UPDATE clients SET status = ?, updated_at = ? WHERE id = ?")
+      .bind(status, new Date().toISOString(), id)
+      .run();
+    return json({ ok: true }, 200, origin);
+  }
+
+  const f = crmClientFields(body);
+  await env.DB.prepare(
+    `UPDATE clients SET ${CRM_CLIENT_COLUMNS.map((k) => k + " = ?").join(", ")}, updated_at = ? WHERE id = ?`
+  )
+    .bind(...CRM_CLIENT_COLUMNS.map((k) => f[k]), new Date().toISOString(), id)
+    .run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- DELETE /crm/clients/:id — removes the client and everything hanging off
+// them. The UI makes you type the client's name first.
+async function handleCrmDeleteClient(request, env, origin, id) {
+  await ensureCrmTables(env);
+  const existing = await env.DB.prepare("SELECT id FROM clients WHERE id = ?").bind(id).first();
+  if (!existing) return json({ error: "Not found" }, 404, origin);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM client_notes WHERE client_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM client_payments WHERE client_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM client_tasks WHERE client_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM clients WHERE id = ?").bind(id)
+  ]);
+  return json({ ok: true }, 200, origin);
+}
+
+// Every child write touches the parent's updated_at so the list page's
+// "last activity" ordering reflects notes and payments, not just edits.
+async function touchClient(env, id) {
+  await env.DB.prepare("UPDATE clients SET updated_at = ? WHERE id = ?")
+    .bind(new Date().toISOString(), id)
+    .run();
+}
+
+// ---- notes ----
+async function handleCrmAddNote(request, env, origin, clientId) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+  const text = String(body.text || "").trim().slice(0, 4000);
+  if (!text) return json({ error: "text required" }, 400, origin);
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
+    .bind(clientId, text, now)
+    .run();
+  await touchClient(env, clientId);
+  return json({ ok: true, id: res.meta.last_row_id, created_at: now }, 200, origin);
+}
+async function handleCrmDeleteNote(request, env, origin, id) {
+  await ensureCrmTables(env);
+  await env.DB.prepare("DELETE FROM client_notes WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- payments ----
+async function handleCrmAddPayment(request, env, origin, clientId) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+  const amount = Number(body.amount);
+  const method = crmEnum(body.method, CRM_PAYMENT_METHODS, null);
+  const kind = crmEnum(body.kind, CRM_PAYMENT_KINDS, "build");
+  const note = crmStr(body.note, 500);
+  const paidAt = crmDate(body.paid_at) || new Date().toISOString().slice(0, 10);
+  if (!Number.isFinite(amount) || amount <= 0) return json({ error: "valid amount required" }, 400, origin);
+  if (!method) return json({ error: "valid method required" }, 400, origin);
+
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    "INSERT INTO client_payments (client_id, amount, method, kind, note, paid_at, created_at) VALUES (?,?,?,?,?,?,?)"
+  )
+    .bind(clientId, Math.round(amount * 100) / 100, method, kind, note, paidAt, now)
+    .run();
+  await touchClient(env, clientId);
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+async function handleCrmDeletePayment(request, env, origin, id) {
+  await ensureCrmTables(env);
+  await env.DB.prepare("DELETE FROM client_payments WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- tasks: the running list of edit requests / to-dos per client ----
+async function handleCrmAddTask(request, env, origin, clientId) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+  const title = String(body.title || "").trim().slice(0, 300);
+  if (!title) return json({ error: "title required" }, 400, origin);
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    "INSERT INTO client_tasks (client_id, title, due_date, done, done_at, created_at) VALUES (?,?,?,0,NULL,?)"
+  )
+    .bind(clientId, title, crmDate(body.due_date), now)
+    .run();
+  await touchClient(env, clientId);
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+async function handleCrmToggleTask(request, env, origin, id) {
+  await ensureCrmTables(env);
+  const task = await env.DB.prepare("SELECT id, client_id, done FROM client_tasks WHERE id = ?").bind(id).first();
+  if (!task) return json({ error: "Not found" }, 404, origin);
+  const body = await request.json().catch(() => ({}));
+  const done = typeof body.done === "boolean" ? body.done : !task.done;
+  await env.DB.prepare("UPDATE client_tasks SET done = ?, done_at = ? WHERE id = ?")
+    .bind(done ? 1 : 0, done ? new Date().toISOString() : null, id)
+    .run();
+  await touchClient(env, task.client_id);
+  return json({ ok: true, done: done }, 200, origin);
+}
+async function handleCrmDeleteTask(request, env, origin, id) {
+  await ensureCrmTables(env);
+  await env.DB.prepare("DELETE FROM client_tasks WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- POST /crm/lead — public. The contact form posts here alongside its
+// existing Formspree submit, so an inquiry becomes a CRM lead on its own.
+// An inquiry from someone already in the CRM is logged as a note on their
+// record instead of creating a second one.
+async function handleCrmLead(request, env, origin) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+  const name = crmStr(body.name, 120);
+  const email = crmStr(body.email, 200);
+  const phone = crmStr(body.phone, 40);
+  const service = crmStr(body.service, 120);
+  const message = crmStr(body.message, 5000);
+  if (!email && !phone) return json({ error: "email or phone required" }, 400, origin);
+
+  const now = new Date().toISOString();
+  let existing = null;
+  if (email) existing = await env.DB.prepare("SELECT id FROM clients WHERE email = ? LIMIT 1").bind(email).first();
+  if (!existing && phone) {
+    existing = await env.DB.prepare("SELECT id FROM clients WHERE phone = ? LIMIT 1").bind(phone).first();
+  }
+
+  if (existing) {
+    const parts = ["New website inquiry"];
+    if (service) parts.push("Interested in: " + service);
+    if (message) parts.push(message);
+    await env.DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
+      .bind(existing.id, parts.join(" — "), now)
+      .run();
+    await touchClient(env, existing.id);
+    return json({ ok: true, id: existing.id, existing: true }, 200, origin);
+  }
+
+  const res = await env.DB.prepare(
+    `INSERT INTO clients (business_name, contact_name, email, phone, status, source, service, message, created_at, updated_at)
+     VALUES (?,?,?,?,'lead','website',?,?,?,?)`
+  )
+    .bind(name, name, email, phone, service, message, now, now)
+    .run();
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
@@ -2518,6 +2958,82 @@ export default {
         const id = Number(path.slice("/admin/pricing/".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleDeletePricing(request, env, origin, id);
+      }
+
+      // ---- Potentia client CRM ----
+      if (path === "/crm/login" && request.method === "POST") {
+        return await handleCrmLogin(request, env, origin);
+      }
+      if (path === "/crm/lead" && request.method === "POST") {
+        return await handleCrmLead(request, env, origin);
+      }
+      if (path === "/crm/clients" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleCrmListClients(request, env, origin);
+      }
+      if (path === "/crm/clients" && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleCrmCreateClient(request, env, origin);
+      }
+      if (path.startsWith("/crm/clients/") && path.endsWith("/notes") && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/clients/".length, -"/notes".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmAddNote(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/clients/") && path.endsWith("/payments") && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/clients/".length, -"/payments".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmAddPayment(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/clients/") && path.endsWith("/tasks") && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/clients/".length, -"/tasks".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmAddTask(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/clients/") && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/clients/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmGetClient(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/clients/") && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/clients/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmUpdateClient(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/clients/") && request.method === "DELETE") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/clients/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmDeleteClient(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/notes/") && request.method === "DELETE") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/notes/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmDeleteNote(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/payments/") && request.method === "DELETE") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/payments/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmDeletePayment(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/tasks/") && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/tasks/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmToggleTask(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/tasks/") && request.method === "DELETE") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/tasks/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmDeleteTask(request, env, origin, id);
       }
 
       if (path === "/shed/pricing" && request.method === "GET") {

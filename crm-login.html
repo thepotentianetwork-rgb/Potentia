@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client CRM — Potentia</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="Potentia_Logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+  background-image:radial-gradient(circle at 18% 12%, rgba(200,205,214,0.06), transparent 45%), radial-gradient(circle at 82% 88%, rgba(200,205,214,0.04), transparent 45%)}
+.card{width:100%;max-width:400px;border:1px solid var(--dim);padding:44px 40px;background:var(--deep);position:relative}
+.card::before{content:'';position:absolute;top:-1px;left:-1px;right:-1px;height:1px;background:linear-gradient(90deg,transparent,var(--chrome),transparent)}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:32px}
+.brand img{width:44px;height:44px;object-fit:contain}
+.brand-text{display:flex;flex-direction:column;gap:3px}
+.brand-name{font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.2em;color:var(--bright)}
+.brand-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase}
+.label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:14px}
+h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
+.form-group{margin-bottom:20px}
+.form-group label{display:block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px}
+.form-group input{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;padding:13px 16px;outline:none;transition:border-color 0.3s}
+.form-group input:focus{border-color:var(--silver)}
+.submit{width:100%;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:15px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.3s;margin-top:8px}
+.submit:hover{background:var(--bright)}
+.submit:disabled{opacity:0.5;cursor:not-allowed}
+.error{font-family:'DM Mono',monospace;font-size:11px;color:#c0675a;margin-top:16px;min-height:14px}
+.footer-tag{margin-top:32px;padding-top:20px;border-top:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:center}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="brand">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    <div class="brand-text">
+      <span class="brand-name">POTENTIA</span>
+      <span class="brand-sub">Client CRM</span>
+    </div>
+  </div>
+  <p class="label">Secure Access</p>
+  <h1>Sign In</h1>
+  <form id="login-form">
+    <div class="form-group">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
+    </div>
+    <button type="submit" class="submit" id="submit-btn">Sign In</button>
+    <p class="error" id="error"></p>
+  </form>
+  <p class="footer-tag">Potentia Studio — internal</p>
+</div>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var form = document.getElementById('login-form');
+var errorEl = document.getElementById('error');
+var submitBtn = document.getElementById('submit-btn');
+var rawNext = new URLSearchParams(location.search).get('next');
+// Same-site relative path only — never redirect off-site (open redirect guard).
+var nextUrl = rawNext && /^[a-zA-Z0-9_-]+\.html(\?[^\s]*)?$/.test(rawNext) ? rawNext : 'crm.html';
+
+if (localStorage.getItem('potentia_crm_token')) {
+  window.location.href = nextUrl;
+}
+
+form.addEventListener('submit', function (e) {
+  e.preventDefault();
+  errorEl.textContent = '';
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Signing in…';
+
+  fetch(API_BASE + '/crm/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: document.getElementById('password').value })
+  })
+    .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+    .then(function (r) {
+      if (!r.ok) throw new Error(r.data && r.data.error ? r.data.error : 'Login failed');
+      localStorage.setItem('potentia_crm_token', r.data.token);
+      window.location.href = nextUrl;
+    })
+    .catch(function (err) {
+      errorEl.textContent = err.message === 'Invalid credentials' ? 'Incorrect password.' : 'Something went wrong — try again.';
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Sign In';
+    });
+});
+</script>
+</body>
+</html>

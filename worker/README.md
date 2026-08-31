@@ -295,3 +295,99 @@ integration is confirmed working.
 - **Multiple admin accounts**: right now there's one shared password. If
   Shed Co. staff need their own logins later, this can be upgraded to a
   proper per-user accounts table in D1.
+
+# Potentia's own client CRM (`/crm/*`)
+
+Everything above this line belongs to the **shed partner**. This section is
+Potentia's own CRM — the web-design clients, from first inquiry through
+launch and into their monthly plan. Same Worker, same D1 database, but
+separate tables, separate pages, and its own password.
+
+New pages: `crm-login.html`, `crm.html` (client list + headline numbers),
+`crm-client.html` (one client: details, work, notes, payments).
+
+## Setup
+
+### 1. Add one secret (recommended, not required)
+
+Worker → **Settings → Variables and Secrets** → **Add variable**,
+Type = **Secret**.
+
+| Name | Value |
+|---|---|
+| `CRM_PASSWORD` | The password for `crm-login.html`. |
+
+If you skip this, the CRM falls back to `ADMIN_PASSWORD` and works
+immediately — but that's the password the shed partner uses, so anyone with
+it could open your client list, revenue and notes. **Set `CRM_PASSWORD` to
+something different** and the two are properly separated: a shed login can't
+open the CRM, and a CRM login can't open the shed dashboard. The Worker
+enforces that on every request, not just in the browser.
+
+### 2. Redeploy the Worker
+
+Paste `worker/dist/index.bundle.js` into **Edit code** and Deploy, same as
+always. No new bindings.
+
+### 3. That's it — no database migration
+
+The four tables (`clients`, `client_notes`, `client_payments`,
+`client_tasks`) are created automatically the first time the CRM is used,
+the same way `payments` and `installs` are. They're in `schema.sql` too, for
+a fresh install. Nothing to paste into the D1 console.
+
+Then open `crm-login.html` on the live site and sign in.
+
+## Using it
+
+**`crm.html`** — every client in one table, with four numbers across the
+top: monthly recurring revenue (the sum of the monthly plans for clients
+who are building or live), active clients, open leads, and everything
+collected in the last 30 days. Filter by pipeline stage, search by name /
+email / domain, change a client's stage straight from the row, or add a
+client by hand with **+ New Client**.
+
+The stages are `lead → contacted → proposal → building → live`, plus
+`paused` and `lost`. A client sitting at `lead` is highlighted so a fresh
+inquiry can't be missed.
+
+**`crm-client.html`** — one client's whole picture:
+
+- **Details** — contact info, package, build fee, monthly fee, live URL,
+  domain, domain renewal date, launch date. Editing the renewal date is what
+  makes "when does this domain come up for renewal?" answerable a year from
+  now.
+- **Original Inquiry** — what they actually typed into the contact form,
+  kept verbatim.
+- **Work & Edit Requests** — the running to-do list per client, with due
+  dates. Open items sort to the top, overdue ones go red, and the count
+  shows on the main list so you can see at a glance who's waiting on you.
+- **Notes** — call notes, decisions, follow-ups. Newest first.
+- **Payments** — each one tagged as a build payment, a monthly retainer, an
+  add-on, or other. The totals show what's been collected all time, how much
+  of that was retainers, and what's still outstanding on the build fee.
+
+## Leads arrive on their own
+
+`contact.html` now posts every inquiry to `POST /crm/lead` alongside its
+existing Formspree email — so a form submission becomes a lead in the CRM
+without anyone typing it in. The Formspree email still goes out exactly as
+before; the CRM call is fire-and-forget, so if the Worker were ever down the
+form still works normally.
+
+If the email or phone matches someone already in the CRM, the new inquiry is
+logged as a **note on their existing record** rather than creating a
+duplicate — and their current stage is left alone, so a repeat inquiry from
+a live client doesn't knock them back to "lead".
+
+## Checking a change didn't break it
+
+`worker/crm.test.mjs` runs every CRM route against a real SQLite database
+standing in for D1 — including that the two logins stay separated:
+
+```
+node --experimental-sqlite worker/crm.test.mjs
+```
+
+It exits non-zero if anything fails. Worth running after any change to the
+`/crm/*` half of `worker/index.js`.
