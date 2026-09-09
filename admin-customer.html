@@ -265,6 +265,91 @@ function appendContactParams(permalink, submission, details) {
   return base + sep + qs + hash;
 }
 
+// ---- customer-facing short link ----
+// The stored permalink is either a giant hash URL (orders submitted before
+// short links existed) or a short ?d= code — and appendContactParams then
+// bolts the customer's own name, email, phone and address onto it. That's
+// right for staff opening the design, and wrong for a link you text to the
+// customer: long, and it carries their details in something they might
+// forward on.
+//
+// So a customer link is minted fresh from the saved config instead: always
+// short, whatever the order's original permalink looked like, and with no
+// contact details in the URL. Contact isn't sent either — the CRM already
+// holds it, and there's no reason to copy it into a second table.
+function designerBase(permalink) {
+  return permalink ? permalink.split('#')[0].split('?')[0] : '';
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise(function (resolve, reject) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
+    ok ? resolve() : reject(new Error('copy failed'));
+  });
+}
+
+function makeCustomerLinkButton(details) {
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'order-link';
+  btn.style.background = 'none';
+  btn.style.border = '1px solid var(--dim)';
+  btn.style.padding = '7px 12px';
+  btn.style.cursor = 'pointer';
+  btn.textContent = 'Copy Customer Link';
+
+  btn.addEventListener('click', function () {
+    var base = designerBase(details.permalink);
+    if (!base || !details.config) {
+      btn.textContent = 'No design saved';
+      setTimeout(function () { btn.textContent = 'Copy Customer Link'; }, 2000);
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+    fetch(API_BASE + '/shed/design', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: details.config })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.j || !res.j.code) throw new Error('save failed');
+        var url = base + '?d=' + res.j.code;
+        return copyText(url).then(function () {
+          btn.textContent = 'Copied ✓';
+        }).catch(function () {
+          // Clipboard blocked — show the link so it can be copied by hand
+          // rather than leaving them with nothing.
+          window.prompt('Copy this link:', url);
+          btn.textContent = 'Copy Customer Link';
+        });
+      })
+      .catch(function () {
+        btn.textContent = 'Failed — retry';
+      })
+      .then(function () {
+        btn.disabled = false;
+        setTimeout(function () {
+          if (btn.textContent === 'Copied ✓') btn.textContent = 'Copy Customer Link';
+        }, 2500);
+      });
+  });
+  return btn;
+}
+
 function summarizeConfig(config) {
   if (!config) return '';
   var parts = [];
@@ -454,7 +539,9 @@ function renderOrders(submissions, installs) {
       designLink.target = '_blank';
       designLink.rel = 'noopener';
       designLink.textContent = 'View 3D Design ↗';
+      designLink.title = 'Opens the design with this customer\'s info prefilled — for staff, not for sending.';
       actions.appendChild(designLink);
+      actions.appendChild(makeCustomerLinkButton(details));
     }
 
     var quoteLink = document.createElement('a');
