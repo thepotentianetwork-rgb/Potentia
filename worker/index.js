@@ -943,7 +943,13 @@ const SHED_OVTYPE = ["gable", "all4"];
 const SHED_PORCHLOC = ["none", "front", "side"];
 const SHED_FOUNDATION = ["blocks", "pad", "existing", "gravel"];
 const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
-const SHED_ELEC = ["none", "basic", "standard", "core", "essential"];
+// "standard" is deliberately absent — that tier was retired Sep 2026 and has
+// no entry in pricing.js's ELEC_MAP any more. Leaving it here let an old
+// permalink or a stale cached designer submit elec:"standard", which passed
+// validation and then priced electrical at $0 because the map lookup missed:
+// a quote that silently omitted $1,500 of work. Now it falls back to "none",
+// so a retired tier reads as no electrical package rather than a free one.
+const SHED_ELEC = ["none", "basic", "core", "essential"];
 const SHED_INT_FINISH = ["none", "drywall", "painted"];
 
 function clampNum(v, lo, hi, fallback) {
