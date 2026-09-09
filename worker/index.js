@@ -1168,6 +1168,87 @@ async function handleShedQuote(request, env, origin) {
   return json({ total: result.customer, optionPrices: computeOptionPrices(cfg) }, 200, origin);
 }
 
+// ---- /shed/design: short shareable links for a saved 3D design ----
+// The designer used to build its own "share this design" link by encoding
+// the ENTIRE config into the URL itself — every dimension, door, window,
+// color, addon — which is why that link was enormous. This stores the
+// config server-side under a short random code instead, so the link is just
+// .../designer.html?d=<8 hex chars>. Works for ANY design, not only ones
+// that have gone through /shed/submit — staff can hand a customer a link
+// before they've filled out contact info at all.
+// Lazily creates the table on first use — same reasoning as
+// ensurePaymentsTable/ensureInstallsTable: avoids a manual D1 migration for
+// a table that didn't exist when the DB was first set up.
+async function ensureSavedDesignsTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS saved_designs (
+      code TEXT PRIMARY KEY,
+      config TEXT NOT NULL,
+      contact_name TEXT,
+      contact_email TEXT,
+      contact_phone TEXT,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+}
+
+// Random, not sequential — a saved design can carry the customer's name/
+// email/phone (whatever the designer had on hand when it was saved), and a
+// guessable code would let anyone page through other people's designs by
+// incrementing it.
+function randomDesignCode() {
+  return crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+}
+
+async function handleSaveDesign(request, env, origin) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || !body.config) {
+    return json({ error: "config required" }, 400, origin);
+  }
+  const config = JSON.stringify(body.config).slice(0, 40000);
+  const contact = body.contact || {};
+  const name = String(contact.name || "").slice(0, 200) || null;
+  const email = String(contact.email || "").slice(0, 200) || null;
+  const phone = String(contact.phone || "").slice(0, 60) || null;
+
+  await ensureSavedDesignsTable(env);
+
+  // Collisions are astronomically unlikely at 8 hex chars (32 bits) but cost
+  // nothing to guard — retry a few times with a fresh code rather than
+  // failing the save outright.
+  let code = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = randomDesignCode();
+    const existing = await env.DB.prepare("SELECT 1 FROM saved_designs WHERE code = ?").bind(candidate).first();
+    if (!existing) {
+      code = candidate;
+      break;
+    }
+  }
+  if (!code) return json({ error: "Could not generate a code, try again" }, 500, origin);
+
+  await env.DB.prepare(
+    "INSERT INTO saved_designs (code, config, contact_name, contact_email, contact_phone, created_at) VALUES (?,?,?,?,?,?)"
+  )
+    .bind(code, config, name, email, phone, new Date().toISOString())
+    .run();
+
+  return json({ code }, 200, origin);
+}
+
+async function handleGetDesign(request, env, origin, code) {
+  await ensureSavedDesignsTable(env);
+  const row = await env.DB.prepare("SELECT config FROM saved_designs WHERE code = ?").bind(code).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  let config;
+  try {
+    config = JSON.parse(row.config);
+  } catch (e) {
+    return json({ error: "Corrupt saved design" }, 500, origin);
+  }
+  return json({ config }, 200, origin);
+}
+
 // ============================================================================
 // Potentia's own client CRM — /crm/*
 //
@@ -1807,6 +1888,14 @@ export default {
       }
       if (path === "/shed/quote" && request.method === "POST") {
         return await handleShedQuote(request, env, origin);
+      }
+      if (path === "/shed/design" && request.method === "POST") {
+        return await handleSaveDesign(request, env, origin);
+      }
+      if (path.startsWith("/shed/design/") && request.method === "GET") {
+        const code = path.slice("/shed/design/".length);
+        if (!code) return json({ error: "Invalid code" }, 400, origin);
+        return await handleGetDesign(request, env, origin, code);
       }
 
       return json({ error: "Not found" }, 404, origin);

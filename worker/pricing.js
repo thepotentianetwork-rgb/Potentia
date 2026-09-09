@@ -441,10 +441,13 @@ export let SELL = {
      finish step (see siding.pine above), never painted. */
   exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 },
 
-  // ── ELECTRICAL PACKAGES (flat) ──
+  // ── ELECTRICAL PACKAGES (flat) ── Basic / Core / Essential only — the old
+  // "Standard" tier and its a la carte variant were dropped Sep 2026
+  // (shedpro-utah.com/gallery only ever listed three tiers). "Exterior
+  // Light" stays: a standalone add-on, not a package. See ELEC_MAP below for
+  // what maps a designer selection ('basic'/'core'/'essential') to these.
   electrical: {
-    "Basic": 840, "Standard": 1500, "Core": 2300, "Essential": 3000,
-    "Standard (a la carte)": 500, "Exterior Light": 150
+    "Basic": 840, "Core": 2300, "Essential": 3000, "Exterior Light": 150
   },
 
   // ── ADDITIONAL OPTIONS ──
@@ -1076,7 +1079,7 @@ export function computePricing(cfgIn, opts){
   // ── ELECTRICAL PACKAGE (customer): flat price by tier ──
   var elecSell = 0, elecSellName = '';
   var elecId = (typeof ELEC!=='undefined')?ELEC:'none';
-  var ELEC_MAP = { basic:'Basic', standard:'Standard', core:'Core', essential:'Essential' };
+  var ELEC_MAP = { basic:'Basic', core:'Core', essential:'Essential' };
   if(ELEC_MAP[elecId] && SELL.electrical[ELEC_MAP[elecId]]!=null){
     elecSell = SELL.electrical[ELEC_MAP[elecId]];
     elecSellName = ELEC_MAP[elecId]+' Electrical';
