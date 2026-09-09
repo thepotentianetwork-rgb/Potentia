@@ -255,7 +255,22 @@ var SELL_DEFAULTS = {
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
   gravelTiers: { tier1: 750, tier2: 1100, tier3: 1500, break1: 75, break2: 150, maxSqft: 200 },
   interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 },
-  exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 }
+  exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 },
+  // Only Basic / Core / Essential are sold — the old "Standard" tier and its
+  // a la carte variant were dropped Sep 2026 (shedpro-utah.com/gallery only
+  // ever listed three tiers). "Exterior Light" stays: a standalone add-on,
+  // not a package.
+  electrical: { "Basic": 840, "Core": 2300, "Essential": 3000, "Exterior Light": 150 }
+};
+
+// What each electrical package includes — shown next to its price below so
+// changing a number doesn't mean losing track of what it's actually buying.
+// Verbatim from shedpro-utah.com/gallery (Sep 2026); update both places if
+// the tiers ever change.
+var ELEC_INCLUDES = {
+  "Basic": '(1) 6" Light, (1) Switch, (1) Outlet, (1) 120V Power Inlet',
+  "Core": '(4) 6" Lights, Porch Light, (2) Switches, (2) Outlets, (1) GFCI Outlet, (1) 120V Power Inlet',
+  "Essential": '(4) 6" Lights, Porch Light, Exterior Soffit Lights, Multiple Switch Locations, (6) Outlets, (1) GFCI Outlet, (1) 120V Power Inlet'
 };
 
 var FLAT_GROUPS = [
@@ -513,7 +528,13 @@ function buildFlatGroup(groupKey, label, unit, dataObj) {
     }
     names.forEach(function (name) {
       var row = el('div', { class: 'comp-row' });
-      row.appendChild(el('span', { class: 'comp-name', text: name }));
+      var nameCol = el('div', { class: 'comp-name' });
+      nameCol.appendChild(el('span', { text: name }));
+      var includes = ELEC_INCLUDES[name];
+      if (groupKey === 'electrical' && includes) {
+        nameCol.appendChild(el('div', { class: 'note', style: 'margin-top:2px', text: includes }));
+      }
+      row.appendChild(nameCol);
       var priceWrap = el('div', { class: 'comp-price-wrap' });
       priceWrap.appendChild(el('span', { text: '$' }));
       var priceInp = el('input', { class: 'comp-price', type: 'number', step: '0.01' });
