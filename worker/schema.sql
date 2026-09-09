@@ -83,3 +83,18 @@ CREATE TABLE IF NOT EXISTS pricing_config (
   data TEXT NOT NULL,
   updated_at TEXT
 );
+
+-- Short shareable links for a saved 3D design (/shed/design). The designer
+-- used to encode the whole config into the URL, which made those links
+-- enormous; the config lives here instead and the link is just
+-- designer.html?d=<8 hex chars>. Codes are random, not sequential, because a
+-- saved design can carry the customer's contact info. The worker also creates
+-- this table lazily on first use, so this only matters for a fresh install.
+CREATE TABLE IF NOT EXISTS saved_designs (
+  code TEXT PRIMARY KEY,
+  config TEXT NOT NULL,
+  contact_name TEXT,
+  contact_email TEXT,
+  contact_phone TEXT,
+  created_at TEXT NOT NULL
+);

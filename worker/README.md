@@ -295,3 +295,156 @@ integration is confirmed working.
 - **Multiple admin accounts**: right now there's one shared password. If
   Shed Co. staff need their own logins later, this can be upgraded to a
   proper per-user accounts table in D1.
+
+# Potentia's own client CRM (`/crm/*`)
+
+Everything above this line belongs to the **shed partner**. This section is
+Potentia's own CRM — the web-design clients, from first inquiry through
+launch and into their monthly plan.
+
+It runs in the same Worker, but on **its own D1 database** (`potentia-crm`,
+bound as `CRM_DB`) with its own login page and its own password. No Potentia
+client data is stored in `potentia-shed`. The one thing still shared is the
+Worker itself — same code deploy, same `ANTHROPIC_API_KEY`, same bill.
+
+New pages: `crm-login.html`, `crm.html` (client list + headline numbers),
+`crm-client.html` (one client: details, work, notes, payments).
+
+## Setup
+
+### 1. Add one secret — required, the CRM will not open without it
+
+Worker → **Settings → Variables and Secrets** → **Add variable**,
+Type = **Secret**.
+
+| Name | Value |
+|---|---|
+| `CRM_PASSWORD` | The password for `crm-login.html`. Make it different from `ADMIN_PASSWORD` — that's the whole point. |
+
+The CRM has its **own** password. It does not accept `ADMIN_PASSWORD`, not
+even as a fallback: the shed partner knows that one, and it must never open
+Potentia's client list, revenue or notes. Until `CRM_PASSWORD` is set,
+`crm-login.html` refuses every attempt and tells you the secret is missing.
+Failing shut is the right direction here.
+
+The separation runs both ways and is enforced by the Worker on every
+request, not just in the browser:
+
+| | `/admin/*` (ShedPro) | `/crm/*` (Potentia) |
+|---|---|---|
+| `ADMIN_PASSWORD` | opens it | rejected |
+| `CRM_PASSWORD` | rejected | opens it |
+| a logged-in shed session | works | 401 |
+| a logged-in CRM session | 401 | works |
+
+Different login page, different password, different session. Losing one
+password does not expose the other side.
+
+### 2. Create a second D1 database — Potentia's own
+
+The CRM does **not** share the shed partner's database. `potentia-shed`
+holds their customers, quotes and renders; Potentia's client list, revenue
+and notes go somewhere else entirely, so the two can never be read out of
+one place.
+
+1. Cloudflare sidebar → **Storage & Databases → D1 SQL Database**.
+2. **Create database**, name it `potentia-crm` → Create.
+
+You do **not** need to paste any SQL into its console. The Worker creates
+its four tables the first time you use the CRM. (`worker/schema-crm.sql`
+has them written out if you ever want to read or recreate the schema by
+hand — it is a different file from `schema.sql`, which builds
+`potentia-shed`.)
+
+### 3. Bind it to the Worker
+
+1. `potentia-assistant` Worker → **Settings → Bindings** → **Add binding**.
+2. Type: **D1 database**. Variable name: `CRM_DB` (exactly that — the code
+   refers to `env.CRM_DB`).
+3. Database: pick `potentia-crm`.
+4. Save/Deploy.
+
+The Worker now has two D1 bindings, and they are not interchangeable:
+
+| Binding | Database | Used by |
+|---|---|---|
+| `DB` | `potentia-shed` | `/admin/*`, `/shed/*` — the shed partner |
+| `CRM_DB` | `potentia-crm` | `/crm/*` — Potentia's clients |
+
+If `CRM_DB` is missing, the CRM refuses with "CRM database not connected"
+rather than quietly falling back to the shed database — and the login page
+tells you so. Failing shut, again.
+
+### 4. Redeploy the Worker
+
+Paste `worker/dist/index.bundle.js` into **Edit code** and Deploy, same as
+always.
+
+Then open `crm-login.html` on the live site and sign in.
+
+## Using it
+
+**`crm.html`** — every client in one table, with four numbers across the
+top: monthly recurring revenue (the sum of the monthly plans for clients
+who are building or live), active clients, open leads, and everything
+collected in the last 30 days. Filter by pipeline stage, search by name /
+email / domain, change a client's stage straight from the row, or add a
+client by hand with **+ New Client**.
+
+The stages are `lead → contacted → proposal → building → live`, plus
+`paused` and `lost`. A client sitting at `lead` is highlighted so a fresh
+inquiry can't be missed.
+
+**`crm-client.html`** — one client's whole picture:
+
+- **Details** — contact info, package, build fee, monthly fee, live URL,
+  domain, domain renewal date, launch date. Editing the renewal date is what
+  makes "when does this domain come up for renewal?" answerable a year from
+  now.
+- **Original Inquiry** — what they actually typed into the contact form,
+  kept verbatim.
+- **Work & Edit Requests** — the running to-do list per client, with due
+  dates. Open items sort to the top, overdue ones go red, and the count
+  shows on the main list so you can see at a glance who's waiting on you.
+- **Notes** — call notes, decisions, follow-ups. Newest first.
+- **Payments** — each one tagged as a build payment, a monthly retainer, an
+  add-on, or other. The totals show what's been collected all time, how much
+  of that was retainers, and what's still outstanding on the build fee.
+
+## Leads arrive on their own
+
+`contact.html` now posts every inquiry to `POST /crm/lead` alongside its
+existing Formspree email — so a form submission becomes a lead in the CRM
+without anyone typing it in. The Formspree email still goes out exactly as
+before; the CRM call is fire-and-forget, so if the Worker were ever down the
+form still works normally.
+
+If the email or phone matches someone already in the CRM, the new inquiry is
+logged as a **note on their existing record** rather than creating a
+duplicate — and their current stage is left alone, so a repeat inquiry from
+a live client doesn't knock them back to "lead".
+
+## Checking a change didn't break it
+
+`worker/crm.test.mjs` runs every CRM route against **two** real SQLite
+databases standing in for the two D1 bindings, so the separation is
+actually exercised rather than assumed:
+
+```
+node --experimental-sqlite worker/crm.test.mjs
+```
+
+It exits non-zero if anything fails. Worth running after any change to the
+`/crm/*` half of `worker/index.js`. Among the 64 checks:
+
+- the shed password is refused by the CRM login, and the CRM password is
+  refused by the shed login
+- with `CRM_PASSWORD` unset, nothing gets into the CRM at all
+- after a full run of CRM activity, the shed database contains **none** of
+  the four CRM tables and not one new row
+- with `CRM_DB` unbound, a CRM write returns 503 instead of landing in the
+  shed database
+
+That fourth one is the guard rail worth keeping: if a query in the CRM half
+of the file ever reaches for `env.DB` instead of `env.CRM_DB`, these checks
+fail loudly.

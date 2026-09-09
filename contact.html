@@ -206,6 +206,26 @@ overlay.querySelectorAll('a').forEach(function(a) {
 });
 window.formspree = window.formspree || function() { (formspree.q = formspree.q || []).push(arguments); };
 formspree('initForm', { formElement: '#contact-form', formId: 'mredlobr' });
+
+// Every inquiry also lands in the Potentia CRM as a lead, alongside the
+// Formspree email. Deliberately passive: no preventDefault, and failures are
+// swallowed — if the CRM is unreachable the Formspree submit still goes
+// through exactly as before, so this can never cost us a lead.
+document.getElementById('contact-form').addEventListener('submit', function() {
+  var payload = {
+    name: document.getElementById('name').value,
+    email: document.getElementById('email').value,
+    service: document.getElementById('service').value,
+    message: document.getElementById('message').value
+  };
+  if (!payload.email) return;
+  fetch('https://potentia-assistant.thepotentianetwork.workers.dev/crm/lead', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    keepalive: true
+  }).catch(function() {});
+});
 </script>
 <script src="https://unpkg.com/@formspree/ajax@1" defer></script>
 <script src="assistant.js" defer></script>
