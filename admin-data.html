@@ -64,6 +64,19 @@ section{margin-bottom:56px}
 .tbar:hover{background:var(--sp-blue)}
 .timeline-axis{display:flex;justify-content:space-between;margin-top:8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
 
+/* won projects */
+.won-row{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:22px}
+.won-tile{background:var(--black);padding:20px 22px}
+.won-tile .wl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.18em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+.won-tile .wv{font-size:28px;color:var(--bright);font-weight:300;line-height:1;font-variant-numeric:tabular-nums}
+.won-tile .wn{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);margin-top:6px}
+.won-tile.good .wv{color:#5fd08a}
+.won-caveat{font-size:13px;color:var(--silver);line-height:1.6;border-left:2px solid var(--dim);padding-left:16px;margin-bottom:26px}
+.won-caveat strong{color:var(--bright);font-weight:400}
+.wl-split{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+.wl-split h3{font-size:15px;font-weight:400;color:var(--bright);margin-bottom:14px}
+@media (max-width:900px){ .won-row{grid-template-columns:repeat(2,1fr)} .wl-split{grid-template-columns:1fr;gap:24px} }
+
 .funnel{display:flex;gap:2px;margin-bottom:20px}
 .funnel-seg{flex:1;text-align:center;padding:16px 8px;font-family:'DM Mono',monospace}
 .funnel-seg .fn{font-size:24px;color:var(--bright);font-weight:300;display:block;margin-bottom:4px}
@@ -107,6 +120,22 @@ section{margin-bottom:56px}
       <div class="stat-tile"><div class="sl">Avg Quoted Price</div><div class="sv" id="st-avg">—</div></div>
       <div class="stat-tile"><div class="sl">Median Quoted Price</div><div class="sv" id="st-median">—</div></div>
     </div>
+
+    <section>
+      <p class="sec-label">Won Projects</p>
+      <h2 style="font-size:20px;margin-bottom:16px">What You've Closed</h2>
+      <div class="won-row">
+        <div class="won-tile"><div class="wl">Jobs Won</div><div class="wv" id="w-count">—</div><div class="wn" id="w-rate">—</div></div>
+        <div class="won-tile"><div class="wl">Won Revenue</div><div class="wv" id="w-rev">—</div><div class="wn" id="w-avg">—</div></div>
+        <div class="won-tile good"><div class="wl">Gross Profit</div><div class="wv" id="w-profit">—</div><div class="wn" id="w-margin">—</div></div>
+        <div class="won-tile"><div class="wl">Collected</div><div class="wv" id="w-collected">—</div><div class="wn">All payments logged</div></div>
+      </div>
+      <p class="won-caveat" id="w-caveat"></p>
+      <div class="wl-split">
+        <div><h3>What wins</h3><div id="w-bar-won"></div></div>
+        <div><h3>What loses</h3><div id="w-bar-lost"></div></div>
+      </div>
+    </section>
 
     <section>
       <p class="sec-label">Pipeline</p>
@@ -292,6 +321,57 @@ function renderBars(hostId, counts, labelMap) {
   });
 }
 
+// ---- won projects ----
+function renderWon(w) {
+  if (!w) return;
+  document.getElementById('w-count').textContent = w.count;
+  document.getElementById('w-rate').textContent =
+    w.winRatePct == null ? 'no decided jobs yet'
+      : w.winRatePct + '% of ' + w.decided + ' decided';
+  document.getElementById('w-rev').textContent = money(w.revenue);
+  document.getElementById('w-avg').textContent =
+    w.avgValue == null ? '' : 'avg ' + money(w.avgValue) + '  \u00b7  med ' + money(w.medianValue);
+  document.getElementById('w-collected').textContent = money(w.collectedAllTime);
+
+  // Profit shows only when it is actually known. Dividing a partial cost total
+  // by full revenue would invent a margin, and an invented margin is worse than
+  // a blank one — you'd price against it.
+  var profitEl = document.getElementById('w-profit');
+  var marginEl = document.getElementById('w-margin');
+  if (w.grossProfit == null) {
+    profitEl.textContent = '\u2014';
+    marginEl.textContent = 'no cost data on these jobs';
+  } else {
+    profitEl.textContent = money(w.grossProfit);
+    marginEl.textContent = w.marginPct + '% margin  \u00b7  ' + w.costKnown + ' of ' + w.count + ' jobs costed';
+  }
+
+  // Says plainly which numbers are complete and which are still filling in,
+  // rather than letting a partial figure read as the whole picture.
+  var caveats = [];
+  if (w.costKnown < w.count) {
+    caveats.push('Profit and margin cover the <strong>' + w.costKnown + ' of ' + w.count +
+      '</strong> won jobs carrying cost data. Revenue covers all of them.');
+  }
+  if (w.undated > 0) {
+    caveats.push('<strong>' + w.undated + '</strong> win' + (w.undated === 1 ? '' : 's') +
+      ' happened before win dates were recorded, so they are counted but have no month. ' +
+      'Anything marked won from now on is dated.');
+  }
+  if (w.medianDaysToWin != null) {
+    caveats.push('Typical time from quote to won: <strong>' + w.medianDaysToWin +
+      ' days</strong> (median of ' + w.dated + ').');
+  }
+  if (w.lostCount) {
+    caveats.push('Lost: <strong>' + w.lostCount + '</strong> job' + (w.lostCount === 1 ? '' : 's') +
+      ' worth ' + money(w.lostRevenue) + ' quoted.');
+  }
+  document.getElementById('w-caveat').innerHTML = caveats.join('<br>');
+
+  renderBars('w-bar-won', w.byStyle || {});
+  renderBars('w-bar-lost', w.lostByStyle || {});
+}
+
 function renderFunnel(statusCounts) {
   var host = document.getElementById('funnel');
   host.innerHTML = '';
@@ -373,6 +453,7 @@ authFetch('/admin/analytics').then(function (r) {
   document.getElementById('st-avg').textContent = money(d.avgPrice);
   document.getElementById('st-median').textContent = money(d.medianPrice);
 
+  renderWon(d.won);
   renderFunnel(d.statusCounts);
   renderTimeline(d.byDay);
   renderMap(d.points);

@@ -23,6 +23,8 @@ header{border-bottom:1px solid var(--dim);padding:20px 40px;display:flex;justify
 .h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
 .h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
 .h-actions{display:flex;gap:12px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
 .logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
 .logout:hover{border-color:var(--silver);color:var(--bright)}
 
@@ -135,6 +137,7 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
     </div>
   </div>
   <div class="h-actions">
+    <a href="crm-data.html" class="back-link">Data →</a>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
 </header>

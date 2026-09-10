@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data — Potentia CRM</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="Potentia_Logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --warm:#d8a15f;--live:#5fd08a;--build:#6fa8dc;--danger:#c0675a;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:12px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--silver);color:var(--bright)}
+
+main{max-width:1100px;margin:0 auto;padding:44px 40px 100px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
+h3{font-size:20px;font-weight:300;color:var(--bright);margin-bottom:16px}
+section{margin-bottom:56px}
+.loading{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:40px 0}
+
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:22px}
+.tile{background:var(--black);padding:20px 22px}
+.tile .tl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.18em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+.tile .tv{font-size:28px;color:var(--bright);font-weight:300;line-height:1;font-variant-numeric:tabular-nums}
+.tile .tn{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);margin-top:6px}
+.tile.good .tv{color:var(--live)}
+
+.caveat{font-size:13px;color:var(--silver);line-height:1.6;border-left:2px solid var(--dim);padding-left:16px;margin-bottom:8px}
+.caveat strong{color:var(--bright);font-weight:400}
+
+.bar-row{display:flex;align-items:center;gap:12px;margin-bottom:9px}
+.bar-label{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);width:110px;flex-shrink:0;text-transform:uppercase;letter-spacing:0.05em;text-align:right}
+.bar-track{flex:1;height:20px;background:rgba(255,255,255,0.03);position:relative}
+.bar-fill{height:100%;background:var(--chrome)}
+.bar-fill.won{background:var(--live)}
+.bar-val{font-family:'DM Mono',monospace;font-size:11px;color:var(--bright);width:42px;flex-shrink:0;font-variant-numeric:tabular-nums}
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
+
+.split{display:grid;grid-template-columns:1fr 1fr;gap:36px}
+.stage-row{display:flex;align-items:center;gap:12px;margin-bottom:9px}
+.stage-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.stage-lead{background:var(--bright)}
+.stage-contacted,.stage-proposal{background:var(--warm)}
+.stage-building{background:var(--build)}
+.stage-live{background:var(--live)}
+.stage-paused{background:var(--silver)}
+.stage-lost{background:var(--dim)}
+.stage-name{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);text-transform:uppercase;letter-spacing:0.08em;flex:1}
+.stage-n{font-size:18px;color:var(--bright);font-weight:300;font-variant-numeric:tabular-nums}
+
+@media (max-width:900px){ .tiles{grid-template-columns:repeat(2,1fr)} .split{grid-template-columns:1fr;gap:28px} }
+@media (max-width:760px){
+  header{padding:16px 20px}
+  main{padding:30px 18px 80px}
+  h2{font-size:24px}
+  .bar-label{width:80px;font-size:10px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="Potentia_Logo.png" alt="Potentia">
+    <div class="h-brand-text">
+      <span class="h-title">POTENTIA CRM</span>
+      <span class="h-sub">Website Clients</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <a href="crm.html" class="back-link">← Clients</a>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <p class="sec-label">Overview</p>
+  <h2>Data</h2>
+
+  <div id="loading" class="loading">Loading…</div>
+
+  <div id="content" style="display:none">
+    <section>
+      <p class="sec-label">Won Clients</p>
+      <h3>Work you've landed</h3>
+      <div class="tiles">
+        <div class="tile"><div class="tl">Clients Won</div><div class="tv" id="w-count">—</div><div class="tn" id="w-rate">—</div></div>
+        <div class="tile"><div class="tl">Build Revenue</div><div class="tv" id="w-build">—</div><div class="tn" id="w-avg">—</div></div>
+        <div class="tile good"><div class="tl">Monthly Recurring</div><div class="tv" id="w-mrr">—</div><div class="tn" id="w-annual">—</div></div>
+        <div class="tile"><div class="tl">Collected</div><div class="tv" id="w-collected">—</div><div class="tn" id="w-collected-n">—</div></div>
+      </div>
+      <p class="caveat" id="w-caveat"></p>
+    </section>
+
+    <section>
+      <div class="split">
+        <div>
+          <h3>Where wins come from</h3>
+          <div id="bar-source"></div>
+        </div>
+        <div>
+          <h3>Packages sold</h3>
+          <div id="bar-package"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <p class="sec-label">Pipeline</p>
+      <h3>Every client by stage</h3>
+      <div id="stages"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_crm_token');
+if (!token) window.location.href = 'crm-login.html';
+
+var STAGES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
+var PACKAGE_LABELS = { foundation:'Foundation', booking:'Booking', gallery:'Gallery', operator:'Operator', custom:'Custom' };
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      localStorage.removeItem('potentia_crm_token');
+      window.location.href = 'crm-login.html';
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('potentia_crm_token');
+  window.location.href = 'crm-login.html';
+});
+
+function money(n) { return n == null ? '—' : '$' + Math.round(n).toLocaleString(); }
+
+function renderBars(hostId, counts, labelMap, cls) {
+  var host = document.getElementById(hostId);
+  host.innerHTML = '';
+  var keys = Object.keys(counts || {}).sort(function (a, b) { return counts[b] - counts[a]; });
+  if (!keys.length) {
+    host.innerHTML = '<p class="empty">Nothing yet.</p>';
+    return;
+  }
+  // Scaled to the largest bar, so the shape of the comparison is readable even
+  // when every number is small.
+  var max = Math.max.apply(null, keys.map(function (k) { return counts[k]; }));
+  keys.forEach(function (k) {
+    var row = document.createElement('div');
+    row.className = 'bar-row';
+    var label = document.createElement('span');
+    label.className = 'bar-label';
+    label.textContent = (labelMap && labelMap[k]) || k;
+    var track = document.createElement('div');
+    track.className = 'bar-track';
+    var fill = document.createElement('div');
+    fill.className = 'bar-fill' + (cls ? ' ' + cls : '');
+    fill.style.width = Math.max(2, (counts[k] / max) * 100) + '%';
+    track.appendChild(fill);
+    var val = document.createElement('span');
+    val.className = 'bar-val';
+    val.textContent = counts[k];
+    row.appendChild(label);
+    row.appendChild(track);
+    row.appendChild(val);
+    host.appendChild(row);
+  });
+}
+
+function renderStages(byStatus) {
+  var host = document.getElementById('stages');
+  host.innerHTML = '';
+  STAGES.forEach(function (s) {
+    var row = document.createElement('div');
+    row.className = 'stage-row';
+    var dot = document.createElement('span');
+    dot.className = 'stage-dot stage-' + s;
+    var name = document.createElement('span');
+    name.className = 'stage-name';
+    name.textContent = s;
+    var n = document.createElement('span');
+    n.className = 'stage-n';
+    n.textContent = byStatus[s] || 0;
+    row.appendChild(dot);
+    row.appendChild(name);
+    row.appendChild(n);
+    host.appendChild(row);
+  });
+}
+
+function render(d) {
+  var w = d.won || {};
+  document.getElementById('w-count').textContent = w.count || 0;
+  document.getElementById('w-rate').textContent =
+    w.winRatePct == null ? 'no decided clients yet' : w.winRatePct + '% of ' + w.decided + ' decided';
+  document.getElementById('w-build').textContent = money(w.buildRevenue);
+  document.getElementById('w-avg').textContent =
+    w.avgBuildFee == null ? '' : 'avg ' + money(w.avgBuildFee) + '  ·  med ' + money(w.medianBuildFee);
+  document.getElementById('w-mrr').textContent = money(w.mrr) + '/mo';
+  document.getElementById('w-annual').textContent = money(w.annualisedRecurring) + ' a year at this rate';
+  document.getElementById('w-collected').textContent = money(d.collected && d.collected.allTime);
+  document.getElementById('w-collected-n').textContent =
+    money(d.collected && d.collected.last30) + ' in the last 30 days';
+
+  // The two numbers most likely to be misread: what "won" counts, and the gap
+  // between money agreed and money in the bank.
+  var caveats = [];
+  caveats.push('Won counts clients who are <strong>building or live</strong>. Paused and lost are excluded — a paused client was won once, but isn\'t revenue now.');
+  if (w.buildOutstanding) {
+    caveats.push('<strong>' + money(w.buildOutstanding) + '</strong> of agreed build fees not yet collected.');
+  }
+  if (w.count && !Object.keys(w.byMonth || {}).length) {
+    caveats.push('No launch dates set yet, so there\'s no timeline to draw. Set one on a client and they\'ll date from there.');
+  }
+  document.getElementById('w-caveat').innerHTML = caveats.join('<br>');
+
+  renderBars('bar-source', w.bySource || {}, null, 'won');
+  renderBars('bar-package', w.byPackage || {}, PACKAGE_LABELS, 'won');
+  renderStages(d.byStatus || {});
+
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+}
+
+if (token) {
+  authFetch('/crm/analytics').then(function (r) {
+    if (!r.ok) {
+      document.getElementById('loading').textContent =
+        (r.data && r.data.error === 'CRM database not connected')
+          ? 'CRM database not connected — bind the potentia-crm D1 database to the Worker as CRM_DB.'
+          : 'Could not load data — ' + ((r.data && r.data.error) || 'try again.');
+      return;
+    }
+    render(r.data);
+  }).catch(function () {
+    document.getElementById('loading').textContent = 'Could not reach the server.';
+  });
+}
+</script>
+</body>
+</html>
