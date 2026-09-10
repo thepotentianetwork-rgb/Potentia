@@ -282,17 +282,25 @@ var HEARD_LABELS = {
 // the app directly (iOS Universal Links / Android App Links); everywhere else
 // they open Voice on the web, already pointed at the right number.
 //
-// NO /u/0/ ACCOUNT INDEX — and that is the whole trick. These URLs originally
-// carried /u/0/ (Google's "first signed-in account" path) and they opened the
-// WEB version every time; dropping it is what lets the app claim the link.
-// Tested on iOS: with the index, Safari; without it, the app. So don't add an
-// account index back in to disambiguate between Google accounts — it trades
-// the app for the browser. The app opens whichever account it's signed into.
+// The two URLs differ on purpose, and the difference is not an oversight.
 //
-// The text URL carries a thread id (the t. prefix), so it lands in that
-// person's conversation rather than the message list.
+// CALL — no /u/0/ account index. Tested on iOS: with the index the link opens
+// Safari, without it the Google Voice app takes it. So don't add an index back
+// here to disambiguate between Google accounts; it trades the app for the
+// browser. The app opens whichever account it is signed into.
+//
+// TEXT — keeps the index, because this one can never reach the app anyway.
+// Tested bare, with no parameters at all: voice.google.com/calls opens the app
+// and voice.google.com/messages opens Safari. Same domain, same form, only the
+// path differs — the app registers /calls and does not register /messages, so
+// no parameter shape will change it, and googlevoice:// schemes do nothing
+// either. Given it is web-only regardless, the index costs no app handoff and
+// pins which Google account opens when several are signed in.
+//
+// The thread id (the t. prefix) still lands on that person's conversation
+// rather than the message list — in the browser rather than the app.
 var GV_CALL_URL = 'https://voice.google.com/calls?a=nc,';
-var GV_TEXT_URL = 'https://voice.google.com/messages?itemId=t.';
+var GV_TEXT_URL = 'https://voice.google.com/u/0/messages?itemId=t.';
 
 // Google Voice wants E.164 (+15551234567). Assumes US/Canada, which is what
 // the shed business serves — a 10-digit number gets +1, an 11-digit starting
