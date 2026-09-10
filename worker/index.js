@@ -243,10 +243,77 @@ async function findOrCreateCustomer(env, { name, email, phone, address, city, st
   return res.meta.last_row_id;
 }
 
+
+// ---- lead temperature: manual override + revisit date ----
+// The computed temperature (days since last touch) is wrong in the one case
+// that matters most: a customer who has told you their timeline. Quote someone
+// in September for a build they want in March and the maths says "hot" all
+// through September and "dormant" by December, when the truth is the reverse.
+//
+// So two fields, both optional, on the customer:
+//   temp_override — pin the temperature and stop computing it
+//   follow_up_at  — the date to pick them back up
+//
+// The revisit date is what stops a pinned temperature going stale. Marked cold
+// until March, the customer surfaces on their own in March rather than sitting
+// cold forever in a list nobody rereads.
+//
+// Added by ALTER TABLE rather than in schema.sql because the customers table is
+// already live with data. SQLite has no ADD COLUMN IF NOT EXISTS, so this reads
+// the table's own columns first. Cheap no-op once they exist.
+let customerTempColumnsReady = false;
+async function ensureCustomerTempColumns(env) {
+  if (customerTempColumnsReady) return;
+  const { results } = await env.DB.prepare("PRAGMA table_info(customers)").all();
+  const have = (results || []).map((r) => r.name);
+  if (have.indexOf("temp_override") === -1) {
+    await env.DB.prepare("ALTER TABLE customers ADD COLUMN temp_override TEXT").run();
+  }
+  if (have.indexOf("follow_up_at") === -1) {
+    await env.DB.prepare("ALTER TABLE customers ADD COLUMN follow_up_at TEXT").run();
+  }
+  customerTempColumnsReady = true;
+}
+
+const LEAD_TEMPS = ["hot", "warm", "cold", "dormant"];
+
+// POST /admin/customers/:id/followup — { temperature, follow_up_at }
+// Either may be null to clear it: null temperature means go back to computing
+// it from activity, null date means no scheduled revisit.
+async function handleSetFollowUp(request, env, origin, customerId) {
+  await ensureCustomerTempColumns(env);
+  const customer = await env.DB.prepare("SELECT id FROM customers WHERE id = ?").bind(customerId).first();
+  if (!customer) return json({ error: "Not found" }, 404, origin);
+
+  const body = await request.json().catch(() => ({}));
+
+  let temperature = null;
+  if (body.temperature !== null && body.temperature !== undefined && body.temperature !== "") {
+    const t = String(body.temperature).toLowerCase().trim();
+    if (LEAD_TEMPS.indexOf(t) === -1) return json({ error: "Invalid temperature" }, 400, origin);
+    temperature = t;
+  }
+
+  let followUpAt = null;
+  if (body.follow_up_at) {
+    const d = String(body.follow_up_at).trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return json({ error: "Invalid date" }, 400, origin);
+    followUpAt = d;
+  }
+
+  await env.DB.prepare("UPDATE customers SET temp_override = ?, follow_up_at = ?, updated_at = ? WHERE id = ?")
+    .bind(temperature, followUpAt, new Date().toISOString(), customerId)
+    .run();
+
+  return json({ ok: true, temperature: temperature, follow_up_at: followUpAt }, 200, origin);
+}
+
 // ---- /admin/customers: one row per customer, with their latest order + note ----
 async function handleListCustomers(request, env, origin) {
+  await ensureCustomerTempColumns(env);
   const { results } = await env.DB.prepare(
     `SELECT c.id, c.name, c.email, c.phone, c.city, c.state, c.created_at, c.updated_at,
+       c.temp_override, c.follow_up_at,
        (SELECT s.id FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_submission_id,
        (SELECT s.details FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_details,
        (SELECT s.status FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_status,
@@ -314,6 +381,7 @@ async function ensureInstallsTable(env) {
 
 // ---- /admin/customers/:id: full detail — customer + all their submissions + notes + payments + installs ----
 async function handleGetCustomer(request, env, origin, id) {
+  await ensureCustomerTempColumns(env);
   const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(id).first();
   if (!customer) return json({ error: "Not found" }, 404, origin);
 
@@ -1715,6 +1783,12 @@ export default {
         const id = Number(path.slice("/admin/customers/".length, -"/notes".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleAddNote(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/followup") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/customers/".length, -"/followup".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleSetFollowUp(request, env, origin, id);
       }
       if (path.startsWith("/admin/customers/") && path.endsWith("/payments") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

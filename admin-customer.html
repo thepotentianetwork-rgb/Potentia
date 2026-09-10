@@ -38,6 +38,15 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:8px}
 
 section{margin-bottom:56px}
 
+/* follow-up controls */
+.followup{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:0 0 44px;padding:20px 22px;border:1px solid var(--dim);background:rgba(255,255,255,0.02)}
+.followup .fu-field{display:flex;flex-direction:column;gap:7px}
+.followup label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase}
+.followup select,.followup input[type="date"]{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:9px 11px;outline:none}
+.followup select:focus,.followup input[type="date"]:focus{border-color:var(--sp-blue)}
+.followup .fu-hint{flex:1 1 220px;font-size:13px;color:var(--silver);line-height:1.5;min-width:200px}
+.followup .fu-msg{font-family:'DM Mono',monospace;font-size:11px;color:#5fd08a}
+
 /* order history */
 .order-card{border:1px solid var(--dim);margin-bottom:16px;padding:20px 24px}
 .order-top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px}
@@ -151,6 +160,31 @@ select:focus{border-color:var(--sp-blue)}
     <div class="info-item"><div class="il">Address</div><div class="iv" id="c-address">—</div></div>
     <div class="info-item"><div class="il">Location</div><div class="iv" id="c-location">—</div></div>
     <div class="info-item"><div class="il">Customer Since</div><div class="iv" id="c-since">—</div></div>
+  </div>
+
+  <div class="followup">
+    <div class="fu-field">
+      <label for="fu-temp">Lead Temperature</label>
+      <select id="fu-temp">
+        <option value="">Auto (from activity)</option>
+        <option value="hot">Hot</option>
+        <option value="warm">Warm</option>
+        <option value="cold">Cold</option>
+        <option value="dormant">Dormant</option>
+      </select>
+    </div>
+    <div class="fu-field">
+      <label for="fu-date">Revisit On</label>
+      <input id="fu-date" type="date">
+    </div>
+    <button class="btn" id="fu-save" type="button">Save</button>
+    <span class="fu-msg" id="fu-msg"></span>
+    <p class="fu-hint">
+      Set the temperature when the customer has told you their timeline — that
+      beats guessing from how long ago you spoke. Add a revisit date and they
+      turn up as <strong>Follow up due</strong> on the list that day, instead of
+      staying cold in a list nobody rereads.
+    </p>
   </div>
 
   <section>
@@ -700,6 +734,46 @@ function renderPayments(payments) {
 
 var CUSTOMER_NAME = '';
 
+function el(id) { return document.getElementById(id); }
+
+// ---- follow-up controls ----
+function fillFollowUp(c) {
+  el('fu-temp').value = c.temp_override || '';
+  el('fu-date').value = c.follow_up_at || '';
+}
+
+document.getElementById('fu-save').addEventListener('click', function () {
+  var msg = el('fu-msg');
+  var btn = this;
+  btn.disabled = true;
+  msg.style.color = 'var(--silver)';
+  msg.textContent = 'Saving…';
+  authFetch('/admin/customers/' + customerId + '/followup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      // Empty select means "go back to computing it" — send null, which is
+      // what the endpoint reads as clear.
+      temperature: el('fu-temp').value || null,
+      follow_up_at: el('fu-date').value || null
+    })
+  }).then(function (r) {
+    btn.disabled = false;
+    if (!r.ok) {
+      msg.style.color = '#e0684f';
+      msg.textContent = (r.data && r.data.error) || 'Could not save.';
+      return;
+    }
+    msg.style.color = '#5fd08a';
+    msg.textContent = 'Saved.';
+    setTimeout(function () { msg.textContent = ''; }, 2500);
+  }).catch(function () {
+    btn.disabled = false;
+    msg.style.color = '#e0684f';
+    msg.textContent = 'Could not reach the server.';
+  });
+});
+
 function loadCustomer() {
   authFetch('/admin/customers/' + customerId).then(function (r) {
     if (!r.ok) {
@@ -713,6 +787,7 @@ function loadCustomer() {
     document.title = (c.name || 'Customer') + ' — ShedPro Admin';
     document.getElementById('c-email').textContent = c.email || '—';
     renderPhoneCell(document.getElementById('c-phone'), c.phone);
+    fillFollowUp(c);
     document.getElementById('c-address').textContent = c.address || '—';
     var loc = [c.city, c.state].filter(Boolean).join(', ');
     document.getElementById('c-location').textContent = loc || '—';
