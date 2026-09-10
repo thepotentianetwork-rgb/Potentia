@@ -69,3 +69,18 @@ CREATE TABLE IF NOT EXISTS client_tasks (
   done_at TEXT,
   created_at TEXT NOT NULL
 );
+
+-- Manual call log per client. Logged by hand rather than pulled from a phone
+-- system: what was said and what happens next is the part worth keeping, and
+-- no API knows it. Separate from client_notes because these fields are each
+-- answerable in one tap — a note is prose, a call is a record.
+CREATE TABLE IF NOT EXISTS client_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL,
+  direction TEXT NOT NULL,   -- 'outbound' | 'inbound'
+  outcome TEXT NOT NULL,     -- 'connected' | 'voicemail' | 'no-answer' | 'callback' | 'wrong-number'
+  duration_min REAL,
+  notes TEXT,
+  called_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
