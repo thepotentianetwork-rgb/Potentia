@@ -1058,6 +1058,31 @@ async function handleAnalytics(request, env, origin) {
     "SELECT id, customer_id, details, status, created_at, won_at, price_adjustment FROM submissions ORDER BY created_at DESC LIMIT 3000"
   ).all();
 
+  // ---- install state of won jobs ----
+  // Derived from the install log, not from a status anyone has to remember to
+  // set. The dates are already recorded per order; asking for a second,
+  // separate "installed" flag would mean two records of the same fact, free to
+  // disagree — a job marked installed with no date, or a date logged against a
+  // job still reading pending.
+  //
+  // The SHED install is what counts as done. A poured pad on its own is not a
+  // delivered job, and treating it as one would report revenue as complete
+  // while the building is still to come.
+  await ensureInstallsTable(env);
+  const { results: shedInstalls } = await env.DB.prepare(
+    "SELECT submission_id, MAX(install_date) AS install_date FROM installs WHERE item = 'shed' GROUP BY submission_id"
+  ).all();
+  const shedInstallBy = {};
+  (shedInstalls || []).forEach((r) => { shedInstallBy[r.submission_id] = r.install_date; });
+  const todayISO = new Date().toISOString().slice(0, 10);
+
+  const install = {
+    installed: { count: 0, revenue: 0 },
+    scheduled: { count: 0, revenue: 0 },
+    unscheduled: { count: 0, revenue: 0 },
+    nextDates: []
+  };
+
   // ---- won jobs ----
   // Everything here is derived from what is genuinely stored. Revenue is the
   // quoted price of jobs marked won; cost is that job's own redline
@@ -1123,6 +1148,15 @@ async function handleAnalytics(request, env, origin) {
 
       if (status === "won") {
         won.count++;
+        // Three states, because "pending" covers two situations that need
+        // different things from you: one needs a date in the diary, the other
+        // needs the crew to turn up.
+        const shedDate = shedInstallBy[row.id];
+        const bucket = !shedDate ? "unscheduled"
+          : (String(shedDate).slice(0, 10) <= todayISO ? "installed" : "scheduled");
+        install[bucket].count++;
+        if (price != null && isFinite(price)) install[bucket].revenue += price;
+        if (bucket === "scheduled") install.nextDates.push(String(shedDate).slice(0, 10));
         if (price != null && isFinite(price)) {
           won.revenue += price;
           won.values.push(price);
@@ -1223,9 +1257,21 @@ async function handleAnalytics(request, env, origin) {
     adjustedWonCount: adjustments.wonCount
   };
 
+  install.nextDates.sort();
+  const installBlock = {
+    installed: { count: install.installed.count, revenue: Math.round(install.installed.revenue) },
+    scheduled: { count: install.scheduled.count, revenue: Math.round(install.scheduled.revenue) },
+    unscheduled: { count: install.unscheduled.count, revenue: Math.round(install.unscheduled.revenue) },
+    // Everything won but not yet in the ground — the work still owed.
+    pendingCount: install.scheduled.count + install.unscheduled.count,
+    pendingRevenue: Math.round(install.scheduled.revenue + install.unscheduled.revenue),
+    nextInstall: install.nextDates.length ? install.nextDates[0] : null
+  };
+
   return json(
     {
       won: wonBlock,
+      install: installBlock,
       totalSubmissions: activeSubmissionCount,
       totalCustomers: custRow ? custRow.n : 0,
       byDay,

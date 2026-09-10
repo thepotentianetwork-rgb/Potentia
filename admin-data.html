@@ -74,6 +74,19 @@ section{margin-bottom:56px}
 .tbar:hover{background:var(--sp-blue)}
 .timeline-axis{display:flex;justify-content:space-between;margin-top:8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
 
+.inst-row{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:16px}
+.inst-tile{background:var(--black);padding:18px 20px;position:relative}
+.inst-tile::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
+.inst-installed::before{background:#5fd08a}
+.inst-scheduled::before{background:var(--sp-blue)}
+.inst-unscheduled::before{background:var(--sp-orange)}
+.inst-tile .il{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.18em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+.inst-tile .iv{font-size:26px;color:var(--bright);font-weight:300;line-height:1;font-variant-numeric:tabular-nums}
+.inst-tile .ir{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);margin-top:6px}
+.inst-note{font-size:13px;color:var(--silver);line-height:1.6;border-left:2px solid var(--dim);padding-left:16px}
+.inst-note strong{color:var(--bright);font-weight:400}
+@media (max-width:760px){ .inst-row{grid-template-columns:1fr} }
+
 /* won projects */
 .won-row{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:22px}
 .won-tile{background:var(--black);padding:20px 22px}
@@ -145,6 +158,17 @@ section{margin-bottom:56px}
         <div><h3>What wins</h3><div id="w-bar-won"></div></div>
         <div><h3>What loses</h3><div id="w-bar-lost"></div></div>
       </div>
+    </section>
+
+    <section>
+      <p class="sec-label">Delivery</p>
+      <h2 style="font-size:20px;margin-bottom:16px">Pending &amp; Installed</h2>
+      <div class="inst-row">
+        <div class="inst-tile inst-unscheduled"><div class="il">Awaiting a Date</div><div class="iv" id="i-unsched">—</div><div class="ir" id="i-unsched-rev">—</div></div>
+        <div class="inst-tile inst-scheduled"><div class="il">Scheduled</div><div class="iv" id="i-sched">—</div><div class="ir" id="i-sched-rev">—</div></div>
+        <div class="inst-tile inst-installed"><div class="il">Installed</div><div class="iv" id="i-done">—</div><div class="ir" id="i-done-rev">—</div></div>
+      </div>
+      <p class="inst-note" id="i-note"></p>
     </section>
 
     <section>
@@ -333,6 +357,42 @@ function renderBars(hostId, counts, labelMap) {
 }
 
 // ---- won projects ----
+// ---- install state ----
+// Read from the install log rather than a status field. A won job with a shed
+// install dated today or earlier is installed; one with a future date is
+// scheduled; one with no date at all is waiting to be booked in.
+function renderInstall(inst) {
+  if (!inst) return;
+  function fill(idPrefix, block) {
+    document.getElementById(idPrefix).textContent = block.count;
+    document.getElementById(idPrefix + '-rev').textContent = money(block.revenue);
+  }
+  fill('i-unsched', inst.unscheduled);
+  fill('i-sched', inst.scheduled);
+  fill('i-done', inst.installed);
+
+  var bits = [];
+  if (inst.pendingCount) {
+    bits.push('<strong>' + money(inst.pendingRevenue) + '</strong> of won work is not in the ground yet, across '
+      + inst.pendingCount + ' job' + (inst.pendingCount === 1 ? '' : 's') + '.');
+  } else if (inst.installed.count) {
+    bits.push('Everything won has been installed.');
+  }
+  if (inst.nextInstall) {
+    bits.push('Next install: <strong>'
+      + new Date(inst.nextInstall + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
+      + '</strong>.');
+  }
+  if (inst.unscheduled.count) {
+    bits.push('<strong>' + inst.unscheduled.count + '</strong> won job'
+      + (inst.unscheduled.count === 1 ? ' has' : 's have') + ' no install date yet — those are the ones to book in.');
+  }
+  // Says where the number comes from, so a job that looks misfiled can be
+  // traced to a missing install date rather than a mystery.
+  bits.push('<span style="color:var(--dim)">Counted from the shed install date logged on each order, not a separate status.</span>');
+  document.getElementById('i-note').innerHTML = bits.join('<br>');
+}
+
 function renderWon(w) {
   if (!w) return;
   document.getElementById('w-count').textContent = w.count;
@@ -482,6 +542,7 @@ authFetch('/admin/analytics').then(function (r) {
   document.getElementById('st-median').textContent = money(d.medianPrice);
 
   renderWon(d.won);
+  renderInstall(d.install);
   renderFunnel(d.statusCounts);
   renderTimeline(d.byDay);
   renderMap(d.points);
