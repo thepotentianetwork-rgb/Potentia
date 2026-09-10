@@ -44,6 +44,16 @@ section{margin-bottom:56px}
 #hotmap{height:440px;width:100%;background:#0a0a10}
 .map-empty{padding:60px 24px;text-align:center;font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
 .leaflet-container{background:#0a0a10 !important}
+/* CARTO's dark basemap started stamping "API KEY REQUIRED" across every tile —
+   still HTTP 200, still a valid PNG, with the message painted into the image,
+   which is why nothing detected it as an error. OpenStreetMap's standard tiles
+   need no key, but they're light, so they're inverted here to match the rest of
+   the dashboard.
+   Scoped to the TILE pane deliberately: the heat layer and the dots live in the
+   overlay and marker panes, and inverting those would turn the hot areas cold
+   and the blue markers orange. */
+.leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(0.86) contrast(0.95) saturate(0.35)}
+.map-warn{padding:12px 16px;font-family:'DM Mono',monospace;font-size:11px;color:var(--sp-orange);border:1px solid rgba(246,148,31,0.4);background:rgba(246,148,31,0.08);margin-bottom:12px;display:none}
 
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:32px}
 @media (max-width:900px){.two-col{grid-template-columns:1fr}.stat-row{grid-template-columns:repeat(2,1fr)}}
@@ -171,6 +181,7 @@ section{margin-bottom:56px}
       </div>
       <div class="map-wrap">
         <div id="hotmap"></div>
+        <div id="map-warn" class="map-warn"></div>
         <div id="map-empty" class="map-empty" style="display:none">No location data yet — this fills in as new submissions come in.</div>
       </div>
       <p style="font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:8px;line-height:1.6">
@@ -417,10 +428,27 @@ function renderMap(points) {
     return;
   }
   var map = L.map('hotmap', { scrollWheelZoom: false }).setView([39.3, -111.7], 6);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '&copy; OpenStreetMap &copy; CARTO',
-    maxZoom: 18
-  }).addTo(map);
+  var tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19
+  });
+
+  // A tile provider can fail without failing: CARTO served a perfectly valid
+  // PNG with "API KEY REQUIRED" painted across it, so every status check passed
+  // while the map was unusable. This can't catch that case, but it does catch
+  // an outright refusal, so the next provider change says something instead of
+  // quietly degrading into a blank grid.
+  var warned = false;
+  tiles.on('tileerror', function () {
+    if (warned) return;
+    warned = true;
+    var warn = document.getElementById('map-warn');
+    if (warn) {
+      warn.textContent = 'Map tiles failed to load — the basemap provider may have changed its terms. The dots below are still accurate.';
+      warn.style.display = 'block';
+    }
+  });
+  tiles.addTo(map);
 
   var heatPoints = points.map(function (p) { return [p.lat, p.lng, 0.6]; });
   L.heatLayer(heatPoints, { radius: 28, blur: 22, maxZoom: 10, minOpacity: 0.35 }).addTo(map);
