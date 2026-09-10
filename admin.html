@@ -266,18 +266,17 @@ function renderActivityCell(td, c) {
   td.appendChild(ago);
 
   // Your side of it, stated plainly rather than dressed up as the customer's
-  // interest. "Cold, chased yesterday" and "cold, never called" are the same
-  // temperature and completely different situations.
+  // interest. Only shown when there IS contact: an absence of logged calls
+  // usually means nobody wrote one down, not that nobody rang — so flagging
+  // every such row in orange was accusing the record-keeping, not surfacing a
+  // neglected lead.
   var contact = lastContactMs(c);
-  var reach = document.createElement('span');
-  reach.className = 'act-ago';
   if (contact) {
+    var reach = document.createElement('span');
+    reach.className = 'act-ago';
     reach.textContent = 'contacted ' + agoLabel(daysSince(contact));
-  } else {
-    reach.textContent = 'no contact logged';
-    reach.style.color = 'var(--sp-orange)';
+    td.appendChild(reach);
   }
-  td.appendChild(reach);
 
   if (OPEN_STATUSES.indexOf(c.latest_status || 'new') === -1) return;
   var t = resolveTemperature(c, days);
