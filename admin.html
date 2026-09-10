@@ -82,6 +82,11 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
 .name-cell{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .new-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--sp-orange);background:rgba(246,148,31,0.14);border:1px solid rgba(246,148,31,0.45);padding:3px 9px;border-radius:20px;text-transform:uppercase;animation:new-pulse 2s ease-in-out infinite}
 .new-badge::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--sp-orange)}
+/* Consult = they asked to talk before finishing a design. Blue rather than
+   the orange New Lead pill so the two read as different things at a glance,
+   and no pulse — both animating at once turns the row into a light show. */
+.consult-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:#5aa9e6;background:rgba(90,169,230,0.14);border:1px solid rgba(90,169,230,0.45);padding:3px 9px;border-radius:20px;text-transform:uppercase}
+.consult-badge::before{content:'';width:5px;height:5px;border-radius:50%;background:#5aa9e6}
 @keyframes new-pulse{
   0%,100%{box-shadow:0 0 0 0 rgba(246,148,31,0.4)}
   50%{box-shadow:0 0 0 5px rgba(246,148,31,0)}
@@ -326,6 +331,12 @@ function renderCustomers(list) {
       badge.textContent = 'New Lead';
       nameWrap.appendChild(badge);
     }
+    if (c.latest_is_consult) {
+      var cb = document.createElement('span');
+      cb.className = 'consult-badge';
+      cb.textContent = 'Wants a call';
+      nameWrap.appendChild(cb);
+    }
     tdName.appendChild(nameWrap);
 
     var tdEmail = document.createElement('td');
@@ -339,7 +350,14 @@ function renderCustomers(list) {
     var tdQuote = document.createElement('td');
     tdQuote.setAttribute('data-label', 'Latest Quote');
     if (c.latest_quoted_price != null) {
-      tdQuote.textContent = '$' + Number(c.latest_quoted_price).toLocaleString();
+      // Math.round, because the pricing engine returns full floating-point
+      // dollars: an $8,944.147 in this column is a rendering bug, not a price.
+      tdQuote.textContent = '$' + Math.round(c.latest_quoted_price).toLocaleString();
+    } else if (c.latest_consult_estimate != null) {
+      // Dimmed and suffixed — this is where their unfinished design stood when
+      // they asked to talk, not a price anyone has been given.
+      tdQuote.textContent = '$' + Math.round(c.latest_consult_estimate).toLocaleString() + ' so far';
+      tdQuote.style.color = 'var(--dim)';
     } else {
       tdQuote.textContent = '—';
     }

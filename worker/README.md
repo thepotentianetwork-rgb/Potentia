@@ -10,6 +10,11 @@ One Cloudflare Worker (`potentia-assistant`) serves three things:
    Co. website will eventually call to read live pricing and send in
    customer design submissions (not wired up on their end yet — see the
    bottom of this doc for what to hand them).
+4. **`/shed/consult`** — public. The designer's "talk to a designer"
+   call-back request. Unlike `/shed/submit` it requires a phone number
+   rather than an email, does not supersede the customer's existing new
+   submissions, and is not geocoded. It stores a submission flagged
+   `consult: true`, which the admin list renders as a "Wants a call" badge.
 
 Current deployed URL: `https://potentia-assistant.thepotentianetwork.workers.dev`
 

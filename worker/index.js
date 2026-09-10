@@ -4,6 +4,7 @@
 //                         partner: view submissions, edit pricing
 //     /shed/pricing     — public: current pricing (for their site to read)
 //     /shed/submit      — public: customer design submissions land here
+//     /shed/consult     — public: "talk to a designer" call-back requests
 //  3. /crm/*            — Potentia's own client CRM (web-design clients:
 //                         pipeline, retainers, edit requests). Its own
 //                         password and its own session scope — the shed
@@ -228,8 +229,17 @@ async function findOrCreateCustomer(env, { name, email, phone, address, city, st
     existing = await env.DB.prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1").bind(phone).first();
   }
   if (existing) {
+    // COALESCE(NULLIF(?, ''), col) — a blank field in this submission must not
+    // erase what we already know. Every column here used to be overwritten
+    // unconditionally, so a customer who left the address off their second
+    // design lost the address from their first, and a consult request (phone
+    // required, email optional) that matched an existing customer by phone
+    // would blank out their email. Absent stays absent; present always wins.
     await env.DB.prepare(
-      "UPDATE customers SET name = ?, email = ?, phone = ?, address = ?, city = ?, state = ?, zip = ?, updated_at = ? WHERE id = ?"
+      "UPDATE customers SET name = COALESCE(NULLIF(?, ''), name), email = COALESCE(NULLIF(?, ''), email), " +
+        "phone = COALESCE(NULLIF(?, ''), phone), address = COALESCE(NULLIF(?, ''), address), " +
+        "city = COALESCE(NULLIF(?, ''), city), state = COALESCE(NULLIF(?, ''), state), " +
+        "zip = COALESCE(NULLIF(?, ''), zip), updated_at = ? WHERE id = ?"
     )
       .bind(name || null, email || null, phone || null, address || null, city || null, state || null, zip || null, now, existing.id)
       .run();
@@ -330,12 +340,28 @@ async function handleListCustomers(request, env, origin) {
 
   const customers = results.map((c) => {
     let quotedPrice = null;
+    let isConsult = false;
+    let consultEstimate = null;
     try {
       const d = JSON.parse(c.latest_details);
       if (d && d.quotedPrice != null) quotedPrice = d.quotedPrice;
+      // A consult request is a lead with no finished design behind it, so it
+      // carries an estimate of what they had going, never a quotedPrice. The
+      // two stay in separate fields on purpose: the list must not show a
+      // half-finished number in the same column, and with the same weight, as
+      // a price someone was actually quoted.
+      if (d && d.consult === true) {
+        isConsult = true;
+        if (d.estimateAtRequest != null) consultEstimate = d.estimateAtRequest;
+      }
     } catch (e) {}
     const { latest_details, ...rest } = c;
-    return { ...rest, latest_quoted_price: quotedPrice };
+    return {
+      ...rest,
+      latest_quoted_price: quotedPrice,
+      latest_is_consult: isConsult,
+      latest_consult_estimate: consultEstimate
+    };
   });
 
   return json({ customers }, 200, origin);
@@ -1261,6 +1287,88 @@ async function handleShedSubmit(request, env, origin) {
     .run();
 
   await env.DB.prepare("INSERT INTO submissions (customer_id, name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?,?)")
+    .bind(customerId, name, email, phone, details, "new", new Date().toISOString())
+    .run();
+  return json({ ok: true }, 200, origin);
+}
+
+// ---- /shed/consult (public): "talk to a designer" from inside the designer ----
+// A consult is a lead that arrives BEFORE a finished design, which makes it
+// the opposite of /shed/submit in three ways worth stating, because each one
+// is a deliberate difference and not an oversight:
+//
+//   1. Phone is required and email is not. Someone asking for a call back is
+//      giving you the channel they want to be reached on; demanding an email
+//      on top of it is friction in exchange for a field you may never use.
+//   2. It does NOT supersede the customer's existing "new" submissions.
+//      /shed/submit does that because a fresh design replaces an older one.
+//      A request to talk replaces nothing — if they already sent a quote
+//      request, that lead is still live and must stay in the New count.
+//   3. No geocoding. The form asks for a name, a number and a good time; there
+//      is no address to place on the map, and inventing one from the
+//      connection's IP would put a false dot on the hotspot map.
+//
+// The design they had going when they asked is stored alongside, so the
+// call-back starts from what they were looking at rather than from nothing.
+async function handleShedConsult(request, env, origin) {
+  const body = await request.json().catch(() => ({}));
+  const contact = body.contact || {};
+  const name = String(contact.name || body.name || "").trim().slice(0, 200);
+  const phone = String(contact.phone || body.phone || "").trim().slice(0, 60);
+  const email = String(contact.email || body.email || "").trim().slice(0, 200);
+  if (!name) return json({ error: "name required" }, 400, origin);
+  if (phone.replace(/\D/g, "").length < 10) return json({ error: "a 10-digit phone number is required" }, 400, origin);
+
+  // Price what they had so far, purely as context for the call — same
+  // server-side engine as a real quote, so the number the admin sees is the
+  // number the designer was showing them.
+  //
+  // Only if they actually got somewhere. The pricing engine never throws: hand
+  // it a garbage config, an empty object, or the untouched defaults and it
+  // quietly prices a default 8x12 at about $5,000. So someone who stalled on
+  // step 1 and accepted the offer of a call — having chosen nothing at all —
+  // would show up in the admin list as "$5,034 so far", which reads as a build
+  // in progress and is worse than showing nothing. stepIndex > 0 is the honest
+  // signal: they moved through at least one step, so the config holds choices
+  // they actually made.
+  const engaged = Number.isFinite(body.stepIndex) && body.stepIndex > 0;
+  let estimate = null;
+  if (engaged && body.config) {
+    try {
+      const { result } = await computeQuoteResult(body.config, undefined, env);
+      estimate = result.customer;
+    } catch (e) {
+      /* partial design — the lead matters, the estimate doesn't */
+    }
+  }
+
+  const details = JSON.stringify({
+    consult: true,
+    bestTime: String(body.bestTime || "").slice(0, 120) || null,
+    question: String(body.question || "").slice(0, 2000) || null,
+    // Where they were when they asked — "stalled on step 1" and "got to
+    // Review and hesitated" are very different sales calls.
+    step: String(body.step || "").slice(0, 80) || null,
+    stepIndex: Number.isFinite(body.stepIndex) ? body.stepIndex : null,
+    trigger: body.trigger === "nudge" ? "nudge" : "button",
+    // Same reason as the estimate above: the default config from an untouched
+    // step 1 is not "their design", and summarising it in the admin as an
+    // 8x12 gable would invent a preference they never expressed.
+    config: (engaged && body.config) || null,
+    permalink: body.permalink || null,
+    estimateAtRequest: estimate,
+    page: body.page || null
+  }).slice(0, 20000);
+
+  const customerId = await findOrCreateCustomer(env, { name, email, phone });
+
+  // submissions.email is NOT NULL (every quote submission has always carried
+  // one), so an email-less consult stores "" rather than null. The customers
+  // row takes null happily, and findOrCreateCustomer's COALESCE keeps any
+  // address we already had on file for them.
+  await env.DB.prepare(
+    "INSERT INTO submissions (customer_id, name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?,?)"
+  )
     .bind(customerId, name, email, phone, details, "new", new Date().toISOString())
     .run();
   return json({ ok: true }, 200, origin);
@@ -2696,6 +2804,9 @@ export default {
       }
       if (path === "/shed/submit" && request.method === "POST") {
         return await handleShedSubmit(request, env, origin);
+      }
+      if (path === "/shed/consult" && request.method === "POST") {
+        return await handleShedConsult(request, env, origin);
       }
       if (path === "/shed/pricing-config" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
