@@ -1649,8 +1649,9 @@ async function handleGetCustomer(request, env, origin, id) {
   const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(id).first();
   if (!customer) return json({ error: "Not found" }, 404, origin);
 
+  await ensureSubmissionAdjustColumns(env);
   const { results: submissions } = await env.DB.prepare(
-    "SELECT id, details, status, created_at FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
+    "SELECT id, details, status, created_at, price_adjustment, adjustment_note FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
     .all();
@@ -1838,6 +1839,7 @@ async function handleDeleteInstall(request, env, origin, id) {
 
 // ---- /admin/submissions/:id: single order, for the quote document ----
 async function handleGetSubmission(request, env, origin, id) {
+  await ensureSubmissionAdjustColumns(env);
   const submission = await env.DB.prepare("SELECT * FROM submissions WHERE id = ?").bind(id).first();
   if (!submission) return json({ error: "Not found" }, 404, origin);
   const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(submission.customer_id).first();
@@ -2001,6 +2003,68 @@ async function ensureSubmissionWonColumn(env) {
     await env.DB.prepare("ALTER TABLE submissions ADD COLUMN won_at TEXT").run();
   }
   submissionWonColumnReady = true;
+}
+
+
+// ---- per-quote price adjustment ----
+// A discount or surcharge agreed with ONE customer, stored against their
+// submission so it changes that quote and nothing else. Deliberately kept as
+// its own field rather than edited into quotedPrice: the original quote stays
+// readable, so "we quoted 23,839 and took 1,000 off" survives as a fact instead
+// of becoming an unexplained 22,839.
+//
+// Signed, so the same field covers a discount (negative) and a surcharge
+// (positive) — a delivery a long way out, an awkward site.
+//
+// ALTER TABLE at runtime, since submissions is live.
+let submissionAdjustColumnsReady = false;
+async function ensureSubmissionAdjustColumns(env) {
+  if (submissionAdjustColumnsReady) return;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  const have = (results || []).map((r) => r.name);
+  if (have.indexOf("price_adjustment") === -1) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN price_adjustment REAL").run();
+  }
+  if (have.indexOf("adjustment_note") === -1) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN adjustment_note TEXT").run();
+  }
+  submissionAdjustColumnsReady = true;
+}
+
+// POST /admin/submissions/:id/adjustment — { amount, note }
+// amount null or 0 clears it.
+async function handleSetAdjustment(request, env, origin, id) {
+  await ensureSubmissionAdjustColumns(env);
+  const row = await env.DB.prepare("SELECT id, details FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+
+  const body = await request.json().catch(() => ({}));
+  let amount = null;
+  if (body.amount !== null && body.amount !== undefined && body.amount !== "") {
+    const n = Number(body.amount);
+    if (!Number.isFinite(n)) return json({ error: "amount must be a number" }, 400, origin);
+    amount = Math.round(n * 100) / 100;
+  }
+
+  // A discount can't exceed the quote — that would produce a negative total and
+  // a quote document nobody could act on. Caught here rather than in the browser
+  // so it holds however the endpoint is called.
+  if (amount !== null && amount < 0) {
+    let quoted = null;
+    try {
+      const d = JSON.parse(row.details);
+      if (d && d.quotedPrice != null) quoted = Number(d.quotedPrice);
+    } catch (e) {}
+    if (quoted != null && Number.isFinite(quoted) && amount + quoted < 0) {
+      return json({ error: "Discount is larger than the quote" }, 400, origin);
+    }
+  }
+
+  const note = amount === null ? null : String(body.note || "").trim().slice(0, 200) || null;
+  await env.DB.prepare("UPDATE submissions SET price_adjustment = ?, adjustment_note = ? WHERE id = ?")
+    .bind(amount, note, id)
+    .run();
+  return json({ ok: true, amount: amount, note: note }, 200, origin);
 }
 
 async function handleUpdateSubmissionStatus(request, env, origin) {
@@ -2251,8 +2315,9 @@ async function handleShedSubmit(request, env, origin) {
 // ---- /admin/analytics: aggregated stats + geo points for the data dashboard ----
 async function handleAnalytics(request, env, origin) {
   await ensureSubmissionWonColumn(env);
+  await ensureSubmissionAdjustColumns(env);
   const { results } = await env.DB.prepare(
-    "SELECT id, customer_id, details, status, created_at, won_at FROM submissions ORDER BY created_at DESC LIMIT 3000"
+    "SELECT id, customer_id, details, status, created_at, won_at, price_adjustment FROM submissions ORDER BY created_at DESC LIMIT 3000"
   ).all();
 
   // ---- won jobs ----
@@ -2260,6 +2325,9 @@ async function handleAnalytics(request, env, origin) {
   // quoted price of jobs marked won; cost is that job's own redline
   // trueTotalCost, which the pricing engine computed at submission — so the
   // margin is the real one, not a percentage assumption.
+  // Discounts given, tracked separately so the effect on takings is visible
+  // rather than just quietly absent from the revenue line.
+  const adjustments = { total: 0, count: 0, wonTotal: 0, wonCount: 0 };
   const won = {
     count: 0, revenue: 0, cost: 0, costKnown: 0,
     byMonth: {}, byStyle: {}, bySize: {}, values: [],
@@ -2298,8 +2366,22 @@ async function handleAnalytics(request, env, origin) {
         const key = d.heardAbout === "other" && d.heardAboutOther ? "other: " + d.heardAboutOther : d.heardAbout;
         heardCounts[key] = (heardCounts[key] || 0) + 1;
       }
-      const price = d.quotedPrice != null ? Number(d.quotedPrice) : null;
+      // Every figure below uses the price actually agreed — the quote plus any
+      // adjustment made for this customer. Reporting won revenue at the
+      // pre-discount number would overstate the takings, and worse, overstate
+      // the margin: a discount comes straight out of profit, since the build
+      // costs the same either way.
+      const rawPrice = d.quotedPrice != null ? Number(d.quotedPrice) : null;
+      const adjust = row.price_adjustment != null ? Number(row.price_adjustment) : 0;
+      const price = rawPrice != null && isFinite(rawPrice)
+        ? rawPrice + (isFinite(adjust) ? adjust : 0)
+        : null;
       if (price != null && isFinite(price)) prices.push(price);
+      if (adjust && isFinite(adjust)) {
+        adjustments.total += adjust;
+        adjustments.count++;
+        if (status === "won") { adjustments.wonTotal += adjust; adjustments.wonCount++; }
+      }
 
       if (status === "won") {
         won.count++;
@@ -2396,7 +2478,11 @@ async function handleAnalytics(request, env, origin) {
     dated: won.dated,
     undated: won.undated,
     medianDaysToWin: won.daysToWin.length ? won.daysToWin[Math.floor(won.daysToWin.length / 2)] : null,
-    collectedAllTime: Math.round(paidRow ? paidRow.total : 0)
+    collectedAllTime: Math.round(paidRow ? paidRow.total : 0),
+    // Negative for discounts given. Shown so a thin margin can be traced to
+    // what was given away rather than looking like a pricing problem.
+    adjustedWonTotal: Math.round(adjustments.wonTotal),
+    adjustedWonCount: adjustments.wonCount
   };
 
   return json(
@@ -3444,6 +3530,12 @@ export default {
         return await handleDeleteCustomer(request, env, origin, id);
       }
 
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/adjustment") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/adjustment".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleSetAdjustment(request, env, origin, id);
+      }
       if (path === "/admin/submissions/status" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleUpdateSubmissionStatus(request, env, origin);
