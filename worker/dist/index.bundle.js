@@ -1982,12 +1982,49 @@ async function handleBackfillQuoteRedline(request, env, origin) {
   );
 }
 
+
+// ---- won_at: when a job was actually won ----
+// Status changes were never timestamped, so "how long from quote to won" and
+// "wins per month" had nothing to read. This starts recording it. Rows already
+// marked won before this shipped stay null — there is no way to recover a date
+// that was never written, and guessing one from created_at would put every
+// historical win on the day its quote came in. The analytics endpoint reports
+// those separately rather than quietly folding them in.
+//
+// ALTER TABLE at runtime, since submissions is live and SQLite has no
+// ADD COLUMN IF NOT EXISTS.
+let submissionWonColumnReady = false;
+async function ensureSubmissionWonColumn(env) {
+  if (submissionWonColumnReady) return;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  if ((results || []).every((r) => r.name !== "won_at")) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN won_at TEXT").run();
+  }
+  submissionWonColumnReady = true;
+}
+
 async function handleUpdateSubmissionStatus(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   const id = Number(body.id);
   const status = String(body.status || "").slice(0, 40);
   if (!id || !status) return json({ error: "id and status required" }, 400, origin);
-  await env.DB.prepare("UPDATE submissions SET status = ? WHERE id = ?").bind(status, id).run();
+  await ensureSubmissionWonColumn(env);
+
+  // Stamped on the way in to won, and cleared on the way out — a job marked won
+  // by mistake and moved back shouldn't leave a win date behind for the
+  // analytics to count. Re-marking an already-won job keeps the first date:
+  // that's when it was won, not when someone last clicked the dropdown.
+  if (status === "won") {
+    await env.DB.prepare(
+      "UPDATE submissions SET status = ?, won_at = COALESCE(won_at, ?) WHERE id = ?"
+    )
+      .bind(status, new Date().toISOString(), id)
+      .run();
+  } else {
+    await env.DB.prepare("UPDATE submissions SET status = ?, won_at = NULL WHERE id = ?")
+      .bind(status, id)
+      .run();
+  }
   return json({ ok: true }, 200, origin);
 }
 
@@ -2213,9 +2250,22 @@ async function handleShedSubmit(request, env, origin) {
 
 // ---- /admin/analytics: aggregated stats + geo points for the data dashboard ----
 async function handleAnalytics(request, env, origin) {
+  await ensureSubmissionWonColumn(env);
   const { results } = await env.DB.prepare(
-    "SELECT customer_id, details, status, created_at FROM submissions ORDER BY created_at DESC LIMIT 3000"
+    "SELECT id, customer_id, details, status, created_at, won_at FROM submissions ORDER BY created_at DESC LIMIT 3000"
   ).all();
+
+  // ---- won jobs ----
+  // Everything here is derived from what is genuinely stored. Revenue is the
+  // quoted price of jobs marked won; cost is that job's own redline
+  // trueTotalCost, which the pricing engine computed at submission — so the
+  // margin is the real one, not a percentage assumption.
+  const won = {
+    count: 0, revenue: 0, cost: 0, costKnown: 0,
+    byMonth: {}, byStyle: {}, bySize: {}, values: [],
+    dated: 0, undated: 0, daysToWin: []
+  };
+  const lost = { count: 0, revenue: 0, byStyle: {} };
 
   const byDay = {};
   const statusCounts = {};
@@ -2250,6 +2300,45 @@ async function handleAnalytics(request, env, origin) {
       }
       const price = d.quotedPrice != null ? Number(d.quotedPrice) : null;
       if (price != null && isFinite(price)) prices.push(price);
+
+      if (status === "won") {
+        won.count++;
+        if (price != null && isFinite(price)) {
+          won.revenue += price;
+          won.values.push(price);
+        }
+        // trueTotalCost is this job's own costed build. Counted separately from
+        // the job count so a margin is never reported over a mix of jobs that
+        // had cost data and jobs that didn't.
+        const tc = d.redline && d.redline.trueTotalCost;
+        if (tc != null && isFinite(Number(tc))) {
+          won.cost += Number(tc);
+          won.costKnown++;
+        }
+        if (config.style) won.byStyle[config.style] = (won.byStyle[config.style] || 0) + 1;
+        if (config.w && config.l) {
+          const k = config.w + "x" + config.l;
+          won.bySize[k] = (won.bySize[k] || 0) + 1;
+        }
+        // Grouped by the month it was WON where that's known. Rows won before
+        // won_at existed are counted apart rather than dropped into the month
+        // their quote arrived, which would be a different fact.
+        if (row.won_at) {
+          won.dated++;
+          const m = String(row.won_at).slice(0, 7);
+          won.byMonth[m] = (won.byMonth[m] || 0) + 1;
+          if (row.created_at) {
+            const days = Math.round((new Date(row.won_at) - new Date(row.created_at)) / 86400000);
+            if (isFinite(days) && days >= 0) won.daysToWin.push(days);
+          }
+        } else {
+          won.undated++;
+        }
+      } else if (status === "lost") {
+        lost.count++;
+        if (price != null && isFinite(price)) lost.revenue += price;
+        if (config.style) lost.byStyle[config.style] = (lost.byStyle[config.style] || 0) + 1;
+      }
       if (d.geo && d.geo.lat != null && d.geo.lng != null) {
         points.push({
           lat: d.geo.lat,
@@ -2273,8 +2362,46 @@ async function handleAnalytics(request, env, origin) {
   // headline submission count.
   const activeSubmissionCount = results.filter((row) => row.status !== "superseded").length;
 
+  // Collected across all customers. Deliberately NOT presented as "collected
+  // against won jobs": payments are recorded per customer, not per submission,
+  // so tying a payment to a specific job isn't something the data supports.
+  await ensurePaymentsTable(env);
+  const paidRow = await env.DB.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM payments").first();
+
+  won.values.sort((a, b) => a - b);
+  won.daysToWin.sort((a, b) => a - b);
+  const decided = won.count + lost.count;
+  const wonBlock = {
+    count: won.count,
+    revenue: Math.round(won.revenue),
+    // Only over the jobs whose cost is actually known — see costKnown.
+    cost: Math.round(won.cost),
+    costKnown: won.costKnown,
+    grossProfit: won.costKnown ? Math.round(won.revenue - won.cost) : null,
+    marginPct: won.costKnown && won.revenue > 0
+      ? Math.round(((won.revenue - won.cost) / won.revenue) * 1000) / 10
+      : null,
+    avgValue: won.values.length ? Math.round(won.revenue / won.values.length) : null,
+    medianValue: won.values.length ? won.values[Math.floor(won.values.length / 2)] : null,
+    // Of decided jobs only. Open ones haven't been lost, and counting them
+    // against the rate would make a busy pipeline look like failure.
+    winRatePct: decided ? Math.round((won.count / decided) * 1000) / 10 : null,
+    decided,
+    lostCount: lost.count,
+    lostRevenue: Math.round(lost.revenue),
+    byMonth: won.byMonth,
+    byStyle: won.byStyle,
+    bySize: won.bySize,
+    lostByStyle: lost.byStyle,
+    dated: won.dated,
+    undated: won.undated,
+    medianDaysToWin: won.daysToWin.length ? won.daysToWin[Math.floor(won.daysToWin.length / 2)] : null,
+    collectedAllTime: Math.round(paidRow ? paidRow.total : 0)
+  };
+
   return json(
     {
+      won: wonBlock,
       totalSubmissions: activeSubmissionCount,
       totalCustomers: custRow ? custRow.n : 0,
       byDay,
@@ -3063,6 +3190,102 @@ async function handleCrmDeleteTask(request, env, origin, id) {
 }
 
 
+// ---- GET /crm/analytics — Potentia's own won-clients data ----
+// "Won" for an agency is a signed client, so it maps to the stages where work
+// is actually happening or live. Paused and lost are excluded: a paused client
+// was won once but isn't revenue now, and folding them in would flatter the
+// numbers.
+const CRM_WON_STATUSES = ["building", "live"];
+
+async function handleCrmAnalytics(request, env, origin) {
+  await ensureCrmTables(env);
+  const { results: clients } = await env.CRM_DB.prepare(
+    "SELECT id, status, source, package, build_fee, monthly_fee, launched_at, created_at FROM clients LIMIT 2000"
+  ).all();
+  const { results: payments } = await env.CRM_DB.prepare(
+    "SELECT amount, kind, paid_at FROM client_payments LIMIT 5000"
+  ).all();
+
+  const byStatus = {};
+  const wonBySource = {};
+  const allBySource = {};
+  const wonByPackage = {};
+  const wonByMonth = {};
+  const buildFees = [];
+  let wonCount = 0, wonBuild = 0, mrr = 0, lostCount = 0;
+
+  for (const c of clients) {
+    const status = c.status || "lead";
+    byStatus[status] = (byStatus[status] || 0) + 1;
+    const source = c.source || "unknown";
+    allBySource[source] = (allBySource[source] || 0) + 1;
+    if (status === "lost") lostCount++;
+
+    if (CRM_WON_STATUSES.indexOf(status) !== -1) {
+      wonCount++;
+      wonBySource[source] = (wonBySource[source] || 0) + 1;
+      if (c.package) wonByPackage[c.package] = (wonByPackage[c.package] || 0) + 1;
+      if (c.build_fee != null) { wonBuild += Number(c.build_fee); buildFees.push(Number(c.build_fee)); }
+      if (c.monthly_fee != null) mrr += Number(c.monthly_fee);
+      // Launch date is the closest thing to a "won on" date the CRM records.
+      // Clients still building have none yet, so they are counted but not
+      // placed on the timeline rather than being dated by their signup.
+      if (c.launched_at) {
+        const m = String(c.launched_at).slice(0, 7);
+        wonByMonth[m] = (wonByMonth[m] || 0) + 1;
+      }
+    }
+  }
+
+  let collected = 0, collectedBuild = 0, collectedMonthly = 0;
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  let collected30 = 0;
+  for (const p of payments) {
+    const amt = Number(p.amount || 0);
+    collected += amt;
+    if (p.kind === "monthly") collectedMonthly += amt;
+    if (p.kind === "build") collectedBuild += amt;
+    if (String(p.paid_at || "") >= cutoff) collected30 += amt;
+  }
+
+  buildFees.sort((a, b) => a - b);
+  const decided = wonCount + lostCount;
+
+  return json(
+    {
+      totalClients: clients.length,
+      byStatus,
+      won: {
+        count: wonCount,
+        buildRevenue: Math.round(wonBuild),
+        mrr: Math.round(mrr),
+        // What the retainers are worth over a year, alongside the one-time
+        // build work. The two are different kinds of money and are kept apart.
+        annualisedRecurring: Math.round(mrr * 12),
+        avgBuildFee: buildFees.length ? Math.round(wonBuild / buildFees.length) : null,
+        medianBuildFee: buildFees.length ? buildFees[Math.floor(buildFees.length / 2)] : null,
+        winRatePct: decided ? Math.round((wonCount / decided) * 1000) / 10 : null,
+        decided,
+        lostCount,
+        bySource: wonBySource,
+        allBySource,
+        byPackage: wonByPackage,
+        byMonth: wonByMonth,
+        // Build fee agreed vs build money actually in the bank.
+        buildOutstanding: Math.round(Math.max(0, wonBuild - collectedBuild))
+      },
+      collected: {
+        allTime: Math.round(collected),
+        build: Math.round(collectedBuild),
+        monthly: Math.round(collectedMonthly),
+        last30: Math.round(collected30)
+      }
+    },
+    200,
+    origin
+  );
+}
+
 // ---- client call log ----
 // Same shape as the shed side's calls table, logged by hand for the same
 // reason: what was said and what happens next is the part worth keeping, and
@@ -3276,6 +3499,10 @@ export default {
       }
       if (path === "/crm/lead" && request.method === "POST") {
         return await handleCrmLead(request, env, origin);
+      }
+      if (path === "/crm/analytics" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleCrmAnalytics(request, env, origin);
       }
       if (path === "/crm/clients" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
