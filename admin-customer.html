@@ -268,7 +268,11 @@ function toE164(phone) {
 function gvIconLink(href, title, pathD) {
   var a = document.createElement('a');
   a.href = href;
-  a.target = '_blank';
+  // No target="_blank" on purpose. These are iOS Universal Links / Android App
+  // Links, and opening them in a new tab stops the OS handing them to the
+  // Google Voice app — you get the web version instead. Navigating the current
+  // tab lets the app claim the link; if the app isn't installed the browser
+  // just loads voice.google.com as before.
   a.rel = 'noopener';
   a.title = title;
   a.setAttribute('aria-label', title);
