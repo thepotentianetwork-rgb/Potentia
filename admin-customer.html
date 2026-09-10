@@ -864,9 +864,52 @@ function renderOrders(submissions, installs) {
     date.textContent = new Date(s.created_at).toLocaleString();
     var price = document.createElement('div');
     price.className = 'order-price';
-    price.textContent = details.quotedPrice != null ? '$' + Number(details.quotedPrice).toLocaleString() : '—';
+    if (details.quotedPrice != null) {
+      // Rounded for the same reason as the customers list: the engine hands
+      // back floating-point dollars and the raw value renders as $8,944.147.
+      price.textContent = '$' + Math.round(details.quotedPrice).toLocaleString();
+    } else if (details.consult && details.estimateAtRequest != null) {
+      // Where the unfinished design stood when they asked to talk. Dimmed and
+      // suffixed so it never reads as a price this customer was given.
+      price.textContent = '$' + Math.round(details.estimateAtRequest).toLocaleString() + ' so far';
+      price.style.color = 'var(--dim)';
+    } else {
+      price.textContent = '—';
+    }
     top.appendChild(date);
     top.appendChild(price);
+
+    // A consult request is the one card where the most useful information is
+    // not the design — it is when to call and what they asked. Put that above
+    // the config summary, because that is the order you need it in on a call.
+    var consultBox = null;
+    if (details.consult) {
+      consultBox = document.createElement('div');
+      consultBox.style.cssText = 'margin:10px 0 4px;padding:10px 12px;border:1px solid rgba(90,169,230,0.35);background:rgba(90,169,230,0.08);border-radius:8px';
+      var ctitle = document.createElement('div');
+      ctitle.style.cssText = "font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:#5aa9e6;margin-bottom:6px";
+      ctitle.textContent = 'Requested a call back';
+      consultBox.appendChild(ctitle);
+      var lines = [];
+      if (details.bestTime) lines.push('Best time: ' + details.bestTime);
+      if (details.step) {
+        // "stalled on step 1" and "hesitated at Review" are different calls.
+        lines.push('Was on: ' + details.step +
+          (details.trigger === 'nudge' ? ' (stalled, we offered)' : ''));
+      }
+      lines.forEach(function (t) {
+        var l = document.createElement('div');
+        l.style.cssText = 'font-size:12px;color:var(--fg);margin-bottom:2px';
+        l.textContent = t;
+        consultBox.appendChild(l);
+      });
+      if (details.question) {
+        var q = document.createElement('div');
+        q.style.cssText = 'font-size:12px;color:var(--fg);margin-top:6px;white-space:pre-wrap';
+        q.textContent = '\u201c' + details.question + '\u201d';
+        consultBox.appendChild(q);
+      }
+    }
 
     var summary = document.createElement('div');
     summary.className = 'order-summary';
@@ -943,6 +986,7 @@ function renderOrders(submissions, installs) {
     actions.appendChild(quoteLink);
 
     card.appendChild(top);
+    if (consultBox) card.appendChild(consultBox);
     card.appendChild(summary);
     if (details.heardAbout) card.appendChild(heard);
     card.appendChild(actions);
