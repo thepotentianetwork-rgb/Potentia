@@ -64,6 +64,12 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 .temp-warm{color:var(--sp-orange);border-color:rgba(246,148,31,0.4);background:rgba(246,148,31,0.1)}
 .temp-cold{color:var(--sp-blue);border-color:rgba(44,192,253,0.35);background:rgba(44,192,253,0.08)}
 .temp-dormant{color:var(--silver);border-color:var(--dim);background:none}
+/* A revisit date that has arrived outranks everything — it's the one state
+   that means "act today". */
+.temp-due{color:#5fd08a;border-color:rgba(95,208,138,0.5);background:rgba(95,208,138,0.14)}
+/* Dashed edge = held by hand rather than computed from activity. */
+.temp.pinned{border-style:dashed}
+.revisit{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:5px}
 
 .note-cell{font-size:13px;color:var(--silver);max-width:220px}
 .note-cell .note-time{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:2px}
@@ -206,6 +212,31 @@ function agoLabel(days) {
 // need chasing, and a superseded design isn't the live one.
 var OPEN_STATUSES = ['new', 'contacted', 'quoted'];
 
+function todayISO() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Precedence, strongest first:
+//   1. a revisit date that has arrived — the whole reason for setting one
+//   2. a temperature pinned by hand — the customer told you their timeline,
+//      which beats anything inferred from how long ago you spoke
+//   3. computed from last activity
+function resolveTemperature(c, days) {
+  if (c.follow_up_at && c.follow_up_at <= todayISO()) {
+    return { cls: 'temp-due', label: 'Follow up due', pinned: true,
+             why: 'Revisit date was ' + c.follow_up_at };
+  }
+  if (c.temp_override) {
+    return { cls: 'temp-' + c.temp_override, pinned: true,
+             label: c.temp_override.charAt(0).toUpperCase() + c.temp_override.slice(1),
+             why: 'Set by hand — not from activity' };
+  }
+  var t = temperatureFor(days);
+  t.why = 'Last touch ' + agoLabel(days) + ' — counts notes as well as the quote';
+  return t;
+}
+
 function renderActivityCell(td, c) {
   var touch = lastTouchMs(c);
   if (!touch) { td.textContent = '—'; return; }
@@ -222,12 +253,22 @@ function renderActivityCell(td, c) {
   td.appendChild(ago);
 
   if (OPEN_STATUSES.indexOf(c.latest_status || 'new') === -1) return;
-  var t = temperatureFor(days);
+  var t = resolveTemperature(c, days);
   var pill = document.createElement('span');
-  pill.className = 'temp ' + t.cls;
+  pill.className = 'temp ' + t.cls + (t.pinned ? ' pinned' : '');
   pill.textContent = t.label;
-  pill.title = 'Last touch ' + agoLabel(days) + ' — counts notes as well as the quote';
+  pill.title = t.why;
   td.appendChild(pill);
+
+  // A revisit still in the future is worth showing — it's the answer to "why
+  // is this one cold?" without opening the customer.
+  if (c.follow_up_at && c.follow_up_at > todayISO()) {
+    var rv = document.createElement('span');
+    rv.className = 'revisit';
+    rv.textContent = 'revisit ' + new Date(c.follow_up_at + 'T00:00:00')
+      .toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    td.appendChild(rv);
+  }
 }
 
 function renderCustomers(list) {
