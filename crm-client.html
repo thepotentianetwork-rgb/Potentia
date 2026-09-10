@@ -301,18 +301,14 @@ el('f-phone').addEventListener('input', renderPhoneActions);
 // here to disambiguate between Google accounts; it trades the app for the
 // browser. The app opens whichever account it is signed into.
 //
-// TEXT — keeps the index, because this one can never reach the app anyway.
-// Tested bare, with no parameters at all: voice.google.com/calls opens the app
-// and voice.google.com/messages opens Safari. Same domain, same form, only the
-// path differs — the app registers /calls and does not register /messages, so
-// no parameter shape will change it, and googlevoice:// schemes do nothing
-// either. Given it is web-only regardless, the index costs no app handoff and
-// pins which Google account opens when several are signed in.
-//
-// The thread id (the t. prefix) still lands on that person's conversation
-// rather than the message list — in the browser rather than the app.
+// TEXT — opens the app, and deliberately carries NO number. See the long note
+// in admin-customer.html for the testing behind this: the app registers /calls
+// and ignores /messages, so no link lands on a specific thread in the app. The
+// number is left off because /calls WITH a number opens the dialer on it, and a
+// Text button that can place a call is a trap. The number goes to the clipboard
+// instead.
 var GV_CALL_URL = 'https://voice.google.com/calls?a=nc,';
-var GV_TEXT_URL = 'https://voice.google.com/u/0/messages?itemId=t.';
+var GV_TEXT_URL = 'https://voice.google.com/calls';
 
 // Google Voice wants E.164 (+15551234567). Assumes US/Canada — a 10-digit
 // number gets +1, an 11-digit starting with 1 gets a plus, anything longer is
@@ -334,18 +330,32 @@ function renderPhoneActions() {
   box.innerHTML = '';
   var e164 = toE164(el('f-phone').value);
   if (!e164) return;
-  // Fourth field is "open in a new tab", and it differs per link for the same
-  // reason the URLs do. Call must navigate the current tab or iOS won't hand it
-  // to the app; Text can never reach the app, so a new tab costs nothing and
-  // keeps this client's record open behind it.
-  [['Call', GV_CALL_URL, '<path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>', false],
-   ['Text', GV_TEXT_URL, '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', true]
+  // Fourth field says whether the link carries the number. Call does — it opens
+  // the app on that number. Text does not, because the same path with a number
+  // opens the DIALER, and a Text button that can place a call is a trap; the
+  // number is copied to the clipboard instead.
+  [['Call', GV_CALL_URL, '<path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>', true],
+   ['Text', GV_TEXT_URL, '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>', false]
   ].forEach(function (spec) {
     var a = document.createElement('a');
-    a.href = spec[1] + encodeURIComponent(e164);
-    if (spec[3]) a.target = '_blank';
+    a.href = spec[3] ? spec[1] + encodeURIComponent(e164) : spec[1];
+    // Current tab on both: a new tab is what stops iOS handing the link to the
+    // app, and the app opening over Safari leaves this record right here.
     a.rel = 'noopener';
-    a.title = spec[0] + ' on Google Voice' + (spec[3] ? ' (opens in a new tab)' : '');
+    a.title = spec[3]
+      ? 'Call on Google Voice'
+      : 'Text on Google Voice — opens the app and copies ' + e164;
+    if (!spec[3]) {
+      // Rides along with the native navigation — no preventDefault, because a
+      // scripted navigation is the kind iOS declines to hand to an app.
+      a.addEventListener('click', function () {
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(e164);
+          }
+        } catch (e) {}
+      });
+    }
     a.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8">' + spec[2] + '</svg>' + spec[0];
     box.appendChild(a);
   });
