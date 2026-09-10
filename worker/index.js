@@ -389,10 +389,24 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensureSubmissionAdjustColumns(env);
   const { results: submissions } = await env.DB.prepare(
-    "SELECT id, details, status, created_at, price_adjustment, adjustment_note FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
+    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
     .all();
+
+  // Each order carries the lines that can be comped on it, priced from its own
+  // redline, plus its adjustments normalised into one shape. Done here so the
+  // CRM never has to parse a redline or know about the older single-adjustment
+  // column.
+  submissions.forEach((sub) => {
+    sub.adjustment_list = adjustmentsOf(sub);
+    let redline = null;
+    try {
+      const d = JSON.parse(sub.details);
+      redline = d && d.redline;
+    } catch (e) {}
+    sub.comp_items = compItemsFromRedline(redline);
+  });
 
   const { results: notes } = await env.DB.prepare(
     "SELECT id, text, created_at FROM notes WHERE customer_id = ? ORDER BY created_at DESC"
@@ -581,6 +595,9 @@ async function handleGetSubmission(request, env, origin, id) {
   const submission = await env.DB.prepare("SELECT * FROM submissions WHERE id = ?").bind(id).first();
   if (!submission) return json({ error: "Not found" }, 404, origin);
   const customer = await env.DB.prepare("SELECT * FROM customers WHERE id = ?").bind(submission.customer_id).first();
+  // Normalised here so the quote document never has to know that older rows
+  // store a single adjustment and newer ones store a list.
+  submission.adjustment_list = adjustmentsOf(submission);
   return json({ submission, customer: customer || null }, 200, origin);
 }
 
@@ -744,6 +761,129 @@ async function ensureSubmissionWonColumn(env) {
 }
 
 
+
+// ---- flexible quote adjustments ----
+// Three kinds, stackable, stored as a list against one submission:
+//   {kind:'comp',    item:'Skylight'}          — that line becomes free
+//   {kind:'percent', value:-10}                — 10% off
+//   {kind:'amount',  value:-250}               — 250 off
+// value is signed throughout, matching the single adjustment this replaces:
+// negative takes money off, positive adds it.
+//
+// ORDER IS NOT COSMETIC. comps, then percent, then amounts. Comping an item
+// and then taking a percentage means the percentage is not applied to
+// something already being given away — on a 20,000 quote with a 600 cupola
+// comped and 10% off, comps-first is 17,460 and percent-first is 17,400. The
+// first is the defensible one. Amounts land last so "250 off" is exactly 250.
+//
+// Several percentages add rather than compound: 10% and 5% is 15% off, not
+// 14.5%. Compounding is not what anyone means when they say it out loud.
+const ADJUSTMENT_KINDS = ["comp", "percent", "amount"];
+
+// Every individually-priced, customer-visible line on a quote, by the name it
+// appears under — which is exactly the set that can be given away. Read from
+// the submission's own stored redline, so it reflects what THAT customer was
+// quoted rather than a generic catalogue.
+function compItemsFromRedline(redline) {
+  if (!redline || typeof redline !== "object") return [];
+  const out = [];
+  const seen = {};
+  function push(name, amt) {
+    const n = Number(amt);
+    if (!name || !Number.isFinite(n) || n <= 0) return;
+    const key = String(name);
+    // Two shelves of the same size are one comp-able entry at the combined
+    // price — offering the same name twice in a picker would be a trap.
+    if (seen[key] != null) { out[seen[key]].amt = Math.round((out[seen[key]].amt + n) * 100) / 100; return; }
+    seen[key] = out.length;
+    out.push({ name: key, amt: Math.round(n * 100) / 100 });
+  }
+  (redline.addonLines || []).forEach((l) => push(l && l.name, l && l.amt));
+  (redline.doorUpLines || []).forEach((l) => push(l && l.label, l && l.up));
+  (redline.windowSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  (redline.dormerSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  (redline.shelfSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  push(redline.porchSellName, redline.porchSell);
+  push(redline.sidingSellName, redline.sidingSell);
+  push(redline.heightSellName, redline.heightSell);
+  push(redline.elecSellName, redline.elecSell);
+  push(redline.loftSellName, redline.loftSell);
+  push(redline.intSellName, redline.intSell);
+  push(redline.foundName, redline.foundSell);
+  // paintSell is deliberately absent. The quote document never sums it as its
+  // own line, so comping it would take money off a total that never contained
+  // it — the customer's bill would drop by an amount nothing on the page
+  // accounts for. Only lines the quote actually adds up can be given away.
+  return out;
+}
+
+// The arithmetic, in one place. quote.html mirrors this for display; both are
+// tested against the same cases so they cannot drift apart quietly.
+function applyAdjustments(subtotal, adjustments, compItems) {
+  const list = Array.isArray(adjustments) ? adjustments : [];
+  const priceOf = {};
+  (compItems || []).forEach((i) => { priceOf[i.name] = i.amt; });
+
+  const comped = [];
+  let compTotal = 0;
+  list.filter((a) => a && a.kind === "comp").forEach((a) => {
+    const amt = priceOf[a.item];
+    if (amt != null) { compTotal += amt; comped.push({ name: a.item, amt: amt }); }
+  });
+
+  let running = subtotal - compTotal;
+  if (running < 0) running = 0;
+  const afterComps = running;
+
+  let percentTotal = 0;
+  list.filter((a) => a && a.kind === "percent").forEach((a) => {
+    const v = Number(a.value);
+    if (Number.isFinite(v)) percentTotal += afterComps * (v / 100);
+  });
+  running += percentTotal;
+
+  let amountTotal = 0;
+  list.filter((a) => a && a.kind === "amount").forEach((a) => {
+    const v = Number(a.value);
+    if (Number.isFinite(v)) amountTotal += v;
+  });
+  running += amountTotal;
+  if (running < 0) running = 0;
+
+  return {
+    comped: comped,
+    compTotal: Math.round(compTotal * 100) / 100,
+    percentTotal: Math.round(percentTotal * 100) / 100,
+    amountTotal: Math.round(amountTotal * 100) / 100,
+    adjusted: Math.round(running * 100) / 100
+  };
+}
+
+function validateAdjustments(raw) {
+  if (!Array.isArray(raw)) return { error: "adjustments must be a list" };
+  if (raw.length > 20) return { error: "too many adjustments" };
+  const out = [];
+  for (const a of raw) {
+    if (!a || typeof a !== "object") return { error: "bad adjustment entry" };
+    const kind = String(a.kind || "").toLowerCase();
+    if (ADJUSTMENT_KINDS.indexOf(kind) === -1) return { error: "unknown adjustment kind: " + kind };
+    const note = String(a.note || "").trim().slice(0, 200) || null;
+    if (kind === "comp") {
+      const item = String(a.item || "").trim().slice(0, 200);
+      if (!item) return { error: "comp needs an item" };
+      out.push({ kind: kind, item: item, note: note });
+    } else {
+      const v = Number(a.value);
+      if (!Number.isFinite(v) || v === 0) return { error: kind + " needs a non-zero value" };
+      // A percentage past 100 either zeroes the quote or doubles it by
+      // accident; both are far likelier to be a typo than an intention.
+      if (kind === "percent" && (v > 100 || v < -100)) return { error: "percent must be between -100 and 100" };
+      out.push({ kind: kind, value: Math.round(v * 100) / 100, note: note });
+    }
+  }
+  return { list: out };
+}
+
 // ---- per-quote price adjustment ----
 // A discount or surcharge agreed with ONE customer, stored against their
 // submission so it changes that quote and nothing else. Deliberately kept as
@@ -766,7 +906,83 @@ async function ensureSubmissionAdjustColumns(env) {
   if (have.indexOf("adjustment_note") === -1) {
     await env.DB.prepare("ALTER TABLE submissions ADD COLUMN adjustment_note TEXT").run();
   }
+  // The stackable list, and the price it works out to. effective_price is
+  // stored rather than recomputed on every read so the analytics never has to
+  // re-derive it from a redline — one place does the arithmetic, at save time.
+  if (have.indexOf("adjustments") === -1) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN adjustments TEXT").run();
+  }
+  if (have.indexOf("effective_price") === -1) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN effective_price REAL").run();
+  }
   submissionAdjustColumnsReady = true;
+}
+
+
+// Reads whichever form a row is in. Rows predating the list carry a single
+// signed price_adjustment; they are presented as a one-entry list so nothing
+// downstream needs to know which era a row is from.
+function adjustmentsOf(row) {
+  if (row && row.adjustments) {
+    try {
+      const parsed = JSON.parse(row.adjustments);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (e) {}
+  }
+  if (row && row.price_adjustment != null && Number(row.price_adjustment) !== 0) {
+    return [{ kind: "amount", value: Number(row.price_adjustment), note: row.adjustment_note || null }];
+  }
+  return [];
+}
+
+// POST /admin/submissions/:id/adjustments — { adjustments: [...] }
+// Replaces the whole list; an empty list clears it.
+async function handleSetAdjustments(request, env, origin, id) {
+  await ensureSubmissionAdjustColumns(env);
+  const row = await env.DB.prepare("SELECT id, details FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+
+  const body = await request.json().catch(() => ({}));
+  const v = validateAdjustments(body.adjustments);
+  if (v.error) return json({ error: v.error }, 400, origin);
+
+  let quoted = null, redline = null;
+  try {
+    const d = JSON.parse(row.details);
+    if (d) {
+      if (d.quotedPrice != null) quoted = Number(d.quotedPrice);
+      redline = d.redline || null;
+    }
+  } catch (e) {}
+
+  const compItems = compItemsFromRedline(redline);
+  // A comp naming a line this quote does not have would silently do nothing,
+  // so it is refused rather than stored as a no-op the CRM would still display.
+  const names = {};
+  compItems.forEach((i) => { names[i.name] = true; });
+  for (const a of v.list) {
+    if (a.kind === "comp" && !names[a.item]) {
+      return json({ error: "This quote has no line called \"" + a.item + "\"" }, 400, origin);
+    }
+  }
+
+  // With no adjustments there is no effective price — the quote stands on its
+  // own. Computed and reported as null in that case rather than as the
+  // unadjusted total, so the response says exactly what was stored; returning
+  // a number here while writing NULL would have the caller believe a price was
+  // pinned that is not.
+  let effective = null;
+  if (v.list.length && quoted != null && Number.isFinite(quoted)) {
+    effective = applyAdjustments(quoted, v.list, compItems).adjusted;
+  }
+
+  await env.DB.prepare(
+    "UPDATE submissions SET adjustments = ?, effective_price = ?, price_adjustment = NULL, adjustment_note = NULL WHERE id = ?"
+  )
+    .bind(v.list.length ? JSON.stringify(v.list) : null, effective, id)
+    .run();
+
+  return json({ ok: true, adjustments: v.list, effective_price: effective, compItems: compItems }, 200, origin);
 }
 
 // POST /admin/submissions/:id/adjustment — { amount, note }
@@ -1055,7 +1271,7 @@ async function handleAnalytics(request, env, origin) {
   await ensureSubmissionWonColumn(env);
   await ensureSubmissionAdjustColumns(env);
   const { results } = await env.DB.prepare(
-    "SELECT id, customer_id, details, status, created_at, won_at, price_adjustment FROM submissions ORDER BY created_at DESC LIMIT 3000"
+    "SELECT id, customer_id, details, status, created_at, won_at, price_adjustment, effective_price FROM submissions ORDER BY created_at DESC LIMIT 3000"
   ).all();
 
   // ---- install state of won jobs ----
@@ -1135,10 +1351,17 @@ async function handleAnalytics(request, env, origin) {
       // the margin: a discount comes straight out of profit, since the build
       // costs the same either way.
       const rawPrice = d.quotedPrice != null ? Number(d.quotedPrice) : null;
-      const adjust = row.price_adjustment != null ? Number(row.price_adjustment) : 0;
-      const price = rawPrice != null && isFinite(rawPrice)
-        ? rawPrice + (isFinite(adjust) ? adjust : 0)
-        : null;
+      // effective_price is written at save time by the adjustment endpoint,
+      // which is the only place the comp/percent/amount arithmetic runs. Older
+      // rows carrying a single signed price_adjustment still work.
+      let price = null;
+      if (row.effective_price != null && isFinite(Number(row.effective_price))) {
+        price = Number(row.effective_price);
+      } else if (rawPrice != null && isFinite(rawPrice)) {
+        const legacy = row.price_adjustment != null ? Number(row.price_adjustment) : 0;
+        price = rawPrice + (isFinite(legacy) ? legacy : 0);
+      }
+      const adjust = (price != null && rawPrice != null && isFinite(rawPrice)) ? price - rawPrice : 0;
       if (price != null && isFinite(price)) prices.push(price);
       if (adjust && isFinite(adjust)) {
         adjustments.total += adjust;
@@ -2315,6 +2538,12 @@ export default {
         return await handleDeleteCustomer(request, env, origin, id);
       }
 
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/adjustments") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/adjustments".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleSetAdjustments(request, env, origin, id);
+      }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/adjustment") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const id = Number(path.slice("/admin/submissions/".length, -"/adjustment".length));
