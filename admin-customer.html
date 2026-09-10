@@ -161,6 +161,18 @@ select:focus{border-color:var(--sp-blue)}
 .install-form input[type="number"]{width:80px}
 .install-form button{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 12px;border:none;text-transform:uppercase;cursor:pointer;font-weight:700}
 .install-form button:hover{background:#5ad0ff}
+.install-form button.ghost{background:none;border:1px solid var(--sp-blue);color:var(--sp-blue)}
+.install-form button.ghost:hover{background:rgba(43,181,232,0.12)}
+/* The state a job is actually in, spelled out rather than left to be inferred
+   from a date. Derived from the install date every time it renders, so it
+   cannot drift out of step with the schedule the way a second stored field
+   would. */
+.install-state{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;padding:3px 8px;border-radius:20px;flex-shrink:0}
+.install-state.pending{color:var(--dim);border:1px solid var(--dim)}
+.install-state.scheduled{color:var(--sp-blue);border:1px solid rgba(43,181,232,0.5);background:rgba(43,181,232,0.1)}
+.install-state.installed{color:#5fd08a;border:1px solid rgba(95,208,138,0.5);background:rgba(95,208,138,0.1)}
+.sep-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--sp-blue);background:none;border:1px solid rgba(43,181,232,0.5);padding:5px 9px;cursor:pointer;text-transform:uppercase;margin-left:10px}
+.sep-btn:hover{background:rgba(43,181,232,0.12)}
 .payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
 
 @media (max-width:760px){
@@ -597,6 +609,21 @@ function installDateLabel(i) {
   return label;
 }
 
+// Local date, not toISOString() — that converts to UTC first, so anyone west
+// of Greenwich logging an install after 5pm would stamp it as tomorrow.
+function todayISO() {
+  var d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Matches how /admin/analytics splits these, so the customer page and the data
+// page can never disagree: a logged date in the past is installed, in the
+// future is scheduled, and no date at all is still pending.
+function installState(install) {
+  if (!install) return 'pending';
+  return install.install_date <= todayISO() ? 'installed' : 'scheduled';
+}
+
 function renderInstallBlock(card, s, details, installs) {
   var hasConcrete = details.config && details.config.foundation === 'pad';
   var items = hasConcrete ? ['concrete', 'shed'] : ['shed'];
@@ -616,6 +643,16 @@ function renderInstallBlock(card, s, details, installs) {
     itemLabel.className = 'install-item';
     itemLabel.textContent = INSTALL_ITEM_LABELS[item];
     row.appendChild(itemLabel);
+
+    // Pending / Scheduled / Installed, worked out from the logged date at
+    // render time. One fact, one place: a job cannot be "Installed" with next
+    // month's date on it, which is exactly what a hand-set second status field
+    // would allow the first time someone forgot to update one of them.
+    var state = installState(existing[0]);
+    var chip = document.createElement('span');
+    chip.className = 'install-state ' + state;
+    chip.textContent = state;
+    row.appendChild(chip);
 
     if (existing.length) {
       var latest = existing[0];
@@ -659,9 +696,28 @@ function renderInstallBlock(card, s, details, installs) {
           if (r.ok) loadCustomer();
         });
       });
+      // The common case is "it went in, I'm telling you now" — that shouldn't
+      // need picking today's date out of a calendar. The date field stays for
+      // scheduling ahead, which is what feeds the next-install figure.
+      var doneBtn = document.createElement('button');
+      doneBtn.type = 'button';
+      doneBtn.className = 'ghost';
+      doneBtn.textContent = 'Installed today';
+      doneBtn.addEventListener('click', function () {
+        doneBtn.disabled = true;
+        authFetch('/admin/submissions/' + s.id + '/installs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ item: item, install_date: todayISO(), days: daysInput.value || null })
+        }).then(function (r) {
+          doneBtn.disabled = false;
+          if (r.ok) loadCustomer();
+        });
+      });
       form.appendChild(dateInput);
       form.appendChild(daysInput);
       form.appendChild(logBtn);
+      form.appendChild(doneBtn);
       row.appendChild(form);
     }
     block.appendChild(row);
@@ -929,8 +985,14 @@ function renderOrders(submissions, installs) {
     actions.className = 'order-actions';
 
     if (s.status === 'superseded') {
-      // Auto-replaced by a newer submission from this same customer before
-      // anyone acted on it — just a history entry, not something to manage.
+      // Auto-replaced by a newer submission from this same customer. That is
+      // the right guess most of the time — people iterate on one design — but
+      // it is only a guess, and it was previously final: a superseded order
+      // showed this tag and NO status dropdown, so a customer ordering a
+      // second shed left their first order stranded with no way to sell it.
+      // The button hands it back. Both orders can then be marked won, and the
+      // analytics counts two jobs and both revenues (it always could — the
+      // block was here in the UI, not in the data).
       var supTag = document.createElement('span');
       supTag.style.fontFamily = "'DM Mono',monospace";
       supTag.style.fontSize = '10px';
@@ -939,6 +1001,24 @@ function renderOrders(submissions, installs) {
       supTag.style.color = 'var(--dim)';
       supTag.textContent = 'Replaced by newer design';
       actions.appendChild(supTag);
+
+      var sepBtn = document.createElement('button');
+      sepBtn.type = 'button';
+      sepBtn.className = 'sep-btn';
+      sepBtn.textContent = 'Separate shed →';
+      sepBtn.title = 'This is not a replacement — it is another shed. Puts the order back in the pipeline as its own job.';
+      sepBtn.addEventListener('click', function () {
+        sepBtn.disabled = true;
+        authFetch('/admin/submissions/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: s.id, status: 'new' })
+        }).then(function (r) {
+          sepBtn.disabled = false;
+          if (r.ok) loadCustomer();
+        });
+      });
+      actions.appendChild(sepBtn);
     } else {
       var dot = document.createElement('span');
       dot.className = 'status-dot status-' + s.status;
@@ -990,11 +1070,21 @@ function renderOrders(submissions, installs) {
     card.appendChild(summary);
     if (details.heardAbout) card.appendChild(heard);
     card.appendChild(actions);
-    // Install dates only matter once the job is actually won — showing them
-    // on a still-pipeline order would just be an empty form nobody can fill
-    // in yet.
+    // Install controls belong to a job that has actually sold, so they stay
+    // hidden until then — but silently hiding them read as "this feature does
+    // not exist". A one-line note on the orders that are nearly there says
+    // where they went. Not shown on lost or superseded orders: nothing is
+    // waiting on those.
     renderAdjustBlock(card, s, details);
-    if (s.status === 'won') renderInstallBlock(card, s, details, installs);
+    if (s.status === 'won') {
+      renderInstallBlock(card, s, details, installs);
+    } else if (s.status === 'new' || s.status === 'contacted' || s.status === 'quoted') {
+      var hint = document.createElement('div');
+      hint.className = 'install-block';
+      hint.style.cssText += ';font-size:11px;color:var(--dim);font-family:\'DM Mono\',monospace;letter-spacing:0.04em';
+      hint.textContent = 'Mark this order won to schedule the install.';
+      card.appendChild(hint);
+    }
     wrap.appendChild(card);
   });
 }
