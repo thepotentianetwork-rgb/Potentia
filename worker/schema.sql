@@ -120,6 +120,14 @@ CREATE TABLE IF NOT EXISTS calls (
 -- original quote stays readable. Signed — negative discounts, positive adds.
 -- The worker adds these columns at runtime too, so this only matters for a
 -- fresh install.
---   ALTER TABLE submissions ADD COLUMN price_adjustment REAL;
---   ALTER TABLE submissions ADD COLUMN adjustment_note TEXT;
+--   ALTER TABLE submissions ADD COLUMN price_adjustment REAL;   -- superseded
+--   ALTER TABLE submissions ADD COLUMN adjustment_note TEXT;    -- superseded
 --   ALTER TABLE submissions ADD COLUMN won_at TEXT;
+--   ALTER TABLE submissions ADD COLUMN adjustments TEXT;      -- JSON list
+--   ALTER TABLE submissions ADD COLUMN effective_price REAL;  -- what it works out to
+--
+-- adjustments holds a list of {kind:'comp'|'percent'|'amount', ...} entries,
+-- applied comps -> percent -> amounts. effective_price is what that arithmetic
+-- produces, written once at save time so nothing downstream re-derives it.
+-- The two older columns are still read for rows written before the list
+-- existed; nothing writes them any more.
