@@ -289,18 +289,24 @@ var HEARD_LABELS = {
 // here to disambiguate between Google accounts; it trades the app for the
 // browser. The app opens whichever account it is signed into.
 //
-// TEXT — keeps the index, because this one can never reach the app anyway.
-// Tested bare, with no parameters at all: voice.google.com/calls opens the app
-// and voice.google.com/messages opens Safari. Same domain, same form, only the
-// path differs — the app registers /calls and does not register /messages, so
-// no parameter shape will change it, and googlevoice:// schemes do nothing
-// either. Given it is web-only regardless, the index costs no app handoff and
-// pins which Google account opens when several are signed in.
+// TEXT — opens the app, and deliberately carries NO number.
 //
-// The thread id (the t. prefix) still lands on that person's conversation
-// rather than the message list — in the browser rather than the app.
+// Tested: the app registers /calls and ignores /messages, so a messages URL
+// can never open it. /calls opens the app on ANY action code, including
+// deliberate nonsense, which means unrecognised actions are dropped and there
+// is no message action to find. A link that lands on a specific thread in the
+// app does not exist.
+//
+// Given the choice between the right thread in the browser and the app with no
+// thread, this goes to the app. But NOT with the number attached: /calls with a
+// number opens the DIALER on it, and a button labelled Text that can place a
+// call is a trap. So the bare path opens the app, and the number goes to the
+// clipboard instead — paste it into Voice's search.
+//
+// To go back to the browser landing on the exact thread, this is the one line:
+//   'https://voice.google.com/u/0/messages?itemId=t.'  (and set newTab true)
 var GV_CALL_URL = 'https://voice.google.com/calls?a=nc,';
-var GV_TEXT_URL = 'https://voice.google.com/u/0/messages?itemId=t.';
+var GV_TEXT_URL = 'https://voice.google.com/calls';
 
 // Google Voice wants E.164 (+15551234567). Assumes US/Canada, which is what
 // the shed business serves — a 10-digit number gets +1, an 11-digit starting
@@ -314,17 +320,31 @@ function toE164(phone) {
   return null;
 }
 
-// newTab is per-link, and follows the same rule as the account index above.
-// The CALL link must navigate the current tab: a new tab stops iOS handing the
-// link to the app, and when the app does take it the CRM page is left where it
-// was anyway, so nothing is lost. The TEXT link can never reach the app, so a
-// new tab costs nothing there and keeps the customer's record open behind it —
-// otherwise texting someone means navigating away and coming back.
-function gvIconLink(href, title, pathD, newTab) {
+// Both links now navigate the current tab, which is what iOS needs to hand a
+// URL to an app — and nothing is lost by it, because when the app takes the
+// link Safari stays where it was, so the customer's record is still here
+// underneath.
+//
+// copyNumber, when set, is put on the clipboard as the link is followed. No
+// preventDefault and no scripted navigation: the anchor is followed natively,
+// because a JS-driven navigation is exactly the kind iOS declines to hand to
+// an app. The copy just rides along.
+function gvIconLink(href, title, pathD, copyNumber) {
   var a = document.createElement('a');
   a.href = href;
-  if (newTab) a.target = '_blank';
   a.rel = 'noopener';
+  if (copyNumber) {
+    a.addEventListener('click', function () {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(copyNumber);
+        }
+      } catch (e) {
+        // A failed copy must never stop the app opening — that's the point of
+        // the tap; the clipboard is the bonus.
+      }
+    });
+  }
   a.title = title;
   a.setAttribute('aria-label', title);
   a.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--dim);color:var(--sp-blue);text-decoration:none;flex-shrink:0';
@@ -348,8 +368,8 @@ function renderPhoneCell(el, phone) {
   num.textContent = phone;
   wrap.appendChild(num);
   if (e164) {
-    wrap.appendChild(gvIconLink(GV_CALL_URL + encodeURIComponent(e164), 'Call on Google Voice', GV_PHONE_ICON, false));
-    wrap.appendChild(gvIconLink(GV_TEXT_URL + encodeURIComponent(e164), 'Text on Google Voice (opens in a new tab)', GV_TEXT_ICON, true));
+    wrap.appendChild(gvIconLink(GV_CALL_URL + encodeURIComponent(e164), 'Call on Google Voice', GV_PHONE_ICON, null));
+    wrap.appendChild(gvIconLink(GV_TEXT_URL, 'Text on Google Voice — opens the app and copies ' + e164, GV_TEXT_ICON, e164));
   }
   el.appendChild(wrap);
 }
