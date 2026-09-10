@@ -314,14 +314,16 @@ function toE164(phone) {
   return null;
 }
 
-function gvIconLink(href, title, pathD) {
+// newTab is per-link, and follows the same rule as the account index above.
+// The CALL link must navigate the current tab: a new tab stops iOS handing the
+// link to the app, and when the app does take it the CRM page is left where it
+// was anyway, so nothing is lost. The TEXT link can never reach the app, so a
+// new tab costs nothing there and keeps the customer's record open behind it —
+// otherwise texting someone means navigating away and coming back.
+function gvIconLink(href, title, pathD, newTab) {
   var a = document.createElement('a');
   a.href = href;
-  // No target="_blank" on purpose. These are iOS Universal Links / Android App
-  // Links, and opening them in a new tab stops the OS handing them to the
-  // Google Voice app — you get the web version instead. Navigating the current
-  // tab lets the app claim the link; if the app isn't installed the browser
-  // just loads voice.google.com as before.
+  if (newTab) a.target = '_blank';
   a.rel = 'noopener';
   a.title = title;
   a.setAttribute('aria-label', title);
@@ -346,8 +348,8 @@ function renderPhoneCell(el, phone) {
   num.textContent = phone;
   wrap.appendChild(num);
   if (e164) {
-    wrap.appendChild(gvIconLink(GV_CALL_URL + encodeURIComponent(e164), 'Call on Google Voice', GV_PHONE_ICON));
-    wrap.appendChild(gvIconLink(GV_TEXT_URL + encodeURIComponent(e164), 'Text on Google Voice', GV_TEXT_ICON));
+    wrap.appendChild(gvIconLink(GV_CALL_URL + encodeURIComponent(e164), 'Call on Google Voice', GV_PHONE_ICON, false));
+    wrap.appendChild(gvIconLink(GV_TEXT_URL + encodeURIComponent(e164), 'Text on Google Voice (opens in a new tab)', GV_TEXT_ICON, true));
   }
   el.appendChild(wrap);
 }
