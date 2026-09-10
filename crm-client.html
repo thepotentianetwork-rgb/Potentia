@@ -290,14 +290,21 @@ el('f-phone').addEventListener('input', renderPhoneActions);
 
 // ---- details ----
 // ---- Google Voice quick actions ----
-// voice.google.com deep-links: on a phone or tablet with the Google Voice app
-// installed these open the app directly (Android App Links / iOS Universal
-// Links); everywhere else they open Google Voice on the web, already pointed
-// at the right number. The /u/0/ is the Google account index — if the Voice
-// account isn't the first one signed in on this device, change it to /u/1/
-// (or /u/2/) here and it applies to every client in the CRM.
-var GV_CALL_URL = 'https://voice.google.com/u/0/calls?a=nc,';
-var GV_TEXT_URL = 'https://voice.google.com/u/0/messages?itemId=t.';
+// voice.google.com deep-links: with the Google Voice app installed these open
+// the app directly (iOS Universal Links / Android App Links); everywhere else
+// they open Voice on the web, already pointed at the right number.
+//
+// NO /u/0/ ACCOUNT INDEX — and that is the whole trick. These URLs originally
+// carried /u/0/ (Google's "first signed-in account" path) and they opened the
+// WEB version every time; dropping it is what lets the app claim the link.
+// Tested on iOS: with the index, Safari; without it, the app. So don't add an
+// account index back in to disambiguate between Google accounts — it trades
+// the app for the browser. The app opens whichever account it's signed into.
+//
+// The text URL carries a thread id (the t. prefix), so it lands in that
+// person's conversation rather than the message list.
+var GV_CALL_URL = 'https://voice.google.com/calls?a=nc,';
+var GV_TEXT_URL = 'https://voice.google.com/messages?itemId=t.';
 
 // Google Voice wants E.164 (+15551234567). Assumes US/Canada — a 10-digit
 // number gets +1, an 11-digit starting with 1 gets a plus, anything longer is
