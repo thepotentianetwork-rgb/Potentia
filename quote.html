@@ -154,6 +154,56 @@ var PCT_LABEL = function (r) { return (r * 100).toFixed(2).replace(/\.?0+$/, '')
 // it happens before the pad goes down, and at these amounts a customer seeing
 // it folded silently into a line called "Shed" would rightly ask what the
 // number was made of.
+// Mirrors compItemsFromRedline() in the worker: the individually-priced lines
+// this quote actually sums, which is exactly the set that can be given away.
+// Which comp-able names belong to which quote row. Interior finishing and the
+// foundation are their own phases; everything else rolls into the shed.
+function nameList(redline, which) {
+  if (!redline) return [];
+  if (which === 'interior') return [redline.intSellName].filter(Boolean);
+  if (which === 'foundation') return [redline.foundName].filter(Boolean);
+  var out = [];
+  (redline.addonLines || []).forEach(function (l) { if (l && l.name && REMOVAL_NAMES.indexOf(l.name) === -1) out.push(l.name); });
+  (redline.doorUpLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.windowSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.dormerSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.shelfSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  [redline.porchSellName, redline.sidingSellName, redline.heightSellName,
+   redline.elecSellName, redline.loftSellName].forEach(function (n) { if (n) out.push(n); });
+  return out;
+}
+
+function compItemPrices(redline) {
+  var out = {};
+  if (!redline || typeof redline !== 'object') return out;
+  function push(name, amt) {
+    var n = Number(amt);
+    if (!name || !isFinite(n) || n <= 0) return;
+    out[name] = (out[name] || 0) + Math.round(n * 100) / 100;
+  }
+  (redline.addonLines || []).forEach(function (l) { push(l && l.name, l && l.amt); });
+  (redline.doorUpLines || []).forEach(function (l) { push(l && l.label, l && l.up); });
+  (redline.windowSellLines || []).forEach(function (l) { push(l && l.label, l && l.price); });
+  (redline.dormerSellLines || []).forEach(function (l) { push(l && l.label, l && l.price); });
+  (redline.shelfSellLines || []).forEach(function (l) { push(l && l.label, l && l.price); });
+  push(redline.porchSellName, redline.porchSell);
+  push(redline.sidingSellName, redline.sidingSell);
+  push(redline.heightSellName, redline.heightSell);
+  push(redline.elecSellName, redline.elecSell);
+  push(redline.loftSellName, redline.loftSell);
+  push(redline.intSellName, redline.intSell);
+  push(redline.foundName, redline.foundSell);
+  return out;
+}
+
+// How much of a given row is being comped, so the reduction lands on the phase
+// the item actually belongs to rather than being lopped off the bottom line.
+function compedIn(names) {
+  var t = 0;
+  names.forEach(function (n) { if (n && COMPED[n] != null) t += COMPED[n]; });
+  return t;
+}
+
 var REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 function removalLines(redline) {
   if (!redline || !Array.isArray(redline.addonLines)) return [];
@@ -186,7 +236,10 @@ function taxBreakdown(redline) {
     + num(redline.loftSell)
     + sumLines(redline.shelfSellLines, 'price')
     + sumLines(redline.addonLines, 'amt')
-    - removalTotal(redline);
+    - removalTotal(redline)
+    // Comped lines come off the phase they sit in, not off the bottom, so each
+    // phase deposit is calculated on what that phase is actually worth.
+    - compedIn(nameList(redline, 'shed'));
 
   // Build order matches how the job is actually run and billed: concrete
   // goes in first, then the shed, then interior finishing — always in
@@ -206,7 +259,7 @@ function taxBreakdown(redline) {
   // First on site, first on the quote.
   var removal = removalLines(redline);
   if (removal.length) {
-    var rTotal = removalTotal(redline);
+    var rTotal = removalTotal(redline) - compedIn(REMOVAL_NAMES);
     var rRow = add(removal.length > 1 ? 'Site Clearance' : removal[0].name, rTotal);
     if (rRow && removal.length > 1) {
       rRow.subLines = removal.map(function (l) { return { label: l.name, amt: num(l.amt) }; });
@@ -222,9 +275,9 @@ function taxBreakdown(redline) {
   // config here and threw ReferenceError, which blanked the whole page.
   var foundLabel = redline.foundName || 'Concrete';
   if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
-  add(foundLabel, redline.foundSell);
+  add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
   var shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
-  add(redline.intSellName || 'Interior Finishing', redline.intSell);
+  add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
 
   // Electrical is still billed and deposited as part of the Shed phase
   // (its dollars stay inside shedTotal above) — this just breaks it out as
@@ -246,11 +299,22 @@ function taxBreakdown(redline) {
   });
   var subtotal = rows.reduce(function (t, r) { return t + r.amt; }, 0);
 
-  // A price adjustment agreed with this customer. Applied BEFORE tax, because
-  // tax is owed on what they actually pay, and scaled through the per-phase
-  // deposits by the same ratio — a discount that reduced the total but not the
-  // deposits would have them paying a bigger share up front for a cheaper shed.
-  var adjust = (ADJUSTMENT && isFinite(ADJUSTMENT.amount)) ? ADJUSTMENT.amount : 0;
+  // Percentages and flat amounts, applied BEFORE tax because tax is owed on
+  // what they actually pay, and scaled through the per-phase deposits by the
+  // same ratio — a discount that reduced the total but not the deposits would
+  // have them paying a bigger share up front for a cheaper shed.
+  //
+  // Comps are already gone by this point: they were removed from their own
+  // phase rows above, which is what makes the percentage land on the
+  // post-comp figure without any extra arithmetic here.
+  var percentAdjust = 0, amountAdjust = 0;
+  ADJUSTMENTS.forEach(function (a) {
+    if (!a) return;
+    var v = Number(a.value);
+    if (a.kind === 'percent' && isFinite(v)) percentAdjust += subtotal * (v / 100);
+    else if (a.kind === 'amount' && isFinite(v)) amountAdjust += v;
+  });
+  var adjust = percentAdjust + amountAdjust;
   var adjustedSubtotal = subtotal + adjust;
   if (adjustedSubtotal < 0) adjustedSubtotal = 0;
   var ratio = subtotal > 0 ? (adjustedSubtotal / subtotal) : 1;
@@ -268,6 +332,8 @@ function taxBreakdown(redline) {
     rows: rows,
     subtotal: subtotal,
     adjust: adjust,
+    percentAdjust: percentAdjust,
+    amountAdjust: amountAdjust,
     adjustedSubtotal: adjustedSubtotal,
     tax: tax,
     total: adjustedSubtotal + tax,
@@ -291,15 +357,24 @@ function buildBreakdown(bd) {
     return html;
   }).join('');
   rowsHtml += '<div class="br-row"><span class="br-label">Subtotal</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
-  // Shown as its own line, with the original subtotal left above it. The
-  // customer can see what the shed prices at and what was taken off — a total
-  // that had quietly absorbed the discount would invite the question anyway.
+  // Each adjustment on its own line, with the subtotal left above them. The
+  // customer sees what the shed prices at and what came off — a total that had
+  // quietly absorbed it would invite the question anyway.
+  ADJUSTMENTS.forEach(function (a) {
+    if (!a) return;
+    var v = Number(a.value);
+    if (a.kind === 'percent' && isFinite(v)) {
+      var pAmt = bd.subtotal * (v / 100);
+      var pLabel = (a.note || 'Discount') + ' (' + Math.abs(v) + '%)';
+      rowsHtml += '<div class="br-row"><span class="br-label">' + esc(pLabel) + '</span>'
+        + '<span class="br-amt">' + (pAmt < 0 ? '\u2212' : '+') + money2(Math.abs(pAmt)) + '</span></div>';
+    } else if (a.kind === 'amount' && isFinite(v)) {
+      var aLabel = a.note || (v < 0 ? 'Discount' : 'Adjustment');
+      rowsHtml += '<div class="br-row"><span class="br-label">' + esc(aLabel) + '</span>'
+        + '<span class="br-amt">' + (v < 0 ? '\u2212' : '+') + money2(Math.abs(v)) + '</span></div>';
+    }
+  });
   if (bd.adjust) {
-    var adjLabel = (ADJUSTMENT && ADJUSTMENT.note)
-      ? ADJUSTMENT.note
-      : (bd.adjust < 0 ? 'Discount' : 'Adjustment');
-    rowsHtml += '<div class="br-row"><span class="br-label">' + esc(adjLabel) + '</span>'
-      + '<span class="br-amt">' + (bd.adjust < 0 ? '\u2212' : '+') + money2(Math.abs(bd.adjust)) + '</span></div>';
     rowsHtml += '<div class="br-row"><span class="br-label">Adjusted Subtotal</span>'
       + '<span class="br-amt">' + money2(bd.adjustedSubtotal) + '</span></div>';
   }
@@ -311,7 +386,22 @@ function buildBreakdown(bd) {
   }).join('');
   depositRowsHtml += '<div class="br-row"><span class="br-label">Total Deposit Due</span><span class="br-amt">' + money2(bd.depositTotal) + '</span></div>';
 
+  // Comped lines get their own block reading "Included", not a discount line.
+  // Same money either way, but "Skylight — Included" is a thing you gave the
+  // customer, where "Discount −$184" reads as the price having been soft.
+  var compHtml = '';
+  var compNames = Object.keys(COMPED);
+  if (compNames.length) {
+    compHtml = '<div class="doc-section"><div class="doc-label">Included at No Charge</div>'
+      + compNames.map(function (n) {
+          return '<div class="br-row"><span class="br-label">' + esc(n) + '</span>'
+            + '<span class="br-amt" style="color:var(--sp-blue)">Included</span></div>';
+        }).join('')
+      + '</div>';
+  }
+
   return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>'
+    + compHtml
     + '<div class="doc-section"><div class="doc-label">Deposits Due</div>' + depositRowsHtml
     +   '<div class="br-note">Each item is invoiced separately as its stage of work begins — a 30% deposit (tax included) is collected per item, with the balance due on completion.</div>'
     + '</div>';
@@ -367,21 +457,35 @@ function buildSpecs(config) {
   return html;
 }
 
-// The price adjustment agreed with THIS customer, read from their own
-// submission row. Module-level because taxBreakdown and buildBreakdown both
-// need it and they are called from separate places; set once per render, so a
-// quote with no adjustment behaves exactly as it did before.
-var ADJUSTMENT = null;
+// The adjustments agreed with THIS customer, read from their own submission
+// row. Module-level because taxBreakdown and buildBreakdown both need them and
+// are called from separate places; set once per render, so a quote with no
+// adjustments behaves exactly as it did before.
+//
+// The arithmetic mirrors applyAdjustments() in worker/index.js — comps, then
+// percent, then amounts, with percentages adding rather than compounding. Both
+// are tested against the same cases; if you change one, change the other.
+var ADJUSTMENTS = [];
+var COMPED = {};        // item name -> amount, for the lines being given away
+var COMP_TOTAL = 0;
 
 function render(submission, customer) {
   var details = {};
   try { details = JSON.parse(submission.details) || {}; } catch (e) {}
   var config = (details.config && typeof details.config === 'object') ? details.config : {};
 
-  var adjAmount = submission.price_adjustment != null ? Number(submission.price_adjustment) : 0;
-  ADJUSTMENT = (adjAmount && isFinite(adjAmount))
-    ? { amount: adjAmount, note: submission.adjustment_note || null }
-    : null;
+  // adjustment_list is normalised by the worker, so an older single-adjustment
+  // row and a newer list-based one arrive in the same shape here.
+  ADJUSTMENTS = Array.isArray(submission.adjustment_list) ? submission.adjustment_list : [];
+  COMPED = {};
+  COMP_TOTAL = 0;
+  var compPrices = compItemPrices(details.redline);
+  ADJUSTMENTS.forEach(function (a) {
+    if (a && a.kind === 'comp' && compPrices[a.item] != null) {
+      COMPED[a.item] = compPrices[a.item];
+      COMP_TOTAL += compPrices[a.item];
+    }
+  });
 
   if (customer) document.getElementById('back-link').href = 'admin-customer.html?id=' + encodeURIComponent(customer.id);
 
