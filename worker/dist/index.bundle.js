@@ -128,7 +128,8 @@ let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
       skylight:false, stairs:false, statLadder:false, atticLadder:false,
       weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
-      doorAwning:false, fbColor:'brown', shutterColor:'brown' },
+      doorAwning:false, fbColor:'brown', shutterColor:'brown',
+      shedRemoval:false, concreteRemoval:false },
     doorsData=[], windowsData=[], ventsData=[], shelvesData=[];
 
 /* Maps the client's getDesignConfig() shape onto the module state above.
@@ -180,7 +181,8 @@ function resetConfig(){
   ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
     skylight:false, stairs:false, statLadder:false, atticLadder:false,
     weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
-    doorAwning:false, fbColor:'brown', shutterColor:'brown' };
+    doorAwning:false, fbColor:'brown', shutterColor:'brown',
+    shedRemoval:false, concreteRemoval:false };
   doorsData=[]; windowsData=[]; ventsData=[]; shelvesData=[];
 }
 
@@ -476,7 +478,11 @@ let SELL = {
       "Shutters": 60, "Flowerboxes": 90,
       "Roof Ridge Vent": 263, "8x16 Gable/Wall Vent": 30, "Roof Vent": 53,
       "Cupola 16\" Black Roof": 600, "Cupola 16\" Copper Roof": 600,
-      "Skylight": 184, "Stairs": 420, "Stationary Ladder": 105, "Attic Pull-Down Ladder": 375
+      "Skylight": 184, "Stairs": 420, "Stationary Ladder": 105, "Attic Pull-Down Ladder": 375,
+      // Site clearance, priced flat rather than by size: the work is a crew and
+      // a dump run either way, and quoting it per square foot would invite an
+      // argument about measurements before anyone has seen the site.
+      "Shed Removal": 1000, "Concrete Removal": 500
     },
     perLinFt: { // × linear feet the customer specifies
       "16\" Deep Shelving": 15, "24\" Deep Shelving": 17
@@ -1163,6 +1169,12 @@ function computePricing(cfgIn, opts){
     _flat(ADDONS.stairs,'Stairs');
     _flat(ADDONS.statLadder,'Stationary Ladder');
     _flat(ADDONS.atticLadder,'Attic Pull-Down Ladder');
+    // Removal of what is already on the site. Priced through the same flat
+    // table as every other add-on so the admin price editor can change it, but
+    // the quote document pulls these two back out into their own phase — they
+    // happen before the pad goes down, not as part of the shed.
+    _flat(ADDONS.shedRemoval,'Shed Removal');
+    _flat(ADDONS.concreteRemoval,'Concrete Removal');
     function _sq(on,name){ if(on){ var p=Math.round(sellPerSqft(name,Wf,Df,Hf)); addonSell+=p; addonLines.push({name:name,amt:p}); } }
     _sq(ADDONS.weatherGuard,'Floor Weather Guard');
     _sq(ADDONS.radiantBarrier,'Radiant Roof Barrier');
@@ -2669,6 +2681,7 @@ function computeOptionPrices(cfg) {
   const ADDON_FLAT_KEYS = {
     shutters: "Shutters", flowerboxes: "Flowerboxes", ridgeVent: "Roof Ridge Vent",
     skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder",
+    shedRemoval: "Shed Removal", concreteRemoval: "Concrete Removal",
     atticLadder: "Attic Pull-Down Ladder"
   };
   const ADDON_PERSQFT_KEYS = {
