@@ -48,7 +48,22 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 .status-contacted,.status-quoted{background:var(--sp-orange)}
 .status-won{background:#5fd08a}
 .status-lost{background:var(--dim)}
-.status-cell{display:flex;align-items:center}
+/* The flex lives on an inner wrapper, never on the <td> itself. A table cell
+   set to display:flex drops out of the table layout algorithm — it stops
+   sharing the row's height, so its border-bottom draws at its own offset and
+   the column visibly fails to line up with the others. */
+.status-wrap{display:flex;align-items:center;gap:8px}
+.status-wrap .status-dot{margin-right:0}
+
+/* ---- follow-up temperature ---- */
+.act-date{display:block;white-space:nowrap}
+.act-ago{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:3px}
+.temp{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;padding:3px 9px;border-radius:20px;margin-top:7px;border:1px solid;white-space:nowrap}
+.temp::before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+.temp-hot{color:#ff7a45;border-color:rgba(255,122,69,0.45);background:rgba(255,122,69,0.12)}
+.temp-warm{color:var(--sp-orange);border-color:rgba(246,148,31,0.4);background:rgba(246,148,31,0.1)}
+.temp-cold{color:var(--sp-blue);border-color:rgba(44,192,253,0.35);background:rgba(44,192,253,0.08)}
+.temp-dormant{color:var(--silver);border-color:var(--dim);background:none}
 
 .note-cell{font-size:13px;color:var(--silver);max-width:220px}
 .note-cell .note-time{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:2px}
@@ -152,6 +167,69 @@ document.getElementById('logout-btn').addEventListener('click', function () {
 
 
 // ---- Customers ----
+// ---- follow-up temperature ----
+// How long since anyone actually touched this lead, and whether that means
+// chase it now or let it go. Deliberately counts NOTES as well as the quote
+// itself: if you rang them yesterday and logged it, the lead isn't cold, even
+// though the quote went out three weeks ago.
+function lastTouchMs(c) {
+  var times = [c.latest_submission_at, c.latest_note_at]
+    .filter(Boolean)
+    .map(function (t) { return new Date(t).getTime(); })
+    .filter(function (n) { return !isNaN(n); });
+  return times.length ? Math.max.apply(null, times) : null;
+}
+
+function daysSince(ms) {
+  return Math.floor((Date.now() - ms) / 86400000);
+}
+
+// Thresholds are a quote-follow-up cadence, not arbitrary: a shed quote is
+// live for about a week, worth one more push out to a month, and effectively
+// dead after that.
+function temperatureFor(days) {
+  if (days <= 3) return { cls: 'temp-hot', label: 'Hot' };
+  if (days <= 10) return { cls: 'temp-warm', label: 'Warm' };
+  if (days <= 30) return { cls: 'temp-cold', label: 'Cold' };
+  return { cls: 'temp-dormant', label: 'Dormant' };
+}
+
+function agoLabel(days) {
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return days + ' days ago';
+  var months = Math.floor(days / 30);
+  return months === 1 ? '1 month ago' : months + ' months ago';
+}
+
+// Only open pipeline states get a temperature. A won or lost deal doesn't
+// need chasing, and a superseded design isn't the live one.
+var OPEN_STATUSES = ['new', 'contacted', 'quoted'];
+
+function renderActivityCell(td, c) {
+  var touch = lastTouchMs(c);
+  if (!touch) { td.textContent = '—'; return; }
+
+  var date = document.createElement('span');
+  date.className = 'act-date';
+  date.textContent = new Date(touch).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  td.appendChild(date);
+
+  var days = daysSince(touch);
+  var ago = document.createElement('span');
+  ago.className = 'act-ago';
+  ago.textContent = agoLabel(days);
+  td.appendChild(ago);
+
+  if (OPEN_STATUSES.indexOf(c.latest_status || 'new') === -1) return;
+  var t = temperatureFor(days);
+  var pill = document.createElement('span');
+  pill.className = 'temp ' + t.cls;
+  pill.textContent = t.label;
+  pill.title = 'Last touch ' + agoLabel(days) + ' — counts notes as well as the quote';
+  td.appendChild(pill);
+}
+
 function renderCustomers(list) {
   var body = document.getElementById('customers-body');
   body.innerHTML = '';
@@ -166,7 +244,7 @@ function renderCustomers(list) {
 
     var tdDate = document.createElement('td');
     tdDate.setAttribute('data-label', 'Last Activity');
-    tdDate.textContent = c.latest_submission_at ? new Date(c.latest_submission_at).toLocaleString() : '—';
+    renderActivityCell(tdDate, c);
 
     var tdName = document.createElement('td');
     tdName.setAttribute('data-label', 'Name');
@@ -209,15 +287,17 @@ function renderCustomers(list) {
     }
 
     var tdStatus = document.createElement('td');
-    tdStatus.className = 'status-cell';
     tdStatus.setAttribute('data-label', 'Status');
+    var statusWrap = document.createElement('div');
+    statusWrap.className = 'status-wrap';
+    tdStatus.appendChild(statusWrap);
     if (c.latest_status === 'superseded') {
       var supTag = document.createElement('span');
       supTag.style.fontFamily = "'DM Mono',monospace";
       supTag.style.fontSize = '11px';
       supTag.style.color = 'var(--dim)';
       supTag.textContent = 'Replaced';
-      tdStatus.appendChild(supTag);
+      statusWrap.appendChild(supTag);
     } else {
       var dot = document.createElement('span');
       dot.className = 'status-dot status-' + (c.latest_status || 'new');
@@ -239,8 +319,8 @@ function renderCustomers(list) {
           }).catch(function () {});
         }
       });
-      tdStatus.appendChild(dot);
-      tdStatus.appendChild(select);
+      statusWrap.appendChild(dot);
+      statusWrap.appendChild(select);
     }
 
     var tdNote = document.createElement('td');
