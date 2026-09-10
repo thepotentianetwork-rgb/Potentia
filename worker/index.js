@@ -1407,6 +1407,7 @@ function computeOptionPrices(cfg) {
   const ADDON_FLAT_KEYS = {
     shutters: "Shutters", flowerboxes: "Flowerboxes", ridgeVent: "Roof Ridge Vent",
     skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder",
+    shedRemoval: "Shed Removal", concreteRemoval: "Concrete Removal",
     atticLadder: "Attic Pull-Down Ladder"
   };
   const ADDON_PERSQFT_KEYS = {

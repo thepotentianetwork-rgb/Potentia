@@ -149,6 +149,22 @@ var PCT_LABEL = function (r) { return (r * 100).toFixed(2).replace(/\.?0+$/, '')
 // the cost/margin fields (framing, siding cost, trueTotalCost, profit, etc.)
 // that live alongside them in the same object for the admin dashboard.
 // Shared by buildBreakdown() and the price box so both show the same total.
+// Site clearance, pulled back out of the add-ons. It is priced through the
+// same flat table as shutters and skylights, but it is not part of the shed:
+// it happens before the pad goes down, and at these amounts a customer seeing
+// it folded silently into a line called "Shed" would rightly ask what the
+// number was made of.
+var REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
+function removalLines(redline) {
+  if (!redline || !Array.isArray(redline.addonLines)) return [];
+  return redline.addonLines.filter(function (l) {
+    return l && REMOVAL_NAMES.indexOf(l.name) !== -1;
+  });
+}
+function removalTotal(redline) {
+  return removalLines(redline).reduce(function (t, l) { return t + num(l.amt); }, 0);
+}
+
 function taxBreakdown(redline) {
   if (!redline || typeof redline !== 'object') return null;
   var num = function (n) { return Number(n) || 0; };
@@ -169,17 +185,32 @@ function taxBreakdown(redline) {
     + num(redline.elecSell)
     + num(redline.loftSell)
     + sumLines(redline.shelfSellLines, 'price')
-    + sumLines(redline.addonLines, 'amt');
+    + sumLines(redline.addonLines, 'amt')
+    - removalTotal(redline);
 
   // Build order matches how the job is actually run and billed: concrete
   // goes in first, then the shed, then interior finishing — always in
   // this order, each its own phase.
   var rows = [];
-  function add(phase, label, amt) {
+  // Phase numbers are assigned from position after the rows are built, not
+  // written in at each call. Removal is added at the FRONT when it applies, and
+  // hardcoded numbers would have made it Phase 1 alongside a concrete pad also
+  // calling itself Phase 1.
+  function add(label, amt) {
     if (!label || !amt) return null;
-    var row = { phase: phase, label: 'Phase ' + phase + ' — ' + label, amt: Number(amt) };
+    var row = { label: label, amt: Number(amt) };
     rows.push(row);
     return row;
+  }
+
+  // First on site, first on the quote.
+  var removal = removalLines(redline);
+  if (removal.length) {
+    var rTotal = removalTotal(redline);
+    var rRow = add(removal.length > 1 ? 'Site Clearance' : removal[0].name, rTotal);
+    if (rRow && removal.length > 1) {
+      rRow.subLines = removal.map(function (l) { return { label: l.name, amt: num(l.amt) }; });
+    }
   }
   // The pad spec (4" poured slab) belongs on every quote regardless of when
   // its redline snapshot was taken, so it's added here at display time
@@ -191,9 +222,9 @@ function taxBreakdown(redline) {
   // config here and threw ReferenceError, which blanked the whole page.
   var foundLabel = redline.foundName || 'Concrete';
   if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
-  add(1, foundLabel, redline.foundSell);
-  var shedRow = add(2, 'Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
-  add(3, redline.intSellName || 'Interior Finishing', redline.intSell);
+  add(foundLabel, redline.foundSell);
+  var shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
+  add(redline.intSellName || 'Interior Finishing', redline.intSell);
 
   // Electrical is still billed and deposited as part of the Shed phase
   // (its dollars stay inside shedTotal above) — this just breaks it out as
@@ -204,6 +235,10 @@ function taxBreakdown(redline) {
   }
 
   if (!rows.length) return null;
+  rows.forEach(function (r, i) {
+    r.phase = i + 1;
+    r.label = 'Phase ' + r.phase + ' — ' + r.label;
+  });
   rows.forEach(function (r) {
     r.tax = r.amt * TAX_RATE;
     r.total = r.amt + r.tax;
