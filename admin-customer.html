@@ -67,6 +67,26 @@ select:focus{border-color:var(--sp-blue)}
 .btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:8px 16px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;font-weight:700;text-decoration:none;display:inline-block}
 .btn:hover{background:#5ad0ff}
 
+/* price adjustment */
+.adj-block{margin-top:14px;padding-top:14px;border-top:1px solid var(--dim)}
+.adj-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:10px}
+.adj-form{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.adj-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 9px;outline:none}
+.adj-form input:focus{border-color:var(--sp-blue)}
+.adj-form input.adj-amt{width:110px}
+.adj-form input.adj-note{flex:1;min-width:150px;font-family:'Cormorant Garamond',serif;font-size:15px}
+.adj-form button{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 12px;border:none;text-transform:uppercase;cursor:pointer;font-weight:700}
+.adj-form button:hover{background:#5ad0ff}
+.adj-current{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px}
+.adj-amt-shown{font-size:18px;font-weight:300}
+.adj-amt-shown.down{color:#e0684f}
+.adj-amt-shown.up{color:#5fd08a}
+.adj-note-shown{font-size:14px;color:var(--silver)}
+.adj-net{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);text-transform:uppercase;letter-spacing:0.05em}
+.adj-net strong{font-family:'Cormorant Garamond',serif;font-size:16px;color:var(--bright);text-transform:none;letter-spacing:normal}
+.adj-clear{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:6px 10px;cursor:pointer}
+.adj-clear:hover{border-color:#e0684f;color:#e0684f}
+
 /* call log */
 .call-form{display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;align-items:flex-end}
 .call-form .cf{display:flex;flex-direction:column;gap:6px}
@@ -640,6 +660,97 @@ function renderInstallBlock(card, s, details, installs) {
   card.appendChild(block);
 }
 
+// ---- per-quote price adjustment ----
+// Lives on the order card rather than the customer, because it belongs to one
+// quote: a repeat customer's second shed should not inherit the discount given
+// on their first.
+function renderAdjustBlock(card, s, details) {
+  var quoted = details.quotedPrice != null ? Number(details.quotedPrice) : null;
+  var current = s.price_adjustment != null ? Number(s.price_adjustment) : 0;
+
+  var block = document.createElement('div');
+  block.className = 'adj-block';
+  var label = document.createElement('div');
+  label.className = 'adj-label';
+  label.textContent = 'Price Adjustment';
+  block.appendChild(label);
+
+  if (current) {
+    var cur = document.createElement('div');
+    cur.className = 'adj-current';
+    var amt = document.createElement('span');
+    amt.className = 'adj-amt-shown ' + (current < 0 ? 'down' : 'up');
+    amt.textContent = (current < 0 ? '\u2212' : '+') + '$' + Math.abs(current).toLocaleString();
+    cur.appendChild(amt);
+    if (s.adjustment_note) {
+      var note = document.createElement('span');
+      note.className = 'adj-note-shown';
+      note.textContent = s.adjustment_note;
+      cur.appendChild(note);
+    }
+    if (quoted != null) {
+      var net = document.createElement('span');
+      net.className = 'adj-net';
+      net.innerHTML = 'customer pays <strong></strong>';
+      net.querySelector('strong').textContent = '$' + Math.round(quoted + current).toLocaleString();
+      cur.appendChild(net);
+    }
+    var clear = document.createElement('button');
+    clear.type = 'button';
+    clear.className = 'adj-clear';
+    clear.textContent = 'Remove';
+    clear.addEventListener('click', function () {
+      if (!confirm('Remove this price adjustment?')) return;
+      saveAdjustment(s.id, null, null);
+    });
+    cur.appendChild(clear);
+    block.appendChild(cur);
+  }
+
+  var form = document.createElement('form');
+  form.className = 'adj-form';
+  var amtIn = document.createElement('input');
+  amtIn.className = 'adj-amt';
+  amtIn.type = 'number';
+  amtIn.step = '0.01';
+  // Negative for a discount, positive for a surcharge — one field, so there is
+  // no direction toggle to get the wrong way round.
+  amtIn.placeholder = '-500';
+  amtIn.title = 'Negative for a discount, positive for a surcharge';
+  var noteIn = document.createElement('input');
+  noteIn.className = 'adj-note';
+  noteIn.type = 'text';
+  noteIn.placeholder = 'Reason shown on the quote — e.g. Repeat customer discount';
+  var btn = document.createElement('button');
+  btn.type = 'submit';
+  btn.textContent = current ? 'Replace' : 'Apply';
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var v = Number(amtIn.value);
+    if (!amtIn.value || !isFinite(v) || v === 0) { alert('Enter an amount — negative to discount, positive to add.'); return; }
+    if (quoted != null && v + quoted < 0) { alert('That discount is larger than the quote.'); return; }
+    saveAdjustment(s.id, v, noteIn.value);
+  });
+
+  form.appendChild(amtIn);
+  form.appendChild(noteIn);
+  form.appendChild(btn);
+  block.appendChild(form);
+  card.appendChild(block);
+}
+
+function saveAdjustment(submissionId, amount, note) {
+  authFetch('/admin/submissions/' + submissionId + '/adjustment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount: amount, note: note })
+  }).then(function (r) {
+    if (!r.ok) { alert((r.data && r.data.error) || 'Could not save that adjustment.'); return; }
+    loadCustomer();
+  }).catch(function () { alert('Could not reach the server.'); });
+}
+
 function renderOrders(submissions, installs) {
   installs = installs || [];
   var wrap = document.getElementById('orders-list');
@@ -747,6 +858,7 @@ function renderOrders(submissions, installs) {
     // Install dates only matter once the job is actually won — showing them
     // on a still-pipeline order would just be an empty form nobody can fill
     // in yet.
+    renderAdjustBlock(card, s, details);
     if (s.status === 'won') renderInstallBlock(card, s, details, installs);
     wrap.appendChild(card);
   });

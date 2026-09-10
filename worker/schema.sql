@@ -114,3 +114,12 @@ CREATE TABLE IF NOT EXISTS calls (
   called_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- Per-quote price adjustment: a discount or surcharge agreed with ONE customer,
+-- stored against their submission rather than edited into quotedPrice, so the
+-- original quote stays readable. Signed — negative discounts, positive adds.
+-- The worker adds these columns at runtime too, so this only matters for a
+-- fresh install.
+--   ALTER TABLE submissions ADD COLUMN price_adjustment REAL;
+--   ALTER TABLE submissions ADD COLUMN adjustment_note TEXT;
+--   ALTER TABLE submissions ADD COLUMN won_at TEXT;

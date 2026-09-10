@@ -210,9 +210,34 @@ function taxBreakdown(redline) {
     r.deposit = r.total * DEPOSIT_RATE;
   });
   var subtotal = rows.reduce(function (t, r) { return t + r.amt; }, 0);
-  var tax = subtotal * TAX_RATE;
+
+  // A price adjustment agreed with this customer. Applied BEFORE tax, because
+  // tax is owed on what they actually pay, and scaled through the per-phase
+  // deposits by the same ratio — a discount that reduced the total but not the
+  // deposits would have them paying a bigger share up front for a cheaper shed.
+  var adjust = (ADJUSTMENT && isFinite(ADJUSTMENT.amount)) ? ADJUSTMENT.amount : 0;
+  var adjustedSubtotal = subtotal + adjust;
+  if (adjustedSubtotal < 0) adjustedSubtotal = 0;
+  var ratio = subtotal > 0 ? (adjustedSubtotal / subtotal) : 1;
+  if (adjust) {
+    rows.forEach(function (r) {
+      r.tax = r.amt * ratio * TAX_RATE;
+      r.total = r.amt * ratio + r.tax;
+      r.deposit = r.total * DEPOSIT_RATE;
+    });
+  }
+
+  var tax = adjustedSubtotal * TAX_RATE;
   var depositTotal = rows.reduce(function (t, r) { return t + r.deposit; }, 0);
-  return { rows: rows, subtotal: subtotal, tax: tax, total: subtotal + tax, depositTotal: depositTotal };
+  return {
+    rows: rows,
+    subtotal: subtotal,
+    adjust: adjust,
+    adjustedSubtotal: adjustedSubtotal,
+    tax: tax,
+    total: adjustedSubtotal + tax,
+    depositTotal: depositTotal
+  };
 }
 
 function buildBreakdown(bd) {
@@ -231,6 +256,18 @@ function buildBreakdown(bd) {
     return html;
   }).join('');
   rowsHtml += '<div class="br-row"><span class="br-label">Subtotal</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
+  // Shown as its own line, with the original subtotal left above it. The
+  // customer can see what the shed prices at and what was taken off — a total
+  // that had quietly absorbed the discount would invite the question anyway.
+  if (bd.adjust) {
+    var adjLabel = (ADJUSTMENT && ADJUSTMENT.note)
+      ? ADJUSTMENT.note
+      : (bd.adjust < 0 ? 'Discount' : 'Adjustment');
+    rowsHtml += '<div class="br-row"><span class="br-label">' + esc(adjLabel) + '</span>'
+      + '<span class="br-amt">' + (bd.adjust < 0 ? '\u2212' : '+') + money2(Math.abs(bd.adjust)) + '</span></div>';
+    rowsHtml += '<div class="br-row"><span class="br-label">Adjusted Subtotal</span>'
+      + '<span class="br-amt">' + money2(bd.adjustedSubtotal) + '</span></div>';
+  }
   rowsHtml += '<div class="br-row"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
 
   var depositRowsHtml = bd.rows.map(function (r) {
@@ -295,10 +332,21 @@ function buildSpecs(config) {
   return html;
 }
 
+// The price adjustment agreed with THIS customer, read from their own
+// submission row. Module-level because taxBreakdown and buildBreakdown both
+// need it and they are called from separate places; set once per render, so a
+// quote with no adjustment behaves exactly as it did before.
+var ADJUSTMENT = null;
+
 function render(submission, customer) {
   var details = {};
   try { details = JSON.parse(submission.details) || {}; } catch (e) {}
   var config = (details.config && typeof details.config === 'object') ? details.config : {};
+
+  var adjAmount = submission.price_adjustment != null ? Number(submission.price_adjustment) : 0;
+  ADJUSTMENT = (adjAmount && isFinite(adjAmount))
+    ? { amount: adjAmount, note: submission.adjustment_note || null }
+    : null;
 
   if (customer) document.getElementById('back-link').href = 'admin-customer.html?id=' + encodeURIComponent(customer.id);
 
