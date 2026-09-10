@@ -86,6 +86,17 @@ section{margin-bottom:52px}
 .mini-del{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:5px 9px;cursor:pointer;flex-shrink:0}
 .mini-del:hover{border-color:var(--danger);color:var(--danger)}
 
+.call-row{display:flex;gap:14px;align-items:flex-start;padding:13px 0;border-bottom:1px solid var(--dim)}
+.call-dir{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;padding:4px 8px;border:1px solid var(--dim);border-radius:20px;flex-shrink:0;margin-top:2px}
+.call-dir.outbound{color:var(--build);border-color:rgba(111,168,220,0.4)}
+.call-dir.inbound{color:var(--warm);border-color:rgba(216,161,95,0.4)}
+.call-body{flex:1;min-width:0}
+.call-top{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
+.call-outcome{font-size:16px;color:var(--bright);font-weight:300}
+.call-when{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:0.05em}
+.call-notes{font-size:14px;color:var(--silver);line-height:1.5;white-space:pre-wrap}
+.call-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:18px}
+
 /* notes */
 .note-item{padding:14px 0;border-bottom:1px solid var(--dim);display:flex;gap:14px;align-items:flex-start}
 .note-body{flex:1}
@@ -188,6 +199,29 @@ section{margin-bottom:52px}
       <button class="btn" type="submit">Add</button>
     </form>
     <div id="tasks-list"><p class="empty">Loading…</p></div>
+  </section>
+
+  <section>
+    <h3>Call Log</h3>
+    <form class="row-form" id="call-form">
+      <select id="call-dir" style="width:130px">
+        <option value="outbound">Outbound</option>
+        <option value="inbound">Inbound</option>
+      </select>
+      <select id="call-outcome" style="width:180px">
+        <option value="connected">Connected</option>
+        <option value="voicemail">Voicemail</option>
+        <option value="no-answer">No answer</option>
+        <option value="callback">Callback requested</option>
+        <option value="wrong-number">Wrong number</option>
+      </select>
+      <input id="call-dur" type="number" min="1" max="600" step="1" placeholder="Min" style="width:90px">
+      <input id="call-date" type="date" style="width:150px">
+      <input id="call-notes" class="grow" type="text" placeholder="What was said — e.g. wants the booking page live before the 1st">
+      <button class="btn" type="submit">Log Call</button>
+    </form>
+    <div class="call-count" id="call-count"></div>
+    <div id="calls-list"><p class="empty">Loading…</p></div>
   </section>
 
   <section>
@@ -698,6 +732,104 @@ el('delete-confirm-btn').addEventListener('click', function () {
   });
 });
 
+// ---- call log ----
+var CALL_OUTCOME_LABELS = {
+  'connected': 'Connected',
+  'voicemail': 'Left voicemail',
+  'no-answer': 'No answer',
+  'callback': 'Callback requested',
+  'wrong-number': 'Wrong number'
+};
+
+function renderCalls(calls) {
+  var box = el('calls-list');
+  var count = el('call-count');
+  box.innerHTML = '';
+  count.textContent = '';
+  if (!calls.length) {
+    box.innerHTML = '<p class="empty">No calls logged yet.</p>';
+    return;
+  }
+
+  // Connected counted apart from the rest — five voicemails are not five
+  // conversations.
+  var connected = calls.filter(function (c) { return c.outcome === 'connected'; }).length;
+  var totalMin = calls.reduce(function (t, c) { return t + Number(c.duration_min || 0); }, 0);
+  var bits = [calls.length + (calls.length === 1 ? ' call' : ' calls'), connected + ' connected'];
+  if (totalMin > 0) bits.push(Math.round(totalMin) + ' min total');
+  count.textContent = bits.join('  \u00b7  ');
+
+  calls.forEach(function (c) {
+    var row = document.createElement('div');
+    row.className = 'call-row';
+
+    var dir = document.createElement('span');
+    dir.className = 'call-dir ' + c.direction;
+    dir.textContent = c.direction === 'inbound' ? 'In' : 'Out';
+
+    var body = document.createElement('div');
+    body.className = 'call-body';
+    var top = document.createElement('div');
+    top.className = 'call-top';
+    var outcome = document.createElement('span');
+    outcome.className = 'call-outcome';
+    outcome.textContent = CALL_OUTCOME_LABELS[c.outcome] || c.outcome;
+    top.appendChild(outcome);
+    var when = document.createElement('span');
+    when.className = 'call-when';
+    var d = new Date(c.called_at);
+    when.textContent = (isNaN(d.getTime()) ? c.called_at
+        : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))
+      + (c.duration_min ? '  \u00b7  ' + c.duration_min + ' min' : '');
+    top.appendChild(when);
+    body.appendChild(top);
+    if (c.notes) {
+      var n = document.createElement('p');
+      n.className = 'call-notes';
+      n.textContent = c.notes;
+      body.appendChild(n);
+    }
+
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'mini-del';
+    del.textContent = 'Delete';
+    del.addEventListener('click', function () {
+      if (!confirm('Delete this call?')) return;
+      authFetch('/crm/calls/' + c.id, { method: 'DELETE' }).then(loadClient).catch(function () {});
+    });
+
+    row.appendChild(dir);
+    row.appendChild(body);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
+el('call-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var dateVal = el('call-date').value;
+  authFetch('/crm/clients/' + clientId + '/calls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      direction: el('call-dir').value,
+      outcome: el('call-outcome').value,
+      duration_min: el('call-dur').value || null,
+      notes: el('call-notes').value,
+      // Midday, not midnight, so a back-dated call doesn't sort behind
+      // everything else logged that day. Blank means now.
+      called_at: dateVal ? dateVal + 'T12:00:00.000Z' : null
+    })
+  }).then(function (r) {
+    if (!r.ok) { alert((r.data && r.data.error) || 'Could not log that call.'); return; }
+    el('call-dur').value = '';
+    el('call-notes').value = '';
+    el('call-date').value = '';
+    loadClient();
+  }).catch(function () { alert('Could not reach the server.'); });
+});
+
 // ---- load ----
 function loadClient() {
   return authFetch('/crm/clients/' + clientId).then(function (r) {
@@ -713,6 +845,7 @@ function loadClient() {
     currentClient = r.data.client;
     fillDetails(currentClient);
     renderTasks(r.data.tasks || []);
+    renderCalls(r.data.calls || []);
     renderNotes(r.data.notes || []);
     renderPayments(r.data.payments || []);
 
