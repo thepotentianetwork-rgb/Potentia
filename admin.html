@@ -175,11 +175,12 @@ document.getElementById('logout-btn').addEventListener('click', function () {
 // ---- Customers ----
 // ---- follow-up temperature ----
 // How long since anyone actually touched this lead, and whether that means
-// chase it now or let it go. Deliberately counts NOTES as well as the quote
-// itself: if you rang them yesterday and logged it, the lead isn't cold, even
-// though the quote went out three weeks ago.
+// chase it now or let it go. Counts LOGGED CALLS and NOTES as well as the quote
+// itself: ring them today and the lead is hot again, even though the quote went
+// out three weeks ago. Leaving calls out would be the worst of both worlds —
+// the CRM would read cold on exactly the leads being worked hardest.
 function lastTouchMs(c) {
-  var times = [c.latest_submission_at, c.latest_note_at]
+  var times = [c.latest_submission_at, c.latest_note_at, c.latest_call_at]
     .filter(Boolean)
     .map(function (t) { return new Date(t).getTime(); })
     .filter(function (n) { return !isNaN(n); });
@@ -233,7 +234,7 @@ function resolveTemperature(c, days) {
              why: 'Set by hand — not from activity' };
   }
   var t = temperatureFor(days);
-  t.why = 'Last touch ' + agoLabel(days) + ' — counts notes as well as the quote';
+  t.why = 'Last touch ' + agoLabel(days) + ' — counts logged calls and notes, not just the quote';
   return t;
 }
 

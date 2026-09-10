@@ -311,6 +311,7 @@ async function handleSetFollowUp(request, env, origin, customerId) {
 // ---- /admin/customers: one row per customer, with their latest order + note ----
 async function handleListCustomers(request, env, origin) {
   await ensureCustomerTempColumns(env);
+  await ensureCallsTable(env);
   const { results } = await env.DB.prepare(
     `SELECT c.id, c.name, c.email, c.phone, c.city, c.state, c.created_at, c.updated_at,
        c.temp_override, c.follow_up_at,
@@ -320,7 +321,8 @@ async function handleListCustomers(request, env, origin) {
        (SELECT s.created_at FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_submission_at,
        (SELECT COUNT(*) FROM submissions s WHERE s.customer_id = c.id AND s.status != 'superseded') AS submission_count,
        (SELECT n.text FROM notes n WHERE n.customer_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
-       (SELECT n.created_at FROM notes n WHERE n.customer_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at
+       (SELECT n.created_at FROM notes n WHERE n.customer_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at,
+       (SELECT cl.called_at FROM calls cl WHERE cl.customer_id = c.id ORDER BY cl.called_at DESC LIMIT 1) AS latest_call_at
      FROM customers c
      ORDER BY latest_submission_at DESC
      LIMIT 200`
@@ -404,6 +406,13 @@ async function handleGetCustomer(request, env, origin, id) {
     .bind(id)
     .all();
 
+  await ensureCallsTable(env);
+  const { results: calls } = await env.DB.prepare(
+    "SELECT id, direction, outcome, duration_min, notes, called_at, created_at FROM calls WHERE customer_id = ? ORDER BY called_at DESC, id DESC"
+  )
+    .bind(id)
+    .all();
+
   // installs are keyed by submission (order), not customer — join through so
   // a repeat customer's install log for order A never bleeds into order B.
   await ensureInstallsTable(env);
@@ -415,7 +424,7 @@ async function handleGetCustomer(request, env, origin, id) {
     .bind(id)
     .all();
 
-  return json({ customer, submissions, notes, payments, installs }, 200, origin);
+  return json({ customer, submissions, notes, payments, installs, calls }, 200, origin);
 }
 
 // ---- DELETE /admin/customers/:id — permanently removes the customer and
@@ -427,9 +436,11 @@ async function handleDeleteCustomer(request, env, origin, id) {
   if (!customer) return json({ error: "Not found" }, 404, origin);
 
   await ensurePaymentsTable(env);
+  await ensureCallsTable(env);
   await env.DB.batch([
     env.DB.prepare("DELETE FROM notes WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM payments WHERE customer_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM calls WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM submissions WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM customers WHERE id = ?").bind(id)
   ]);
@@ -447,6 +458,62 @@ async function handleAddNote(request, env, origin, customerId) {
     .bind(customerId, text, now)
     .run();
   return json({ ok: true, id: res.meta.last_row_id, created_at: now }, 200, origin);
+}
+
+
+// ---- call log (ShedPro) ----
+// Logged by hand, not pulled from a phone system: the useful part of a call is
+// what was said and what happens next, and no API knows that. Kept separate
+// from notes because these fields are answerable in one tap each — a note is
+// prose, a call is a record.
+//
+// Lazily created on first use, same as payments and installs.
+async function ensureCallsTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      direction TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      duration_min REAL,
+      notes TEXT,
+      called_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  ).run();
+}
+
+const CALL_DIRECTIONS = ["outbound", "inbound"];
+// "callback" is its own outcome rather than a note, because it is the one that
+// should change what you do next — see the follow-up temperature.
+const CALL_OUTCOMES = ["connected", "voicemail", "no-answer", "callback", "wrong-number"];
+
+async function handleAddCall(request, env, origin, customerId) {
+  await ensureCallsTable(env);
+  const body = await request.json().catch(() => ({}));
+  const direction = enumOr(String(body.direction || "").toLowerCase().trim(), CALL_DIRECTIONS, null);
+  const outcome = enumOr(String(body.outcome || "").toLowerCase().trim(), CALL_OUTCOMES, null);
+  if (!direction) return json({ error: "valid direction required" }, 400, origin);
+  if (!outcome) return json({ error: "valid outcome required" }, 400, origin);
+
+  const durationRaw = Number(body.duration_min);
+  const duration = Number.isFinite(durationRaw) && durationRaw > 0 ? Math.min(durationRaw, 600) : null;
+  const notes = String(body.notes || "").trim().slice(0, 2000) || null;
+  const calledAt = body.called_at ? String(body.called_at).slice(0, 40) : new Date().toISOString();
+
+  const now = new Date().toISOString();
+  const res = await env.DB.prepare(
+    "INSERT INTO calls (customer_id, direction, outcome, duration_min, notes, called_at, created_at) VALUES (?,?,?,?,?,?,?)"
+  )
+    .bind(customerId, direction, outcome, duration, notes, calledAt, now)
+    .run();
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+async function handleDeleteCall(request, env, origin, id) {
+  await ensureCallsTable(env);
+  await env.DB.prepare("DELETE FROM calls WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
 }
 
 // ---- /admin/customers/:id/payments ----
@@ -1401,6 +1468,18 @@ async function ensureCrmTables(env) {
       )`
     ),
     env.CRM_DB.prepare(
+      `CREATE TABLE IF NOT EXISTS client_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER NOT NULL,
+        direction TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        duration_min REAL,
+        notes TEXT,
+        called_at TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`
+    ),
+    env.CRM_DB.prepare(
       `CREATE TABLE IF NOT EXISTS client_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id INTEGER NOT NULL,
@@ -1469,6 +1548,7 @@ async function handleCrmListClients(request, env, origin) {
     `SELECT c.*,
        (SELECT n.text FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
        (SELECT n.created_at FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at,
+       (SELECT cl.called_at FROM client_calls cl WHERE cl.client_id = c.id ORDER BY cl.called_at DESC LIMIT 1) AS latest_call_at,
        (SELECT COUNT(*) FROM client_tasks t WHERE t.client_id = c.id AND t.done = 0) AS open_tasks,
        (SELECT MIN(t.due_date) FROM client_tasks t WHERE t.client_id = c.id AND t.done = 0 AND t.due_date IS NOT NULL) AS next_due,
        (SELECT COALESCE(SUM(p.amount), 0) FROM client_payments p WHERE p.client_id = c.id) AS collected
@@ -1580,8 +1660,13 @@ async function handleCrmGetClient(request, env, origin, id) {
   )
     .bind(id)
     .all();
+  const { results: calls } = await env.CRM_DB.prepare(
+    "SELECT id, direction, outcome, duration_min, notes, called_at, created_at FROM client_calls WHERE client_id = ? ORDER BY called_at DESC, id DESC"
+  )
+    .bind(id)
+    .all();
 
-  return json({ client, notes, payments, tasks }, 200, origin);
+  return json({ client, notes, payments, tasks, calls }, 200, origin);
 }
 
 // ---- POST /crm/clients/:id — update (POST, not PATCH: the CORS allow-list
@@ -1622,6 +1707,7 @@ async function handleCrmDeleteClient(request, env, origin, id) {
     env.CRM_DB.prepare("DELETE FROM client_notes WHERE client_id = ?").bind(id),
     env.CRM_DB.prepare("DELETE FROM client_payments WHERE client_id = ?").bind(id),
     env.CRM_DB.prepare("DELETE FROM client_tasks WHERE client_id = ?").bind(id),
+    env.CRM_DB.prepare("DELETE FROM client_calls WHERE client_id = ?").bind(id),
     env.CRM_DB.prepare("DELETE FROM clients WHERE id = ?").bind(id)
   ]);
   return json({ ok: true }, 200, origin);
@@ -1714,6 +1800,40 @@ async function handleCrmDeleteTask(request, env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
+
+// ---- client call log ----
+// Same shape as the shed side's calls table, logged by hand for the same
+// reason: what was said and what happens next is the part worth keeping, and
+// no phone system knows it.
+async function handleCrmAddCall(request, env, origin, clientId) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+  const direction = crmEnum(body.direction, CALL_DIRECTIONS, null);
+  const outcome = crmEnum(body.outcome, CALL_OUTCOMES, null);
+  if (!direction) return json({ error: "valid direction required" }, 400, origin);
+  if (!outcome) return json({ error: "valid outcome required" }, 400, origin);
+
+  const durationRaw = Number(body.duration_min);
+  const duration = Number.isFinite(durationRaw) && durationRaw > 0 ? Math.min(durationRaw, 600) : null;
+  const notes = crmStr(body.notes, 2000);
+  const calledAt = body.called_at ? String(body.called_at).slice(0, 40) : new Date().toISOString();
+
+  const now = new Date().toISOString();
+  const res = await env.CRM_DB.prepare(
+    "INSERT INTO client_calls (client_id, direction, outcome, duration_min, notes, called_at, created_at) VALUES (?,?,?,?,?,?,?)"
+  )
+    .bind(clientId, direction, outcome, duration, notes, calledAt, now)
+    .run();
+  await touchClient(env, clientId);
+  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+async function handleCrmDeleteCall(request, env, origin, id) {
+  await ensureCrmTables(env);
+  await env.CRM_DB.prepare("DELETE FROM client_calls WHERE id = ?").bind(id).run();
+  return json({ ok: true }, 200, origin);
+}
+
 // ---- POST /crm/lead — public. The contact form posts here alongside its
 // existing Formspree submit, so an inquiry becomes a CRM lead on its own.
 // An inquiry from someone already in the CRM is logged as a note on their
@@ -1789,6 +1909,18 @@ export default {
         const id = Number(path.slice("/admin/customers/".length, -"/followup".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleSetFollowUp(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/calls") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/customers/".length, -"/calls".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleAddCall(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/calls/") && request.method === "DELETE") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/calls/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleDeleteCall(request, env, origin, id);
       }
       if (path.startsWith("/admin/customers/") && path.endsWith("/payments") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
@@ -1902,6 +2034,18 @@ export default {
         const id = Number(path.slice("/crm/clients/".length, -"/payments".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleCrmAddPayment(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/clients/") && path.endsWith("/calls") && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/clients/".length, -"/calls".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmAddCall(request, env, origin, id);
+      }
+      if (path.startsWith("/crm/calls/") && request.method === "DELETE") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/crm/calls/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleCrmDeleteCall(request, env, origin, id);
       }
       if (path.startsWith("/crm/clients/") && path.endsWith("/tasks") && request.method === "POST") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

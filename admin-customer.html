@@ -67,6 +67,25 @@ select:focus{border-color:var(--sp-blue)}
 .btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:8px 16px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.2s;font-weight:700;text-decoration:none;display:inline-block}
 .btn:hover{background:#5ad0ff}
 
+/* call log */
+.call-form{display:flex;gap:10px;margin-bottom:24px;flex-wrap:wrap;align-items:flex-end}
+.call-form .cf{display:flex;flex-direction:column;gap:6px}
+.call-form label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase}
+.call-form select,.call-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:9px 11px;outline:none}
+.call-form select:focus,.call-form input:focus{border-color:var(--sp-blue)}
+.call-form input[type="text"]{font-family:'Cormorant Garamond',serif;font-size:15px}
+.call-form .grow{flex:1 1 200px;min-width:160px}
+.call-row{display:flex;gap:14px;align-items:flex-start;padding:13px 0;border-bottom:1px solid var(--dim)}
+.call-dir{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;padding:4px 8px;border:1px solid var(--dim);border-radius:20px;flex-shrink:0;margin-top:2px}
+.call-dir.outbound{color:var(--sp-blue);border-color:rgba(44,192,253,0.4)}
+.call-dir.inbound{color:var(--sp-orange);border-color:rgba(246,148,31,0.4)}
+.call-body{flex:1;min-width:0}
+.call-top{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
+.call-outcome{font-size:16px;color:var(--bright);font-weight:300}
+.call-when{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:0.05em}
+.call-notes{font-size:14px;color:var(--silver);line-height:1.5;white-space:pre-wrap}
+.call-count{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:16px}
+
 /* notes */
 .note-form{display:flex;gap:10px;margin-bottom:28px}
 .note-form textarea{flex:1;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:12px 14px;outline:none;resize:vertical;min-height:44px}
@@ -191,6 +210,45 @@ select:focus{border-color:var(--sp-blue)}
     <p class="sec-label">History</p>
     <h2>Order History</h2>
     <div id="orders-list"><p class="empty">Loading…</p></div>
+  </section>
+
+  <section>
+    <p class="sec-label">Interactions</p>
+    <h2>Call Log</h2>
+    <form class="call-form" id="call-form">
+      <div class="cf">
+        <label for="call-dir">Direction</label>
+        <select id="call-dir">
+          <option value="outbound">Outbound</option>
+          <option value="inbound">Inbound</option>
+        </select>
+      </div>
+      <div class="cf">
+        <label for="call-outcome">Outcome</label>
+        <select id="call-outcome">
+          <option value="connected">Connected</option>
+          <option value="voicemail">Voicemail</option>
+          <option value="no-answer">No answer</option>
+          <option value="callback">Callback requested</option>
+          <option value="wrong-number">Wrong number</option>
+        </select>
+      </div>
+      <div class="cf">
+        <label for="call-dur">Minutes</label>
+        <input id="call-dur" type="number" min="1" max="600" step="1" style="width:90px">
+      </div>
+      <div class="cf">
+        <label for="call-date">When</label>
+        <input id="call-date" type="date" style="width:150px">
+      </div>
+      <div class="cf grow">
+        <label for="call-notes">What was said</label>
+        <input id="call-notes" type="text" placeholder="Wants it after the fence goes in — call back in Oct">
+      </div>
+      <button class="btn" type="submit">Log Call</button>
+    </form>
+    <div class="call-count" id="call-count"></div>
+    <div id="calls-list"><p class="empty">Loading…</p></div>
   </section>
 
   <section>
@@ -815,6 +873,106 @@ document.getElementById('fu-save').addEventListener('click', function () {
   });
 });
 
+// ---- call log ----
+var CALL_OUTCOME_LABELS = {
+  'connected': 'Connected',
+  'voicemail': 'Left voicemail',
+  'no-answer': 'No answer',
+  'callback': 'Callback requested',
+  'wrong-number': 'Wrong number'
+};
+
+function renderCalls(calls) {
+  var box = el('calls-list');
+  var count = el('call-count');
+  box.innerHTML = '';
+  count.textContent = '';
+
+  if (!calls.length) {
+    box.innerHTML = '<p class="empty">No calls logged yet.</p>';
+    return;
+  }
+
+  // Connected is counted separately on purpose. Five voicemails are not five
+  // conversations, and one combined total would read as though the customer had
+  // been reached when they never picked up.
+  var connected = calls.filter(function (c) { return c.outcome === 'connected'; }).length;
+  var totalMin = calls.reduce(function (t, c) { return t + Number(c.duration_min || 0); }, 0);
+  var bits = [calls.length + (calls.length === 1 ? ' call' : ' calls'), connected + ' connected'];
+  if (totalMin > 0) bits.push(Math.round(totalMin) + ' min total');
+  count.textContent = bits.join('  \u00b7  ');
+
+  calls.forEach(function (c) {
+    var row = document.createElement('div');
+    row.className = 'call-row';
+
+    var dir = document.createElement('span');
+    dir.className = 'call-dir ' + c.direction;
+    dir.textContent = c.direction === 'inbound' ? 'In' : 'Out';
+
+    var body = document.createElement('div');
+    body.className = 'call-body';
+    var top = document.createElement('div');
+    top.className = 'call-top';
+    var outcome = document.createElement('span');
+    outcome.className = 'call-outcome';
+    outcome.textContent = CALL_OUTCOME_LABELS[c.outcome] || c.outcome;
+    top.appendChild(outcome);
+    var when = document.createElement('span');
+    when.className = 'call-when';
+    var d = new Date(c.called_at);
+    when.textContent = (isNaN(d.getTime()) ? c.called_at
+        : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }))
+      + (c.duration_min ? '  \u00b7  ' + c.duration_min + ' min' : '');
+    top.appendChild(when);
+    body.appendChild(top);
+    if (c.notes) {
+      var n = document.createElement('p');
+      n.className = 'call-notes';
+      n.textContent = c.notes;
+      body.appendChild(n);
+    }
+
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'payment-del';
+    del.textContent = 'Delete';
+    del.addEventListener('click', function () {
+      if (!confirm('Delete this call?')) return;
+      authFetch('/admin/calls/' + c.id, { method: 'DELETE' }).then(loadCustomer).catch(function () {});
+    });
+
+    row.appendChild(dir);
+    row.appendChild(body);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
+document.getElementById('call-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  var dateVal = el('call-date').value;
+  authFetch('/admin/customers/' + customerId + '/calls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      direction: el('call-dir').value,
+      outcome: el('call-outcome').value,
+      duration_min: el('call-dur').value || null,
+      notes: el('call-notes').value,
+      // Midday, not midnight: a date-only value would sort behind anything else
+      // logged the same day. Blank means now, which is the usual case.
+      called_at: dateVal ? dateVal + 'T12:00:00.000Z' : null
+    })
+  }).then(function (r) {
+    if (!r.ok) { alert((r.data && r.data.error) || 'Could not log that call.'); return; }
+    el('call-dur').value = '';
+    el('call-notes').value = '';
+    el('call-date').value = '';
+    loadCustomer();
+  }).catch(function () { alert('Could not reach the server.'); });
+});
+
 function loadCustomer() {
   authFetch('/admin/customers/' + customerId).then(function (r) {
     if (!r.ok) {
@@ -836,6 +994,7 @@ function loadCustomer() {
 
     var submissions = r.data.submissions || [], notes = r.data.notes || [], payments = r.data.payments || [], installs = r.data.installs || [];
     renderOrders(submissions, installs);
+    renderCalls(r.data.calls || []);
     renderNotes(notes);
     renderPayments(payments);
 

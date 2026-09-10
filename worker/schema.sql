@@ -98,3 +98,19 @@ CREATE TABLE IF NOT EXISTS saved_designs (
   contact_phone TEXT,
   created_at TEXT NOT NULL
 );
+
+-- Manual call log per customer — logged by hand, not pulled from a phone
+-- system. A logged call counts as a "touch" for the follow-up temperature on
+-- admin.html, so ringing someone makes their lead read hot again. The worker
+-- also creates this table lazily on first use, so this only matters for a
+-- fresh install.
+CREATE TABLE IF NOT EXISTS calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL,
+  direction TEXT NOT NULL,   -- 'outbound' | 'inbound'
+  outcome TEXT NOT NULL,     -- 'connected' | 'voicemail' | 'no-answer' | 'callback' | 'wrong-number'
+  duration_min REAL,
+  notes TEXT,
+  called_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
