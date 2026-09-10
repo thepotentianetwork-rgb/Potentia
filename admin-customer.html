@@ -243,6 +243,62 @@ var HEARD_LABELS = {
 // Carries the customer's contact info into the designer link as query params
 // (before the #hash the design config lives in) so re-opening a design to
 // tweak and re-quote it doesn't mean retyping name/email/phone/address by hand.
+// ---- Google Voice quick actions ----
+// voice.google.com deep-links: on a phone or tablet with the Google Voice app
+// installed these open the app directly (Android App Links / iOS Universal
+// Links); everywhere else they open Google Voice on the web, already pointed
+// at the right number. The /u/0/ is the Google account index — if the Voice
+// account isn't the first one signed in on this device, change it to /u/1/
+// (or /u/2/) here and it applies to every number in the CRM.
+var GV_CALL_URL = 'https://voice.google.com/u/0/calls?a=nc,';
+var GV_TEXT_URL = 'https://voice.google.com/u/0/messages?itemId=t.';
+
+// Google Voice wants E.164 (+15551234567). Assumes US/Canada, which is what
+// the shed business serves — a 10-digit number gets +1, an 11-digit starting
+// with 1 gets a plus, anything already longer is passed through as-is.
+function toE164(phone) {
+  var d = String(phone || '').replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d.charAt(0) === '1') return '+' + d;
+  if (d.length > 11) return '+' + d;
+  return null;
+}
+
+function gvIconLink(href, title, pathD) {
+  var a = document.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.title = title;
+  a.setAttribute('aria-label', title);
+  a.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border:1px solid var(--dim);color:var(--sp-blue);text-decoration:none;flex-shrink:0';
+  a.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8">' + pathD + '</svg>';
+  a.addEventListener('mouseenter', function () { a.style.borderColor = 'var(--sp-blue)'; });
+  a.addEventListener('mouseleave', function () { a.style.borderColor = 'var(--dim)'; });
+  return a;
+}
+var GV_PHONE_ICON = '<path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>';
+var GV_TEXT_ICON = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+
+// Renders the number plus a call and a text button. Falls back to plain text
+// when there's no number, or when it isn't one Google Voice could dial.
+function renderPhoneCell(el, phone) {
+  el.innerHTML = '';
+  if (!phone) { el.textContent = '—'; return; }
+  var e164 = toE164(phone);
+  var wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+  var num = document.createElement('span');
+  num.textContent = phone;
+  wrap.appendChild(num);
+  if (e164) {
+    wrap.appendChild(gvIconLink(GV_CALL_URL + encodeURIComponent(e164), 'Call on Google Voice', GV_PHONE_ICON));
+    wrap.appendChild(gvIconLink(GV_TEXT_URL + encodeURIComponent(e164), 'Text on Google Voice', GV_TEXT_ICON));
+  }
+  el.appendChild(wrap);
+}
+
 function appendContactParams(permalink, submission, details) {
   var fields = {
     name: submission.name || '',
@@ -656,7 +712,7 @@ function loadCustomer() {
     document.getElementById('customer-name').textContent = c.name || 'Unnamed customer';
     document.title = (c.name || 'Customer') + ' — ShedPro Admin';
     document.getElementById('c-email').textContent = c.email || '—';
-    document.getElementById('c-phone').textContent = c.phone || '—';
+    renderPhoneCell(document.getElementById('c-phone'), c.phone);
     document.getElementById('c-address').textContent = c.address || '—';
     var loc = [c.city, c.state].filter(Boolean).join(', ');
     document.getElementById('c-location').textContent = loc || '—';
