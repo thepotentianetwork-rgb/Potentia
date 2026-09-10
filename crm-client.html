@@ -52,6 +52,10 @@ section{margin-bottom:52px}
 .field select,.field input[type="date"]{font-family:'DM Mono',monospace;font-size:12px;text-transform:uppercase}
 .field input:focus,.field select:focus{border-color:var(--silver)}
 .field select option{background:#0a0a12;color:var(--bright)}
+.quick-actions{display:flex;gap:8px;margin-top:8px}
+.quick-actions a{display:inline-flex;align-items:center;gap:6px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--silver);text-decoration:none;border:1px solid var(--dim);padding:6px 10px;transition:all 0.2s}
+.quick-actions a:hover{border-color:var(--silver);color:var(--bright)}
+
 .save-row{display:flex;gap:12px;align-items:center}
 .save-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--live)}
 .save-msg.err{color:var(--danger)}
@@ -145,7 +149,11 @@ section{margin-bottom:52px}
       <div class="field"><label for="f-business">Business Name</label><input id="f-business" type="text"></div>
       <div class="field"><label for="f-contact">Contact Name</label><input id="f-contact" type="text"></div>
       <div class="field"><label for="f-email">Email</label><input id="f-email" type="email"></div>
-      <div class="field"><label for="f-phone">Phone</label><input id="f-phone" type="tel"></div>
+      <div class="field">
+        <label for="f-phone">Phone</label>
+        <input id="f-phone" type="tel">
+        <div id="phone-actions" class="quick-actions"></div>
+      </div>
       <div class="field"><label for="f-status">Status</label><select id="f-status"></select></div>
       <div class="field"><label for="f-package">Package</label><select id="f-package"></select></div>
       <div class="field"><label for="f-build">Build Fee ($)</label><input id="f-build" type="number" min="0" step="0.01"></div>
@@ -278,8 +286,52 @@ fillSelect(el('f-source'), SOURCES);
 fillSelect(el('pay-method'), PAY_METHODS.map(function (m) { return [m, m]; }));
 fillSelect(el('pay-kind'), PAY_KINDS);
 el('pay-date').value = today();
+el('f-phone').addEventListener('input', renderPhoneActions);
 
 // ---- details ----
+// ---- Google Voice quick actions ----
+// voice.google.com deep-links: on a phone or tablet with the Google Voice app
+// installed these open the app directly (Android App Links / iOS Universal
+// Links); everywhere else they open Google Voice on the web, already pointed
+// at the right number. The /u/0/ is the Google account index — if the Voice
+// account isn't the first one signed in on this device, change it to /u/1/
+// (or /u/2/) here and it applies to every client in the CRM.
+var GV_CALL_URL = 'https://voice.google.com/u/0/calls?a=nc,';
+var GV_TEXT_URL = 'https://voice.google.com/u/0/messages?itemId=t.';
+
+// Google Voice wants E.164 (+15551234567). Assumes US/Canada — a 10-digit
+// number gets +1, an 11-digit starting with 1 gets a plus, anything longer is
+// passed through as already-international.
+function toE164(phone) {
+  var d = String(phone || '').replace(/\D/g, '');
+  if (!d) return null;
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d.charAt(0) === '1') return '+' + d;
+  if (d.length > 11) return '+' + d;
+  return null;
+}
+
+// The phone here is an editable input, not static text, so these refresh as
+// it's typed rather than only on load — otherwise the buttons would point at
+// the old number until the page was saved and reloaded.
+function renderPhoneActions() {
+  var box = el('phone-actions');
+  box.innerHTML = '';
+  var e164 = toE164(el('f-phone').value);
+  if (!e164) return;
+  [['Call', GV_CALL_URL, '<path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>'],
+   ['Text', GV_TEXT_URL, '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>']
+  ].forEach(function (spec) {
+    var a = document.createElement('a');
+    a.href = spec[1] + encodeURIComponent(e164);
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.title = spec[0] + ' on Google Voice';
+    a.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8">' + spec[2] + '</svg>' + spec[0];
+    box.appendChild(a);
+  });
+}
+
 function fillDetails(c) {
   el('client-name').textContent = c.business_name || c.contact_name || 'Unnamed client';
   document.title = (c.business_name || c.contact_name || 'Client') + ' — Potentia CRM';
@@ -298,6 +350,7 @@ function fillDetails(c) {
   el('f-contact').value = c.contact_name || '';
   el('f-email').value = c.email || '';
   el('f-phone').value = c.phone || '';
+  renderPhoneActions();
   el('f-status').value = status;
   el('f-package').value = c.package || '';
   el('f-source').value = c.source || '';
