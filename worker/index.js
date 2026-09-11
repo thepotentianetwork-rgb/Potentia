@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, applyPricingOverrides, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft } from "./pricing.js";
+import { computePricing, applyPricingOverrides, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice } from "./pricing.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -943,6 +943,7 @@ function compItemsFromRedline(redline) {
   push(redline.elecSellName, redline.elecSell);
   push(redline.loftSellName, redline.loftSell);
   push(redline.intSellName, redline.intSell);
+  push(redline.floorSellName, redline.floorSell);
   push(redline.foundName, redline.foundSell);
   // paintSell is deliberately absent. The quote document never sums it as its
   // own line, so comping it would take money off a total that never contained
@@ -1787,6 +1788,13 @@ const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
 // so a retired tier reads as no electrical package rather than a free one.
 const SHED_ELEC = ["none", "basic", "core", "essential"];
 const SHED_INT_FINISH = ["none", "drywall", "painted"];
+/* Flooring tiers. Anything else falls back to "none" rather than being priced
+   — an unknown tier must cost nothing, not throw and not guess. That includes
+   "good", a sealed-floor tier that was briefly here and was dropped because
+   the Foundation step already sells sealing: a preview link saved while it
+   existed prices as a Standard floor rather than as something we no longer
+   offer. */
+const SHED_FLOOR = ["none", "better", "best"];
 
 function clampNum(v, lo, hi, fallback) {
   const n = Number(v);
@@ -1825,6 +1833,7 @@ function validateShedConfig(raw) {
     loft: typeof raw.loft === "string" ? raw.loft.slice(0, 20) : "none",
     elec: enumOr(raw.elec, SHED_ELEC, "none"),
     intFinish: enumOr(raw.intFinish, SHED_INT_FINISH, "none"),
+    floor: enumOr(raw.floor, SHED_FLOOR, "none"),
     addons: raw.addons && typeof raw.addons === "object" ? raw.addons : {},
     doors: capArray(raw.doors, 30),
     windows: capArray(raw.windows, 30),
@@ -1850,6 +1859,16 @@ function computeOptionPrices(cfg) {
   const windows = Object.assign({}, SELL.windows);
 
   const interior = { drywall: interiorPrice("drywall", encW, encD), painted: interiorPrice("painted", encW, encD) };
+
+  /* Flooring: the finished dollar amount for THIS shed, per tier, so the cards
+     can show what the upgrade actually costs without the browser ever holding
+     the $/sq ft rate — same treatment siding and wall height get. Enclosed
+     area, so a porch deck is not billed as floor. */
+  const flooring = {};
+  SHED_FLOOR.forEach((t) => {
+    flooring[t] = flooringPrice(t, encW * encD);
+  });
+  flooring.areaSqft = Math.round(encW * encD);
 
   const padSqft = Math.round(encW * encD);
   const foundationFinish = {
@@ -1950,6 +1969,7 @@ function computeOptionPrices(cfg) {
     windows: windows,
     doors: computeDoorPrices(),
     interior: interior,
+    flooring: flooring,
     // 'gravel' isn't a flat SELL.foundation entry — it's tiered by THIS
     // shed's own footprint (gravelTiers), same as foundationFinish.broom
     // below is tiered by pad sqft. Computed fresh here so the tile always
