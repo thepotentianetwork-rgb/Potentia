@@ -825,23 +825,41 @@ function sellDoorUpcharge(dd){
   return base + rollUpColorUpcharge(dd);
 }
 
-/* Only roll-ups carry this. Every other door style gets its colour from the
-   siding and trim, which are already priced into the walls — charging a finish
-   upcharge on those would bill the same paint twice. */
+/* Only roll-ups carry this. A roll-up's black or brown is a factory coating on
+   a steel curtain, quoted as an upcharge by the supplier. Every other door —
+   the fairytale's painted leaf included — gets its colour from paint the price
+   sheet already covers, so charging a finish upcharge there would bill the same
+   work twice. The style gate is what keeps that true as more doors gain
+   colours: a new entry in DOOR_COLOR_DEFAULTS cannot start billing by itself. */
 function rollUpColorUpcharge(dd){
   if((dd && dd.style) !== 'rollup') return 0;
   var c = String((dd && dd.color) || 'white').toLowerCase();
   return ROLLUP_COLOR_UPCHARGE[c] || 0;
 }
 
+/* Which door styles come in a finish colour, and what each has always been
+   built as when a saved design names no colour at all. Mirrors DOOR_COLOR_SETS
+   in designer.html: the KEYS must stay identical, because dd.color is written
+   there and read here.
+   The defaults differ because the products do — a roll-up curtain has always
+   been white, a fairytale leaf has always been black — and a design saved
+   before the choice existed has to keep pricing and reading as the door it was
+   actually quoted as. */
+const DOOR_COLOR_DEFAULTS = { rollup: 'white', fairytale: 'black' };
+
 /* The colour for the quote line, so "8' Roll Up · Black" is what the customer
    and the redline both read. Deliberately NOT folded into sellDoorName().key —
    that string is the lookup into SELL.doors, and appending to it would miss
-   every entry in the table. */
+   every entry in the table.
+   The style's own default is left unsaid: a roll-up with no colour on the line
+   is white and a fairytale with none is black, exactly as every quote already
+   written reads. Anything the customer actively chose gets named, because the
+   shop has to know what to paint. */
 function doorColorLabel(dd){
-  if((dd && dd.style) !== 'rollup') return '';
-  var c = String((dd && dd.color) || 'white').toLowerCase();
-  if(c === 'white' || !ROLLUP_COLOR_UPCHARGE.hasOwnProperty(c)) return '';
+  var st = String((dd && dd.style) || '');
+  if(!Object.prototype.hasOwnProperty.call(DOOR_COLOR_DEFAULTS, st)) return '';
+  var c = String((dd && dd.color) || DOOR_COLOR_DEFAULTS[st]).toLowerCase();
+  if(c === DOOR_COLOR_DEFAULTS[st] || !ROLLUP_COLOR_UPCHARGE.hasOwnProperty(c)) return '';
   return ' \u00b7 ' + c.charAt(0).toUpperCase() + c.slice(1);
 }
 /* What the CUSTOMER reads on the quote line.

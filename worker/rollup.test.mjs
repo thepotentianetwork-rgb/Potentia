@@ -53,11 +53,23 @@ check("an unknown colour prices as white rather than adding anything",
   Math.round(bogus)===Math.round(w8), {bogus:Math.round(bogus), white:Math.round(w8)});
 
 console.log("\n-- only roll-ups carry it --");
-// Other styles take their colour from the siding, already priced into the walls.
+// Other styles take their colour from paint the price sheet already covers.
 const resWhite=await price([{wall:"front",pos:0.5,style:"resfull",w:36,h:82.5,color:"white"}]);
 const resBlack=await price([{wall:"front",pos:0.5,style:"resfull",w:36,h:82.5,color:"black"}]);
 check("a residential door is not charged a curtain-colour upcharge",
   Math.round(resWhite)===Math.round(resBlack), {resWhite:Math.round(resWhite), resBlack:Math.round(resBlack)});
+
+/* The fairytale entry door now offers the same three colours. It must NOT pick
+   up the roll-up's upcharge on the way: the money gate is the style, not the
+   presence of a colour, and this is the check that proves the two stayed apart
+   when the colours were shared. */
+const ft = c => [{wall:"front",pos:0.5,style:"fairytale",w:36,h:80,color:c}];
+const ftBlack=await price(ft("black")), ftWhite=await price(ft("white")), ftBrown=await price(ft("brown"));
+check("a fairytale door costs the same in all three colours",
+  Math.round(ftBlack)===Math.round(ftWhite) && Math.round(ftWhite)===Math.round(ftBrown),
+  {black:Math.round(ftBlack), white:Math.round(ftWhite), brown:Math.round(ftBrown)});
+check("and it still prices at all — a colour must not break the SELL.doors lookup",
+  ftBlack>0, ftBlack);
 
 console.log("\n-- the quote line names the colour --");
 const tok=await (await worker.fetch(new Request("https://x/admin/login",{method:"POST",
@@ -76,6 +88,26 @@ check("the quote line says Roll-Up Garage Door, and the colour",
       /8'\s*Roll-Up\s*Garage\s*Door\s*·\s*Black/.test(labels), labels.slice(0,220));
 check("the raw table key is NOT what the customer is shown",
       !/8'\s*Roll\s*Up\s*·/.test(labels), labels.slice(0,220));
+
+/* The fairytale's colour has to reach the shop too, or a customer picks brown
+   and a black door gets built. Its default, black, is deliberately left unsaid
+   so every quote already written still reads exactly as it did. */
+async function redline(doors){
+  const r=await (await worker.fetch(new Request("https://x/shed/quote?redline=1",{method:"POST",
+    headers:{Origin:"https://shedpro-utah.com","Content-Type":"application/json",Authorization:"Bearer "+tok.token,"CF-Connecting-IP":"5.5.5.5"},
+    body:JSON.stringify({config:{style:"gable",w:12,l:16,h:9,doors:doors}})}),env)).json();
+  return JSON.stringify(r.redline||{});
+}
+const ftBrownLine=await redline(ft("brown"));
+const ftWhiteLine=await redline(ft("white"));
+const ftBlackLine=await redline(ft("black"));
+check("a brown fairytale says Brown on the line", /·\s*Brown/.test(ftBrownLine), ftBrownLine.slice(0,220));
+check("a white fairytale says White on the line", /·\s*White/.test(ftWhiteLine), ftWhiteLine.slice(0,220));
+check("a black fairytale — the default — adds nothing, as it always read",
+      !/·\s*Black/.test(ftBlackLine), ftBlackLine.slice(0,220));
+const ftNoneLine=await redline([{wall:"front",pos:0.5,style:"fairytale",w:36,h:80}]);
+check("a design saved before the choice existed reads the same as black",
+      ftNoneLine===ftBlackLine, {none:ftNoneLine.slice(0,120), black:ftBlackLine.slice(0,120)});
 
 console.log(fails?`\n${fails} FAILED\n`:"\nAll checks passed.\n");
 process.exit(fails?1:0);
