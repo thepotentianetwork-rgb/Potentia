@@ -1343,6 +1343,114 @@ Be warm, concise, and confident — a few sentences at most. You are a live exam
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
+/* ---------------------------------------------------------------------------
+   RATE LIMITING
+   Every /shed/* endpoint below and /chat are public by necessity — a customer
+   has to be able to use them without logging in — which means anyone with curl
+   can call them too. What that costs is not the same everywhere:
+
+     /chat          spends the Anthropic key. Real money, per call.
+     /shed/submit   writes a lead, uploads up to 6 renders (3MB each) to R2,
+                    and makes a geocoding request.
+     /shed/consult  writes a lead.
+     /shed/design   writes a row.
+     /shed/quote    CPU only — but the designer calls it on EVERY change, so
+                    its ceiling has to be high enough for someone genuinely
+                    designing a shed for an hour.
+
+   Counters live in D1 rather than KV on purpose: D1 is already bound, so this
+   needs no new binding and nothing done in the Cloudflare dashboard. KV would
+   be the more natural fit at scale and is worth moving to if traffic ever
+   justifies it.
+
+   Two rules this must never break:
+     - It FAILS OPEN. If the table is missing, D1 is slow, or anything throws,
+       the request is allowed. A rate limiter that blocks paying customers
+       during a database wobble is worse than the abuse it prevents.
+     - It never blocks the admin. Staff endpoints are behind requireAuth and
+       are not rate limited at all.
+--------------------------------------------------------------------------- */
+let _rateTableReady = false;
+async function ensureRateTable(env) {
+  if (_rateTableReady) return;
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS rate_limits (
+      bucket TEXT PRIMARY KEY,
+      count INTEGER NOT NULL,
+      window_start INTEGER NOT NULL
+    )`
+  ).run();
+  _rateTableReady = true;
+}
+
+function clientIp(request) {
+  // CF-Connecting-IP is set by Cloudflare itself and cannot be spoofed by the
+  // caller; X-Forwarded-For can be, so it is deliberately not consulted.
+  return request.headers.get("CF-Connecting-IP") || "unknown";
+}
+
+/**
+ * Fixed-window counter. Returns { ok } and, when refused, how many seconds
+ * until the window rolls over.
+ *
+ * A fixed window lets someone send up to 2x the limit across a window
+ * boundary. That is a known and accepted property here: the point is to stop
+ * a loop running all night, not to police the exact shape of a burst, and the
+ * alternative costs a second round trip on every request.
+ */
+async function rateLimit(request, env, name, limit, windowSec) {
+  const ip = clientIp(request);
+  if (ip === "unknown") return { ok: true };          // no key to count against
+  const now = Math.floor(Date.now() / 1000);
+  const bucket = name + ":" + ip;
+  try {
+    await ensureRateTable(env);
+    const row = await env.DB.prepare(
+      "SELECT count, window_start FROM rate_limits WHERE bucket = ?"
+    ).bind(bucket).first();
+
+    if (!row || now - row.window_start >= windowSec) {
+      await env.DB.prepare(
+        "INSERT INTO rate_limits (bucket, count, window_start) VALUES (?,1,?) " +
+        "ON CONFLICT(bucket) DO UPDATE SET count = 1, window_start = excluded.window_start"
+      ).bind(bucket, now).run();
+      // Opportunistic pruning — roughly one request in fifty pays for it, so
+      // the table cannot grow without bound and no cron is needed.
+      if (Math.random() < 0.02) {
+        await env.DB.prepare("DELETE FROM rate_limits WHERE window_start < ?")
+          .bind(now - 86400).run().catch(() => {});
+      }
+      return { ok: true };
+    }
+
+    if (row.count >= limit) {
+      return { ok: false, retryAfter: Math.max(1, row.window_start + windowSec - now) };
+    }
+    await env.DB.prepare("UPDATE rate_limits SET count = count + 1 WHERE bucket = ?")
+      .bind(bucket).run();
+    return { ok: true };
+  } catch (e) {
+    return { ok: true };                               // fail open, always
+  }
+}
+
+function tooMany(retryAfter, origin) {
+  return new Response(
+    JSON.stringify({ error: "Too many requests. Please try again shortly." }),
+    { status: 429, headers: { ...corsHeaders(origin), "Content-Type": "application/json",
+                              "Retry-After": String(retryAfter || 60) } }
+  );
+}
+
+/* A form field no human ever sees, so anything that fills it in is automated.
+   Accepted and answered with a normal 200 rather than an error: a bot told it
+   failed simply tries again differently, whereas one told it succeeded moves
+   on. Nothing is written either way. */
+function looksAutomated(body) {
+  return typeof body === "object" && body !== null &&
+         typeof body.website === "string" && body.website.trim() !== "";
+}
+
 function corsHeaders(origin) {
   const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
@@ -2485,6 +2593,8 @@ async function geocodeAddress(contact) {
 
 async function handleShedSubmit(request, env, origin) {
   const body = await request.json().catch(() => ({}));
+  // Answered as if it worked. See looksAutomated: nothing is stored.
+  if (looksAutomated(body)) return json({ ok: true }, 200, origin);
   // Accepts either the designer tool's shape ({contact:{...}, config, permalink,
   // quotedPrice, redline, renders, page}) or a plain {name, email, phone, details} shape.
   const contact = body.contact || {};
@@ -2586,6 +2696,7 @@ async function handleShedSubmit(request, env, origin) {
 // call-back starts from what they were looking at rather than from nothing.
 async function handleShedConsult(request, env, origin) {
   const body = await request.json().catch(() => ({}));
+  if (looksAutomated(body)) return json({ ok: true }, 200, origin);
   const contact = body.contact || {};
   const name = String(contact.name || body.name || "").trim().slice(0, 200);
   const phone = String(contact.phone || body.phone || "").trim().slice(0, 60);
@@ -3848,6 +3959,13 @@ export default {
 
     try {
       if (path === "/chat" && request.method === "POST") {
+        // The only endpoint here that spends money per call. 30/hour is far
+        // more than a visitor asking about shed sizes will ever use, and far
+        // less than a script needs to run up a bill.
+        {
+          const rl = await rateLimit(request, env, "chat", 30, 3600);
+          if (!rl.ok) return tooMany(rl.retryAfter, origin);
+        }
         return await handleChat(request, env, origin);
       }
 
@@ -4076,10 +4194,18 @@ export default {
       if (path === "/shed/pricing" && request.method === "GET") {
         return await handlePublicPricing(request, env, origin);
       }
+      // A real customer submits once, maybe three times across an evening of
+      // revisions. Ten an hour leaves room for a family arguing over colours
+      // without leaving room for a flood — and each one of these carries R2
+      // uploads and a geocoding call.
       if (path === "/shed/submit" && request.method === "POST") {
+        const rl = await rateLimit(request, env, "submit", 10, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleShedSubmit(request, env, origin);
       }
       if (path === "/shed/consult" && request.method === "POST") {
+        const rl = await rateLimit(request, env, "consult", 10, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleShedConsult(request, env, origin);
       }
       if (path === "/shed/pricing-config" && request.method === "GET") {
@@ -4091,9 +4217,20 @@ export default {
         return await handleSavePricingConfig(request, env, origin);
       }
       if (path === "/shed/quote" && request.method === "POST") {
+        // Deliberately generous. The designer re-prices on every single change
+        // — size, colour, each window — so an hour of genuine designing is
+        // easily several hundred calls. This endpoint only burns CPU: no
+        // writes, no uploads, no API spend. The ceiling is here to stop a
+        // runaway loop, not to ration customers.
+        const rl = await rateLimit(request, env, "quote", 900, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleShedQuote(request, env, origin);
       }
       if (path === "/shed/design" && request.method === "POST") {
+        // Saved once per quote submission, plus whenever someone shares a
+        // build. 40/hour covers heavy use and caps junk rows.
+        const rl = await rateLimit(request, env, "design", 40, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleSaveDesign(request, env, origin);
       }
       if (path.startsWith("/shed/design/") && request.method === "GET") {
