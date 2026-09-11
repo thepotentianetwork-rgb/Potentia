@@ -125,7 +125,7 @@ let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     PORCH_LOC='none', SIDE_PORCH=0, PORCH_TIER='standard',
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
-    LOFT='none', ELEC='none', INT_FINISH='none',
+    LOFT='none', ELEC='none', INT_FINISH='none', FLOOR='none',
     ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
       skylight:false, stairs:false, statLadder:false, atticLadder:false,
       weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
@@ -161,6 +161,7 @@ function setConfig(cfg){
   if(cfg.loft!=null) LOFT=cfg.loft;
   if(cfg.elec!=null) ELEC=cfg.elec;
   if(cfg.intFinish!=null) INT_FINISH=cfg.intFinish;
+  if(cfg.floor!=null) FLOOR=cfg.floor;
   if(cfg.addons!=null) ADDONS=cfg.addons;
   doorsData   = Array.isArray(cfg.doors)   ? cfg.doors   : [];
   windowsData = Array.isArray(cfg.windows) ? cfg.windows : [];
@@ -178,7 +179,7 @@ function resetConfig(){
   PORCH_LOC='none'; SIDE_PORCH=0; PORCH_TIER='standard';
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
-  LOFT='none'; ELEC='none'; INT_FINISH='none';
+  LOFT='none'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
   ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
     skylight:false, stairs:false, statLadder:false, atticLadder:false,
     weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
@@ -231,6 +232,65 @@ function interiorPrice(kind, wf, df){
   var raw=tier*(1-(iv.unpaintedPct||0)/100);
   var step=iv.roundTo>0 ? iv.roundTo : 1;
   return Math.round(raw/step)*step;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FLOORING — finished floor over the subfloor or the slab.
+   COSTS, not sell prices. Never ship this block to a browser: the client is
+   handed the finished dollar amount per tier in optionPrices.flooring and
+   nothing else, the same treatment SELL.siding and SELL.wallHeight get.
+
+   margin is a TRUE margin, so the sell rate is cost / (1 - margin). Dividing
+   by 0.70 and multiplying by 1.30 are not the same thing and the second one
+   under-charges: 1.25 x 1.30 = 1.63 against a correct 1.80, which is 23%
+   margin, not 30%. The arithmetic below is integer cents for the same reason
+   — a float cent that lands a hair under a rounding step quietly prices a
+   whole tier wrong. */
+let FLOORING = {
+  marginBp: 3000,                 // 30.00%, in basis points, to stay integer
+  tiers: {
+    none:   { costSqftCents:   0, costMinCents:      0 },
+    good:   { costSqftCents: 125, costMinCents:  20000 },
+    better: { costSqftCents: 555, costMinCents:  83500 },
+    best:   { costSqftCents: 695, costMinCents: 104500 }
+  }
+};
+/* What the customer reads. The install spec (coats, plank thickness, wear
+   layer, vapour barrier) is deliberately NOT here — it is internal, and this
+   module's whole point is that what reaches the browser is a name and a
+   number. */
+const FLOORING_NAMES = {
+  none:   'Standard Floor',
+  good:   'Sealed Floor',
+  better: 'Luxury Vinyl Plank',
+  best:   'Premium Luxury Vinyl Plank'
+};
+// Ceiling division on integers — no float anywhere, so a rate can't land one
+// ten-thousandth under a step and round down a tier.
+function _ceilDiv(a, b){ return Math.floor((a + b - 1) / b); }
+/* Sell rate per square foot, in whole cents, rounded UP to the nearest 5c.
+   Good $1.80, Better $7.95, Best $9.95 — assert these, they are the numbers
+   on the price sheet. */
+function flooringSellRateCents(tier){
+  var t = FLOORING.tiers[tier]; if(!t || !t.costSqftCents) return 0;
+  var STEP = 5;                                            // round up to 5 cents
+  return _ceilDiv(t.costSqftCents * 10000, (10000 - FLOORING.marginBp) * STEP) * STEP;
+}
+/* Job minimum, in whole cents, rounded UP to the nearest $5.
+   Good $290, Better $1,195, Best $1,495. */
+function flooringSellMinCents(tier){
+  var t = FLOORING.tiers[tier]; if(!t || !t.costMinCents) return 0;
+  var STEP = 500;                                          // round up to $5
+  return _ceilDiv(t.costMinCents * 10000, (10000 - FLOORING.marginBp) * STEP) * STEP;
+}
+/* Whole dollars for THIS shed. Area is the ENCLOSED floor — a porch deck is
+   not floored and a loft is not a second floor to price, so neither counts.
+   The same price on plywood and on concrete: the tier's cost already carries
+   whichever prep that floor needs (enamel vs sealer, vapour barrier vs none). */
+function flooringPrice(tier, areaSqft){
+  var rate = flooringSellRateCents(tier); if(!rate) return 0;
+  var cents = Math.max(flooringSellMinCents(tier), (areaSqft||0) * rate);
+  return Math.round(cents / 100);
 }
 
 /* FOUNDATION FLOOR FINISH — the single implementation, used by computePricing
@@ -1162,6 +1222,23 @@ function computePricing(cfgIn, opts){
   }
   customerPrice += intSell;
 
+  /* ── FLOORING (customer): area x rate, with a job minimum ──
+     Same enclosed area the interior finish just used, and for the same
+     reason: a porch deck is not floored, so billing the full footprint would
+     charge a 12x16-with-a-4ft-porch for 192 sqft of plank when only 144 of it
+     is inside. The price does not move with the foundation — the tier's cost
+     already carries whichever prep that floor needs. */
+  var floorSell = 0, floorSellName = '';
+  var floorId = (typeof FLOOR!=='undefined') ? FLOOR : 'none';
+  if(FLOORING.tiers[floorId] && floorId!=='none'){
+    var _feat = (typeof porchEatFt==='function') ? porchEatFt() : {w:0,l:0};
+    var _fArea = (Wf - _feat.w) * (Df - _feat.l);
+    floorSell = flooringPrice(floorId, _fArea);
+    floorSellName = 'Flooring \u2014 ' + (FLOORING_NAMES[floorId]||floorId)
+                  + ' (' + _fArea + ' sq ft)';
+  }
+  customerPrice += floorSell;
+
   // ── ELECTRICAL PACKAGE (customer): flat price by tier ──
   var elecSell = 0, elecSellName = '';
   var elecId = (typeof ELEC!=='undefined')?ELEC:'none';
@@ -1300,6 +1377,7 @@ function computePricing(cfgIn, opts){
       heightSell: heightSell, heightSellName: heightSellName,
       windowSell: windowSell, windowSellLines: windowSellLines,
       intSell: intSell, intSellName: intSellName,
+      floorSell: floorSell, floorSellName: floorSellName,
       elecSell: elecSell, elecSellName: elecSellName,
       shelfSell: shelfSell, shelfSellLines: shelfSellLines,
       loftSell: loftSell, loftSellName: loftSellName,
@@ -2276,6 +2354,7 @@ function compItemsFromRedline(redline) {
   push(redline.elecSellName, redline.elecSell);
   push(redline.loftSellName, redline.loftSell);
   push(redline.intSellName, redline.intSell);
+  push(redline.floorSellName, redline.floorSell);
   push(redline.foundName, redline.foundSell);
   // paintSell is deliberately absent. The quote document never sums it as its
   // own line, so comping it would take money off a total that never contained
@@ -3120,6 +3199,9 @@ const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
 // so a retired tier reads as no electrical package rather than a free one.
 const SHED_ELEC = ["none", "basic", "core", "essential"];
 const SHED_INT_FINISH = ["none", "drywall", "painted"];
+// Flooring tiers. Anything else falls back to "none" rather than being priced
+// — an unknown tier must cost nothing, not throw and not guess.
+const SHED_FLOOR = ["none", "good", "better", "best"];
 
 function clampNum(v, lo, hi, fallback) {
   const n = Number(v);
@@ -3158,6 +3240,7 @@ function validateShedConfig(raw) {
     loft: typeof raw.loft === "string" ? raw.loft.slice(0, 20) : "none",
     elec: enumOr(raw.elec, SHED_ELEC, "none"),
     intFinish: enumOr(raw.intFinish, SHED_INT_FINISH, "none"),
+    floor: enumOr(raw.floor, SHED_FLOOR, "none"),
     addons: raw.addons && typeof raw.addons === "object" ? raw.addons : {},
     doors: capArray(raw.doors, 30),
     windows: capArray(raw.windows, 30),
@@ -3183,6 +3266,16 @@ function computeOptionPrices(cfg) {
   const windows = Object.assign({}, SELL.windows);
 
   const interior = { drywall: interiorPrice("drywall", encW, encD), painted: interiorPrice("painted", encW, encD) };
+
+  /* Flooring: the finished dollar amount for THIS shed, per tier, so the cards
+     can show what the upgrade actually costs without the browser ever holding
+     the $/sq ft rate — same treatment siding and wall height get. Enclosed
+     area, so a porch deck is not billed as floor. */
+  const flooring = {};
+  ["none", "good", "better", "best"].forEach((t) => {
+    flooring[t] = flooringPrice(t, encW * encD);
+  });
+  flooring.areaSqft = Math.round(encW * encD);
 
   const padSqft = Math.round(encW * encD);
   const foundationFinish = {
@@ -3283,6 +3376,7 @@ function computeOptionPrices(cfg) {
     windows: windows,
     doors: computeDoorPrices(),
     interior: interior,
+    flooring: flooring,
     // 'gravel' isn't a flat SELL.foundation entry — it's tiered by THIS
     // shed's own footprint (gravelTiers), same as foundationFinish.broom
     // below is tiered by pad sqft. Computed fresh here so the tile always
