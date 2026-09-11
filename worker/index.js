@@ -1788,9 +1788,13 @@ const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
 // so a retired tier reads as no electrical package rather than a free one.
 const SHED_ELEC = ["none", "basic", "core", "essential"];
 const SHED_INT_FINISH = ["none", "drywall", "painted"];
-// Flooring tiers. Anything else falls back to "none" rather than being priced
-// — an unknown tier must cost nothing, not throw and not guess.
-const SHED_FLOOR = ["none", "good", "better", "best"];
+/* Flooring tiers. Anything else falls back to "none" rather than being priced
+   — an unknown tier must cost nothing, not throw and not guess. That includes
+   "good", a sealed-floor tier that was briefly here and was dropped because
+   the Foundation step already sells sealing: a preview link saved while it
+   existed prices as a Standard floor rather than as something we no longer
+   offer. */
+const SHED_FLOOR = ["none", "better", "best"];
 
 function clampNum(v, lo, hi, fallback) {
   const n = Number(v);
@@ -1861,7 +1865,7 @@ function computeOptionPrices(cfg) {
      the $/sq ft rate — same treatment siding and wall height get. Enclosed
      area, so a porch deck is not billed as floor. */
   const flooring = {};
-  ["none", "good", "better", "best"].forEach((t) => {
+  SHED_FLOOR.forEach((t) => {
     flooring[t] = flooringPrice(t, encW * encD);
   });
   flooring.areaSqft = Math.round(encW * encD);

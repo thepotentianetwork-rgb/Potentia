@@ -250,7 +250,12 @@ let FLOORING = {
   marginBp: 3000,                 // 30.00%, in basis points, to stay integer
   tiers: {
     none:   { costSqftCents:   0, costMinCents:      0 },
-    good:   { costSqftCents: 125, costMinCents:  20000 },
+    /* No sealed/painted tier here. Sealing a floor is already sold, on the
+       Foundation step, as SELL.foundationFinish.coated — and offering it in
+       two places meant two prices for one job ($300 there, $290 here) with
+       nothing stopping a customer buying both and being billed $590 to seal
+       one slab. Flooring is the thing the Foundation step does NOT cover:
+       plank over whatever the shed stands on. */
     better: { costSqftCents: 555, costMinCents:  83500 },
     best:   { costSqftCents: 695, costMinCents: 104500 }
   }
@@ -261,7 +266,6 @@ let FLOORING = {
    number. */
 const FLOORING_NAMES = {
   none:   'Standard Floor',
-  good:   'Sealed Floor',
   better: 'Luxury Vinyl Plank',
   best:   'Premium Luxury Vinyl Plank'
 };
@@ -3199,9 +3203,13 @@ const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
 // so a retired tier reads as no electrical package rather than a free one.
 const SHED_ELEC = ["none", "basic", "core", "essential"];
 const SHED_INT_FINISH = ["none", "drywall", "painted"];
-// Flooring tiers. Anything else falls back to "none" rather than being priced
-// — an unknown tier must cost nothing, not throw and not guess.
-const SHED_FLOOR = ["none", "good", "better", "best"];
+/* Flooring tiers. Anything else falls back to "none" rather than being priced
+   — an unknown tier must cost nothing, not throw and not guess. That includes
+   "good", a sealed-floor tier that was briefly here and was dropped because
+   the Foundation step already sells sealing: a preview link saved while it
+   existed prices as a Standard floor rather than as something we no longer
+   offer. */
+const SHED_FLOOR = ["none", "better", "best"];
 
 function clampNum(v, lo, hi, fallback) {
   const n = Number(v);
@@ -3272,7 +3280,7 @@ function computeOptionPrices(cfg) {
      the $/sq ft rate — same treatment siding and wall height get. Enclosed
      area, so a porch deck is not billed as floor. */
   const flooring = {};
-  ["none", "good", "better", "best"].forEach((t) => {
+  SHED_FLOOR.forEach((t) => {
     flooring[t] = flooringPrice(t, encW * encD);
   });
   flooring.areaSqft = Math.round(encW * encD);

@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs"; import path from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "./index.js";
-import { FLOORING, flooringSellRateCents, flooringSellMinCents, flooringPrice } from "./pricing.js";
+import { FLOORING, FLOORING_NAMES, flooringSellRateCents, flooringSellMinCents, flooringPrice } from "./pricing.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 function makeD1(db){
   function shape(sql){ const st=db.prepare(sql); const sel=/^\s*(select|pragma)/i.test(sql);
@@ -23,18 +23,25 @@ let fails=0;
 const check=(n,cond,x)=>{ if(cond) console.log("  ok   "+n); else { fails++; console.log("  FAIL "+n+(x!==undefined?"  "+JSON.stringify(x):"")); } };
 
 console.log("\n-- the sell prices on the price sheet --");
-check("Good is $1.80 / sq ft",   flooringSellRateCents("good")===180,   flooringSellRateCents("good"));
 check("Better is $7.95 / sq ft", flooringSellRateCents("better")===795, flooringSellRateCents("better"));
 check("Best is $9.95 / sq ft",   flooringSellRateCents("best")===995,   flooringSellRateCents("best"));
-check("Good minimum is $290",    flooringSellMinCents("good")===29000,   flooringSellMinCents("good"));
 check("Better minimum is $1,195",flooringSellMinCents("better")===119500,flooringSellMinCents("better"));
 check("Best minimum is $1,495",  flooringSellMinCents("best")===149500,  flooringSellMinCents("best"));
+
+/* SEALING IS NOT SOLD HERE. It is sold on the Foundation step as
+   SELL.foundationFinish.coated. It was briefly offered in both places at two
+   different prices, and nothing stopped a customer buying both — $590 to seal
+   one slab, on two quote lines. These are the checks that keep it in one
+   place. */
+console.log("\n-- sealing belongs to the Foundation step, not here --");
+check("there is no sealed tier", FLOORING.tiers.good===undefined);
+check("and asking for one costs nothing", flooringPrice("good", 160)===0, flooringPrice("good", 160));
 
 /* A TRUE margin divides by (1 - margin). Multiplying by 1.30 is the mistake
    this guards: it would rate Good at $1.63, a 23% margin, and nothing about
    the number would look wrong. */
 console.log("\n-- margin is cost / (1 - margin), not cost x 1.30 --");
-for (const t of ["good","better","best"]) {
+for (const t of ["better","best"]) {
   const rate = flooringSellRateCents(t), cost = FLOORING.tiers[t].costSqftCents;
   const realised = (rate - cost) / rate;
   check(`${t}: realised margin is at least 30%`, realised >= 0.30,
@@ -45,12 +52,11 @@ for (const t of ["good","better","best"]) {
 
 console.log("\n-- the spec's test-case table, exactly --");
 const TABLE = [
-  ["8x10",   80,  290, 1195, 1495],
-  ["10x16", 160,  290, 1272, 1592],
-  ["12x24", 288,  518, 2290, 2866],
+  ["8x10",   80,  1195, 1495],
+  ["10x16", 160,  1272, 1592],
+  ["12x24", 288,  2290, 2866],
 ];
-for (const [shed, area, good, better, best] of TABLE) {
-  check(`${shed} (${area} sq ft) Good = $${good}`,   flooringPrice("good", area)===good,     flooringPrice("good", area));
+for (const [shed, area, better, best] of TABLE) {
   check(`${shed} (${area} sq ft) Better = $${better}`, flooringPrice("better", area)===better, flooringPrice("better", area));
   check(`${shed} (${area} sq ft) Best = $${best}`,   flooringPrice("best", area)===best,     flooringPrice("best", area));
 }
@@ -73,6 +79,21 @@ check("Standard adds nothing", Math.round(qExplicitNone.total)===Math.round(qNon
 const qJunk=await price({floor:"marble"});
 check("a tier we do not sell adds nothing rather than throwing",
   Math.round(qJunk.total)===Math.round(qNone.total), {junk:Math.round(qJunk.total)});
+const qOld=await price({floor:"good"});
+check("and a preview link saved while the sealed tier existed prices as Standard",
+  Math.round(qOld.total)===Math.round(qNone.total), {old:Math.round(qOld.total)});
+
+/* The double-charge itself. Sealing a pad must cost the same whether or not a
+   floor tier is also chosen. */
+console.log("\n-- sealing a pad is billed once --");
+const sealBase=await price({foundation:"pad"});
+const sealed  =await price({foundation:"pad", foundationFinish:"coated"});
+const sealedPlus=await price({foundation:"pad", foundationFinish:"coated", floor:"good"});
+check("Stained & Sealed Coating costs $300", Math.round(sealed.total-sealBase.total)===300,
+  Math.round(sealed.total-sealBase.total));
+check("and asking for a sealed FLOOR on top adds nothing",
+  Math.round(sealedPlus.total)===Math.round(sealed.total),
+  {sealed:Math.round(sealed.total), both:Math.round(sealedPlus.total)});
 
 console.log("\n-- the foundation does not change the flooring price --");
 for (const f of ["blocks","gravel","pad","existing"]) {
@@ -101,6 +122,7 @@ check("the 12x12 room is billed, not the 12x16 footprint",
 console.log("\n-- option prices for the cards --");
 const op=(await price({})).optionPrices||{};
 check("the client is handed a dollar amount per tier", op.flooring && op.flooring.better===1272, op.flooring);
+check("and is offered no sealed tier to render", op.flooring && op.flooring.good===undefined, op.flooring);
 check("and the area it was worked out from", op.flooring && op.flooring.areaSqft===160, op.flooring);
 /* The whole reason pricing is server-side: the browser must never be able to
    read what we pay, or the rate we mark it up by. */
