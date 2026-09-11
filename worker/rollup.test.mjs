@@ -67,7 +67,15 @@ const rl=await (await worker.fetch(new Request("https://x/shed/quote?redline=1",
   headers:{Origin:"https://shedpro-utah.com","Content-Type":"application/json",Authorization:"Bearer "+tok.token,"CF-Connecting-IP":"5.5.5.5"},
   body:JSON.stringify({config:{style:"gable",w:12,l:16,h:9,doors:rollup(96,"black")}})}),env)).json();
 const labels=JSON.stringify(rl.redline||{});
-check("the redline says Black, not just \"8' Roll Up\"", /8'\s*Roll\s*Up\s*·\s*Black/.test(labels), labels.slice(0,200));
+/* The customer-facing name is "8' Roll-Up Garage Door" as of the rename. The
+   SELL.doors key it is priced from is still the table's own spelling,
+   "8' Roll Up" — see doorDisplayName. This asserts the NEW name reaches the
+   quote; the price checks above prove the old key still resolves, which is the
+   half of the split that would fail silently (a missed key prices at zero). */
+check("the quote line says Roll-Up Garage Door, and the colour",
+      /8'\s*Roll-Up\s*Garage\s*Door\s*·\s*Black/.test(labels), labels.slice(0,220));
+check("the raw table key is NOT what the customer is shown",
+      !/8'\s*Roll\s*Up\s*·/.test(labels), labels.slice(0,220));
 
 console.log(fails?`\n${fails} FAILED\n`:"\nAll checks passed.\n");
 process.exit(fails?1:0);

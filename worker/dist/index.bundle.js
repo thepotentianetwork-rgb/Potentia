@@ -844,8 +844,20 @@ function doorColorLabel(dd){
   if(c === 'white' || !ROLLUP_COLOR_UPCHARGE.hasOwnProperty(c)) return '';
   return ' \u00b7 ' + c.charAt(0).toUpperCase() + c.slice(1);
 }
+/* What the CUSTOMER reads on the quote line.
+
+   sellDoorName().key is the lookup into SELL.doors and must stay exactly as
+   the table spells it — "6' Roll Up". Renaming it there would miss every
+   entry and price the door at zero, the same trap doorColorLabel was written
+   to avoid. So the rename lives here, on the way out, and the key is left
+   alone: "6' Roll Up" prices the door, "6' Roll-Up Garage Door" is what the
+   quote says it is. */
+function doorDisplayName(dd){
+  var k = sellDoorName(dd).key;
+  return (dd && dd.style === 'rollup') ? k.replace(/Roll Up$/, 'Roll-Up Garage Door') : k;
+}
 // Convenience: the readable label for the redline.
-var _sellDoorNameStr = function(dd){ return sellDoorName(dd).key; };
+var _sellDoorNameStr = function(dd){ return doorDisplayName(dd); };
 
 // ── WINDOW CATALOG ── the real Client-Workbook windows: each entry is a
 // specific type+color+size with its own customer price (from SELL.windows).
@@ -1028,7 +1040,7 @@ function computePricing(cfgIn, opts){
     doorsData.forEach(function(dd){
       var up = sellDoorUpcharge(dd);
       if(up>0){ doorUpcharge += up;
-                doorUpLines.push({label:sellDoorName(dd).key + doorColorLabel(dd), up:up}); }
+                doorUpLines.push({label:doorDisplayName(dd) + doorColorLabel(dd), up:up}); }
     });
   }
   var customerPrice = basePrice + doorUpcharge;
