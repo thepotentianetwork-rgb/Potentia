@@ -809,12 +809,40 @@ function sellDoorName(dd){
             st==='arch'?" (Arch Trim)":st==='panel4'?" (4 Panel)":"";
   return { base: wl+" "+kind, key: wl+" "+kind+suf, panel4: st==='panel4' };
 }
+/* Roll-up curtain colours. White is the stock finish and the price the sizes
+   above already carry; black and brown are a finish upcharge on top, the same
+   whatever the door's width — it is a coating, not more steel.
+   Flat per door, not per square foot, for that reason. */
+const ROLLUP_COLOR_UPCHARGE = { white: 0, black: 100, brown: 100 };
+
 function sellDoorUpcharge(dd){
   var m=sellDoorName(dd), t=SELL.doors;
-  if(t[m.key]!=null) return t[m.key];
-  if(m.panel4 && t[m.base+" (4-Panel)"]!=null) return t[m.base+" (4-Panel)"]; // naming variant
-  if(t[m.base]!=null) return t[m.base];   // fall back to the plain-door upcharge
-  return 0;
+  var base = 0;
+  if(t[m.key]!=null) base = t[m.key];
+  else if(m.panel4 && t[m.base+" (4-Panel)"]!=null) base = t[m.base+" (4-Panel)"]; // naming variant
+  else if(t[m.base]!=null) base = t[m.base];   // fall back to the plain-door upcharge
+  else return 0;
+  return base + rollUpColorUpcharge(dd);
+}
+
+/* Only roll-ups carry this. Every other door style gets its colour from the
+   siding and trim, which are already priced into the walls — charging a finish
+   upcharge on those would bill the same paint twice. */
+function rollUpColorUpcharge(dd){
+  if((dd && dd.style) !== 'rollup') return 0;
+  var c = String((dd && dd.color) || 'white').toLowerCase();
+  return ROLLUP_COLOR_UPCHARGE[c] || 0;
+}
+
+/* The colour for the quote line, so "8' Roll Up · Black" is what the customer
+   and the redline both read. Deliberately NOT folded into sellDoorName().key —
+   that string is the lookup into SELL.doors, and appending to it would miss
+   every entry in the table. */
+function doorColorLabel(dd){
+  if((dd && dd.style) !== 'rollup') return '';
+  var c = String((dd && dd.color) || 'white').toLowerCase();
+  if(c === 'white' || !ROLLUP_COLOR_UPCHARGE.hasOwnProperty(c)) return '';
+  return ' \u00b7 ' + c.charAt(0).toUpperCase() + c.slice(1);
 }
 // Convenience: the readable label for the redline.
 var _sellDoorNameStr = function(dd){ return sellDoorName(dd).key; };
@@ -999,7 +1027,8 @@ function computePricing(cfgIn, opts){
   if(typeof doorsData!=='undefined'){
     doorsData.forEach(function(dd){
       var up = sellDoorUpcharge(dd);
-      if(up>0){ doorUpcharge += up; doorUpLines.push({label:sellDoorName(dd).key, up:up}); }
+      if(up>0){ doorUpcharge += up;
+                doorUpLines.push({label:sellDoorName(dd).key + doorColorLabel(dd), up:up}); }
     });
   }
   var customerPrice = basePrice + doorUpcharge;
