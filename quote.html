@@ -234,6 +234,10 @@ function compedIn(names) {
   return t;
 }
 
+// Declared at file scope, not inside taxBreakdown: removalTotal below is a
+// sibling function, and a copy living inside taxBreakdown was invisible to it.
+function num(n) { return Number(n) || 0; }
+
 var REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 function removalLines(redline) {
   if (!redline || !Array.isArray(redline.addonLines)) return [];
@@ -247,7 +251,6 @@ function removalTotal(redline) {
 
 function taxBreakdown(redline) {
   if (!redline || typeof redline !== 'object') return null;
-  var num = function (n) { return Number(n) || 0; };
   function sumLines(lines, amtKey) {
     return (lines || []).reduce(function (t, l) { return t + num(l[amtKey]); }, 0);
   }
@@ -1183,7 +1186,18 @@ if (token && submissionId) {
         'The server found the record but returned nothing to build a quote from.');
       return;
     }
-    render(r.data.submission, r.data.customer);
+    /* Drawing is caught separately from fetching. A fault in the code that
+       builds the document is not a network problem, and reporting it as one
+       sent a real bug (a ReferenceError thrown while totalling the removal
+       lines) to be diagnosed as a connection fault. */
+    try {
+      render(r.data.submission, r.data.customer);
+    } catch (e) {
+      quoteProblem('The quote could not be drawn',
+        'The order loaded, but building the document failed' +
+        (e && e.message ? ' (' + e.message + ')' : '') +
+        '. This is a fault in the page, not in the order — worth reporting with the id below.');
+    }
   }).catch(function (e) {
     // A dropped connection is not a missing quote, and saying so sends people
     // looking in the wrong place.
