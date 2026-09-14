@@ -256,16 +256,26 @@ function taxBreakdown(redline) {
   }
 
   // Everything about the shed itself (base, doors, windows, dormers, porch,
-  // siding, wall height, electrical, loft, shelves, add-ons) is rolled into
-  // one "Shed" line. Only foundation and interior finishing are broken out.
+  // siding, exterior paint, wall height, electrical, flooring, loft, shelves,
+  // add-ons) is rolled into one "Shed" line. Only foundation and interior
+  // finishing are broken out.
+  //
+  // This sum has to account for EVERY sell field the engine adds into
+  // customerPrice. A field the engine charges for and this list omits is
+  // money the quote silently fails to bill — paintSell was missing here for
+  // exactly that reason, and it is on almost every shed, so almost every
+  // quote came out thousands of dollars under the price the customer was
+  // shown. worker/quotepage.test.mjs now checks this sum against the engine.
   var shedTotal = num(redline.marginPrice)
     + sumLines(redline.doorUpLines, 'up')
     + sumLines(redline.windowSellLines, 'price')
     + sumLines(redline.dormerSellLines, 'price')
     + num(redline.porchSell)
     + num(redline.sidingSell)
+    + num(redline.paintSell)
     + num(redline.heightSell)
     + num(redline.elecSell)
+    + num(redline.floorSell)
     + num(redline.loftSell)
     + sumLines(redline.shelfSellLines, 'price')
     + sumLines(redline.addonLines, 'amt')
@@ -312,13 +322,19 @@ function taxBreakdown(redline) {
   var shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
   add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
 
-  // Electrical is still billed and deposited as part of the Shed phase
-  // (its dollars stay inside shedTotal above) — this just breaks it out as
-  // its own line in the Price Breakdown so the customer can see what the
-  // package itself costs, without changing invoicing/deposit schedule.
-  if (shedRow && redline.elecSell) {
-    shedRow.subLines = [{ label: redline.elecSellName || 'Electrical', amt: num(redline.elecSell) }];
+  // Electrical and flooring are still billed and deposited as part of the
+  // Shed phase (their dollars stay inside shedTotal above) — this just breaks
+  // them out in the Price Breakdown so the customer can see what the package
+  // itself costs, without changing the invoicing/deposit schedule.
+  //
+  // Appended rather than assigned: electrical used to claim this slot
+  // outright, so anything added alongside it would have silently replaced it.
+  function shedSubLine(amt, label) {
+    if (!shedRow || !amt) return;
+    (shedRow.subLines = shedRow.subLines || []).push({ label: label, amt: num(amt) });
   }
+  shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical');
+  shedSubLine(redline.floorSell, redline.floorSellName || 'Flooring');
 
   if (!rows.length) return null;
   rows.forEach(function (r, i) {
