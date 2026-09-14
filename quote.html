@@ -113,7 +113,33 @@ var submissionId = new URLSearchParams(location.search).get('id');
 var selfUrl = 'quote.html' + location.search;
 
 if (!token) window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
-if (!submissionId) document.getElementById('doc').innerHTML = '<p class="empty">No quote specified.</p>';
+
+/* SAY WHAT ACTUALLY WENT WRONG.
+   Every failure here used to print the same three words, "Quote not found" —
+   a missing id, a non-numeric id, a submission that isn't in the table, the
+   server throwing, and the connection dropping all looked identical. That is
+   not a message anyone can act on, and it made a real fault impossible to
+   diagnose from the outside: the page could not tell you whether the problem
+   was the link, the record, or the server. */
+function quoteProblem(title, detail) {
+  var el = document.getElementById('doc');
+  if (!el) return;
+  el.innerHTML =
+    '<div class="empty" style="text-align:left;max-width:520px;margin:40px auto;line-height:1.6">' +
+      '<div style="font-weight:700;color:#c0392b;margin-bottom:8px">' + esc(title) + '</div>' +
+      '<div>' + esc(detail) + '</div>' +
+      '<div style="margin-top:14px;font-size:12px;opacity:.75">Quote id in this link: <code>' +
+        esc(submissionId == null ? '(none)' : submissionId) + '</code></div>' +
+    '</div>';
+}
+
+if (!submissionId) {
+  quoteProblem('No quote id in the link',
+    'This page was opened without ?id=… on the end. Go back to the customer and use the Generate Quote button on the order rather than opening this page directly.');
+} else if (!/^\d+$/.test(String(submissionId).trim())) {
+  quoteProblem('That link carries a broken id',
+    'A quote id should be a number, and this one is "' + submissionId + '". The Generate Quote button built the link from an order that had no id on it.');
+}
 
 function authFetch(path) {
   return fetch(API_BASE + path, { headers: { 'Authorization': 'Bearer ' + token } }).then(function (res) {
@@ -122,7 +148,11 @@ function authFetch(path) {
       window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
       throw new Error('Session expired');
     }
-    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+    // status comes back too — the caller has to tell a missing order from a
+    // server fault, and {ok:false} alone cannot.
+    return res.json()
+      .catch(function () { return null; })     // a non-JSON error page is still a status
+      .then(function (data) { return { ok: res.ok, status: res.status, data: data }; });
   });
 }
 
@@ -204,6 +234,10 @@ function compedIn(names) {
   return t;
 }
 
+// Declared at file scope, not inside taxBreakdown: removalTotal below is a
+// sibling function, and a copy living inside taxBreakdown was invisible to it.
+function num(n) { return Number(n) || 0; }
+
 var REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 function removalLines(redline) {
   if (!redline || !Array.isArray(redline.addonLines)) return [];
@@ -217,7 +251,6 @@ function removalTotal(redline) {
 
 function taxBreakdown(redline) {
   if (!redline || typeof redline !== 'object') return null;
-  var num = function (n) { return Number(n) || 0; };
   function sumLines(lines, amtKey) {
     return (lines || []).reduce(function (t, l) { return t + num(l[amtKey]); }, 0);
   }
@@ -1129,10 +1162,49 @@ function renderFloorPlan(config, container, frontWall) {
 if (token && submissionId) {
   authFetch('/admin/submissions/' + submissionId).then(function (r) {
     if (!r.ok) {
-      document.getElementById('doc').innerHTML = '<p class="empty">Quote not found.</p>';
+      /* Each of these used to read "Quote not found", which is only true of
+         one of them. authFetch already sends a 401 to the login page, so a
+         session that has simply expired never reaches here. */
+      if (r.status === 404) {
+        quoteProblem('No order with that id',
+          'The quote id in this link does not match any order in the database. The order may have been deleted, or this link may be from a different environment.');
+      } else if (r.status === 400) {
+        quoteProblem('The server rejected that id',
+          'It could not read "' + submissionId + '" as an order number.');
+      } else if (r.status >= 500) {
+        quoteProblem('The server errored on this order',
+          'It answered ' + r.status + (r.data && r.data.error ? ' — ' + r.data.error : '') +
+          '. The order is probably fine; something went wrong reading it. Worth reporting with the id below.');
+      } else {
+        quoteProblem('Could not load this quote',
+          'The server answered ' + r.status + (r.data && r.data.error ? ' — ' + r.data.error : '') + '.');
+      }
       return;
     }
-    render(r.data.submission, r.data.customer);
+    if (!r.data || !r.data.submission) {
+      quoteProblem('That order came back empty',
+        'The server found the record but returned nothing to build a quote from.');
+      return;
+    }
+    /* Drawing is caught separately from fetching. A fault in the code that
+       builds the document is not a network problem, and reporting it as one
+       sent a real bug (a ReferenceError thrown while totalling the removal
+       lines) to be diagnosed as a connection fault. */
+    try {
+      render(r.data.submission, r.data.customer);
+    } catch (e) {
+      quoteProblem('The quote could not be drawn',
+        'The order loaded, but building the document failed' +
+        (e && e.message ? ' (' + e.message + ')' : '') +
+        '. This is a fault in the page, not in the order — worth reporting with the id below.');
+    }
+  }).catch(function (e) {
+    // A dropped connection is not a missing quote, and saying so sends people
+    // looking in the wrong place.
+    if (e && /Session expired/.test(e.message || '')) return;   // already redirecting
+    quoteProblem('Could not reach the server',
+      'The request failed before it got an answer' + (e && e.message ? ' (' + e.message + ')' : '') +
+      '. Check the connection and reload.');
   });
 }
 </script>
