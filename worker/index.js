@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, applyPricingOverrides, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice } from "./pricing.js";
+import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice } from "./pricing.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -1743,15 +1743,19 @@ async function handleAnalytics(request, env, origin) {
 // caller left — admin-pricing.html — and it's authenticated like every
 // other admin route.
 async function handleGetPricingConfig(request, env, origin) {
+  /* Returns the shipped defaults with the owner's saved edits applied on top —
+     the SAME combination /shed/quote prices from.
+     It used to return the saved snapshot alone, which meant the dashboard only
+     ever listed prices that existed on the day it was last saved. Anything
+     added to pricing.js afterwards was charged by the quote engine and was
+     invisible here: Shed Removal and Concrete Removal were being billed at
+     $1,000 and $500 with no row to see them on, let alone change them. */
   const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
-  if (!row) return json({}, 200, origin);
-  let data;
-  try {
-    data = JSON.parse(row.data);
-  } catch (e) {
-    data = {};
+  let saved = {};
+  if (row) {
+    try { saved = JSON.parse(row.data); } catch (e) { saved = {}; }
   }
-  return json(data, 200, origin);
+  return json(mergedPricingConfig(saved), 200, origin);
 }
 
 async function handleSavePricingConfig(request, env, origin) {
