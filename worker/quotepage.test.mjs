@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { computePricing } from './pricing.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PAGE = path.join(HERE, '..', 'quote.html');
@@ -116,4 +117,76 @@ test('removal is the first phase, ahead of the concrete', () => {
   });
   assert.match(bd.rows[0].label, /^Phase 1 — Shed Removal/);
   assert.match(bd.rows[1].label, /^Phase 2 — Concrete Pad/);
+});
+
+
+/* ── The quote must bill what the engine charges ──────────────────────────
+ *
+ * The customer is shown computeQuote().customer — in the designer, and again
+ * as the price on the customer page, which is what gets stored as
+ * details.quotedPrice. The quote DOCUMENT re-derives that number from the
+ * redline, in quote.html, by listing the fields to add up.
+ *
+ * That list silently omitted paintSell. Exterior paint is on every shed that
+ * isn't pine, so nearly every quote totalled thousands of dollars below the
+ * price the customer had already been shown. floorSell was missing the same
+ * way and would have started costing money the day flooring went live.
+ *
+ * So don't test the list — test it against the engine. Any sell field added
+ * to customerPrice in the future and not added to quote.html fails here.
+ */
+const BUILDS = {
+  'plain 10x16': { style: 'gable', w: 10, l: 16, h: 9 },
+  'pine (no paint charge)': { style: 'gable', w: 10, l: 16, h: 9, siding: 'pine' },
+  'tall walls': { style: 'gable', w: 12, l: 20, h: 10 },
+  'pad + coating': { style: 'gable', w: 10, l: 16, h: 9, foundation: 'pad', foundationFinish: 'coated' },
+  'interior + electrical': { style: 'gable', w: 10, l: 16, h: 9, intFinish: 'painted', elec: 'essential' },
+  'flooring (still hidden)': { style: 'gable', w: 10, l: 16, h: 9, intFinish: 'painted', floor: 'best' },
+  'removals': { style: 'gable', w: 10, l: 16, h: 9, addons: { shedRemoval: true, concreteRemoval: true } },
+  'barn, everything on': {
+    style: 'barn', w: 12, l: 20, h: 10, siding: 'board-batten', foundation: 'pad',
+    foundationFinish: 'coated', intFinish: 'painted', floor: 'better', elec: 'essential',
+    loft: '6-front', porchFront: 4,
+    doors: [{ wall: 'front', pos: 0.5, w: 36, h: 80, style: 'fairytale', color: 'white' },
+            { wall: 'right', pos: 0.5, w: 96, h: 84, style: 'rollup', color: 'brown' }],
+    windows: [{ wall: 'left', pos: 0.3, w: 24, h: 36, cy: 52, type: 'White Vinyl 24x36' }],
+    shelves: [{ wall: 'back', pos: 0.5, cy: 48, depth: 24, len: 12 }],
+    addons: { shutters: true, shedRemoval: true, concreteRemoval: true, skylight: true, houseWrap: true },
+  },
+};
+
+for (const [label, config] of Object.entries(BUILDS)) {
+  test(`quote subtotal matches the engine: ${label}`, () => {
+    const page = loadQuotePage();
+    const { customer, redline } = computePricing(config);
+    const bd = page.taxBreakdown(redline);
+    assert.ok(bd, 'the build produces a breakdown');
+    assert.ok(
+      Math.abs(bd.subtotal - customer) < 1,
+      `quote subtotal $${Math.round(bd.subtotal)} != customer price $${Math.round(customer)} ` +
+      `(off by $${Math.round(bd.subtotal - customer)}) — a sell field the engine charges for ` +
+      `is missing from shedTotal in quote.html`
+    );
+  });
+}
+
+test('exterior paint is inside the shed phase, not a phase of its own', () => {
+  const page = loadQuotePage();
+  const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
+  assert.ok(redline.paintSell > 0, 'a painted shed does charge for paint');
+  const bd = page.taxBreakdown(redline);
+  assert.equal(bd.rows.length, 1, 'a bare painted shed is one phase');
+  assert.match(bd.rows[0].label, /Shed/);
+});
+
+test('flooring is broken out without displacing electrical', () => {
+  const page = loadQuotePage();
+  const { redline } = computePricing({
+    style: 'gable', w: 10, l: 16, h: 9, intFinish: 'painted', floor: 'best', elec: 'essential',
+  });
+  const bd = page.taxBreakdown(redline);
+  const shed = bd.rows.find(r => / Shed\b/.test(r.label));
+  const labels = (shed.subLines || []).map(s => s.label).join(' | ');
+  assert.match(labels, /Electrical/, 'electrical still shown');
+  assert.match(labels, /Flooring/, 'flooring shown alongside it, not instead of it');
 });
