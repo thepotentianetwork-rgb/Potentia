@@ -509,11 +509,15 @@ function renderComponents() {
   host.appendChild(buildPerSqftGroup(config.SELL.options.perSqft));
 }
 
+/* Rows the owner has removed are kept in the saved sheet as nulls so the
+   server knows to take them off, but they are not rows any more. */
+function liveKeys(obj){ return Object.keys(obj || {}).filter(function (k) { return obj[k] !== null; }); }
+function liveCount(obj){ return liveKeys(obj).length; }
 function buildFlatGroup(groupKey, label, unit, dataObj) {
   var wrap = el('div', { class: 'comp-group' });
   var head = el('div', { class: 'comp-group-head' });
   head.appendChild(el('span', { class: 'comp-group-title', text: label }));
-  var countEl = el('span', { class: 'comp-group-count', text: Object.keys(dataObj).length + ' items' });
+  var countEl = el('span', { class: 'comp-group-count', text: liveCount(dataObj) + ' items' });
   head.appendChild(countEl);
   wrap.appendChild(head);
 
@@ -522,7 +526,7 @@ function buildFlatGroup(groupKey, label, unit, dataObj) {
 
   function renderList() {
     list.innerHTML = '';
-    var names = Object.keys(dataObj);
+    var names = liveKeys(dataObj);
     if (!names.length) {
       list.appendChild(el('p', { class: 'empty', text: 'No items yet — add one below.' }));
     }
@@ -548,9 +552,14 @@ function buildFlatGroup(groupKey, label, unit, dataObj) {
       row.appendChild(priceWrap);
       var delBtn = el('button', { class: 'comp-del', text: 'Remove' });
       delBtn.addEventListener('click', function () {
-        if (!confirm('Remove "' + name + '"? This won\'t remove it from the designer\'s selectable options, just its price.')) return;
-        delete dataObj[name];
-        countEl.textContent = Object.keys(dataObj).length + ' items';
+        if (!confirm('Remove "' + name + '"? This won\'t remove it from the designer\'s selectable options, just its price — it will stop being charged for.')) return;
+        /* A null, not a delete. The saved sheet is layered OVER the shipped
+           prices and a deletion from it removes nothing from them, so deleting
+           the key hid the row here and left the item being charged at its
+           shipped price. A null is a tombstone the server understands as
+           "taken off the sheet". */
+        dataObj[name] = null;
+        countEl.textContent = liveCount(dataObj) + ' items';
         renderList();
       });
       row.appendChild(delBtn);
@@ -569,7 +578,7 @@ function buildFlatGroup(groupKey, label, unit, dataObj) {
     if (!name || !isFinite(price)) return;
     dataObj[name] = price;
     nameInp.value = ''; priceInp2.value = '';
-    countEl.textContent = Object.keys(dataObj).length + ' items';
+    countEl.textContent = liveCount(dataObj) + ' items';
     renderList();
   });
   addForm.appendChild(nameInp);
@@ -617,11 +626,11 @@ function buildPerSqftGroup(dataObj) {
   var wrap = el('div', { class: 'comp-group' });
   var head = el('div', { class: 'comp-group-head' });
   head.appendChild(el('span', { class: 'comp-group-title', text: 'Options — Priced Per Sq Ft' }));
-  head.appendChild(el('span', { class: 'comp-group-count', text: Object.keys(dataObj).length + ' items' }));
+  head.appendChild(el('span', { class: 'comp-group-count', text: liveCount(dataObj) + ' items' }));
   wrap.appendChild(head);
 
   var list = el('div', { class: 'comp-list' });
-  Object.keys(dataObj).forEach(function (name) {
+  liveKeys(dataObj).forEach(function (name) {
     var item = dataObj[name] || {};
     var row = el('div', { class: 'comp-row' });
     row.appendChild(el('span', { class: 'comp-name', text: name }));
@@ -640,7 +649,7 @@ function buildPerSqftGroup(dataObj) {
     row.appendChild(priceWrap);
     list.appendChild(row);
   });
-  if (!Object.keys(dataObj).length) list.appendChild(el('p', { class: 'empty', text: 'No items.' }));
+  if (!liveCount(dataObj)) list.appendChild(el('p', { class: 'empty', text: 'No items.' }));
   wrap.appendChild(list);
   wrap.appendChild(el('p', { class: 'note', text: 'Rate only — how each is measured (wall, floor, roof, etc.) is fixed in the designer\'s code.' }));
   return wrap;

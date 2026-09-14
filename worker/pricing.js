@@ -1385,28 +1385,77 @@ export function computePricing(cfgIn, opts){
    batch of requests (or per-request; it's cheap) BEFORE computePricing —
    never inside the same tick as an await, for the same synchronous-only
    reason setConfig()'s doc comment explains. */
+/* THE SHIPPED PRICES, AS SHIPPED.
+   Taken at module load, before any request can apply a saved override on top
+   of SELL/COST/DEFAULTS. The dashboard needs to show the prices the engine
+   will ACTUALLY charge, which is these plus whatever the owner has edited —
+   and a live read of SELL cannot give that, because a previous request in the
+   same isolate may already have mutated it. */
+const PRISTINE = JSON.stringify({ SELL: SELL, COST: COST, DEFAULTS: DEFAULTS });
+export function pricingDefaults(){ return JSON.parse(PRISTINE); }
+
+/* The named tables an override may replace keys inside. Declared once and used
+   by BOTH the live apply and the merged read below, because the two disagreeing
+   about which groups exist is exactly how the dashboard ends up showing a
+   different set of prices from the one being charged. */
+const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','electrical','dormers','wallHeight',
+  'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
+const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
+
+/* A null in a saved override means REMOVED, not "priced at null".
+   Deleting the key from the snapshot instead does nothing at all: the snapshot
+   is layered OVER the shipped defaults and never deletes from them, so the item
+   carried on being charged at its shipped price while the dashboard row was
+   gone. A tombstone is what actually takes it off the sheet. */
+function _mergeInto(target, src){
+  if(!src) return;
+  Object.keys(src).forEach(function(k){
+    if(src[k]===null) delete target[k]; else target[k]=src[k];
+  });
+}
+
 export function applyPricingOverrides(o){
   if(!o || typeof o!=='object') return;
   if(o.baseSheets) SELL.baseSheets=o.baseSheets;
-  if(o.COST) Object.keys(o.COST).forEach(function(k){ COST[k]=o.COST[k]; });
-  if(o.DEFAULTS) Object.keys(o.DEFAULTS).forEach(function(k){ DEFAULTS[k]=o.DEFAULTS[k]; });
+  _mergeInto(COST, o.COST);
+  _mergeInto(DEFAULTS, o.DEFAULTS);
   if(o.SELL){
-    ['doors','windows','siding','exteriorPaint','electrical','dormers','wallHeight',
-     'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'].forEach(function(group){
-      if(o.SELL[group]) Object.keys(o.SELL[group]).forEach(function(k){
-        SELL[group][k]=o.SELL[group][k];
-      });
+    OVERRIDE_GROUPS.forEach(function(group){
+      if(o.SELL[group] && SELL[group]) _mergeInto(SELL[group], o.SELL[group]);
     });
     if(o.SELL.options){
-      ['flat', 'perLinFt'].forEach(function(sub){
-        if(o.SELL.options[sub]) Object.keys(o.SELL.options[sub]).forEach(function(k){
-          SELL.options[sub][k]=o.SELL.options[sub][k];
-        });
-      });
-      var incomingSqft=o.SELL.options.perSqft;
-      if(incomingSqft) Object.keys(incomingSqft).forEach(function(k){
-        SELL.options.perSqft[k]=incomingSqft[k];
+      OVERRIDE_OPTION_SUBS.forEach(function(sub){
+        if(o.SELL.options[sub] && SELL.options[sub]) _mergeInto(SELL.options[sub], o.SELL.options[sub]);
       });
     }
   }
+}
+
+/* What the dashboard should render: every shipped price, with the owner's edits
+   applied on top — the same combination /shed/quote prices from. Returns a
+   plain object and touches no module state, so calling it cannot leak into the
+   next quote served by this isolate.
+   Any other top-level key the saved config carried is passed through untouched,
+   so a round-trip through the editor never drops data it did not know about. */
+export function mergedPricingConfig(saved){
+  var o = (saved && typeof saved==='object') ? saved : {};
+  var d = pricingDefaults();
+  var out = {};
+  Object.keys(o).forEach(function(k){ if(k!=='SELL'&&k!=='COST'&&k!=='DEFAULTS') out[k]=o[k]; });
+  out.SELL = d.SELL; out.COST = d.COST; out.DEFAULTS = d.DEFAULTS;
+  out.baseSheets = o.baseSheets || d.SELL.baseSheets;
+  _mergeInto(out.COST, o.COST);
+  _mergeInto(out.DEFAULTS, o.DEFAULTS);
+  if(o.SELL){
+    if(o.SELL.baseSheets) out.SELL.baseSheets=o.SELL.baseSheets;
+    OVERRIDE_GROUPS.forEach(function(group){
+      if(o.SELL[group] && out.SELL[group]) _mergeInto(out.SELL[group], o.SELL[group]);
+    });
+    if(o.SELL.options){
+      OVERRIDE_OPTION_SUBS.forEach(function(sub){
+        if(o.SELL.options[sub] && out.SELL.options[sub]) _mergeInto(out.SELL.options[sub], o.SELL.options[sub]);
+      });
+    }
+  }
+  return out;
 }
