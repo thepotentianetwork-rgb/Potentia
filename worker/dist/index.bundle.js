@@ -547,7 +547,10 @@ let SELL = {
       // Site clearance, priced flat rather than by size: the work is a crew and
       // a dump run either way, and quoting it per square foot would invite an
       // argument about measurements before anyone has seen the site.
-      "Shed Removal": 1000, "Concrete Removal": 500
+      // Both $1,000 as of Sep 2026 — breaking up and hauling a slab is the same
+      // day's work as taking an old shed away, so it stopped being the cheaper
+      // of the two.
+      "Shed Removal": 1000, "Concrete Removal": 1000
     },
     perLinFt: { // × linear feet the customer specifies
       "16\" Deep Shelving": 15, "24\" Deep Shelving": 17

@@ -51,12 +51,12 @@ const base=await quote(SHED);
 const shed=await quote(withAddon({shedRemoval:true}));
 const conc=await quote(withAddon({concreteRemoval:true}));
 ck("the quote still charges $1,000 to remove a shed", Math.round(shed-base)===1000, Math.round(shed-base));
-ck("and $500 to remove concrete", Math.round(conc-base)===500, Math.round(conc-base));
+ck("and $1,000 to remove concrete", Math.round(conc-base)===1000, Math.round(conc-base));
 cfg=await getCfg();
 const flat=(cfg.SELL&&cfg.SELL.options&&cfg.SELL.options.flat)||{};
 ck("...and the dashboard lists Shed Removal, so it can be changed",
    flat["Shed Removal"]===1000, flat);
-ck("...and Concrete Removal", flat["Concrete Removal"]===500, flat);
+ck("...and Concrete Removal", flat["Concrete Removal"]===1000, flat);
 ck("the owner's own edits still win over the shipped price",
    flat["Shutters"]===60, flat["Shutters"]);
 ck("and every other shipped price is there to edit too",
@@ -88,7 +88,7 @@ ck("and stays gone from the dashboard rather than springing back",
    after.SELL.options.flat["Shed Removal"]===undefined,
    after.SELL.options.flat["Shed Removal"]);
 ck("without taking anything else with it",
-   after.SELL.options.flat["Concrete Removal"]===500, after.SELL.options.flat["Concrete Removal"]);
+   after.SELL.options.flat["Concrete Removal"]===1000, after.SELL.options.flat["Concrete Removal"]);
 
 console.log(fails?`\n${fails} FAILED\n`:"\nAll checks passed.\n");
 process.exit(fails?1:0);
