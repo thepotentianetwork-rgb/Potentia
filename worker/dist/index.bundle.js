@@ -1027,6 +1027,33 @@ let DEFAULTS = {
 };
 
 // ── MASTER: compute everything from the current designer state ───────────
+/* ── STAFF MARGIN LEVER ───────────────────────────────────────────────────
+ * The margin target is the one number that moves the shed's BASE price, and
+ * it is deliberately invisible to the customer: it lands inside marginPrice,
+ * which the quote document folds into the single "Shed" line. There is no
+ * separate line item to explain, because there is nothing to explain — it is
+ * the price of the shed.
+ *
+ * The band is a business rule, not a UI nicety, so it lives here beside the
+ * arithmetic rather than in whichever form happens to set it. Below 30% the
+ * job stops covering its own overhead; above 70% it stops being a price
+ * anyone signs. A value outside the band is pulled to the nearest edge rather
+ * than rejected, so a fat-fingered 700 prices at 70% instead of failing the
+ * quote or, worse, quietly pricing at 700%.
+ */
+const MARGIN_MIN = 30;
+const MARGIN_MAX = 70;
+function clampMarginTarget(v){
+  // "Not set" has to stay distinguishable from "set to something low".
+  // The designer's redline knob sends null when it is blank, and Number(null)
+  // is 0 — so clamping first would have pulled every blank knob to the 30%
+  // floor and quietly repriced every quote the moment staff opened the panel.
+  if(v === null || v === undefined || v === '') return null;
+  var n = Number(v);
+  if(!isFinite(n)) return null;
+  return Math.min(MARGIN_MAX, Math.max(MARGIN_MIN, n));
+}
+
 function computePricing(cfgIn, opts){
   // cfgIn drives the module-level build-config state (STYLE/W/L/H/...);
   // opts is the separate, pre-existing margin/mileage/diesel override used
@@ -1036,7 +1063,8 @@ function computePricing(cfgIn, opts){
   setConfig(cfgIn);
   opts = opts || {};
   var cfg = {
-    marginTarget: opts.marginTarget!=null?opts.marginTarget:DEFAULTS.marginTarget,
+    marginTarget: (clampMarginTarget(opts.marginTarget) != null)
+                    ? clampMarginTarget(opts.marginTarget) : DEFAULTS.marginTarget,
     milesOneWay:  opts.milesOneWay!=null?opts.milesOneWay:DEFAULTS.milesOneWay,
     dieselPrice:  opts.dieselPrice!=null?opts.dieselPrice:DEFAULTS.dieselPrice,
     truckMpg:     opts.truckMpg!=null?opts.truckMpg:DEFAULTS.truckMpg,
@@ -2812,9 +2840,26 @@ async function handleShedSubmit(request, env, origin) {
   // real, current numbers regardless of what the browser sent.
   let quotedPrice = body.quotedPrice != null ? body.quotedPrice : null;
   let redline = body.redline || null;
+
+  /* The margin target a salesperson dialled in has to survive the submit, or
+     the lever does nothing: the redline panel would show the higher price,
+     the order would store the default, and the quote would go out at a number
+     nobody chose. It is re-priced here rather than trusted from the body —
+     the browser sends the margin, never the price — and only for a caller
+     holding a staff token, so a customer cannot price their own shed.
+     Clamped to the 30–70% band by clampMarginTarget in the pricing module. */
+  let marginTarget = null;
+  if (body.overrides && body.overrides.marginTarget != null && (await requireAuth(request, env))) {
+    marginTarget = clampMarginTarget(body.overrides.marginTarget);
+  }
+
   if (body.config) {
     try {
-      const { result } = await computeQuoteResult(body.config, undefined, env);
+      const { result } = await computeQuoteResult(
+        body.config,
+        marginTarget != null ? { marginTarget: marginTarget } : undefined,
+        env
+      );
       quotedPrice = result.customer;
       redline = result.redline;
     } catch (e) {
@@ -2835,6 +2880,9 @@ async function handleShedSubmit(request, env, origin) {
           config: body.config || null,
           permalink: body.permalink || null,
           quotedPrice: quotedPrice,
+          // What the shed was actually priced at, when staff moved it off the
+          // default. null means the standard margin — see DEFAULTS.marginTarget.
+          marginTarget: marginTarget,
           redline: redline, // internal cost/margin breakdown — admin dashboard only, never public
           renders: await uploadRenders(env, body.renders),
           page: body.page || null,
@@ -3485,17 +3533,27 @@ async function computeQuoteResult(rawConfig, overrides, env) {
 async function handleShedQuote(request, env, origin) {
   const body = await request.json().catch(() => ({}));
 
+  const url = new URL(request.url);
+  const wantsRedline = url.searchParams.get("redline") === "1";
+
+  /* Overrides move the price. They are a STAFF lever (margin target, mileage,
+     diesel), so they are honoured only for a caller who proves it — the auth
+     check used to gate the redline RESPONSE while the overrides had already
+     been applied to the total above it, which meant an unauthenticated caller
+     could post overrides:{marginTarget:0} and be quoted well under the real
+     price. Nothing about the request identifies staff except the token. */
+  const staff = await requireAuth(request, env);
+  const overrides = staff ? body.overrides : undefined;
+
   let cfg, result;
   try {
-    ({ cfg, result } = await computeQuoteResult(body.config, body.overrides, env));
+    ({ cfg, result } = await computeQuoteResult(body.config, overrides, env));
   } catch (e) {
     return json({ error: "Could not price this build" }, 400, origin);
   }
 
-  const url = new URL(request.url);
-  const wantsRedline = url.searchParams.get("redline") === "1";
   if (wantsRedline) {
-    if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+    if (!staff) return json({ error: "Unauthorized" }, 401, origin);
     return json({ total: result.customer, redline: result.redline }, 200, origin);
   }
 
