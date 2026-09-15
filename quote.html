@@ -46,6 +46,14 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 
 .br-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--dim);font-size:15px}
 .br-row:last-child{border-bottom:none}
+/* The subtotal closes the itemised phases; tax is not one of them. Without
+   this they were all identical rows and the line a customer reads as "the
+   price" sat indistinguishable from the line that adds tax to it. */
+.br-row.br-sum{border-top:2px solid var(--chrome);margin-top:4px;padding-top:11px}
+.br-row.br-sum .br-label{color:var(--bright);font-weight:600}
+.br-row.br-sum .br-amt{font-size:15px}
+.br-row.br-tax .br-label{color:var(--chrome)}
+.br-sub-note{font-size:11px;color:var(--chrome);opacity:.8;padding:0 0 8px;line-height:1.5}
 .br-label{color:var(--chrome)}
 .br-amt{color:var(--bright);font-family:'DM Mono',monospace;font-size:13px}
 .spec-val{color:var(--chrome);font-family:'Cormorant Garamond',serif;font-size:15px}
@@ -83,6 +91,8 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
   .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label,.sub-label,.br-note{color:#333}
   .price-box{background:#f5f9fc;border-color:#bcdcf0}
   .br-row{border-color:#ddd}
+  .br-row.br-sum{border-top-color:#111}
+  .br-row.br-sum .br-label{color:#111}
   .render-cell{border-color:#ccc}
   .render-grid{break-inside:avoid}
   .symbol-legend{border-color:#ccc}
@@ -405,7 +415,7 @@ function buildBreakdown(bd) {
     });
     return html;
   }).join('');
-  rowsHtml += '<div class="br-row"><span class="br-label">Subtotal</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
+  rowsHtml += '<div class="br-row br-sum"><span class="br-label">Subtotal (before tax)</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
   // Each adjustment on its own line, with the subtotal left above them. The
   // customer sees what the shed prices at and what came off — a total that had
   // quietly absorbed it would invite the question anyway.
@@ -424,10 +434,10 @@ function buildBreakdown(bd) {
     }
   });
   if (bd.adjust) {
-    rowsHtml += '<div class="br-row"><span class="br-label">Adjusted Subtotal</span>'
+    rowsHtml += '<div class="br-row br-sum"><span class="br-label">Adjusted Subtotal (before tax)</span>'
       + '<span class="br-amt">' + money2(bd.adjustedSubtotal) + '</span></div>';
   }
-  rowsHtml += '<div class="br-row"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
+  rowsHtml += '<div class="br-row br-tax"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
 
   var depositRowsHtml = bd.rows.map(function (r) {
     return '<div class="br-row"><span class="br-label">Phase ' + r.phase + ' Deposit (' + PCT_LABEL(DEPOSIT_RATE) + '%)</span>'

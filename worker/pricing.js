@@ -1006,6 +1006,33 @@ export let DEFAULTS = {
 };
 
 // ── MASTER: compute everything from the current designer state ───────────
+/* ── STAFF MARGIN LEVER ───────────────────────────────────────────────────
+ * The margin target is the one number that moves the shed's BASE price, and
+ * it is deliberately invisible to the customer: it lands inside marginPrice,
+ * which the quote document folds into the single "Shed" line. There is no
+ * separate line item to explain, because there is nothing to explain — it is
+ * the price of the shed.
+ *
+ * The band is a business rule, not a UI nicety, so it lives here beside the
+ * arithmetic rather than in whichever form happens to set it. Below 30% the
+ * job stops covering its own overhead; above 70% it stops being a price
+ * anyone signs. A value outside the band is pulled to the nearest edge rather
+ * than rejected, so a fat-fingered 700 prices at 70% instead of failing the
+ * quote or, worse, quietly pricing at 700%.
+ */
+export const MARGIN_MIN = 30;
+export const MARGIN_MAX = 70;
+export function clampMarginTarget(v){
+  // "Not set" has to stay distinguishable from "set to something low".
+  // The designer's redline knob sends null when it is blank, and Number(null)
+  // is 0 — so clamping first would have pulled every blank knob to the 30%
+  // floor and quietly repriced every quote the moment staff opened the panel.
+  if(v === null || v === undefined || v === '') return null;
+  var n = Number(v);
+  if(!isFinite(n)) return null;
+  return Math.min(MARGIN_MAX, Math.max(MARGIN_MIN, n));
+}
+
 export function computePricing(cfgIn, opts){
   // cfgIn drives the module-level build-config state (STYLE/W/L/H/...);
   // opts is the separate, pre-existing margin/mileage/diesel override used
@@ -1015,7 +1042,8 @@ export function computePricing(cfgIn, opts){
   setConfig(cfgIn);
   opts = opts || {};
   var cfg = {
-    marginTarget: opts.marginTarget!=null?opts.marginTarget:DEFAULTS.marginTarget,
+    marginTarget: (clampMarginTarget(opts.marginTarget) != null)
+                    ? clampMarginTarget(opts.marginTarget) : DEFAULTS.marginTarget,
     milesOneWay:  opts.milesOneWay!=null?opts.milesOneWay:DEFAULTS.milesOneWay,
     dieselPrice:  opts.dieselPrice!=null?opts.dieselPrice:DEFAULTS.dieselPrice,
     truckMpg:     opts.truckMpg!=null?opts.truckMpg:DEFAULTS.truckMpg,

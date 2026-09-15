@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice } from "./pricing.js";
+import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget } from "./pricing.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -1345,9 +1345,26 @@ async function handleShedSubmit(request, env, origin) {
   // real, current numbers regardless of what the browser sent.
   let quotedPrice = body.quotedPrice != null ? body.quotedPrice : null;
   let redline = body.redline || null;
+
+  /* The margin target a salesperson dialled in has to survive the submit, or
+     the lever does nothing: the redline panel would show the higher price,
+     the order would store the default, and the quote would go out at a number
+     nobody chose. It is re-priced here rather than trusted from the body —
+     the browser sends the margin, never the price — and only for a caller
+     holding a staff token, so a customer cannot price their own shed.
+     Clamped to the 30–70% band by clampMarginTarget in the pricing module. */
+  let marginTarget = null;
+  if (body.overrides && body.overrides.marginTarget != null && (await requireAuth(request, env))) {
+    marginTarget = clampMarginTarget(body.overrides.marginTarget);
+  }
+
   if (body.config) {
     try {
-      const { result } = await computeQuoteResult(body.config, undefined, env);
+      const { result } = await computeQuoteResult(
+        body.config,
+        marginTarget != null ? { marginTarget: marginTarget } : undefined,
+        env
+      );
       quotedPrice = result.customer;
       redline = result.redline;
     } catch (e) {
@@ -1368,6 +1385,9 @@ async function handleShedSubmit(request, env, origin) {
           config: body.config || null,
           permalink: body.permalink || null,
           quotedPrice: quotedPrice,
+          // What the shed was actually priced at, when staff moved it off the
+          // default. null means the standard margin — see DEFAULTS.marginTarget.
+          marginTarget: marginTarget,
           redline: redline, // internal cost/margin breakdown — admin dashboard only, never public
           renders: await uploadRenders(env, body.renders),
           page: body.page || null,
@@ -2018,17 +2038,27 @@ async function computeQuoteResult(rawConfig, overrides, env) {
 async function handleShedQuote(request, env, origin) {
   const body = await request.json().catch(() => ({}));
 
+  const url = new URL(request.url);
+  const wantsRedline = url.searchParams.get("redline") === "1";
+
+  /* Overrides move the price. They are a STAFF lever (margin target, mileage,
+     diesel), so they are honoured only for a caller who proves it — the auth
+     check used to gate the redline RESPONSE while the overrides had already
+     been applied to the total above it, which meant an unauthenticated caller
+     could post overrides:{marginTarget:0} and be quoted well under the real
+     price. Nothing about the request identifies staff except the token. */
+  const staff = await requireAuth(request, env);
+  const overrides = staff ? body.overrides : undefined;
+
   let cfg, result;
   try {
-    ({ cfg, result } = await computeQuoteResult(body.config, body.overrides, env));
+    ({ cfg, result } = await computeQuoteResult(body.config, overrides, env));
   } catch (e) {
     return json({ error: "Could not price this build" }, 400, origin);
   }
 
-  const url = new URL(request.url);
-  const wantsRedline = url.searchParams.get("redline") === "1";
   if (wantsRedline) {
-    if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+    if (!staff) return json({ error: "Unauthorized" }, 401, origin);
     return json({ total: result.customer, redline: result.redline }, 200, origin);
   }
 
