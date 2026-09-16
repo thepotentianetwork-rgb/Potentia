@@ -143,13 +143,19 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 .why-badge{display:inline-flex;align-self:flex-start;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid;margin-top:5px}
 .why-bad{color:#e0725f;border-color:rgba(224,114,95,0.45);background:rgba(224,114,95,0.1)}
 .why-mid{color:#d8a15f;border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
-.lead-detail{display:flex;flex-direction:column;gap:5px;margin-top:9px;padding-left:10px;border-left:1px solid rgba(216,161,95,0.3)}
+.lead-detail{display:flex;flex-wrap:wrap;gap:8px 30px;padding-left:12px;border-left:1px solid rgba(216,161,95,0.3)}
 .lead-detail .ld-line{font-size:13px;color:var(--silver);line-height:1.5}
+.lead-detail a{word-break:normal;overflow-wrap:anywhere}
+tr.lead-detail-row td{padding:4px 18px 16px;border-top:none}
+.why-more{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--dim);background:none;border:1px solid var(--dim);border-radius:20px;padding:2px 9px;margin-top:5px;cursor:pointer;align-self:flex-start}
+.why-more:hover{border-color:var(--silver);color:var(--silver)}
+.why-more.on{border-color:var(--warm);color:var(--warm)}
 .lead-detail .ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:7px}
-.lead-detail a{color:var(--warm);text-decoration:none;border-bottom:1px solid rgba(216,161,95,0.35);word-break:break-all}
+.lead-detail a{color:var(--warm);text-decoration:none;border-bottom:1px solid rgba(216,161,95,0.35)}
 .lead-detail a:hover{color:#f0c48a}
 .lead-detail .ld-none{color:#d89b6a;font-weight:500}
 .lead-detail .ld-why{color:var(--dim);font-size:12.5px;line-height:1.55}
+.lead-detail .ld-line.ld-wide{flex-basis:100%}
 .speed-pill{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;padding:2px 8px;border-radius:20px;border:1px solid}
 .speed-bad{color:#e0725f;border-color:rgba(224,114,95,0.5);background:rgba(224,114,95,0.1)}
 .speed-mid{color:#d8a15f;border-color:rgba(216,161,95,0.5);background:rgba(216,161,95,0.1)}
@@ -1127,8 +1133,18 @@ function render() {
       badge.textContent = 'New Lead';
       wrap.appendChild(badge);
     }
+    /* The detail used to live in this cell, which is the narrowest column on
+       the page — every line wrapped three times and one lead filled a screen.
+       It gets its own full-width row below, shut until asked for. */
+    if (Number(c.created_by_pipeline) === 1) {
+      var more = document.createElement('button');
+      more.className = 'why-more';
+      more.type = 'button';
+      more.textContent = 'Why';
+      wrap.appendChild(more);
+      tr._more = more;
+    }
     tdName.appendChild(wrap);
-    if (Number(c.created_by_pipeline) === 1) tdName.appendChild(LeadDetail.block(c, SEGMENT_LABELS));
 
     // contact
     var tdContact = document.createElement('td');
@@ -1231,6 +1247,22 @@ function render() {
 
     [tdName, tdContact, tdPkg, tdStatus, tdValue, tdWork, tdNote, tdView].forEach(function (td) { tr.appendChild(td); });
     body.appendChild(tr);
+
+    if (tr._more) {
+      var detailRow = document.createElement('tr');
+      detailRow.className = 'lead-detail-row';
+      detailRow.hidden = true;
+      var dtd = document.createElement('td');
+      dtd.colSpan = 8;
+      dtd.appendChild(LeadDetail.block(c, SEGMENT_LABELS));
+      detailRow.appendChild(dtd);
+      body.appendChild(detailRow);
+
+      tr._more.addEventListener('click', function () {
+        detailRow.hidden = !detailRow.hidden;
+        tr._more.classList.toggle('on', !detailRow.hidden);
+      });
+    }
   }
 }
 

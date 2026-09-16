@@ -19,22 +19,23 @@
     if (c.lead_speed != null) {
       var n = Number(c.lead_speed);
       if (Number(c.lead_mobile_ready) === 0) {
-        return { tone: 'bad', text: n + '/100 · not built for phones' };
+        // Short enough to sit on one line in a narrow column.
+        return { tone: 'bad', text: n + '/100 \u00b7 no mobile' };
       }
-      return { tone: n < 50 ? 'bad' : 'mid', text: n + '/100 on mobile' };
+      return { tone: n < 50 ? 'bad' : 'mid', text: n + '/100 mobile' };
     }
-    if (Number(c.lead_mobile_ready) === 0) return { tone: 'bad', text: 'Not built for phones' };
+    if (Number(c.lead_mobile_ready) === 0) return { tone: 'bad', text: 'No mobile view' };
     if (!c.website_url) return { tone: 'bad', text: 'No website' };
 
     /* A site we never scored: either it is one of the pages that never needed a
        speed test, or Google could not load it. The reason line says which. */
     var r = String(c.lead_reason || '');
-    if (/business\.site/.test(r)) return { tone: 'bad', text: 'Dead Google site' };
+    if (/business\.site/.test(r)) return { tone: 'bad', text: 'Dead site' };
     if (/just a ([a-z.]+) page/.test(r)) return { tone: 'bad', text: r.match(/just a ([a-z.]+) page/)[1] + ' only' };
     if (/plain http/.test(r)) return { tone: 'bad', text: 'No https' };
     if (/does not load|does not resolve|returns an error|never finishes loading|not served securely|cannot load/.test(r)) {
-    return { tone: 'bad', text: 'Site will not load' };
-  }
+      return { tone: 'bad', text: 'Site won\u2019t load' };
+    }
     return null;
   }
 
@@ -50,9 +51,9 @@
     var box = document.createElement('div');
     box.className = 'lead-detail';
 
-    function line(key, node) {
+    function line(key, node, wide) {
       var d = document.createElement('div');
-      d.className = 'ld-line';
+      d.className = 'ld-line' + (wide ? ' ld-wide' : '');
       var k = document.createElement('span');
       k.className = 'ld-k';
       k.textContent = key;
@@ -93,7 +94,7 @@
         row.appendChild(pill);
       }
       if (Number(c.lead_mobile_ready) === 0) {
-        var warn = text('not built for phones', 'speed-pill speed-bad');
+        var warn = text('no mobile viewport', 'speed-pill speed-bad');
         warn.style.marginLeft = '6px';
         row.appendChild(warn);
       }
@@ -123,7 +124,8 @@
         'Open their listing'));
     }
 
-    if (c.lead_reason) line('Why', text(c.lead_reason, 'ld-why'));
+    // The sentence gets a row of its own; everything else sits side by side.
+    if (c.lead_reason) line('Why', text(c.lead_reason, 'ld-why'), true);
     return box;
   }
 
