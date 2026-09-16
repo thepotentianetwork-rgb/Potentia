@@ -504,11 +504,18 @@ which cities have already been searched.
 
 | Category | Ships | Offer |
 |---|---|---|
-| Subcontractors | on | Credibility Website |
-| General contractors | on | Credibility Website |
+| Home Services | on | Credibility Website |
 | Handymen | off | $99 Website |
 | Auto detailers | off | $99 Website |
 | Car dealerships | off | Dealership CRM |
+
+Home Services covers the specialty trades that sub to general contractors and
+the small GCs who hire them — one category because it is one sales
+conversation. Established GCs are not the target, but nothing needs to know
+that: the review ceiling sends anyone big enough to have an agency straight
+out. The `subcontractor` and `general` categories it replaces are renamed in
+place on startup, in `lead_sources`, `lead_candidates` and `clients`, so no
+rebuild is needed and no row loses its `last_run_at`.
 
 The CRM's Lead Pipeline section has a chip per category; clicking one calls
 `POST /crm/leads/segments` with `{segment, enabled}`. There is no separate

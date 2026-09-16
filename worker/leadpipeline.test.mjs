@@ -104,7 +104,7 @@ test('pushing a lead inserts and never touches an existing row', async () => {
   const before = db.prepare("SELECT * FROM clients WHERE id = 1").get();
 
   await pushLeadToCrm(env,
-    { place_id: 'PLACE_B', segment: 'contractor', offer_hint: 1 },
+    { place_id: 'PLACE_B', segment: 'home_service', offer_hint: 1 },
     { name: 'Different Co', address: '1 Main St', phone: '8015551234', website: '' },
     { qualified: true, score: 88, reason: 'No website at all, 12 Google reviews.' });
 
@@ -186,11 +186,11 @@ test('spend is summed over a rolling 24 hours, not all time', async () => {
 
 
 // ── the search grid ───────────────────────────────────────────────────────
-test('only subcontractors and general contractors ship switched on', () => {
+test('only home services ships switched on', () => {
   const rows = defaultSources();
   const on = rows.filter(r => r.enabled);
   const segs = [...new Set(on.map(r => r.segment))].sort();
-  assert.deepEqual(segs, ['general', 'subcontractor']);
+  assert.deepEqual(segs, ['home_service']);
   /* Every other category is seeded for every city anyway, so switching one on
      is an UPDATE. A reseed would work too but would throw away which cities
      have already been searched. */
@@ -229,14 +229,15 @@ test('two cities with the same name stay separate', () => {
   // Glendale CA and Glendale AZ are different places in different metros.
   const glendale = defaultSources().filter(r => r.city === 'Glendale');
   assert.deepEqual([...new Set(glendale.map(r => r.state))].sort(), ['AZ', 'CA']);
-  const q = defaultSources().filter(r => r.city === 'Glendale' && r.segment === 'subcontractor');
+  const q = defaultSources().filter(r => r.city === 'Glendale' && r.segment === 'home_service');
   assert.ok(q.length > 2, 'each state gets its own full set of queries');
 });
 
-test('the enabled grid is mostly subcontractors', () => {
-  const on = defaultSources().filter(r => r.enabled);
-  const subs = on.filter(r => r.segment === 'subcontractor').length;
-  assert.ok(subs / on.length > 0.7, 'subs are the target, GCs ride along');
+test('the trades are the bulk of what home services searches', () => {
+  const hs = SEGMENTS.find(s => s.key === 'home_service');
+  const gc = hs.queries.filter(q => /general contractor|home builder|remodeling/.test(q));
+  assert.equal(gc.length, 3, 'the GC searches are folded in, not dropped');
+  assert.ok(gc.length / hs.queries.length < 0.2, 'specialty trades still dominate');
 });
 
 
@@ -899,7 +900,7 @@ test('the toggles report what lead_sources actually says', async () => {
 
   const byKey = {};
   segs.forEach(s => { byKey[s.key] = s; });
-  assert.equal(byKey.subcontractor.enabled, true);
+  assert.equal(byKey.home_service.enabled, true);
   assert.equal(byKey.detailer.enabled, false);
   assert.equal(byKey.detailer.searches, 0);
   assert.ok(byKey.detailer.total > 0, 'off, but seeded and ready');
@@ -915,7 +916,7 @@ test('turning a category on switches its searches on, and off again', async () =
   (await listSegments(env)).forEach(s => { byKey[s.key] = s; });
   assert.equal(byKey.detailer.enabled, true);
   assert.ok(byKey.detailer.searches > 0);
-  assert.equal(byKey.subcontractor.enabled, true, 'other categories are untouched');
+  assert.equal(byKey.home_service.enabled, true, 'other categories are untouched');
 
   await setSegmentEnabled(env, 'detailer', false);
   byKey = {};
@@ -970,7 +971,7 @@ test('a lead remembers which trade found it, not just its category', async () =>
   Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
   const now = new Date().toISOString();
   db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
-              VALUES ('roofing contractor','Carlsbad','CA','subcontractor',2,1,?)`).run(now);
+              VALUES ('roofing contractor','Carlsbad','CA','home_service',2,1,?)`).run(now);
 
   stubFetch({ places: () => ok({ places: [PLACE(1)] }), pagespeed: PS(10) });
   await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
@@ -978,7 +979,7 @@ test('a lead remembers which trade found it, not just its category', async () =>
   const row = db.prepare("SELECT * FROM clients WHERE created_by_pipeline = 1").get();
   assert.equal(row.lead_trade, 'roofing contractor',
     '"subcontractor" is a bucket; "roofing contractor" is what you say on the phone');
-  assert.equal(row.lead_segment, 'subcontractor', 'the category is still there to group by');
+  assert.equal(row.lead_segment, 'home_service', 'the category is still there to group by');
 });
 
 test('the trade survives a reseed, because it is not a foreign key', async () => {
@@ -1118,7 +1119,7 @@ test('a run only checks the categories that are switched on', async () => {
   ).run(id, segment, trade,
         JSON.stringify({ place_id: id, name: trade + ' Co', website: '', review_count: 20 }), now, now);
 
-  stage('S1', 'subcontractor', 'roofing contractor');
+  stage('S1', 'home_service', 'roofing contractor');
   stage('H1', 'handyman', 'handyman');
   stage('D1', 'detailer', 'mobile detailing');
   stage('D2', 'detailer', 'ceramic coating');
@@ -1140,7 +1141,48 @@ test('a run only checks the categories that are switched on', async () => {
     assert.equal(Number(row.attempts), 0);
   }
 
-  await setSegmentEnabled(env, 'subcontractor', true);
+  await setSegmentEnabled(env, 'home_service', true);
   const after = await runLeadPipeline(env, { trigger: 'manual', limit: 10 });
   assert.equal(after.pushed, 1, 'the roofer lands once its category is back on');
+});
+
+test('the old two categories are renamed in place, not rebuilt away', async () => {
+  const { env, db } = await freshEnv();
+  const now = new Date().toISOString();
+
+  /* Rows as they exist right now in production: two categories, with
+     last_run_at recording which cities have already been searched. A rebuild
+     would fix the naming and lose that, which is the whole reason this is a
+     rename. */
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, last_run_at, created_at)
+              VALUES ('roofing contractor','Irvine','CA','subcontractor',2,1,?,?)`).run(now, now);
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, last_run_at, created_at)
+              VALUES ('general contractor','Mesa','AZ','general',2,1,?,?)`).run(now, now);
+  db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, created_at, updated_at)
+              VALUES ('PQ','subcontractor','new',?,?)`).run(now, now);
+  db.prepare(`INSERT INTO clients (business_name, status, created_at, updated_at)
+              VALUES ('Old Lead','lead',?,?)`).run(now, now);
+  await ensureLeadPipelineTables(env);
+  db.prepare("UPDATE clients SET lead_segment = 'general', created_by_pipeline = 1 WHERE business_name = 'Old Lead'").run();
+
+  await ensureLeadPipelineTables(env);
+
+  assert.equal(Number(db.prepare(
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment IN ('subcontractor','general')").get().c), 0);
+  assert.equal(Number(db.prepare(
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment = 'home_service'").get().c), 2);
+
+  const src = db.prepare("SELECT * FROM lead_sources WHERE city = 'Irvine'").get();
+  assert.equal(src.last_run_at, now, 'it still knows Irvine has been searched');
+  assert.equal(Number(src.enabled), 1, 'and that it is switched on');
+
+  assert.equal(db.prepare("SELECT segment FROM lead_candidates WHERE place_id='PQ'").get().segment,
+    'home_service', 'candidates in the queue come across too');
+  assert.equal(db.prepare("SELECT lead_segment FROM clients WHERE business_name='Old Lead'").get().lead_segment,
+    'home_service', 'and leads already in the CRM group under the new name');
+
+  // Safe to run forever, which it will be — it is in the lazy migration path.
+  await ensureLeadPipelineTables(env);
+  assert.equal(Number(db.prepare(
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment = 'home_service'").get().c), 2);
 });
