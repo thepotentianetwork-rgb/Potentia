@@ -76,6 +76,24 @@ test("the lead generator is locked to a CRM login alone", async () => {
   assert.equal((await call("GET", "/crm/leads/segments")).status, 401);
 });
 
+test("the ShedPro price-unlock password does not open the lead generator", async () => {
+  const { env, call, crmTok } = await setup();
+
+  /* ADMIN_PASSWORD is what ShedPro staff type to see prices in the designer —
+     handed around daily. It must not also unlock a thing that spends money,
+     and it must not do so quietly just because the generator's own secret has
+     not been set yet. */
+  assert.equal((await call("POST", "/crm/leads/unlock", { password: "adminpw" }, crmTok)).status, 401);
+
+  delete env.LEADS_PASSWORD;
+  const unset = await call("POST", "/crm/leads/unlock", { password: "adminpw" }, crmTok);
+  assert.equal(unset.status, 503, "no password set means shut, not open");
+  assert.match(unset.data.error, /LEADS_PASSWORD/, "and it says what to go and add");
+
+  // Nothing got through while it was unconfigured.
+  assert.equal((await call("GET", "/crm/leads/segments", null, crmTok)).status, 403);
+});
+
 test("the right password unlocks it; the wrong one does not", async () => {
   const { call, crmTok } = await setup();
 
@@ -106,15 +124,15 @@ test("whoever gets them on the phone owns the lead", async () => {
   const { call, crmTok, crmDb } = await setup();
 
   await call("POST", "/crm/clients/1/calls",
-    { direction: "outbound", outcome: "connected", logged_by: "Maya" }, crmTok);
-  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, "Maya");
+    { direction: "outbound", outcome: "connected", logged_by: "Fernando M" }, crmTok);
+  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, "Fernando M");
 
   /* First contact wins. A second caller opening the record later cannot take
      a lead off the person who actually earned it. */
   const second = await call("POST", "/crm/clients/1/calls",
-    { direction: "outbound", outcome: "connected", logged_by: "Chris" }, crmTok);
+    { direction: "outbound", outcome: "connected", logged_by: "Alejandro A" }, crmTok);
   assert.equal(second.data.claimed_by, null, "nothing to claim");
-  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, "Maya");
+  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, "Fernando M");
 });
 
 test("voicemail and no answer claim nothing", async () => {
@@ -144,15 +162,34 @@ test("a call with no name logged claims nothing, and is still logged", async () 
   assert.equal(Number(crmDb.prepare("SELECT COUNT(*) AS c FROM client_calls").get().c), 1);
 });
 
-test("the caller list is built from who has actually called", async () => {
+test("the roster is there before anyone has made a call", async () => {
   const { call, crmTok } = await setup();
-  await call("POST", "/crm/clients/1/calls",
-    { direction: "outbound", outcome: "connected", logged_by: "Maya" }, crmTok);
-  await call("POST", "/crm/clients/1/calls",
-    { direction: "outbound", outcome: "voicemail", logged_by: "Chris" }, crmTok);
-
   const r = await call("GET", "/crm/callers", null, crmTok);
-  assert.deepEqual(r.data.callers, ["Chris", "Maya"], "including whoever only left a voicemail");
+  assert.deepEqual(r.data.roster, ["Fernando M", "Alejandro A"],
+    "a new CRM offers the people on the phones, not an empty list");
+});
+
+test("the roster changes without a deploy", async () => {
+  const { env, call, crmTok } = await setup();
+  env.CRM_CALLERS = " Dana R , Sam T ,, ";
+  const r = await call("GET", "/crm/callers", null, crmTok);
+  assert.deepEqual(r.data.roster, ["Dana R", "Sam T"], "trimmed, and blanks dropped");
+});
+
+test("names already in the call log survive leaving the roster", async () => {
+  const { env, call, crmTok } = await setup();
+  await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "connected", logged_by: "Fernando M" }, crmTok);
+  await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "voicemail", logged_by: "Alejandro A" }, crmTok);
+
+  /* Someone leaving the roster must not make the leads they own unattributable
+     in the list they are picked from. */
+  env.CRM_CALLERS = "Dana R";
+  const r = await call("GET", "/crm/callers", null, crmTok);
+  assert.deepEqual(r.data.callers, ["Alejandro A", "Dana R", "Fernando M"],
+    "including whoever only left a voicemail, and whoever has since left");
+  assert.deepEqual(r.data.roster, ["Dana R"]);
 });
 
 test("who logged a call is returned with it", async () => {

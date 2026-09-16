@@ -2796,6 +2796,12 @@ Be warm, concise, and confident — a few sentences at most. You are a live exam
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
+/* Who is on the phones. Overridden by CRM_CALLERS so the roster changes in
+   Cloudflare rather than in a deploy. A fixed list rather than a free-text
+   box on purpose: "Fernando M", "fernando" and "Fernando" are three owners
+   of the same lead, and nobody notices until someone asks whose it is. */
+const DEFAULT_CALLERS = "Fernando M, Alejandro A";
+
 /* ---------------------------------------------------------------------------
    RATE LIMITING
    Every /shed/* endpoint below and /chat are public by necessity — a customer
@@ -3013,11 +3019,18 @@ async function leadsGate(request, env) {
   return null;
 }
 
-/* Falls back to the ShedPro admin password when LEADS_PASSWORD is unset, so
-   the lock works the moment it ships rather than leaving the generator open
-   until someone remembers to add a secret. */
+/* LEADS_PASSWORD only — deliberately no fall back to ADMIN_PASSWORD, which is
+   what unlocks prices in the ShedPro designer. Those are two different jobs
+   for two different businesses: showing a customer their shed price is a
+   thing every ShedPro staffer does all day, and spending Potentia's money
+   sourcing leads is not. One password doing both means the first is handed
+   out until the second is no longer protected.
+
+   Unset means nobody can unlock, which is the right way round to fail: the
+   generator spends money, so "no password configured" has to mean shut, not
+   open. */
 function leadsPassword(env) {
-  return env.LEADS_PASSWORD || env.ADMIN_PASSWORD || null;
+  return env.LEADS_PASSWORD || null;
 }
 
 // ---- /chat: AI assistant ----
@@ -5780,7 +5793,7 @@ export default {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const secret = leadsPassword(env);
         if (!secret || !env.ADMIN_SESSION_SECRET) {
-          return json({ error: "Lead generator password not configured" }, 503, origin);
+          return json({ error: "No lead generator password is set. Add LEADS_PASSWORD as a secret on the Worker." }, 503, origin);
         }
         const body = await request.json().catch(() => ({}));
         const given = typeof body.password === "string" ? body.password : "";
@@ -5794,9 +5807,12 @@ export default {
       if (path === "/crm/callers" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         await ensureCrmTables(env);
-        /* Built from who has actually logged calls rather than a list someone
-           has to maintain: the first caller types their name, everyone after
-           picks it. */
+        /* The people on the phones, from CRM_CALLERS (comma-separated) so the
+           roster changes without a deploy. Names already in the call log are
+           merged in so history never loses an owner who has since left the
+           list. */
+        const roster = String(env.CRM_CALLERS || DEFAULT_CALLERS)
+          .split(",").map((n) => n.trim()).filter(Boolean);
         const rows = await env.CRM_DB.prepare(
           `SELECT logged_by AS name, COUNT(*) AS calls FROM client_calls
             WHERE logged_by IS NOT NULL AND logged_by != ''
@@ -5806,9 +5822,10 @@ export default {
           "SELECT owner AS name, COUNT(*) AS leads FROM clients WHERE owner IS NOT NULL AND owner != '' GROUP BY owner"
         ).all();
         const seen = {};
+        for (const n of roster) seen[n] = true;
         for (const r of rows.results || []) seen[r.name] = true;
         for (const r of owners.results || []) seen[r.name] = true;
-        return json({ callers: Object.keys(seen).sort() }, 200, origin);
+        return json({ callers: Object.keys(seen).sort(), roster }, 200, origin);
       }
       if (path === "/crm/analytics" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
