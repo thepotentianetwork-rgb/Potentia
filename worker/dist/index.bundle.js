@@ -2503,11 +2503,25 @@ async function runLeadPipeline(env, opts) {
           WHERE status = 'enriching' AND updated_at < ?`
       ).bind(new Date().toISOString(), staleBefore).run();
 
-      const batch = await db.prepare(
-        `SELECT * FROM lead_candidates
-          WHERE status IN ('new','enriched') AND attempts < ?
-          ORDER BY COALESCE(promise, -1) DESC, id ASC LIMIT ?`
-      ).bind(LEAD_DEFAULTS.maxAttempts, perRun).all();
+      /* Only categories that are switched on. The toggles used to govern what
+         got SOURCED and nothing else, so switching everything to Auto
+         detailers and pressing run worked through a backlog of roofers and
+         handymen staged weeks earlier — the categories said one thing and the
+         leads said another. Candidates from a category that is off are not
+         discarded, just parked until it is on again. */
+      const live = await db.prepare(
+        "SELECT DISTINCT segment FROM lead_sources WHERE enabled = 1"
+      ).all();
+      const liveSegments = (live.results || []).map((r) => r.segment);
+
+      const batch = liveSegments.length
+        ? await db.prepare(
+            `SELECT * FROM lead_candidates
+              WHERE status IN ('new','enriched') AND attempts < ?
+                AND segment IN (${liveSegments.map(() => "?").join(",")})
+              ORDER BY COALESCE(promise, -1) DESC, id ASC LIMIT ?`
+          ).bind(LEAD_DEFAULTS.maxAttempts, ...liveSegments, perRun).all()
+        : { results: [] };
 
       const queue = batch.results || [];
       await emit({ event: "batch", total: queue.length });
