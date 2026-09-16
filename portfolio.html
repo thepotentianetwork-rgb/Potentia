@@ -60,6 +60,13 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .grid-name{font-size:22px;font-weight:300;color:var(--bright);margin-bottom:4px}
 .grid-url{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
 .yours{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:var(--black)}
+/* The software card. The others frame the live site; a CRM sits behind a
+   client's login, so this one sends you to the sample instead. */
+.sample-card{width:100%;height:100%;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:34px;background:linear-gradient(160deg,rgba(216,161,95,0.10),rgba(4,4,7,0) 60%),var(--deep)}
+.sample-card .sc-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--warm,#d8a15f);text-transform:uppercase}
+.sample-card h3{font-size:27px;font-weight:300;color:var(--bright);line-height:1.2}
+.sample-card p{font-size:14px;color:var(--silver);font-weight:300;line-height:1.7}
+.sample-card .sc-go{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--chrome);text-transform:uppercase;margin-top:4px}
 .yours p:first-child{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.35em;color:var(--dim);text-transform:uppercase}
 .yours p:last-child{font-size:36px;font-weight:300;color:var(--dim);font-style:italic}
 
@@ -162,6 +169,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     <a href="index.html">Home</a>
     <a href="portfolio.html" class="active">Portfolio</a>
     <a href="pricing.html">Pricing</a>
+    <a href="sample.html">Live Sample</a>
     <a href="contact.html">Contact</a>
     <a href="https://portal.potentianetwork.com/login">Client Login</a>
   </div>
@@ -175,6 +183,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <a href="index.html">Home</a>
   <a href="portfolio.html" class="active">Portfolio</a>
   <a href="pricing.html">Pricing</a>
+  <a href="sample.html">Live Sample</a>
   <a href="contact.html">Contact</a>
   <a href="https://portal.potentianetwork.com/login">Client Login</a>
   <a href="contact.html" class="mob-cta-btn">Get Started</a>
@@ -226,6 +235,14 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
         <p class="grid-tag">Tire &amp; TPMS Service · Logan, UT</p>
         <p class="grid-name">Tire Pros Shop</p>
         <p class="grid-url">tireprosshop.com ↗</p>
+      </div>
+    </div>
+    <div class="grid-item" onclick="window.location='sample.html'">
+      <div class="sample-card">
+        <p class="sc-tag">Custom CRM &amp; Platform</p>
+        <h3>The software, running</h3>
+        <p>Our CRM and sales-platform work lives behind our clients' logins, so we rebuilt it on invented data. Click through the real interface — filter a pipeline, read what it says about a lead.</p>
+        <p class="sc-go">Open the live sample →</p>
       </div>
     </div>
     <div class="grid-item" onclick="window.location='contact.html'">
