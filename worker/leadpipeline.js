@@ -492,11 +492,18 @@ export async function seedLeadSources(env, force) {
   }
   const now = new Date().toISOString();
   const rows = defaultSources();
-  for (const r of rows) {
-    await db.prepare(
-      `INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(r.query_template, r.city, r.state, r.segment, r.offer_hint, r.enabled, now).run();
+
+  /* Batched. The grid is nearly two thousand rows now, and one statement at a
+     time is one network round trip at a time — tens of seconds of doing
+     nothing but waiting, for a request a browser is sitting on. */
+  const insert = db.prepare(
+    `INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  );
+  const CHUNK = 100;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await db.batch(rows.slice(i, i + CHUNK).map((r) =>
+      insert.bind(r.query_template, r.city, r.state, r.segment, r.offer_hint, r.enabled, now)));
   }
   return rows.length;
 }

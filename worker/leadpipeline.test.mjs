@@ -1071,3 +1071,34 @@ test('an account failure that is not PageSpeed still stops the run', async () =>
   assert.equal(calls.places, 1);
   assert.equal(out.sourced, 0);
 });
+
+test('a rebuilt grid replaces the old one wholesale', async () => {
+  const { env, db } = await freshEnv();
+  const now = new Date().toISOString();
+  // Stand in for the old 20-city grid that is still out there.
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
+              VALUES ('handyman','Bakersfield','CA','handyman',1,1,?)`).run(now);
+
+  // A normal run leaves it alone — that is the whole point of seeding once.
+  assert.equal(await seedLeadSources(env, false), 0);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c), 1);
+
+  const written = await seedLeadSources(env, true);
+  assert.ok(written > 1000, 'the real grid is written, not a handful of rows');
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c), written);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources WHERE city='Bakersfield'").get().c), 0,
+    'the old city list is gone');
+
+  /* The symptom that started this: handymen stuck at 42 searches, which is
+     14 cities x 3 queries from the grid before SoCal. After a rebuild the
+     count has to reflect the grid in the code. */
+  const handy = SEGMENTS.find(s => s.key === 'handyman');
+  const cities = new Set(defaultSources().map(r => r.city + ',' + r.state)).size;
+  assert.equal(
+    Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources WHERE segment='handyman'").get().c),
+    cities * handy.queries.length);
+
+  await setSegmentEnabled(env, 'handyman', true);
+  const on = (await listSegments(env)).find(s => s.key === 'handyman');
+  assert.ok(on.searches > 200, 'and switching it on offers the whole region, not 42 searches');
+});

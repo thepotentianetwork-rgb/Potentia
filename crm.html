@@ -44,6 +44,10 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
 .lp-cat.on .lp-n{color:rgba(216,161,95,0.75)}
 .lp-cat-loading{font-size:12px;color:var(--dim)}
 .lp-cat-warn{font-size:12px;color:#d89b6a;margin-left:4px}
+.lp-reseed-note{margin-top:-24px}
+.lp-reseed{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;padding:8px 14px;margin-left:10px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.2s}
+.lp-reseed:hover:not(:disabled){border-color:var(--silver);color:var(--bright)}
+.lp-reseed:disabled{opacity:.5;cursor:progress}
 .lp-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .lp-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;padding:12px 18px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.3s;flex:1 1 220px}
 .lp-btn:hover:not(:disabled){border-color:var(--silver);color:var(--bright)}
@@ -203,6 +207,14 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
       is saved even if you close the page.
     </p>
     <div class="lp-out" id="lp-out" hidden></div>
+
+    <p class="lp-note lp-reseed-note">
+      The list of cities and searches is written once and then left alone, so that runs never
+      lose track of which cities have already been searched. Rebuild it when the city list or
+      the categories have changed &mdash; it replaces the whole grid and puts the categories
+      back to their defaults.
+      <button class="lp-reseed" id="lp-reseed" type="button">Rebuild search grid</button>
+    </p>
   </section>
 
   <section>
@@ -527,6 +539,44 @@ function authFetch(path, options) {
       })
       .then(function () { dry.disabled = false; live.disabled = false; });
   }
+
+  /* Rebuilding the grid is a POST with an auth header, which is not something
+     anyone can do from a browser address bar — so it needs a button or it may
+     as well not exist. */
+  var reseedBtn = document.getElementById('lp-reseed');
+  if (reseedBtn) reseedBtn.addEventListener('click', function () {
+    if (!confirm('Rebuild the list of cities and searches from scratch?\n\n' +
+                 'This replaces the whole grid and puts the categories back to their ' +
+                 'defaults. Leads you already have are not touched.')) return;
+    reseedBtn.disabled = true;
+    dry.disabled = true; live.disabled = true;
+    show('Rebuilding the search grid&hellip;');
+
+    fetch(API_BASE + '/crm/leads/run-now?dry=1&reseed=1', {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + token }
+    }).then(function (res) {
+      // The run-now endpoint streams; the last line carries the result.
+      return res.text();
+    }).then(function (text) {
+      var last = null;
+      text.split('\n').forEach(function (l) {
+        if (!l.trim()) return;
+        try { var o = JSON.parse(l); if (o.event === 'done') last = o.result; } catch (e) {}
+      });
+      show(last
+        ? 'Search grid rebuilt. Found ' + n(last.sourced) + ' businesses on the way past. ' +
+          'Switch the categories you want back on, then do a real run.'
+        : '<span class="lp-err">The rebuild did not report back. Reload the page and check ' +
+          'whether the category counts changed.</span>');
+      loadCats();
+    }).catch(function (e) {
+      show('<span class="lp-err">Could not rebuild the grid (' +
+           esc(e && e.message ? e.message : 'network error') + ').</span>');
+    }).then(function () {
+      reseedBtn.disabled = false;
+      loadCats();
+    });
+  });
 
   dry.addEventListener('click', function () { run(true); });
   live.addEventListener('click', function () {
