@@ -146,10 +146,8 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 .lead-detail{display:flex;flex-wrap:wrap;gap:8px 30px;padding-left:12px;border-left:1px solid rgba(216,161,95,0.3)}
 .lead-detail .ld-line{font-size:13px;color:var(--silver);line-height:1.5}
 .lead-detail a{word-break:normal;overflow-wrap:anywhere}
-tr.lead-detail-row td{padding:4px 18px 16px;border-top:none}
-.why-more{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--dim);background:none;border:1px solid var(--dim);border-radius:20px;padding:2px 9px;margin-top:5px;cursor:pointer;align-self:flex-start}
-.why-more:hover{border-color:var(--silver);color:var(--silver)}
-.why-more.on{border-color:var(--warm);color:var(--warm)}
+.why-cell{min-width:340px}
+.why-note{font-size:13px;color:var(--silver);margin-top:8px;padding-left:12px;border-left:1px solid var(--dim)}
 .lead-detail .ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:7px}
 .lead-detail a{color:var(--warm);text-decoration:none;border-bottom:1px solid rgba(216,161,95,0.35)}
 .lead-detail a:hover{color:#f0c48a}
@@ -183,6 +181,10 @@ tr.lead-detail-row td{padding:4px 18px 16px;border-top:none}
   td.view-cell::before{display:none}
   td.view-cell .view-link{display:block;text-align:center;border:1px solid var(--dim);padding:10px;font-size:12px}
   .note-cell{max-width:none}
+  /* Everything is a block down here, so a minimum meant for a table column
+     would only force the page sideways. */
+  .why-cell{min-width:0}
+  .lead-detail{flex-direction:column;gap:5px}
   td.empty::before{display:none}
 }
 </style>
@@ -1133,18 +1135,8 @@ function render() {
       badge.textContent = 'New Lead';
       wrap.appendChild(badge);
     }
-    /* The detail used to live in this cell, which is the narrowest column on
-       the page — every line wrapped three times and one lead filled a screen.
-       It gets its own full-width row below, shut until asked for. */
-    if (Number(c.created_by_pipeline) === 1) {
-      var more = document.createElement('button');
-      more.className = 'why-more';
-      more.type = 'button';
-      more.textContent = 'Why';
-      wrap.appendChild(more);
-      tr._more = more;
-    }
     tdName.appendChild(wrap);
+    var isLead = Number(c.created_by_pipeline) === 1;
 
     // contact
     var tdContact = document.createElement('td');
@@ -1245,24 +1237,27 @@ function render() {
     link.textContent = 'Open →';
     tdView.appendChild(link);
 
-    [tdName, tdContact, tdPkg, tdStatus, tdValue, tdWork, tdNote, tdView].forEach(function (td) { tr.appendChild(td); });
-    body.appendChild(tr);
-
-    if (tr._more) {
-      var detailRow = document.createElement('tr');
-      detailRow.className = 'lead-detail-row';
-      detailRow.hidden = true;
-      var dtd = document.createElement('td');
-      dtd.colSpan = 8;
-      dtd.appendChild(LeadDetail.block(c, SEGMENT_LABELS));
-      detailRow.appendChild(dtd);
-      body.appendChild(detailRow);
-
-      tr._more.addEventListener('click', function () {
-        detailRow.hidden = !detailRow.hidden;
-        tr._more.classList.toggle('on', !detailRow.hidden);
-      });
+    /* A pipeline lead has nothing in Value, Open Work or Latest Note — three
+       empty columns to the right of every one of them. The detail goes there,
+       across all three, rather than into the narrowest column on the page or
+       behind a button. Nothing to open: a call list is read at a glance. */
+    if (isLead) {
+      var tdWhy = document.createElement('td');
+      tdWhy.className = 'why-cell';
+      tdWhy.colSpan = 3;
+      tdWhy.setAttribute('data-label', 'Why');
+      tdWhy.appendChild(LeadDetail.block(c, SEGMENT_LABELS));
+      if (c.latest_note) {
+        var kept = document.createElement('div');
+        kept.className = 'why-note';
+        kept.textContent = c.latest_note;
+        tdWhy.appendChild(kept);
+      }
+      [tdName, tdContact, tdPkg, tdStatus, tdWhy, tdView].forEach(function (td) { tr.appendChild(td); });
+    } else {
+      [tdName, tdContact, tdPkg, tdStatus, tdValue, tdWork, tdNote, tdView].forEach(function (td) { tr.appendChild(td); });
     }
+    body.appendChild(tr);
   }
 }
 
