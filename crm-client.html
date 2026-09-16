@@ -298,12 +298,16 @@ if (!token) window.location.href = 'crm-login.html';
 if (!clientId) window.location.href = 'crm.html';
 
 var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
-var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
+/* Filled from /crm/packages. Not written here: the list carries the build
+   prices, and this file is readable by anyone who visits it. */
+var PACKAGES = [['', '—']];
+var PACKAGE_PRICE = {};
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 var PAY_METHODS = ['cash', 'check', 'venmo', 'zelle', 'card', 'stripe', 'paypal', 'invoice', 'other'];
 var PAY_KINDS = [['build', 'Build'], ['monthly', 'Monthly'], ['addon', 'Add-on'], ['other', 'Other']];
 
 var currentClient = null;
+var PACKAGE_LABELS = {};
 
 function authFetch(path, options) {
   options = options || {};
@@ -350,12 +354,25 @@ function fillSelect(el, pairs) {
 function el(id) { return document.getElementById(id); }
 
 fillSelect(el('f-status'), STATUSES.map(function (s) { return [s, s]; }));
-fillSelect(el('f-package'), PACKAGES);
 fillSelect(el('f-source'), SOURCES);
 fillSelect(el('pay-method'), PAY_METHODS.map(function (m) { return [m, m]; }));
 fillSelect(el('pay-kind'), PAY_KINDS);
 el('pay-date').value = today();
 el('f-phone').addEventListener('input', renderPhoneActions);
+/* Picking a tier fills the build fee in — but only into a field that is empty
+   or still holds the figure this put there. What a client is actually being
+   charged is never overwritten by a list price.
+
+   Clears it when the new package has no list price, so changing a client from
+   Tier 1 to Custom CRM does not leave them quoted at 500. */
+var autoFee = null;
+el('f-package').addEventListener('change', function () {
+  var cur = String(el('f-build').value).trim();
+  if (cur && !(autoFee != null && cur === String(autoFee))) return;
+  var price = PACKAGE_PRICE[this.value];
+  el('f-build').value = price == null ? '' : price;
+  autoFee = price == null ? null : price;
+});
 
 // ---- details ----
 // ---- Google Voice quick actions ----
@@ -484,7 +501,7 @@ function fillDetails(c) {
   el('f-phone').value = c.phone || '';
   renderPhoneActions();
   el('f-status').value = status;
-  el('f-package').value = c.package || '';
+  setPackage(c.package || '');
   el('f-source').value = c.source || '';
   el('f-build').value = c.build_fee == null ? '' : c.build_fee;
   el('f-monthly').value = c.monthly_fee == null ? '' : c.monthly_fee;
@@ -944,6 +961,42 @@ el('call-form').addEventListener('submit', function (e) {
 });
 
 // ---- load ----
+/* Selecting the package by hand, because the option may not exist.
+
+   A client can be on a retired package, and a retired package is not offered
+   for new work — so it is not in the dropdown. Assigning a value no option
+   carries silently leaves the select on '', and the next Save would write
+   that empty value back and erase what the client actually bought. So: if
+   the option is missing, add it before selecting it. Nothing is ever lost by
+   opening the page. */
+function setPackage(key) {
+  var sel = el('f-package');
+  if (key) {
+    var found = false;
+    for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === key) { found = true; break; }
+    if (!found) {
+      var o = document.createElement('option');
+      o.value = key;
+      o.textContent = PACKAGE_LABELS[key] || key;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = key;
+}
+
+function loadPackages() {
+  return authFetch('/crm/packages').then(function (r) {
+    if (!r.ok || !r.data || !r.data.packages) return;
+    r.data.packages.forEach(function (p) {
+      PACKAGE_LABELS[p.key] = p.label;
+      if (p.price != null) PACKAGE_PRICE[p.key] = p.price;
+      if (!p.retired) PACKAGES.push([p.key, p.label]);
+    });
+    fillSelect(el('f-package'), PACKAGES);
+    if (currentClient) setPackage(currentClient.package || '');
+  }).catch(function () { /* setPackage still adds whatever the client has */ });
+}
+
 function loadClient() {
   return authFetch('/crm/clients/' + clientId).then(function (r) {
     if (!r.ok) {
@@ -970,7 +1023,10 @@ function loadClient() {
   });
 }
 
-if (token && clientId) loadClient();
+/* Packages first, so the dropdown is populated before a client's package is
+   selected into it. loadClient runs either way if that call fails — setPackage
+   covers the gap. */
+if (token && clientId) loadPackages().then(loadClient);
 </script>
 </body>
 </html>

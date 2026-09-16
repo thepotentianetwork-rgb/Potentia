@@ -345,6 +345,43 @@ request, not just in the browser:
 Different login page, different password, different session. Losing one
 password does not expose the other side.
 
+## The packages, and what a build costs
+
+The website tiers and their build prices live in **one** place:
+`CRM_PACKAGE_LIST` in `worker/index.js`.
+
+| Key | Shown as | Build |
+|---|---|---|
+| `tier1` | Tier 1 — Home & Contact | $500 |
+| `tier2` | Tier 2 — Home, Gallery & Contact | $1,200 |
+| `tier3` | Tier 3 — Gallery + Scheduling | $1,800 |
+| `crm` | Custom CRM | scoped per business |
+| `platform` | Sales Platform | scoped per business |
+| `custom` | Custom | — |
+
+**The prices are internal.** Nothing on the public site quotes a figure —
+every plan on `pricing.html` says *Request Info*, and the site's assistant is
+told in its system prompt never to state a dollar amount. That is why the
+list is served from `GET /crm/packages` (CRM login required) rather than
+written into `crm.html`: **crm.html is a public file.** A login gates the data
+a page fetches, not the page itself, so anything typed into one is published.
+`worker/packages.test.mjs` fails the build if a price appears in a page or in
+the assistant's prompt.
+
+`crm.html`, `crm-client.html` and `crm-data.html` all read that endpoint, so
+changing a price is one edit here and a bundle paste — no page changes.
+
+Selecting a package in the CRM fills the build fee in, and **clears it** when
+the new package has no list price, so a Custom CRM is never left quoted at the
+price of a two-page website. It never touches a number someone typed.
+
+Four package names are **retired**: `foundation`, `booking`, `gallery` and
+`operator`, from the old four-tier lineup. They are still in the list and
+marked `retired: true` — not offered for new work, but still shown on the
+clients who have one. They are deliberately **not** migrated onto the new
+tiers: a client who bought a 4-Page Gallery Site bought that, and rewriting
+their row would falsify what they paid for.
+
 ### 2. Create a second D1 database — Potentia's own
 
 The CRM does **not** share the shed partner's database. `potentia-shed`

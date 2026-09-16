@@ -57,7 +57,7 @@ const ALLOWED_ORIGINS = [
 const SYSTEM_PROMPT = `You are the AI assistant embedded on the Potentia Studio website. Potentia builds two things: custom, hand-built websites — no templates, no bloated platforms, 72-hour turnaround, free domain for the first year — and the software a business runs on once the work arrives: fully custom CRMs and tailored sales platforms with data tracking. The website is where a client starts, not the whole offer; Potentia is looking for clients who want to grow with them over years, adding each piece when they need it rather than buying everything at once.
 
 Stage One — the website (yours outright, no page builder underneath):
-Tier 1 — Home & Contact Site: two pages, who you are and how to reach you. 5 images, free domain (1 year). One-time build, no monthly subscription (edits after the first 7 days are billed per change request).
+Tier 1 — Home & Contact Site: two pages, who you are and how to reach you. 3 images, free domain (1 year). One-time build, no monthly subscription (edits after the first 7 days are billed per change request).
 Tier 2 — Home, Gallery & Contact Site: everything in Tier 1, plus a gallery page (15 photos and 1 featured video). For businesses where seeing the work is what makes the customer call. Includes a monthly plan to edit, manage & update photos.
 Tier 3 — Gallery Site + Scheduling: everything in Tier 2, plus a live booking calendar — the customer picks a service and books a slot instead of waiting on a callback. Includes a monthly plan for the calendar & ongoing management.
 
@@ -2218,7 +2218,36 @@ const CRM_STATUSES = ["lead", "contacted", "proposal", "building", "live", "paus
 // Statuses that count as a paying client for MRR — a build in progress is
 // already on its monthly plan, a paused or lost one is not.
 const CRM_ACTIVE_STATUSES = ["building", "live"];
-const CRM_PACKAGES = ["", "foundation", "booking", "gallery", "operator", "custom"];
+/* The packages a client can be on, and what a build of each one costs.
+
+   The prices are INTERNAL. The public site quotes nothing — every plan on
+   pricing.html says "Request Info", and the site's assistant is told in its
+   system prompt never to state a figure. They live here, behind CRM auth,
+   rather than in crm.html, because crm.html is a public file: anyone can read
+   its source without logging in. Nothing that should not be on a billboard
+   goes in a page.
+
+   Written once here and served to the CRM pages, so a price change is one
+   edit rather than a hunt through three files.
+
+   The retired names stay in the list. A client who bought a 4-Page Gallery
+   Site bought that, not a Tier 2, and rewriting their row would falsify the
+   record of what they paid for. They are marked retired so the CRM can stop
+   offering them for new work while still showing them on the clients who
+   have one. */
+const CRM_PACKAGE_LIST = [
+  { key: "tier1", label: "Tier 1 — Home & Contact", price: 500 },
+  { key: "tier2", label: "Tier 2 — Home, Gallery & Contact", price: 1200 },
+  { key: "tier3", label: "Tier 3 — Gallery + Scheduling", price: 1800 },
+  { key: "crm", label: "Custom CRM", price: null },
+  { key: "platform", label: "Sales Platform", price: null },
+  { key: "custom", label: "Custom", price: null },
+  { key: "foundation", label: "Foundation", price: null, retired: true },
+  { key: "booking", label: "Booking", price: null, retired: true },
+  { key: "gallery", label: "Gallery", price: null, retired: true },
+  { key: "operator", label: "Operator", price: null, retired: true }
+];
+const CRM_PACKAGES = [""].concat(CRM_PACKAGE_LIST.map((p) => p.key));
 const CRM_SOURCES = ["", "website", "referral", "instagram", "facebook", "google", "outreach", "repeat", "other"];
 const CRM_PAYMENT_METHODS = ["cash", "check", "venmo", "zelle", "card", "stripe", "paypal", "invoice", "other"];
 // What a payment was for. Keeps a $150/mo retainer from being read as another
@@ -3112,6 +3141,13 @@ export default {
           "SELECT * FROM enrichment_runs ORDER BY id DESC LIMIT 30"
         ).all();
         return json({ runs: rows.results || [] }, 200, origin);
+      }
+      if (path === "/crm/packages" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        /* Behind CRM auth because it carries the build prices, which are not
+           public. The labels alone would be harmless; the prices are why this
+           is an endpoint and not a constant in the page. */
+        return json({ packages: CRM_PACKAGE_LIST }, 200, origin);
       }
       if (path === "/crm/segment-names" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

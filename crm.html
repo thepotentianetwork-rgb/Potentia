@@ -380,7 +380,11 @@ authFetch('/crm/segment-names').then(function (r) {
 /* Search term -> the name shown for it, from the same endpoint. A lead stores
    the raw term it was found by; this is only ever for display and grouping. */
 var TRADE_LABELS = {};
-var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
+/* Filled from /crm/packages. Not written here: the list carries the build
+   prices, and this file is readable by anyone who visits it. */
+var PACKAGES = [['', '—']];
+var PACKAGE_PRICE = {};
+var PACKAGE_LABELS = {};
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 
 function authFetch(path, options) {
@@ -873,7 +877,23 @@ function fillSelect(el, pairs) {
 function today() { return new Date().toISOString().slice(0, 10); }
 
 // ---- new-client panel ----
-fillSelect(document.getElementById('n-package'), PACKAGES);
+/* The select is filled when the packages land rather than at load, so it is
+   populated once, from one place. Everything else on the panel works
+   meanwhile; only the package dropdown waits. */
+function loadPackages() {
+  return authFetch('/crm/packages').then(function (r) {
+    if (!r.ok || !r.data || !r.data.packages) return;
+    r.data.packages.forEach(function (p) {
+      if (p.retired) return;               // still shown on clients who have one, not offered for new work
+      PACKAGES.push([p.key, p.label]);
+      if (p.price != null) PACKAGE_PRICE[p.key] = p.price;
+    });
+    (r.data.packages || []).forEach(function (p) { PACKAGE_LABELS[p.key] = p.label; });
+    fillSelect(document.getElementById('n-package'), PACKAGES);
+    if (allClients && allClients.length) render();
+  }).catch(function () { /* the raw key still reads */ });
+}
+loadPackages();
 fillSelect(document.getElementById('n-source'), SOURCES);
 fillSelect(document.getElementById('n-status'), STATUSES.map(function (s) { return [s, s]; }));
 
@@ -885,6 +905,25 @@ document.getElementById('new-btn').addEventListener('click', function () {
 document.getElementById('n-cancel').addEventListener('click', function () {
   newPanel.classList.remove('open');
 });
+/* Picking a tier fills the build fee in — but only ever into a field that is
+   empty or still holds the figure this put there. A number someone typed is
+   their quote and is never touched.
+
+   It also CLEARS the field when the new package has no list price. Otherwise
+   picking Tier 1 and then changing to Custom CRM leaves 500 sitting in the
+   box, and a custom CRM goes out quoted at the price of a two-page website. */
+var autoFee = null;
+function bindFeePrefill(selectId, buildId) {
+  var sel = document.getElementById(selectId), build = document.getElementById(buildId);
+  sel.addEventListener('change', function () {
+    var cur = String(build.value).trim();
+    if (cur && !(autoFee != null && cur === String(autoFee))) return;
+    var price = PACKAGE_PRICE[sel.value];
+    build.value = price == null ? '' : price;
+    autoFee = price == null ? null : price;
+  });
+}
+bindFeePrefill('n-package', 'n-build');
 document.getElementById('n-save').addEventListener('click', function () {
   var msg = document.getElementById('n-msg');
   var payload = {
@@ -1190,7 +1229,10 @@ function render() {
     // package
     var tdPkg = document.createElement('td');
     tdPkg.setAttribute('data-label', 'Package');
-    tdPkg.textContent = label(c.package, PACKAGES);
+    /* PACKAGE_LABELS, not PACKAGES: a retired package is not offered for new
+       work, so it is not in the dropdown — but a client who bought one still
+       has to read as "Gallery" rather than "gallery". */
+    tdPkg.textContent = c.package ? (PACKAGE_LABELS[c.package] || c.package) : '—';
 
     // status
     var tdStatus = document.createElement('td');
