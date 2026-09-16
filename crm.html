@@ -237,6 +237,14 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
       back to their defaults.
       <button class="lp-reseed" id="lp-reseed" type="button">Rebuild search grid</button>
     </p>
+
+    <p class="lp-note lp-reseed-note">
+      Leads found while Google&rsquo;s speed test was unavailable were never actually
+      speed-tested. Recheck looks at the ones with a real website that nobody has
+      touched yet, keeps the ones that fail, and marks the rest lost so they drop out
+      of your call list.
+      <button class="lp-reseed" id="lp-recheck" type="button">Recheck websites</button>
+    </p>
     </div>
   </section>
 
@@ -481,7 +489,14 @@ function authFetch(path, options) {
      this reads the body as it arrives instead of using authFetch, which waits
      for the whole response and parses it as one JSON object. */
   function streamRun(isDry, onLine) {
-    return fetch(API_BASE + '/crm/leads/run-now' + (isDry ? '?dry=1' : ''), {
+    return streamPost('/crm/leads/run-now' + (isDry ? '?dry=1' : ''), onLine);
+  }
+
+  /* One NDJSON reader for every streaming endpoint. Both of them outlive the
+     100 seconds Cloudflare will hold a silent request open, so both stream,
+     and neither should have its own copy of the parsing. */
+  function streamPost(path, onLine) {
+    return fetch(API_BASE + path, {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + token, 'X-Leads-Unlock': unlockToken || '' }
     }).then(function (res) {
@@ -735,6 +750,53 @@ function authFetch(path, options) {
     }).then(function () {
       reseedBtn.disabled = false;
       loadCats();
+    });
+  });
+
+  var recheckBtn = document.getElementById('lp-recheck');
+  if (recheckBtn) recheckBtn.addEventListener('click', function () {
+    if (!confirm('Recheck the leads that were never speed-tested?\n\n' +
+                 'Anything whose website turns out to be fine is marked lost. Leads ' +
+                 'you have called or claimed are left alone.')) return;
+    recheckBtn.disabled = true;
+    dry.disabled = true; live.disabled = true;
+    var log = [];
+    function note(line) { log.push(line); show(log.join('<br>')); }
+    show('Rechecking&hellip;');
+
+    streamPost('/crm/leads/recheck', function (evt) {
+      if (evt.event === 'recheck_start') {
+        note(evt.total ? 'Rechecking ' + n(evt.total) + ' leads&hellip;'
+                       : 'Nothing to recheck &mdash; every lead with a website has been tested.');
+        return;
+      }
+      if (evt.event === 'rechecking') {
+        note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' + esc(evt.name || '') +
+             ' &mdash; ' + esc(evt.website) + '&hellip;');
+        return;
+      }
+      if (evt.event === 'rechecked') {
+        note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' + esc(evt.name || '') +
+             (evt.kept ? ' &mdash; <b>still a lead</b>' : ' &mdash; marked lost') +
+             (evt.speed == null ? '' : ' (' + evt.speed + '/100)'));
+        return;
+      }
+      if (evt.event === 'done') {
+        var d = evt.result || {};
+        note('<br>Looked at ' + n(d.looked) + ': ' + n(d.kept) + ' still worth a call, ' +
+             n(d.retired) + ' marked lost' +
+             (d.skipped ? ', ' + n(d.skipped) + ' needed no test' : '') + '.');
+        if (d.errors && d.errors.length) {
+          note('<span class="lp-err">' + esc(readable(d.errors.join(' | '))) + '</span>');
+        }
+        loadClients();
+        return;
+      }
+      if (evt.event === 'error') note('<span class="lp-err">' + esc(readable(evt.error)) + '</span>');
+    }).catch(function (e) {
+      note('<span class="lp-err">' + esc(readable(e && e.message ? e.message : 'network error')) + '</span>');
+    }).then(function () {
+      recheckBtn.disabled = false; dry.disabled = false; live.disabled = false;
     });
   });
 

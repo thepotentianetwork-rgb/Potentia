@@ -2476,6 +2476,108 @@ async function stripCandidate(env, id, status, score, reason, crmId) {
          crmId == null ? null : crmId, new Date().toISOString(), id).run();
 }
 
+// ── recheck: leads that were never actually speed-tested ──────────────────
+/* A lead with a real website should carry a speed score. One that does not
+   was judged while the speed test was unavailable, and the only honest thing
+   to say about it is that nobody has looked.
+
+   Only untouched leads are considered: status still 'lead', no owner, no
+   calls logged. The moment a person has engaged with a business, what the
+   pipeline thinks about their website stops being the deciding fact — same
+   never-overwrite rule as everywhere else. */
+async function recheckLeads(env, opts) {
+  const o = opts || {};
+  const db = env.CRM_DB;
+  await ensureLeadPipelineTables(env);
+
+  const limit = Math.max(1, Math.min(200, Number(o.limit) || 50));
+  const rows = await db.prepare(
+    `SELECT c.id, c.business_name, c.website_url, c.lead_reason
+       FROM clients c
+      WHERE c.created_by_pipeline = 1
+        AND c.status = 'lead'
+        AND (c.owner IS NULL OR c.owner = '')
+        AND c.website_url IS NOT NULL AND c.website_url != ''
+        AND c.lead_speed IS NULL
+        AND NOT EXISTS (SELECT 1 FROM client_calls cl WHERE cl.client_id = c.id)
+      ORDER BY c.id ASC LIMIT ?`
+  ).bind(limit).all();
+
+  const counts = { looked: 0, kept: 0, retired: 0, skipped: 0, errors: [] };
+  const emit = async (evt) => {
+    if (!o.onProgress) return;
+    try { await o.onProgress(evt); } catch (e) { /* client gone */ }
+  };
+
+  const queue = rows.results || [];
+  await emit({ event: "recheck_start", total: queue.length });
+
+  let position = 0;
+  for (const row of queue) {
+    position++;
+
+    /* The free checks already settled these: a Facebook page, a dead
+       business.site, plain http. They never needed a speed test and re-running
+       one would only risk overturning a correct verdict. */
+    if (notARealWebsite(row.website_url) || /^http:\/\//i.test(String(row.website_url).trim())) {
+      counts.skipped++;
+      continue;
+    }
+
+    await emit({ event: "rechecking", position: position, total: queue.length,
+                 name: row.business_name || null, website: row.website_url });
+
+    let verdict;
+    try {
+      verdict = await websiteVerdict(env, { website: row.website_url, review_count: null }, o.deps);
+    } catch (e) {
+      counts.errors.push((row.business_name || row.id) + ": " + String(e.message || e).slice(0, 160));
+      if (e && e.accountFailure) {
+        counts.errors.push("stopped: the speed test is still unavailable");
+        break;
+      }
+      continue;
+    }
+    if (verdict.defer) { counts.errors.push("stopped: the speed test is still unavailable"); break; }
+
+    counts.looked++;
+    const now = new Date().toISOString();
+
+    if (verdict.qualified) {
+      // Still a lead — now with the evidence it should have had all along.
+      await db.prepare(
+        `UPDATE clients SET lead_score = ?, lead_reason = ?, lead_speed = ?,
+                lead_mobile_ready = ?, lead_check = ?, updated_at = ?
+          WHERE id = ?`
+      ).bind(verdict.score, verdict.reason || "",
+             verdict.speed == null ? null : verdict.speed,
+             verdict.mobileReady == null ? null : (verdict.mobileReady ? 1 : 0),
+             verdict.checked || null, now, row.id).run();
+      counts.kept++;
+    } else {
+      /* Marked lost rather than deleted. It was put in front of someone as a
+         lead, and a row that quietly disappears is worse than one that says
+         why it is no longer worth a call. */
+      await db.prepare(
+        `UPDATE clients SET status = 'lost', lead_score = ?, lead_reason = ?,
+                lead_speed = ?, lead_mobile_ready = ?, lead_check = ?, updated_at = ?
+          WHERE id = ?`
+      ).bind(verdict.score, "Rechecked: " + (verdict.reason || "their site is fine."),
+             verdict.speed == null ? null : verdict.speed,
+             verdict.mobileReady == null ? null : (verdict.mobileReady ? 1 : 0),
+             verdict.checked || null, now, row.id).run();
+      counts.retired++;
+    }
+
+    await emit({ event: "rechecked", position: position, total: queue.length,
+                 name: row.business_name || null, kept: verdict.qualified,
+                 speed: verdict.speed == null ? null : verdict.speed,
+                 reason: verdict.reason || null });
+  }
+
+  return counts;
+}
+
 // ── cost ceiling ──────────────────────────────────────────────────────────
 async function spentToday(env) {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
@@ -5795,6 +5897,49 @@ export default {
         } catch (e) {
           return json({ error: String(e.message || e) }, 400, origin);
         }
+      }
+      if (path === "/crm/leads/recheck" && request.method === "POST") {
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
+
+        /* Streamed like a run, and for the same reason: each site is a fresh
+           speed test and fifty of them is well past the 100 seconds Cloudflare
+           will hold a silent request open. */
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const enc = new TextEncoder();
+        let gone = false;
+        const emit = async (evt) => {
+          if (gone) return;
+          try { await writer.write(enc.encode(JSON.stringify(evt) + "\n")); }
+          catch (e) { gone = true; }
+        };
+
+        (async () => {
+          try {
+            /* Both: recheckLeads reads client_calls, which belongs to the CRM
+               tables rather than the pipeline's. */
+            await ensureCrmTables(env);
+            const out = await recheckLeads(env, {
+              limit: Number(url.searchParams.get("limit")) || undefined,
+              onProgress: emit
+            });
+            await emit({ event: "done", result: out });
+          } catch (e) {
+            await emit({ event: "error", error: String(e).slice(0, 300) });
+          }
+          try { await writer.close(); } catch (e) { /* client already gone */ }
+        })();
+
+        return new Response(readable, {
+          status: 200,
+          headers: {
+            ...corsHeaders(origin),
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no"
+          }
+        });
       }
       if (path === "/crm/leads/runs" && request.method === "GET") {
         const gate = await leadsGate(request, env);
