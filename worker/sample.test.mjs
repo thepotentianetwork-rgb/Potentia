@@ -50,8 +50,12 @@ test("the websites it shows are reserved names too", () => {
   const hosts = page.match(/https?:\/\/[A-Za-z0-9.-]+/g) || [];
   hosts.forEach((h) => {
     const host = h.replace(/^https?:\/\//, "");
-    assert.ok(/(^|\.)example\.com$/i.test(host) || /fonts\.googleapis\.com|fonts\.gstatic\.com/.test(host),
-      "sample sites must be example.com: " + h);
+    /* www.w3.org is the SVG namespace identifier. It is never fetched — it is
+       the string createElementNS takes to say "this is an SVG element". */
+    const allowed = /(^|\.)example\.com$/i.test(host)
+      || /^fonts\.(googleapis|gstatic)\.com$/.test(host)
+      || host === "www.w3.org";
+    assert.ok(allowed, "sample sites must be example.com: " + h);
   });
 });
 
@@ -69,6 +73,41 @@ test("no client of ours is named in it", () => {
   ["ShedPro", "shedpro", "Chonis", "chonis", "Juan's", "juansauto", "tirepros", "Tire Pros"]
     .forEach((name) => assert.equal(page.indexOf(name), -1,
       "sample.html must not name a real client: " + name));
+});
+
+test("the map is drawn here, not fetched from a map service", () => {
+  /* The page's one promise is that it makes no request. A mapping library
+     over a tile server would break that for the sake of six dots, so the
+     state is drawn from its own corner coordinates. */
+  ["leaflet", "Leaflet", "mapbox", "openstreetmap", "OpenStreetMap", "tile.", "arcgis", "google.com/maps"]
+    .forEach((dep) => assert.equal(page.indexOf(dep), -1,
+      "the map must not depend on " + dep));
+  assert.match(page, /mapOutline/);
+  assert.match(page, /createElementNS/);
+});
+
+test("the map plots exactly as many submissions as the page claims", () => {
+  /* Two invented numbers in the same screen that disagree look like a bug in
+     the software, which is the opposite of what a sample is for. */
+  const areas = page.match(/\{ name: '[^']+', lat: [-\d.]+, lon: [-\d.]+, n: (\d+) \}/g) || [];
+  assert.ok(areas.length >= 5, "found the plotted areas");
+  const plotted = areas.reduce((t, a) => t + Number(/n: (\d+)/.exec(a)[1]), 0);
+  const claimed = Number(/label: 'Total submissions', value: '(\d+)'/.exec(page)[1]);
+  assert.equal(plotted, claimed,
+    "the map plots " + plotted + " submissions but the page says " + claimed);
+});
+
+test("no submission is plotted at a street address", () => {
+  /* Each dot sits on a town, at two decimal places — about a kilometre. The
+     real map plots the address on the form; a sample must not look like it
+     could. */
+  const coords = page.match(/lat: (-?\d+\.\d+), lon: (-?\d+\.\d+)/g) || [];
+  assert.ok(coords.length > 0);
+  coords.forEach((c) => {
+    const decimals = /lat: -?\d+\.(\d+)/.exec(c)[1];
+    assert.ok(decimals.length <= 3,
+      "coordinate is precise enough to be a building: " + c);
+  });
 });
 
 test("it is reachable from the rest of the site", () => {

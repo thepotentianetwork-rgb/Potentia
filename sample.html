@@ -107,6 +107,39 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 .bar-n{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
 .bar-track{height:4px;background:rgba(255,255,255,0.05)}
 .bar-fill{height:100%;background:var(--build);width:0;transition:width 0.9s cubic-bezier(.2,.7,.3,1)}
+/* The map. Drawn from coordinates in an inline SVG rather than a mapping
+   library over a tile server: it keeps the page's promise that it makes no
+   network request, and a marketing page should not pull a third party's
+   JavaScript to draw six dots. */
+.map-grid{display:grid;grid-template-columns:auto 1fr;gap:44px;align-items:start;margin-top:8px}
+.map-wrap{position:relative;line-height:0}
+.map-svg{height:420px;width:auto;max-width:100%;overflow:visible}
+.map-state{fill:rgba(255,255,255,0.025);stroke:var(--dim);stroke-width:1.2}
+.map-city{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.12em;fill:var(--dim);text-transform:uppercase}
+.map-city-dot{fill:var(--dim)}
+.cluster{cursor:default}
+.cluster .halo{transition:opacity 0.25s}
+.cluster .core{fill:#9ad2f5;transition:r 0.25s}
+.cluster:hover .core{r:5}
+.cluster:hover .halo{opacity:1}
+.map-tip{position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-140%);transition:opacity 0.15s;background:#0a0a12;border:1px solid var(--dim);padding:7px 11px;white-space:nowrap;line-height:1.5}
+/* Cache Valley sits at the top of the state, and a tip drawn above it lands
+   outside the map and over the heading. Near the top, it goes below instead. */
+.map-tip.below{transform:translate(-50%,40%)}
+.map-tip.on{opacity:1}
+.map-tip b{display:block;font-size:14px;font-weight:300;color:var(--bright)}
+.map-tip span{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--silver);text-transform:uppercase}
+.map-side h3{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:18px}
+.area-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:9px 0;border-bottom:1px solid var(--dim)}
+.area-row:last-of-type{border-bottom:none}
+.area-name{font-size:15px;font-weight:300;color:var(--chrome)}
+.area-n{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
+.map-foot{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);line-height:1.7;margin-top:18px}
+@media(max-width:860px){
+  .map-grid{grid-template-columns:1fr;gap:28px;justify-items:center}
+  .map-svg{height:340px}
+  .map-side{width:100%}
+}
 .caveats{border-left:1px solid var(--dim);padding-left:16px;margin:26px 0 8px}
 .caveats p{font-size:14px;color:var(--silver);font-weight:300;line-height:1.8}
 .caveats b{color:var(--bright)}
@@ -243,6 +276,21 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
         <div class="bars"><h3>Where enquiries come from</h3><div id="bars-sources"></div></div>
         <div class="bars"><h3>What wins &amp; what loses</h3><div id="bars-wins"></div></div>
       </div>
+
+      <p class="sec-label" style="margin-top:44px">Geography</p>
+      <h2 style="font-size:24px;margin-bottom:8px">Where submissions come from</h2>
+      <p class="screen-lede">Each enquiry plotted from the address on its own form. It is how you find out that half your work comes from one valley and none of it from the town you have been advertising in.</p>
+      <div class="map-grid">
+        <div class="map-wrap">
+          <svg class="map-svg" id="map-svg" role="img" aria-label="Map of submissions by area — sample data"></svg>
+          <div class="map-tip" id="map-tip"></div>
+        </div>
+        <div class="map-side">
+          <h3>By area</h3>
+          <div id="area-rows"></div>
+          <p class="map-foot" id="map-foot"></p>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -359,7 +407,34 @@ var SAMPLE = {
       { label: 'Word of mouth', n: 2 }
     ],
     wins: [ { label: 'gable', n: 3 }, { label: 'barn', n: 1 }, { label: 'leanto', n: 1 } ],
-    losses: [ { label: 'gable', n: 2 } ]
+    losses: [ { label: 'gable', n: 2 } ],
+    /* The state outline is real geography — Utah is a rectangle with the
+       north-east corner cut out by Wyoming, so six corners describe it
+       exactly. The submissions on it are not real: the areas are invented and
+       so are the counts, which add up to the 16 total above. No submission is
+       plotted at an address; each sits on its town. */
+    mapBounds: { west: -114.052, east: -109.041, south: 37.0, north: 42.0 },
+    mapOutline: [
+      [-114.052, 42.0], [-111.047, 42.0], [-111.047, 41.0],
+      [-109.041, 41.0], [-109.041, 37.0], [-114.052, 37.0]
+    ],
+    mapCities: [
+      { name: 'Logan', lat: 41.735, lon: -111.834 },
+      { name: 'Ogden', lat: 41.223, lon: -111.973 },
+      { name: 'Salt Lake City', lat: 40.761, lon: -111.891, anchor: 'end' },
+      { name: 'Provo', lat: 40.234, lon: -111.659 },
+      { name: 'Moab', lat: 38.573, lon: -109.550, anchor: 'end' },
+      { name: 'St George', lat: 37.096, lon: -113.576 }
+    ],
+    mapAreas: [
+      { name: 'Cache Valley', lat: 41.71, lon: -111.83, n: 4 },
+      { name: 'Box Elder', lat: 41.51, lon: -112.02, n: 2 },
+      { name: 'Ogden', lat: 41.22, lon: -111.97, n: 3 },
+      { name: 'Davis County', lat: 41.06, lon: -111.97, n: 1 },
+      { name: 'Salt Lake Valley', lat: 40.72, lon: -111.90, n: 3 },
+      { name: 'Tooele', lat: 40.53, lon: -112.30, n: 1 },
+      { name: 'Utah County', lat: 40.30, lon: -111.75, n: 2 }
+    ]
   }
 };
 
@@ -609,6 +684,108 @@ render();
     });
   }, { threshold: 0.2 });
   document.querySelectorAll('.bar-fill').forEach(function (f) { io.observe(f); });
+})();
+
+/* ---------- 4. The map ----------
+   Equirectangular, with the longitude degrees narrowed by cos(mid-latitude)
+   so the state is not drawn 30% too wide. Over five degrees that is accurate
+   enough that the outline is the real shape, which matters: a map that is
+   visibly wrong makes a viewer distrust the numbers next to it. */
+(function map() {
+  var d = SAMPLE.data;
+  var b = d.mapBounds;
+  var SCALE = 100;                                   // svg units per degree of latitude
+  var squeeze = Math.cos((b.south + b.north) / 2 * Math.PI / 180);
+  var W = (b.east - b.west) * squeeze * SCALE;
+  var H = (b.north - b.south) * SCALE;
+
+  function px(lon) { return (lon - b.west) * squeeze * SCALE; }
+  function py(lat) { return (b.north - lat) * SCALE; }
+
+  var NS = 'http://www.w3.org/2000/svg';
+  function node(name, attrs) {
+    var n = document.createElementNS(NS, name);
+    Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+    return n;
+  }
+
+  var svg = document.getElementById('map-svg');
+  svg.setAttribute('viewBox', '0 0 ' + W.toFixed(1) + ' ' + H.toFixed(1));
+
+  // the glow each cluster sits in
+  var defs = node('defs');
+  var grad = node('radialGradient', { id: 'heat' });
+  grad.appendChild(node('stop', { offset: '0%', 'stop-color': '#6fa8dc', 'stop-opacity': '0.55' }));
+  grad.appendChild(node('stop', { offset: '55%', 'stop-color': '#6fa8dc', 'stop-opacity': '0.16' }));
+  grad.appendChild(node('stop', { offset: '100%', 'stop-color': '#6fa8dc', 'stop-opacity': '0' }));
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+
+  svg.appendChild(node('path', {
+    class: 'map-state',
+    d: d.mapOutline.map(function (p, i) {
+      return (i ? 'L' : 'M') + px(p[0]).toFixed(1) + ' ' + py(p[1]).toFixed(1);
+    }).join(' ') + ' Z'
+  }));
+
+  d.mapCities.forEach(function (c) {
+    var x = px(c.lon), y = py(c.lat), end = c.anchor === 'end';
+    svg.appendChild(node('circle', { class: 'map-city-dot', cx: x, cy: y, r: 1.6 }));
+    var t = node('text', {
+      class: 'map-city', x: x + (end ? -7 : 7), y: y + 3,
+      'text-anchor': end ? 'end' : 'start'
+    });
+    t.textContent = c.name;
+    svg.appendChild(t);
+  });
+
+  var tip = document.getElementById('map-tip');
+  var wrap = tip.parentNode;
+  var biggest = Math.max.apply(null, d.mapAreas.map(function (a) { return a.n; }));
+
+  d.mapAreas.forEach(function (a) {
+    var x = px(a.lon), y = py(a.lat);
+    var g = node('g', { class: 'cluster', tabindex: '0',
+      'aria-label': a.name + ', ' + a.n + ' submissions' });
+    // area scales with the count, so four submissions look like four
+    var r = 16 + (a.n / biggest) * 26;
+    g.appendChild(node('circle', { class: 'halo', cx: x, cy: y, r: r, fill: 'url(#heat)' }));
+    g.appendChild(node('circle', { class: 'core', cx: x, cy: y, r: 3.2 }));
+    // a bigger invisible target, because a 3px dot is not clickable on a phone
+    g.appendChild(node('circle', { cx: x, cy: y, r: 14, fill: 'transparent' }));
+
+    function show() {
+      tip.innerHTML = '';
+      var b1 = document.createElement('b'); b1.textContent = a.name;
+      var s1 = document.createElement('span');
+      s1.textContent = a.n + (a.n === 1 ? ' submission' : ' submissions');
+      tip.appendChild(b1); tip.appendChild(s1);
+      // svg units -> css pixels, which differ because the svg is scaled to fit
+      var box = svg.getBoundingClientRect();
+      tip.style.left = (x / W * box.width) + 'px';
+      tip.style.top = (y / H * box.height) + 'px';
+      tip.classList.toggle('below', y / H < 0.22);
+      tip.classList.add('on');
+    }
+    function hide() { tip.classList.remove('on'); }
+    g.addEventListener('mouseenter', show);
+    g.addEventListener('mouseleave', hide);
+    g.addEventListener('focus', show);
+    g.addEventListener('blur', hide);
+    svg.appendChild(g);
+  });
+
+  var side = document.getElementById('area-rows');
+  d.mapAreas.slice().sort(function (a, b2) { return b2.n - a.n; }).forEach(function (a) {
+    var row = el('div', 'area-row');
+    row.appendChild(el('span', 'area-name', a.name));
+    row.appendChild(el('span', 'area-n', String(a.n)));
+    side.appendChild(row);
+  });
+
+  var total = d.mapAreas.reduce(function (t, a) { return t + a.n; }, 0);
+  document.getElementById('map-foot').textContent =
+    total + ' submissions plotted. Areas and counts are invented, like everything else here.';
 })();
 </script>
 </body>
