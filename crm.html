@@ -65,6 +65,9 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .toolbar-cats{margin-top:-10px}
 .cat-bar-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase}
+tr.group-head td{background:rgba(216,161,95,0.07);border-top:1px solid rgba(216,161,95,0.3);padding:11px 18px}
+.group-title{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--warm)}
+.group-count{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-left:10px}
 .chip{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--silver);background:none;border:1px solid var(--dim);padding:8px 13px;cursor:pointer;text-transform:uppercase;transition:all 0.2s}
 .chip:hover{color:var(--bright)}
 .chip.on{background:var(--chrome);color:var(--black);border-color:var(--chrome)}
@@ -218,6 +221,7 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
     <div class="toolbar toolbar-cats" id="cat-bar-wrap" hidden>
       <span class="cat-bar-label">Category</span>
       <div class="filters" id="cat-filters"></div>
+      <button class="chip" id="group-toggle" type="button">Group</button>
       <input id="search" type="search" placeholder="Search name, email, domain…" autocomplete="off">
       <button class="btn" id="new-btn">+ New Client</button>
     </div>
@@ -560,6 +564,10 @@ var activeFilter = 'all';
 var searchTerm = '';
 
 var activeSegment = 'all';
+/* Per-viewer convenience only — nothing depends on it being there, and a
+   private window or blocked site data just means it starts off. */
+var groupByCategory = false;
+try { groupByCategory = localStorage.getItem('potentia_crm_group') === '1'; } catch (e) {}
 
 /* Built from the leads that are actually there rather than from a fixed list,
    so the row only offers categories you have leads in — and disappears
@@ -594,6 +602,17 @@ function paintCategoryFilters() {
     });
 }
 
+var groupBtn = document.getElementById('group-toggle');
+if (groupBtn) {
+  if (groupByCategory) groupBtn.classList.add('on');
+  groupBtn.addEventListener('click', function () {
+    groupByCategory = !groupByCategory;
+    groupBtn.classList.toggle('on', groupByCategory);
+    try { localStorage.setItem('potentia_crm_group', groupByCategory ? '1' : '0'); } catch (e) {}
+    render();
+  });
+}
+
 var filterBar = document.getElementById('filters');
 [['all', 'All']].concat(STATUSES.map(function (s) { return [s, s]; })).forEach(function (f) {
   var b = document.createElement('button');
@@ -617,7 +636,7 @@ function matches(c) {
   if (activeSegment !== 'all' && (c.lead_segment || '') !== activeSegment) return false;
   if (!searchTerm) return true;
   var hay = [c.business_name, c.contact_name, c.email, c.phone, c.domain, c.website_url,
-             c.lead_area]
+             c.lead_area, c.lead_trade]
     .filter(Boolean).join(' ').toLowerCase();
   return hay.indexOf(searchTerm) !== -1;
 }
@@ -686,7 +705,11 @@ function leadDetail(c) {
 
   // The town is already under the name; this is the street address.
   if (c.lead_address) line('Address', text(c.lead_address));
-  if (c.lead_segment) line('Category', text(SEGMENT_LABELS[c.lead_segment] || c.lead_segment));
+  if (c.lead_segment || c.lead_trade) {
+    var what = SEGMENT_LABELS[c.lead_segment] || c.lead_segment || '';
+    // The trade is the useful half: "roofing contractor", not "subcontractor".
+    line('Trade', text(c.lead_trade ? (what ? c.lead_trade + '  ·  ' + what : c.lead_trade) : what));
+  }
 
   /* Straight to the live listing — reviews, photos, hours, how long they have
      been there. place_id is the only thing Google lets us keep, and it is the
@@ -723,7 +746,46 @@ function render() {
     return;
   }
 
-  list.forEach(function (c) {
+  if (groupByCategory) {
+    /* Grouped by what the business does, because that is how you work a call
+       list — you get into a rhythm pitching roofers and you do not want a car
+       dealership in the middle of it. Everyone who did not come from the
+       pipeline keeps their own group at the end. */
+    var groups = {};
+    list.forEach(function (c) {
+      var k = Number(c.created_by_pipeline) === 1 ? (c.lead_segment || 'uncategorised') : '__own';
+      (groups[k] = groups[k] || []).push(c);
+    });
+    Object.keys(groups)
+      .sort(function (a, b) {
+        if (a === '__own') return 1;            // your own clients last
+        if (b === '__own') return -1;
+        return groups[b].length - groups[a].length;
+      })
+      .forEach(function (k) {
+        var head = document.createElement('tr');
+        head.className = 'group-head';
+        var td = document.createElement('td');
+        td.colSpan = 8;
+        var t = document.createElement('span');
+        t.className = 'group-title';
+        t.textContent = k === '__own' ? 'Your clients'
+          : (SEGMENT_LABELS[k] || k);
+        td.appendChild(t);
+        var n = document.createElement('span');
+        n.className = 'group-count';
+        n.textContent = groups[k].length;
+        td.appendChild(n);
+        head.appendChild(td);
+        body.appendChild(head);
+        groups[k].forEach(row);
+      });
+    return;
+  }
+
+  list.forEach(row);
+
+  function row(c) {
     var status = c.status || 'lead';
     var tr = document.createElement('tr');
     if (status === 'lead') tr.className = 'is-lead';
@@ -863,7 +925,7 @@ function render() {
 
     [tdName, tdContact, tdPkg, tdStatus, tdValue, tdWork, tdNote, tdView].forEach(function (td) { tr.appendChild(td); });
     body.appendChild(tr);
-  });
+  }
 }
 
 function renderStats(s) {

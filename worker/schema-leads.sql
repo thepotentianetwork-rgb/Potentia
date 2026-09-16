@@ -113,4 +113,8 @@ CREATE INDEX IF NOT EXISTS idx_enrichment_runs_started ON enrichment_runs (start
 -- lead_speed    INTEGER  Google mobile performance, 0-100, null when not measured
 -- lead_mobile_ready INTEGER 1/0/null — has a viewport meta tag
 -- lead_check    TEXT     'places' or 'pagespeed' — which check decided it
+-- lead_trade    TEXT     the search that found them, e.g. "roofing contractor".
+--                        Copied onto the candidate at sourcing rather than
+--                        looked up through source_id, because a reseed deletes
+--                        every lead_sources row and the reference would dangle.
 --   created_by_pipeline  INTEGER NOT NULL DEFAULT 0   -- tells a robot row from a human one

@@ -1564,7 +1564,7 @@ async function ensureLeadPipelineTables(env) {
       /* status: new -> enriching -> pushed | rejected | failed, or 'screened'
          for a business vetoed on the free Places fields without ever being
          checked. 'screened' is the only one ?rescreen=1 will clear. */
-      place_id TEXT NOT NULL UNIQUE, segment TEXT NOT NULL, offer_hint INTEGER,
+      place_id TEXT NOT NULL UNIQUE, segment TEXT NOT NULL, trade TEXT, offer_hint INTEGER,
       source_id INTEGER, status TEXT NOT NULL DEFAULT 'new',
       attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
       places_json TEXT, places_fetched_at TEXT, enrichment_json TEXT,
@@ -1590,8 +1590,13 @@ async function ensureLeadPipelineTables(env) {
   // `promise` arrived after the first candidates were staged, so it has to be
   // added to an existing table as well as declared in CREATE TABLE above.
   const candCols = await db.prepare("PRAGMA table_info(lead_candidates)").all();
-  if ((candCols.results || []).map((r) => r.name).indexOf("promise") === -1) {
+  const candNames = (candCols.results || []).map((r) => r.name);
+  if (candNames.indexOf("promise") === -1) {
     await db.prepare("ALTER TABLE lead_candidates ADD COLUMN promise INTEGER").run();
+  }
+  // Which search found them — "roofing contractor", not just "subcontractor".
+  if (candNames.indexOf("trade") === -1) {
+    await db.prepare("ALTER TABLE lead_candidates ADD COLUMN trade TEXT").run();
   }
 
   // Same for `screened` — free screening used to be lumped in with `rejected`.
@@ -1615,6 +1620,7 @@ async function ensureLeadPipelineTables(env) {
     ["lead_speed", "INTEGER"],
     ["lead_mobile_ready", "INTEGER"],
     ["lead_check", "TEXT"],
+    ["lead_trade", "TEXT"],
     ["created_by_pipeline", "INTEGER NOT NULL DEFAULT 0"]
   ];
   for (const [name, decl] of wanted) {
@@ -2048,9 +2054,9 @@ async function sourceCandidates(env, counts, opts) {
 
       await db.prepare(
         `INSERT INTO lead_candidates
-           (place_id, segment, offer_hint, source_id, status, promise, places_json, places_fetched_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?)`
-      ).bind(p.place_id, s.segment, s.offer_hint, s.id, placesPromise(p),
+           (place_id, segment, trade, offer_hint, source_id, status, promise, places_json, places_fetched_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?)`
+      ).bind(p.place_id, s.segment, s.query_template, s.offer_hint, s.id, placesPromise(p),
              JSON.stringify(p), now, now, now).run();
     }
   }
@@ -2272,9 +2278,9 @@ async function pushLeadToCrm(env, cand, places, verdict) {
     `INSERT INTO clients
        (business_name, phone, website_url, status, source, service,
         place_id, lead_score, lead_segment, lead_offer, lead_reason,
-        lead_address, lead_area, lead_speed, lead_mobile_ready, lead_check,
+        lead_address, lead_area, lead_speed, lead_mobile_ready, lead_check, lead_trade,
         created_by_pipeline, do_not_contact, created_at, updated_at)
-     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
+     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
   ).bind(
     places.name || "",
     phone,
@@ -2295,6 +2301,7 @@ async function pushLeadToCrm(env, cand, places, verdict) {
     verdict.speed == null ? null : verdict.speed,
     verdict.mobileReady == null ? null : (verdict.mobileReady ? 1 : 0),
     verdict.checked || null,
+    cand.trade || null,
     now,
     now
   ).run();

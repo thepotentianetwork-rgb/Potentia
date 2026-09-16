@@ -960,3 +960,36 @@ test('a switched-on category actually gets searched', async () => {
   for (const q of queries)
     assert.match(q, /detail|ceramic coating/, 'and only the category that is on: ' + q);
 });
+
+test('a lead remembers which trade found it, not just its category', async () => {
+  const { env, db } = await freshEnv();
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
+              VALUES ('roofing contractor','Carlsbad','CA','subcontractor',2,1,?)`).run(now);
+
+  stubFetch({ places: () => ok({ places: [PLACE(1)] }), pagespeed: PS(10) });
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+
+  const row = db.prepare("SELECT * FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(row.lead_trade, 'roofing contractor',
+    '"subcontractor" is a bucket; "roofing contractor" is what you say on the phone');
+  assert.equal(row.lead_segment, 'subcontractor', 'the category is still there to group by');
+});
+
+test('the trade survives a reseed, because it is not a foreign key', async () => {
+  const { env, db } = await freshEnv();
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
+              VALUES ('ceramic coating','Irvine','CA','detailer',1,1,?)`).run(now);
+
+  stubFetch({ places: () => ok({ places: [PLACE(1)] }), pagespeed: PS(10) });
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+
+  /* A reseed deletes every lead_sources row, so a lead that pointed at one by
+     id would lose its trade. It is copied onto the candidate instead. */
+  await seedLeadSources(env, true);
+  const row = db.prepare("SELECT lead_trade FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(row.lead_trade, 'ceramic coating');
+});
