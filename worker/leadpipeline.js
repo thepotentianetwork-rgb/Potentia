@@ -326,21 +326,50 @@ const GENERAL_QUERIES = ["general contractor", "home builder", "remodeling contr
 const HANDYMAN_QUERIES = ["handyman", "handyman services", "home repair service"];
 const DEALER_QUERIES = ["used car dealer", "auto sales", "pre-owned vehicles"];
 
+/* Wealthy metros, searched at suburb level rather than by metro name.
+
+   "Los Angeles" as a query returns the same few hundred businesses however
+   many times you ask, because Places ranks on prominence — and prominence is
+   exactly what our target does not have. A business with no website is not
+   winning "drywall contractor Los Angeles". It IS findable under the town it
+   actually works in, which is why this list is suburbs: Torrance, Whittier,
+   Anaheim, Mesa. Twenty-odd searches across a metro reach twenty different
+   sets of businesses; one search on the metro reaches one.
+
+   Money is the point of the list. A subcontractor in Newport Beach or
+   Scottsdale is bidding on work where looking legitimate to a GC is worth
+   real money, which is the whole pitch of offer 2.
+
+   Utah rows are the home state and stay off. */
 const CITIES = [
-  ["Bakersfield", "CA", 1], ["Fresno", "CA", 1], ["Visalia", "CA", 1],
-  ["Modesto", "CA", 1], ["Stockton", "CA", 1], ["Chico", "CA", 1],
-  ["Redding", "CA", 1], ["Merced", "CA", 1],
-  ["Tucson", "AZ", 1], ["Yuma", "AZ", 1], ["Prescott", "AZ", 1],
-  ["Kingman", "AZ", 1], ["Flagstaff", "AZ", 1], ["Casa Grande", "AZ", 1],
+  // Greater Los Angeles
+  ["Pasadena", "CA", 1], ["Glendale", "CA", 1], ["Burbank", "CA", 1],
+  ["Santa Monica", "CA", 1], ["Torrance", "CA", 1], ["Long Beach", "CA", 1],
+  ["Whittier", "CA", 1], ["Pomona", "CA", 1], ["Santa Clarita", "CA", 1],
+  ["Thousand Oaks", "CA", 1], ["Woodland Hills", "CA", 1], ["Downey", "CA", 1],
+  ["West Covina", "CA", 1], ["Redondo Beach", "CA", 1], ["Calabasas", "CA", 1],
+
+  // Orange County
+  ["Anaheim", "CA", 1], ["Irvine", "CA", 1], ["Santa Ana", "CA", 1],
+  ["Huntington Beach", "CA", 1], ["Newport Beach", "CA", 1],
+  ["Costa Mesa", "CA", 1], ["Fullerton", "CA", 1], ["Mission Viejo", "CA", 1],
+  ["Laguna Niguel", "CA", 1], ["Yorba Linda", "CA", 1], ["Orange", "CA", 1],
+
+  // Greater Phoenix
+  ["Scottsdale", "AZ", 1], ["Mesa", "AZ", 1], ["Chandler", "AZ", 1],
+  ["Gilbert", "AZ", 1], ["Tempe", "AZ", 1], ["Glendale", "AZ", 1],
+  ["Peoria", "AZ", 1], ["Surprise", "AZ", 1], ["Goodyear", "AZ", 1],
+  ["Paradise Valley", "AZ", 1], ["Queen Creek", "AZ", 1], ["Avondale", "AZ", 1],
+
+  // Home state. Off.
   ["Logan", "UT", 0], ["Ogden", "UT", 0], ["Provo", "UT", 0],
   ["St George", "UT", 0], ["Cedar City", "UT", 0], ["Vernal", "UT", 0]
 ];
-
 export function defaultSources() {
   /* Subcontractors are the target. General contractors ride along but only
      convert when they are small; handymen and dealers are seeded so the grid
      is there to switch on, but ship DISABLED — one UPDATE turns either back on
-     without re-deriving the whole city list. Utah likewise. */
+     without re-deriving the whole city list. Utah likewise, being home. */
   const out = [];
   for (const [city, state, on] of CITIES) {
     for (const q of SUBCONTRACTOR_QUERIES)

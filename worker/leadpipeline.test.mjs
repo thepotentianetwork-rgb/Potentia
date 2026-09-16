@@ -201,6 +201,33 @@ test('Utah ships disabled in every segment', () => {
   assert.ok(ut.every(r => r.enabled === 0), 'nothing local is called until it is switched on');
 });
 
+test('the grid searches the three target metros, at suburb level', () => {
+  const on = defaultSources().filter(r => r.enabled);
+  const states = [...new Set(on.map(r => r.state))].sort();
+  assert.deepEqual(states, ['AZ', 'CA'], 'LA, Orange County and Phoenix');
+
+  const cities = new Set(on.map(r => r.city));
+  for (const c of ['Pasadena', 'Torrance', 'Newport Beach', 'Irvine', 'Scottsdale', 'Gilbert'])
+    assert.ok(cities.has(c), c + ' is in the grid');
+
+  /* Places returns 20 results per query, ranked on prominence, and a business
+     with no website has none. Searching the metro by name would reach the same
+     twenty well-known firms forever; the suburbs are how the grid reaches the
+     businesses we are actually after. */
+  for (const metro of ['Los Angeles', 'Phoenix'])
+    assert.ok(!cities.has(metro), metro + ' by name would return the same twenty every time');
+
+  assert.ok(cities.size >= 30, 'enough suburbs that the rotation keeps finding new ground');
+});
+
+test('two cities with the same name stay separate', () => {
+  // Glendale CA and Glendale AZ are different places in different metros.
+  const glendale = defaultSources().filter(r => r.city === 'Glendale');
+  assert.deepEqual([...new Set(glendale.map(r => r.state))].sort(), ['AZ', 'CA']);
+  const q = defaultSources().filter(r => r.city === 'Glendale' && r.segment === 'subcontractor');
+  assert.ok(q.length > 2, 'each state gets its own full set of queries');
+});
+
 test('the enabled grid is mostly subcontractors', () => {
   const on = defaultSources().filter(r => r.enabled);
   const subs = on.filter(r => r.segment === 'subcontractor').length;
