@@ -361,10 +361,11 @@ function authFetch(path, options) {
       if (evt.event === 'candidate_failed') {
         note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' +
              esc(evt.name || 'a business') + ' &mdash; could not be researched.');
-        if (evt.auth) {
-          note('<span class="lp-err">One of the API keys was rejected. The run stopped ' +
-               'here rather than spending on the rest &mdash; fix the key in Cloudflare ' +
-               'and run again. Nothing already researched is lost.</span>');
+        if (evt.account) {
+          note('<span class="lp-err">The AI account was refused &mdash; usually a rejected ' +
+               'key or an empty credit balance. The run stopped here rather than spending ' +
+               'on the rest. Fix it and run again: nothing already researched is lost, and ' +
+               'these businesses keep their place in the queue.</span>');
         }
         return;
       }

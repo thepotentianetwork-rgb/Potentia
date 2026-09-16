@@ -13,7 +13,7 @@ import {
   pushLeadToCrm, stripCandidate, spentToday, withRetry, parseClaudeJson,
   parseGrokJson, enrichmentSchemaFor, defaultSources, seedLeadSources,
   offerName, LEAD_DEFAULTS, scorePrompt, placesReject, placesPromise,
-  apiKey, providerError
+  apiKey, providerError, accountFailure
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -661,15 +661,31 @@ test('a key pasted with stray whitespace still works', () => {
   assert.equal(apiKey(null), '');
 });
 
-test('only 401 and 403 are marked unretryable', () => {
-  assert.equal(providerError('Anthropic', 401, 'bad key').authFailure, true);
-  assert.equal(providerError('Anthropic', 403, 'forbidden').authFailure, true);
-  assert.equal(providerError('xAI', 429, 'slow down').authFailure, undefined);
-  assert.equal(providerError('xAI', 500, 'oops').authFailure, undefined);
+test('account failures are marked unretryable, transient ones are not', () => {
+  assert.equal(accountFailure(401, 'bad key'), true);
+  assert.equal(accountFailure(403, 'forbidden'), true);
+  assert.equal(accountFailure(402, 'payment required'), true);
+
+  /* The expensive one to miss. Both providers report an empty balance as a
+     plain 400, which is otherwise indistinguishable from a malformed request. */
+  assert.equal(accountFailure(400, JSON.stringify({
+    type: 'error',
+    error: { type: 'invalid_request_error',
+             message: 'Your credit balance is too low to access the Anthropic API. ' +
+                      'Please go to Plans & Billing to upgrade or purchase credits.' }
+  })), true, 'an empty balance is an account failure, not a bad request');
+
+  // A genuine bad request still retries, and so does everything transient.
+  assert.equal(accountFailure(400, '{"error":"max_tokens must be positive"}'), false);
+  assert.equal(accountFailure(429, 'slow down'), false);
+  assert.equal(accountFailure(500, 'oops'), false);
+
+  assert.equal(providerError('Anthropic', 401, 'bad key').accountFailure, true);
+  assert.equal(providerError('xAI', 500, 'oops').accountFailure, undefined);
   assert.match(providerError('Anthropic', 401, 'bad key').message, /^Anthropic 401: bad key/);
 });
 
-test('withRetry gives up on a rejected key instead of hammering it', async () => {
+test('withRetry gives up on an account failure instead of hammering it', async () => {
   let calls = 0;
   await assert.rejects(() => withRetry(() => {
     calls++;
@@ -752,4 +768,79 @@ test('screened-for-free is counted apart from researched-and-rejected', async ()
   const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
   assert.equal(out.screened, 1, 'one was vetoed before a cent was spent');
   assert.equal(out.rejected, 1, 'one was researched, scored and turned down');
+});
+
+test('an empty credit balance stops the run and spares the candidates', async () => {
+  const { env, db } = await seededEnv();
+  const BILLING = () => new Response(JSON.stringify({
+    type: 'error',
+    error: { type: 'invalid_request_error',
+             message: 'Your credit balance is too low to access the Anthropic API. ' +
+                      'Please go to Plans & Billing to upgrade or purchase credits.' }
+  }), { status: 400 });
+
+  const calls = stubFetch({
+    places: () => ok({ places: [PLACE(1), PLACE(2), PLACE(3), PLACE(4), PLACE(5)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: BILLING
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+
+  assert.equal(calls.anthropic, 1, 'asked once — a 400 about billing is not retried');
+  assert.equal(calls.xai, 1, 'and it did not buy research for the other four');
+  assert.match(out.errors.join(' '), /stopped: Anthropic 400/);
+
+  /* The account being empty says nothing about the business, so the attempt
+     is given back. Three runs during a billing lapse must not permanently
+     retire five good candidates. */
+  const row = db.prepare("SELECT attempts, status, last_error FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(Number(row.attempts), 0, 'the attempt was not the candidate’s to lose');
+  assert.equal(row.status, 'new');
+  assert.match(row.last_error, /^\[account\]/);
+  assert.equal(out.failed, 0, 'nothing was retired');
+});
+
+test('candidates retired during an earlier lapse come back, with their research', async () => {
+  const { env, db } = await seededEnv();
+  const now = new Date().toISOString();
+  const places = JSON.stringify({ place_id: 'PZ', name: 'Revived Co', review_count: 20 });
+  const research = JSON.stringify({ has_website: false, website_quality: 'none',
+    mobile_friendly: null, google_rating: 4.5, review_count: 20, notes: 'paid for already',
+    source_urls: [], contact_phone: null, contact_website: null, web_presence: 'none' });
+
+  // Retired by a billing lapse, with research already bought and banked.
+  db.prepare(`INSERT INTO lead_candidates
+    (place_id, segment, status, attempts, last_error, places_json, enrichment_json, promise, created_at, updated_at)
+    VALUES ('PZ','handyman','failed',3,'[account] Anthropic 400: credit balance',?,?,80,?,?)`)
+    .run(places, research, now, now);
+
+  const calls = stubFetch({
+    places: () => ok({ places: [] }),
+    xai: () => { throw new Error('must not re-buy research that is already banked'); },
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 90, best_offer: 1, reason: 'r', opener: 'o' }) }] })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+  assert.equal(out.pushed, 1, 'the revived candidate was scored and added');
+  assert.equal(out.enriched, 0);
+  assert.equal(calls.xai, 0, 'and cost nothing to recover');
+});
+
+test('a candidate that genuinely keeps failing is still retired', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1)] }),
+    xai: () => new Response('{"error":"upstream exploded"}', { status: 500 }),
+    anthropic: () => ok({ content: [{ type: 'text', text: '{}' }] })
+  });
+  for (let i = 0; i < 3; i++) await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  const row = db.prepare("SELECT status, attempts FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(row.status, 'failed', 'a real fault still retires after three attempts');
+  assert.equal(Number(row.attempts), 3);
 });

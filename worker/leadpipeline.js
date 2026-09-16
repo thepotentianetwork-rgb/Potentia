@@ -515,14 +515,26 @@ function enrichPrompt(segment, p) {
    a flat "API key is invalid" that sends you looking at the wrong thing. */
 export function apiKey(v) { return String(v == null ? "" : v).trim(); }
 
-/* A 401 or 403 is the one failure that will not come right by trying again:
-   the key is wrong now and will still be wrong in six seconds, and on the
-   next candidate, and the one after that. Marking it lets withRetry give up
+/* Some failures are about the ACCOUNT, not the request: a rejected key, an
+   empty credit balance, a suspended org. None of them will come right by
+   trying again — the answer is identical six seconds later, on the next
+   candidate, and on the one after that. Marking them lets withRetry give up
    at once and lets the run stop instead of buying the same answer five times.
-   Everything else — a timeout, a 429, a 500 — retries as before. */
+   Everything else — a timeout, a 429, a 500 — retries as before.
+
+   A 401/403 is the obvious shape. The expensive one to miss is billing: both
+   providers report an empty balance as a plain 400, which looks like any
+   other bad request, so it is matched on the wording as well. */
+export function accountFailure(status, body) {
+  if (status === 401 || status === 403 || status === 402) return true;
+  if (status !== 400) return false;
+  return /credit balance|billing|purchase credits|insufficient (funds|credit)|quota/i
+    .test(String(body));
+}
+
 export function providerError(who, status, body) {
   const e = new Error(who + " " + status + ": " + String(body).slice(0, 300));
-  if (status === 401 || status === 403) e.authFailure = true;
+  if (accountFailure(status, body)) e.accountFailure = true;
   return e;
 }
 
@@ -845,6 +857,14 @@ export async function runLeadPipeline(env, opts) {
          attempts at a three-minute ceiling) so this cannot steal a row from a
          run that is still working. The attempt it burned stays burned: if the
          call really is what is killing the run, it still retires after three. */
+      /* Anything an earlier billing or key lapse retired comes back. It was
+         never the candidate's fault, and its research is usually still banked
+         on the row, so reviving costs nothing and recovers what was paid for. */
+      await db.prepare(
+        `UPDATE lead_candidates SET status = 'new', attempts = 0, updated_at = ?
+          WHERE status = 'failed' AND last_error LIKE ?`
+      ).bind(new Date().toISOString(), ACCOUNT_FAIL + "%").run();
+
       const staleBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       await db.prepare(
         `UPDATE lead_candidates SET status = 'new', updated_at = ?
@@ -920,15 +940,16 @@ export async function runLeadPipeline(env, opts) {
                        kept: kept, reason: scored.reason || null,
                        spent: Number(counts.est_cost_usd.toFixed(4)) });
         } catch (e) {
-          await failCandidate(env, cand, String(e).slice(0, 300), counts);
+          const account = !!(e && e.accountFailure);
+          await failCandidate(env, cand, String(e).slice(0, 300), counts, account);
           await checkpoint();
           await emit({ event: "candidate_failed", position: position,
                        total: queue.length, name: (places && places.name) || null,
-                       auth: !!(e && e.authFailure) });
-          /* A rejected key is the same answer for every candidate in the
-             queue. Carrying on costs five cents a head to be told it five
-             times, so the run stops and says which key to go and look at. */
-          if (e && e.authFailure) {
+                       account: account });
+          /* A rejected key or an empty balance is the same answer for every
+             candidate in the queue. Carrying on costs five cents a head to be
+             told it five times, so the run stops and says what to go and fix. */
+          if (account) {
             counts.errors.push("stopped: " + String(e.message || e).slice(0, 200));
             break;
           }
@@ -954,15 +975,26 @@ export async function runLeadPipeline(env, opts) {
 }
 
 /* A candidate that has burned its attempts is marked failed and left alone;
-   the batch query filters on attempts so it never comes back. */
-async function failCandidate(env, cand, msg, counts) {
-  const attempts = Number(cand.attempts || 0) + 1;
-  const terminal = attempts >= LEAD_DEFAULTS.maxAttempts;
+   the batch query filters on attempts so it never comes back.
+
+   Unless the failure was the account's. A rejected key or an empty balance
+   says nothing about the business, and three runs during a billing lapse
+   would otherwise retire perfectly good candidates for good. Those give the
+   attempt back and carry the ACCOUNT_FAIL marker, which the next run reads to
+   revive anything an earlier lapse already retired. */
+export const ACCOUNT_FAIL = "[account] ";
+
+async function failCandidate(env, cand, msg, counts, account) {
+  const attempts = account ? Number(cand.attempts || 0) : Number(cand.attempts || 0) + 1;
+  const terminal = !account && attempts >= LEAD_DEFAULTS.maxAttempts;
   if (terminal) counts.failed++;
+  const text = (account ? ACCOUNT_FAIL : "") + msg;
   counts.errors.push("candidate " + cand.id + ": " + msg);
   await env.CRM_DB.prepare(
-    "UPDATE lead_candidates SET status = ?, last_error = ?, updated_at = ? WHERE id = ?"
-  ).bind(terminal ? "failed" : "new", msg, new Date().toISOString(), cand.id).run();
+    `UPDATE lead_candidates SET status = ?, attempts = ?, last_error = ?, updated_at = ?
+      WHERE id = ?`
+  ).bind(terminal ? "failed" : "new", attempts, text.slice(0, 300),
+         new Date().toISOString(), cand.id).run();
 }
 
 /* Two retries, 2s then 6s. Deliberately small: the run is on a schedule, so a
@@ -974,7 +1006,7 @@ export async function withRetry(fn, sleep) {
   for (let i = 0; i <= waits.length; i++) {
     try { return await fn(); } catch (e) {
       last = e;
-      if (e && e.authFailure) throw e;   // the key will not fix itself
+      if (e && e.accountFailure) throw e;   // the account will not fix itself
       if (i < waits.length) await (sleep || defaultSleep)(waits[i]);
     }
   }
