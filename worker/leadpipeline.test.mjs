@@ -12,7 +12,7 @@ import {
   normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
   pushLeadToCrm, stripCandidate, spentToday, withRetry, parseClaudeJson,
   parseGrokJson, enrichmentSchemaFor, defaultSources, seedLeadSources,
-  offerName, LEAD_DEFAULTS
+  offerName, LEAD_DEFAULTS, scorePrompt
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -237,14 +237,47 @@ test('Grok JSON is found whether it arrives flat or nested past tool calls', () 
 });
 
 // ── the search grid ───────────────────────────────────────────────────────
-test('Utah ships disabled, California and Arizona ship enabled', async () => {
+test('only subcontractors and general contractors are switched on', () => {
   const rows = defaultSources();
-  const ut = rows.filter(r => r.state === 'UT');
+  const on = rows.filter(r => r.enabled);
+  const segs = [...new Set(on.map(r => r.segment))].sort();
+  assert.deepEqual(segs, ['general', 'subcontractor'],
+    'handymen and dealers are seeded but off until asked for');
+  // Still present, so switching either back on is one UPDATE, not a reseed.
+  for (const seg of ['handyman', 'dealer'])
+    assert.ok(rows.some(r => r.segment === seg), seg + ' is still in the grid');
+});
+
+test('Utah ships disabled in every segment', () => {
+  const ut = defaultSources().filter(r => r.state === 'UT');
   assert.ok(ut.length > 0);
   assert.ok(ut.every(r => r.enabled === 0), 'nothing local is called until it is switched on');
-  assert.ok(rows.filter(r => r.state !== 'UT').every(r => r.enabled === 1));
-  for (const seg of ['contractor', 'handyman', 'dealer'])
-    assert.ok(rows.some(r => r.segment === seg), seg + ' is covered');
+});
+
+test('the enabled grid is mostly subcontractors', () => {
+  const on = defaultSources().filter(r => r.enabled);
+  const subs = on.filter(r => r.segment === 'subcontractor').length;
+  assert.ok(subs / on.length > 0.7, 'subs are the target, GCs ride along');
+});
+
+test('establishment is a first-class enrichment field for trades, not dealers', () => {
+  const trade = enrichmentSchemaFor('subcontractor');
+  assert.ok('establishment' in trade.properties);
+  assert.ok('establishment_evidence' in trade.properties,
+    'the caller needs to know what the judgement was based on');
+  assert.ok(trade.properties.establishment.type.includes('null'),
+    'unknown must stay expressible — a guess here keeps the caller off good leads');
+  assert.ok(!('establishment' in enrichmentSchemaFor('dealer').properties));
+});
+
+test('the scoring prompt gates on establishment, hardest for general contractors', () => {
+  const prompt = scorePrompt('general',
+    { name: 'Big Build Co', address: '1 Main St' },
+    { establishment: 'established' });
+  assert.match(prompt, /established\s+-> cap the score at 30/,
+    'an established firm must be capped out of calling range');
+  assert.match(prompt, /GENERAL CONTRACTOR/, 'GCs are held to a stricter bar');
+  assert.match(prompt, /do not guess/, 'null establishment must not be invented');
 });
 
 test('seeding is idempotent — a second call adds nothing', async () => {
@@ -383,4 +416,25 @@ test('a candidate that keeps failing is retired after three attempts', async () 
   assert.equal(row.status, 'failed');
   assert.ok(row.attempts >= LEAD_DEFAULTS.maxAttempts);
   assert.match(row.last_error, /503/);
+});
+
+test('a reseed replaces the grid; without force it leaves it alone', async () => {
+  const { env, db } = await freshEnv();
+  const first = await seedLeadSources(env);
+  assert.ok(first > 0);
+
+  // Someone switches a Utah row on by hand.
+  db.prepare("UPDATE lead_sources SET enabled = 1 WHERE state = 'UT'").run();
+  const utOn = () => Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources WHERE state='UT' AND enabled=1").get().c);
+  assert.ok(utOn() > 0);
+
+  // A normal run must not touch it.
+  assert.equal(await seedLeadSources(env), 0, 'no force, no change');
+  assert.ok(utOn() > 0, 'the manual enable survives an ordinary run');
+
+  // A forced reseed replaces the grid — and drops that manual enable with it.
+  await seedLeadSources(env, true);
+  assert.equal(utOn(), 0, 'reseed returns every row to what the code ships');
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c), first,
+    'replaced, not appended — a reseed must not double the grid');
 });

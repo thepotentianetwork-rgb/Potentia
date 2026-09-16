@@ -2893,7 +2893,11 @@ export default {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const limit = Number(url.searchParams.get("limit") || 5);
         const dryRun = url.searchParams.get("dry") === "1";
-        const out = await runLeadPipeline(env, { trigger: "manual", limit, dryRun });
+        // ?reseed=1 replaces the search grid from the code's own defaults —
+        // needed after changing which segments or cities ship, since the grid
+        // is otherwise only ever written once. Drops manual enables with it.
+        const reseed = url.searchParams.get("reseed") === "1";
+        const out = await runLeadPipeline(env, { trigger: "manual", limit, dryRun, reseed });
         return json(out, 200, origin);
       }
       if (path === "/crm/leads/runs" && request.method === "GET") {

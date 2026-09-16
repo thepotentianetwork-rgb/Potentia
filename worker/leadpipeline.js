@@ -22,7 +22,7 @@
       estimated cost, and a daily ceiling is checked before each paid call.
    ══════════════════════════════════════════════════════════════════════════ */
 
-export const LEAD_SEGMENTS = ["contractor", "handyman", "dealer"];
+export const LEAD_SEGMENTS = ["subcontractor", "general", "handyman", "dealer"];
 
 /* Estimated unit costs, in USD, used for the daily ceiling and the per-run
    log. Only the Claude figure is derived from published per-token rates
@@ -215,12 +215,18 @@ export async function findExisting(env, cand) {
    could not resolve without knowing which town is home — enable the ones you
    want with a single UPDATE (see the README). Nothing in Utah is called until
    you do. */
-const CONTRACTOR_QUERIES = [
+const SUBCONTRACTOR_QUERIES = [
   "concrete contractor", "framing contractor", "drywall contractor",
   "electrician", "plumber", "HVAC contractor", "roofing contractor",
   "painting contractor", "flooring installer", "fencing contractor",
-  "excavation contractor", "landscaping contractor"
+  "excavation contractor", "siding contractor", "masonry contractor",
+  "stucco contractor", "insulation contractor", "gutter installer"
 ];
+/* General contractors are a different animal: an established GC has a real
+   site, a real crew and no interest in a $99 anything. They are searched, but
+   the scorer is told to reject any that look established — so this list earns
+   its place only through the small and new ones. */
+const GENERAL_QUERIES = ["general contractor", "home builder", "remodeling contractor"];
 const HANDYMAN_QUERIES = ["handyman", "handyman services", "home repair service"];
 const DEALER_QUERIES = ["used car dealer", "auto sales", "pre-owned vehicles"];
 
@@ -235,19 +241,36 @@ const CITIES = [
 ];
 
 export function defaultSources() {
+  /* Subcontractors are the target. General contractors ride along but only
+     convert when they are small; handymen and dealers are seeded so the grid
+     is there to switch on, but ship DISABLED — one UPDATE turns either back on
+     without re-deriving the whole city list. Utah likewise. */
   const out = [];
-  for (const [city, state, enabled] of CITIES) {
-    for (const q of CONTRACTOR_QUERIES) out.push({ query_template: q, city, state, segment: "contractor", offer_hint: 2, enabled });
-    for (const q of HANDYMAN_QUERIES) out.push({ query_template: q, city, state, segment: "handyman", offer_hint: 1, enabled });
-    for (const q of DEALER_QUERIES) out.push({ query_template: q, city, state, segment: "dealer", offer_hint: 3, enabled });
+  for (const [city, state, on] of CITIES) {
+    for (const q of SUBCONTRACTOR_QUERIES)
+      out.push({ query_template: q, city, state, segment: "subcontractor", offer_hint: 2, enabled: on });
+    for (const q of GENERAL_QUERIES)
+      out.push({ query_template: q, city, state, segment: "general", offer_hint: 2, enabled: on });
+    for (const q of HANDYMAN_QUERIES)
+      out.push({ query_template: q, city, state, segment: "handyman", offer_hint: 1, enabled: 0 });
+    for (const q of DEALER_QUERIES)
+      out.push({ query_template: q, city, state, segment: "dealer", offer_hint: 3, enabled: 0 });
   }
   return out;
 }
 
-export async function seedLeadSources(env) {
+/* Seeds the grid on an empty table. With force=true it REPLACES the grid —
+   which matters because the table is only ever seeded once, so a change to
+   defaultSources() is invisible to a database that has already been seeded.
+   A reseed drops manual edits with it: any row you switched on by hand goes
+   back to whatever this file ships. That is why it is opt-in. */
+export async function seedLeadSources(env, force) {
   const db = env.CRM_DB;
   const n = await db.prepare("SELECT COUNT(*) AS c FROM lead_sources").first();
-  if (n && Number(n.c) > 0) return 0;
+  if (n && Number(n.c) > 0) {
+    if (!force) return 0;
+    await db.prepare("DELETE FROM lead_sources").run();
+  }
   const now = new Date().toISOString();
   const rows = defaultSources();
   for (const r of rows) {
@@ -327,7 +350,16 @@ const TRADE_PROPS = {
   web_presence: { type: "string", enum: ["none", "facebook_only", "own_site"] },
   site_is_http_only: { type: ["boolean", "null"] },
   shows_license_or_insured: { type: ["boolean", "null"] },
-  does_subcontract_work: { type: ["boolean", "null"] }
+  does_subcontract_work: { type: ["boolean", "null"] },
+  /* How established they look. This is the field that keeps the caller off
+     the phone with a 40-truck outfit that has had a real website since 2011 —
+     those are not buying a $99 site, and a pitch to one wastes the call and
+     the reputation. Judged from what is visible: review volume, crew and fleet
+     size, multiple locations, years trading, the polish of what they already
+     have. Null where none of that is establishable. */
+  establishment: { type: ["string", "null"],
+                   enum: ["just_starting", "small", "growing", "established", null] },
+  establishment_evidence: { type: ["string", "null"] }
 };
 
 const DEALER_PROPS = {
@@ -365,12 +397,19 @@ function enrichPrompt(segment, p) {
       `they last posted on Facebook, whether their website lists inventory at all, and ` +
       `whether that inventory looks current. Describe any mismatch in inventory_gap.`;
   }
+  const kind = segment === "handyman" ? "handyman / home repair"
+             : segment === "general" ? "general contracting / home building"
+             : "specialty trade (subcontracting)";
   return common +
-    `This is a ${segment === "handyman" ? "handyman / home repair" : "contracting"} business. ` +
-    `Establish whether they have a real website, only a Facebook page, or no web presence ` +
-    `at all; whether the site is http-only (no padlock); whether they show a license or ` +
-    `proof of insurance anywhere; and whether they take subcontract work for general ` +
-    `contractors.`;
+    `This is a ${kind} business. Establish whether they have a real website, only a ` +
+    `Facebook page, or no web presence at all; whether the site is http-only (no padlock); ` +
+    `whether they show a license or proof of insurance anywhere; and whether they take ` +
+    `subcontract work for general contractors.\n\n` +
+    `Also judge HOW ESTABLISHED they are, and say what you based it on. Look for review ` +
+    `volume, how long they have been trading, crew or fleet size, more than one location, ` +
+    `and how polished whatever they already have looks. A one-person outfit with 6 reviews ` +
+    `is "just_starting"; a 40-truck company with a professional site since 2011 is ` +
+    `"established". Use null if you genuinely cannot tell.`;
 }
 
 /* xAI Responses API. Verified against docs.x.ai (Sept 2026):
@@ -441,8 +480,10 @@ const OFFERS = `
    costing them work.
 2. A credibility website for a subcontractor — the pitch is looking legitimate
    to the general contractors who hire them: licence, insurance, real photos of
-   finished work. For a handyman the same product sells to HOMEOWNERS instead,
-   on trust rather than bid-list credibility.
+   finished work. This is the main offer: specialty trades who want on a GC's
+   bid list. For a handyman the same product sells to HOMEOWNERS instead, on
+   trust rather than bid-list credibility. For a small general contractor it
+   sells to HOMEOWNERS choosing who to hire for a remodel.
 3. Dealership CRM / inventory software — for an independent used-car dealer who
    is active on Facebook while their own website's inventory sits stale. The
    gap between the two IS the pitch.`;
@@ -456,6 +497,17 @@ SCORING. 0-100, and score WITHIN this business's segment ("${segment}") — do n
 discount a dealer because a handyman has a worse website. 100 means the pain is
 obvious and the offer lands squarely. Below 55 means do not spend a call on it.
 A business with a good, current website scores low: there is nothing to sell them.
+
+HOW ESTABLISHED THEY ARE IS A HARD GATE, not a tiebreaker. A big, settled firm
+does not buy a cheap website no matter how ordinary its current one is, and
+calling one wastes the call and looks amateur:
+  just_starting / small  -> no penalty; these are the target
+  growing                -> cap the score at 70
+  established            -> cap the score at 30, i.e. do not call
+For a GENERAL CONTRACTOR specifically, be stricter still: only score above 55 if
+they look genuinely small or new. An established GC is not a lead.
+If establishment is null, do not guess — judge on the web presence alone and say
+in the reason that you could not tell how established they are.
 
 Ignore any field that is null — null means the researcher could not verify it,
 not that the answer is no. Do not infer anything the research does not support.
@@ -601,7 +653,7 @@ export async function runLeadPipeline(env, opts) {
   const db = env.CRM_DB;
 
   await ensureLeadPipelineTables(env);
-  await seedLeadSources(env);
+  await seedLeadSources(env, !!o.reseed);
 
   const counts = {
     sourced: 0, deduped: 0, enriched: 0, scored: 0,
