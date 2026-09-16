@@ -683,19 +683,28 @@ try { groupByCategory = localStorage.getItem('potentia_crm_group') === '1'; } ca
 /* Built from the leads that are actually there rather than from a fixed list,
    so the row only offers categories you have leads in — and disappears
    entirely before the pipeline has found anything. */
-/* Only the trades actually present in what is currently selected, so the row
-   narrows as you narrow the category and disappears when there is nothing to
-   split. */
+/* A second row only once a category is chosen. Showing every trade across
+   every category at once is two rows of chips before you have asked for
+   anything, which is noise — the trades only mean something inside a
+   category. */
 function paintTradeFilters() {
   var wrap = document.getElementById('trade-bar-wrap');
   var bar = document.getElementById('trade-filters');
+
+  if (activeSegment === 'all') {
+    wrap.hidden = true;
+    activeTrade = 'all';
+    return;
+  }
+
   var counts = {};
   allClients.forEach(function (c) {
-    if (activeSegment !== 'all' && (c.lead_segment || '') !== activeSegment) return;
+    if ((c.lead_segment || '') !== activeSegment) return;
     var t = tradeOf(c);
     if (t) counts[t] = (counts[t] || 0) + 1;
   });
   var keys = Object.keys(counts).sort();
+  // Nothing to split if the category only has the one trade in it.
   if (keys.length < 2) {
     wrap.hidden = true;
     activeTrade = 'all';
@@ -811,14 +820,17 @@ function render() {
        list — you get into a rhythm pitching roofers and you do not want a car
        dealership in the middle of it. Everyone who did not come from the
        pipeline keeps their own group at the end. */
-    /* Grouped by trade where we know it, category where we do not. One block
-       of forty "Home Services" is not a call list; "Roofing 6, Drywall 4" is. */
+    /* Grouped at whichever level you are looking at. Across everything that
+       is the category; inside one category the categories are all the same,
+       so it splits by trade — "Roofing 6, Drywall 4" rather than one block of
+       forty labelled Home Services. */
+    var byTrade = activeSegment !== 'all';
     var groups = {};
     var titles = {};
     list.forEach(function (c) {
       var k, title;
       if (Number(c.created_by_pipeline) !== 1) { k = '__own'; title = 'Your clients'; }
-      else if (tradeOf(c)) { k = 't:' + tradeOf(c); title = tradeOf(c); }
+      else if (byTrade && tradeOf(c)) { k = 't:' + tradeOf(c); title = tradeOf(c); }
       else {
         k = 's:' + (c.lead_segment || 'uncategorised');
         title = SEGMENT_LABELS[c.lead_segment] || c.lead_segment || 'Uncategorised';
