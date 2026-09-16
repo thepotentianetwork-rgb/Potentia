@@ -13,7 +13,7 @@ import {
   pushLeadToCrm, stripCandidate, spentToday, defaultSources, seedLeadSources,
   offerName, LEAD_DEFAULTS, placesReject, placesPromise,
   apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT,
-  placeArea
+  placeArea, coprimeStride
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -202,13 +202,15 @@ test('Utah ships disabled in every segment', () => {
   assert.ok(ut.every(r => r.enabled === 0), 'nothing local is called until it is switched on');
 });
 
-test('the grid searches the three target metros, at suburb level', () => {
+test('the grid covers Southern California and Phoenix, at suburb level', () => {
   const on = defaultSources().filter(r => r.enabled);
   const states = [...new Set(on.map(r => r.state))].sort();
-  assert.deepEqual(states, ['AZ', 'CA'], 'LA, Orange County and Phoenix');
+  assert.deepEqual(states, ['AZ', 'CA']);
 
   const cities = new Set(on.map(r => r.city));
-  for (const c of ['Pasadena', 'Torrance', 'Newport Beach', 'Irvine', 'Scottsdale', 'Gilbert'])
+  // One from each region, so dropping a whole region fails loudly.
+  for (const c of ['Pasadena', 'Newport Beach', 'Temecula', 'Carlsbad',
+                   'Camarillo', 'Palm Desert', 'Scottsdale'])
     assert.ok(cities.has(c), c + ' is in the grid');
 
   /* Places returns 20 results per query, ranked on prominence, and a business
@@ -807,4 +809,49 @@ test('a lead carries its town for the list, and its street address for the call'
   assert.equal(row.lead_area, 'Newport Beach, CA', 'scannable in the list');
   assert.equal(row.lead_address, '1401 Dove St Ste 220, Newport Beach, CA 92660, USA',
     'and the full thing is still there');
+});
+
+// ── the rotation ──────────────────────────────────────────────────────────
+
+test('a fresh grid does not spend its first ten runs in one town', () => {
+  /* A run takes the two least-recently-searched sources, and on a fresh grid
+     nothing has been searched, so they come back in insert order. Grouping the
+     rows by city meant ten consecutive runs all searched the same town and
+     every lead came from it — which reads as "the city list is wrong" when the
+     city list is fine. */
+  const on = defaultSources().filter(r => r.enabled);
+  const firstTwentySearches = on.slice(0, 20).map(r => r.city + ',' + r.state);
+  assert.equal(new Set(firstTwentySearches).size, 20,
+    'ten runs, twenty searches, twenty different towns');
+
+  // And they should not all be in one corner of the map either.
+  const states = new Set(on.slice(0, 20).map(r => r.state));
+  assert.ok(states.size > 1, 'the first ten runs reach more than one state');
+});
+
+test('every city is reachable, none searched twice as often as another', () => {
+  const rows = defaultSources();
+  const perCity = {};
+  rows.forEach(r => { const k = r.city + ',' + r.state; perCity[k] = (perCity[k] || 0) + 1; });
+  const counts = [...new Set(Object.values(perCity))];
+  assert.equal(counts.length, 1, 'every city gets exactly the same set of queries');
+});
+
+test('the stride can never silently skip cities', () => {
+  /* A stride sharing a factor with the city count walks a subset and repeats
+     it forever — some towns would simply never be searched, with nothing to
+     show for it. The stride is checked rather than trusted. */
+  assert.equal(coprimeStride(17, 76), 17, '17 and 76 are coprime');
+  assert.equal(coprimeStride(4, 8), 5, '4 would visit only half of 8');
+  assert.equal(coprimeStride(2, 10), 3, '2 would visit only the even indices');
+  assert.equal(coprimeStride(17, 1), 1);
+  assert.equal(coprimeStride(17, 2), 1);
+
+  // Whatever it returns must walk the whole ring, for any size.
+  for (let n = 2; n <= 200; n++) {
+    const s = coprimeStride(17, n);
+    const seen = new Set();
+    for (let i = 0; i < n; i++) seen.add((i * s) % n);
+    assert.equal(seen.size, n, 'stride ' + s + ' misses cities when there are ' + n);
+  }
 });

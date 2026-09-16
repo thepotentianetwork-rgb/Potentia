@@ -356,6 +356,26 @@ const CITIES = [
   ["Costa Mesa", "CA", 1], ["Fullerton", "CA", 1], ["Mission Viejo", "CA", 1],
   ["Laguna Niguel", "CA", 1], ["Yorba Linda", "CA", 1], ["Orange", "CA", 1],
 
+  // Inland Empire
+  ["Riverside", "CA", 1], ["Temecula", "CA", 1], ["Murrieta", "CA", 1],
+  ["Rancho Cucamonga", "CA", 1], ["Corona", "CA", 1], ["Chino Hills", "CA", 1],
+  ["Ontario", "CA", 1], ["Redlands", "CA", 1], ["Eastvale", "CA", 1],
+  ["San Bernardino", "CA", 1],
+
+  // San Diego County
+  ["Carlsbad", "CA", 1], ["Encinitas", "CA", 1], ["Del Mar", "CA", 1],
+  ["Poway", "CA", 1], ["Escondido", "CA", 1], ["Oceanside", "CA", 1],
+  ["Vista", "CA", 1], ["San Marcos", "CA", 1], ["Chula Vista", "CA", 1],
+  ["La Mesa", "CA", 1], ["El Cajon", "CA", 1], ["Coronado", "CA", 1],
+
+  // Ventura County
+  ["Ventura", "CA", 1], ["Camarillo", "CA", 1], ["Simi Valley", "CA", 1],
+  ["Oxnard", "CA", 1], ["Westlake Village", "CA", 1],
+
+  // Coachella Valley
+  ["Palm Springs", "CA", 1], ["Palm Desert", "CA", 1], ["La Quinta", "CA", 1],
+  ["Rancho Mirage", "CA", 1], ["Indio", "CA", 1],
+
   // Greater Phoenix
   ["Scottsdale", "AZ", 1], ["Mesa", "AZ", 1], ["Chandler", "AZ", 1],
   ["Gilbert", "AZ", 1], ["Tempe", "AZ", 1], ["Glendale", "AZ", 1],
@@ -370,19 +390,55 @@ export function defaultSources() {
   /* Subcontractors are the target. General contractors ride along but only
      convert when they are small; handymen and dealers are seeded so the grid
      is there to switch on, but ship DISABLED — one UPDATE turns either back on
-     without re-deriving the whole city list. Utah likewise, being home. */
+     without re-deriving the whole city list. Utah likewise, being home.
+
+     ROW ORDER IS LOAD-BEARING. A run takes the two least-recently-searched
+     sources, and on a freshly seeded grid nothing has been searched, so they
+     come back in insert order. Grouping by city — every query for Pasadena,
+     then every query for Glendale — meant the first ten runs in a row all
+     searched Pasadena, and the leads all came from one town. It looked like
+     the city list was wrong when the city list was fine.
+
+     So the rows are laid out query-major with the city start rotated each
+     round: consecutive rows are different towns AND different trades, and a
+     single run's two searches never land in the same place. */
+  const plan = [];
+  for (const q of SUBCONTRACTOR_QUERIES) plan.push([q, "subcontractor", 2, true]);
+  for (const q of GENERAL_QUERIES) plan.push([q, "general", 2, true]);
+  for (const q of HANDYMAN_QUERIES) plan.push([q, "handyman", 1, false]);
+  for (const q of DEALER_QUERIES) plan.push([q, "dealer", 3, false]);
+
+  /* Stepping through CITIES one at a time would still walk the regions in
+     blocks — fifteen LA runs, then the Inland Empire, then San Diego. A stride
+     jumps across the list instead, so consecutive runs land in different parts
+     of Southern California and you see the whole map from the first day.
+
+     The stride has to be coprime with the number of cities or the walk visits
+     a subset and repeats it forever, silently never searching the rest. Rather
+     than trust a hand-picked number to stay coprime as cities are added, it is
+     checked here and falls back to 1, which is always safe. */
+  const n = CITIES.length;
+  const stride = coprimeStride(17, n);
+
   const out = [];
-  for (const [city, state, on] of CITIES) {
-    for (const q of SUBCONTRACTOR_QUERIES)
-      out.push({ query_template: q, city, state, segment: "subcontractor", offer_hint: 2, enabled: on });
-    for (const q of GENERAL_QUERIES)
-      out.push({ query_template: q, city, state, segment: "general", offer_hint: 2, enabled: on });
-    for (const q of HANDYMAN_QUERIES)
-      out.push({ query_template: q, city, state, segment: "handyman", offer_hint: 1, enabled: 0 });
-    for (const q of DEALER_QUERIES)
-      out.push({ query_template: q, city, state, segment: "dealer", offer_hint: 3, enabled: 0 });
-  }
+  plan.forEach(([query_template, segment, offer_hint, live], round) => {
+    for (let i = 0; i < n; i++) {
+      const [city, state, on] = CITIES[(i * stride + round) % n];
+      out.push({ query_template, city, state, segment, offer_hint,
+                 enabled: live ? on : 0 });
+    }
+  });
   return out;
+}
+
+export function coprimeStride(want, n) {
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  if (n < 2) return 1;
+  for (let s = want; s < want + n; s++) {
+    const v = ((s - 1) % (n - 1)) + 1;      // keep it in 1..n-1
+    if (gcd(v, n) === 1) return v;
+  }
+  return 1;
 }
 
 /* Seeds the grid on an empty table. With force=true it REPLACES the grid —
