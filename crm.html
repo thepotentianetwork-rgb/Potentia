@@ -111,6 +111,7 @@ select.status-sel:focus{border-color:var(--silver)}
 
 tr.is-lead{background:linear-gradient(90deg,rgba(216,161,95,0.09),rgba(216,161,95,0.01) 55%)}
 tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
+.name-area{color:var(--silver)}
 .lead-detail{display:flex;flex-direction:column;gap:5px;margin-top:9px;padding-left:10px;border-left:1px solid rgba(216,161,95,0.3)}
 .lead-detail .ld-line{font-size:13px;color:var(--silver);line-height:1.5}
 .lead-detail .ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:7px}
@@ -499,7 +500,8 @@ document.getElementById('search').addEventListener('input', function (e) {
 function matches(c) {
   if (activeFilter !== 'all' && (c.status || 'lead') !== activeFilter) return false;
   if (!searchTerm) return true;
-  var hay = [c.business_name, c.contact_name, c.email, c.phone, c.domain, c.website_url]
+  var hay = [c.business_name, c.contact_name, c.email, c.phone, c.domain, c.website_url,
+             c.lead_area]
     .filter(Boolean).join(' ').toLowerCase();
   return hay.indexOf(searchTerm) !== -1;
 }
@@ -566,7 +568,8 @@ function leadDetail(c) {
     line('Speed', row);
   }
 
-  if (c.lead_address) line('Where', text(c.lead_address));
+  // The town is already under the name; this is the street address.
+  if (c.lead_address) line('Address', text(c.lead_address));
   if (c.lead_segment) line('Trade', text(c.lead_segment));
 
   /* Straight to the live listing — reviews, photos, hours, how long they have
@@ -623,6 +626,16 @@ function render() {
       sub.className = 'name-sub';
       sub.textContent = c.contact_name;
       wrap.appendChild(sub);
+    }
+    /* The town, right under the name, because that is what you scan by when
+       you are deciding which five to ring this morning. Leads found before
+       lead_area existed fall back to the full address. */
+    var area = c.lead_area || c.lead_address;
+    if (area) {
+      var where = document.createElement('span');
+      where.className = 'name-sub name-area';
+      where.textContent = area;
+      wrap.appendChild(where);
     }
     if (status === 'lead') {
       var badge = document.createElement('span');

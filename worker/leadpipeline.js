@@ -115,6 +115,7 @@ export async function ensureLeadPipelineTables(env) {
     ["lead_reason", "TEXT"],
     ["lead_opener", "TEXT"],
     ["lead_address", "TEXT"],
+    ["lead_area", "TEXT"],
     ["lead_speed", "INTEGER"],
     ["lead_mobile_ready", "INTEGER"],
     ["lead_check", "TEXT"],
@@ -512,6 +513,36 @@ export function providerError(who, status, body) {
 }
 
 
+/* "Newport Beach, CA" out of "1401 Dove St Ste 220, Newport Beach, CA 92660,
+   USA". The full address belongs on the lead, but what someone scanning a
+   list wants is the town — it is how you decide which five to ring this
+   morning.
+
+   Worked backwards from the state-and-zip part rather than by counting
+   commas from the front, because a suite line adds a comma and a rural
+   address drops the street one, so no fixed index is right for both. */
+export function placeArea(address) {
+  const parts = String(address == null ? "" : address)
+    .split(",").map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return "";
+
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const m = /^([A-Z]{2})\s+\d{5}(-\d{4})?$/.exec(parts[i]);
+    if (m) {
+      const city = i > 0 ? parts[i - 1] : "";
+      return city ? city + ", " + m[1] : m[1];
+    }
+  }
+
+  // No zip to anchor on — drop a trailing country and take what is left.
+  const trimmed = /^(USA|United States)$/i.test(parts[parts.length - 1])
+    ? parts.slice(0, -1) : parts;
+  if (!trimmed.length) return "";
+  return trimmed.length >= 2
+    ? trimmed[trimmed.length - 2] + ", " + trimmed[trimmed.length - 1]
+    : trimmed[0];
+}
+
 /* "Websites" that are not websites. A listing pointing at a Facebook page, a
    Linktree or a marketplace profile means the business has no site of its own
    — which is the pitch, not a disqualification.
@@ -657,9 +688,9 @@ export async function pushLeadToCrm(env, cand, places, verdict) {
     `INSERT INTO clients
        (business_name, phone, website_url, status, source, service,
         place_id, lead_score, lead_segment, lead_offer, lead_reason,
-        lead_address, lead_speed, lead_mobile_ready, lead_check,
+        lead_address, lead_area, lead_speed, lead_mobile_ready, lead_check,
         created_by_pipeline, do_not_contact, created_at, updated_at)
-     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
+     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
   ).bind(
     places.name || "",
     phone,
@@ -676,6 +707,7 @@ export async function pushLeadToCrm(env, cand, places, verdict) {
        wants — reviews, photos, hours — is one click away on the live Google
        listing via place_id, which is better than a stale copy anyway. */
     places.address || "",
+    placeArea(places.address),
     verdict.speed == null ? null : verdict.speed,
     verdict.mobileReady == null ? null : (verdict.mobileReady ? 1 : 0),
     verdict.checked || null,

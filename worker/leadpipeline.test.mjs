@@ -12,7 +12,8 @@ import {
   normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
   pushLeadToCrm, stripCandidate, spentToday, defaultSources, seedLeadSources,
   offerName, LEAD_DEFAULTS, placesReject, placesPromise,
-  apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT
+  apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT,
+  placeArea
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -771,4 +772,39 @@ test('rescreening never touches a business that was actually checked', async () 
   assert.equal(out.rescreened, 0);
   assert.equal(db.prepare("SELECT status FROM lead_candidates WHERE place_id='P1'").get().status,
     'rejected', 'a real verdict survives a rescreen');
+});
+
+test('the town is pulled out of whatever shape Google sends', () => {
+  // The ordinary case.
+  assert.equal(placeArea('1401 Dove St, Newport Beach, CA 92660, USA'), 'Newport Beach, CA');
+  // A suite line adds a comma, so counting from the front would be off by one.
+  assert.equal(placeArea('1401 Dove St Ste 220, Newport Beach, CA 92660, USA'), 'Newport Beach, CA');
+  // A rural address drops the street line, so it would be off the other way.
+  assert.equal(placeArea('Queen Creek, AZ 85142, USA'), 'Queen Creek, AZ');
+  // Zip+4.
+  assert.equal(placeArea('55 W Main St, Mesa, AZ 85201-1234, USA'), 'Mesa, AZ');
+  // Two-word state-side towns and saints keep their spaces.
+  assert.equal(placeArea('9 Camino Real, Paradise Valley, AZ 85253, USA'), 'Paradise Valley, AZ');
+
+  // No zip to anchor on: fall back to the last two parts, country dropped.
+  assert.equal(placeArea('100 Main St, Torrance, California, USA'), 'Torrance, California');
+  assert.equal(placeArea('Torrance'), 'Torrance');
+  assert.equal(placeArea(''), '');
+  assert.equal(placeArea(null), '');
+  assert.equal(placeArea(undefined), '');
+});
+
+test('a lead carries its town for the list, and its street address for the call', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [Object.assign(PLACE(1), {
+      formattedAddress: '1401 Dove St Ste 220, Newport Beach, CA 92660, USA'
+    })] }),
+    pagespeed: PS(10)
+  });
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  const row = db.prepare("SELECT * FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(row.lead_area, 'Newport Beach, CA', 'scannable in the list');
+  assert.equal(row.lead_address, '1401 Dove St Ste 220, Newport Beach, CA 92660, USA',
+    'and the full thing is still there');
 });
