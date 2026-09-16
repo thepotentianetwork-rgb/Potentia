@@ -14,7 +14,7 @@ import {
   offerName, LEAD_DEFAULTS, placesReject, placesPromise,
   apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT,
   placeArea, coprimeStride, SEGMENTS, LEAD_SEGMENTS, HOME_STATE,
-  listSegments, setSegmentEnabled
+  listSegments, setSegmentEnabled, tradeLabel, tradeLabels
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -1206,4 +1206,49 @@ test('home services covers trades, GCs and handymen in one search list', () => {
   assert.equal(hs.offer, 2);
   assert.equal(LEAD_SEGMENTS.indexOf('handyman'), -1, 'no longer its own category');
   assert.equal(new Set(hs.queries).size, hs.queries.length, 'no duplicated searches');
+});
+
+// ── sub-categories ────────────────────────────────────────────────────────
+
+test('a search term becomes a name you would put at the top of a column', () => {
+  // The general rule: drop the trailing noun, title-case the rest.
+  assert.equal(tradeLabel('drywall contractor'), 'Drywall');
+  assert.equal(tradeLabel('masonry contractor'), 'Masonry');
+  assert.equal(tradeLabel('roofing contractor'), 'Roofing');
+
+  // The ones the rule cannot reach.
+  assert.equal(tradeLabel('electrician'), 'Electrical');
+  assert.equal(tradeLabel('plumber'), 'Plumbing');
+  assert.equal(tradeLabel('HVAC contractor'), 'HVAC', 'not "Hvac"');
+  assert.equal(tradeLabel('gutter installer'), 'Gutters');
+
+  // Several search terms, one sub-category — three handyman searches should
+  // not become three columns.
+  for (const q of ['handyman', 'handyman services', 'home repair service'])
+    assert.equal(tradeLabel(q), 'Handyman');
+  for (const q of ['used car dealer', 'auto sales', 'pre-owned vehicles'])
+    assert.equal(tradeLabel(q), 'Used Cars');
+
+  assert.equal(tradeLabel(''), '');
+  assert.equal(tradeLabel(null), '');
+});
+
+test('every search the grid can run has a sub-category name', () => {
+  const map = tradeLabels();
+  for (const seg of SEGMENTS) {
+    for (const q of seg.queries) {
+      assert.ok(map[q], q + ' has no label');
+      assert.ok(!/contractor$|installer$|services?$/i.test(map[q]),
+        map[q] + ' still reads like a search term');
+    }
+  }
+
+  /* The searching stays broad — one Home Services category — and the split
+     happens on the way out. Nineteen columns is a usable call list; one
+     column of everything is not. */
+  const hs = SEGMENTS.find(s => s.key === 'home_service');
+  const subs = new Set(hs.queries.map(q => map[q]));
+  assert.ok(subs.size > 15, 'the trades stay distinguishable');
+  assert.ok(subs.has('Roofing') && subs.has('Plumbing') && subs.has('Handyman'));
+  assert.equal(subs.size < hs.queries.length, true, 'and near-duplicates collapse');
 });

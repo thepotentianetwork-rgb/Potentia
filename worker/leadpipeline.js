@@ -865,6 +865,55 @@ export function offerName(n) {
   return "Unknown";
 }
 
+/* A search term is not a label. "gutter installer" is what you type into
+   Places; "Gutters" is what you want at the top of a column of leads.
+
+   Explicit where the tidy name is not derivable — Electrical from
+   electrician, Handyman from home repair service — and a general rule for
+   everything else, so adding a search term does not mean remembering to add
+   a label alongside it. */
+const TRADE_LABELS = {
+  "electrician": "Electrical",
+  "plumber": "Plumbing",
+  "HVAC contractor": "HVAC",
+  "gutter installer": "Gutters",
+  "flooring installer": "Flooring",
+  "general contractor": "General Contracting",
+  "home builder": "General Contracting",
+  "remodeling contractor": "Remodeling",
+  "handyman": "Handyman",
+  "handyman services": "Handyman",
+  "home repair service": "Handyman",
+  "auto detailing": "Detailing",
+  "auto detailing service": "Detailing",
+  "car detailing": "Detailing",
+  "mobile detailing": "Mobile Detailing",
+  "ceramic coating": "Ceramic Coating",
+  "used car dealer": "Used Cars",
+  "auto sales": "Used Cars",
+  "pre-owned vehicles": "Used Cars",
+  "car dealership": "Dealership"
+};
+
+export function tradeLabel(query) {
+  const q = String(query == null ? "" : query).trim();
+  if (!q) return "";
+  if (TRADE_LABELS[q]) return TRADE_LABELS[q];
+  // "drywall contractor" -> "Drywall", "masonry contractor" -> "Masonry".
+  const base = q.replace(/\s+(contractor|installer|services?|service)$/i, "");
+  return base.replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+/* Every search term the grid can produce, mapped to its label. Served to the
+   CRM so the sub-categories it offers are the ones the pipeline can actually
+   generate, rather than a second list that has to be kept in step. */
+export function tradeLabels() {
+  const out = {};
+  for (const seg of SEGMENTS)
+    for (const q of seg.queries) out[q] = tradeLabel(q);
+  return out;
+}
+
 export function segmentLabel(key) {
   const s = SEGMENTS.find((x) => x.key === key);
   return s ? s.label : key;

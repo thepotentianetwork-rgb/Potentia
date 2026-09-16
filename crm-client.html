@@ -420,11 +420,35 @@ function renderPhoneActions() {
    on both pages. The raw key is a readable fallback if the call has not
    landed, and nothing waits on it. */
 var SEGMENT_LABELS = {};
+var TRADE_LABELS = {};
 authFetch('/crm/leads/segments').then(function (r) {
-  if (r.ok && r.data && r.data.segments) {
-    r.data.segments.forEach(function (seg) { SEGMENT_LABELS[seg.key] = seg.label; });
-  }
+  if (!r.ok || !r.data) return;
+  (r.data.segments || []).forEach(function (seg) { SEGMENT_LABELS[seg.key] = seg.label; });
+  if (r.data.trades) TRADE_LABELS = r.data.trades;
+  // It may land after the client did; repaint if so.
+  if (window.__lastClient) fillLeadDetail(window.__lastClient);
 }).catch(function () {});
+
+/* A pipeline lead gets the same block as the list, from the same code, so the
+   two pages can never tell you different things about a business. */
+function fillLeadDetail(c) {
+  if (Number(c.created_by_pipeline) !== 1) return;
+  el('lead-section').style.display = '';
+  var box = el('lead-detail');
+  box.innerHTML = '';
+  box.appendChild(LeadDetail.block(c, SEGMENT_LABELS));
+
+  // The headline sits next to the name, as it does in the list.
+  if (!document.querySelector('.why-badge')) {
+    var why = LeadDetail.badge(c);
+    if (why) {
+      var wb = document.createElement('span');
+      wb.className = 'why-badge why-' + why.tone;
+      wb.textContent = why.text;
+      el('title-status').insertAdjacentElement('afterend', wb);
+    }
+  }
+}
 
 function fillDetails(c) {
   el('client-name').textContent = c.business_name || c.contact_name || 'Unnamed client';
@@ -467,21 +491,8 @@ function fillDetails(c) {
 
   /* A pipeline lead gets the same block as the list, from the same code, so
      the two pages can never tell you different things about a business. */
-  if (Number(c.created_by_pipeline) === 1) {
-    el('lead-section').style.display = '';
-    var box = el('lead-detail');
-    box.innerHTML = '';
-    box.appendChild(LeadDetail.block(c, SEGMENT_LABELS));
-
-    // The headline sits next to the name, as it does in the list.
-    var why = LeadDetail.badge(c);
-    if (why) {
-      var wb = document.createElement('span');
-      wb.className = 'why-badge why-' + why.tone;
-      wb.textContent = why.text;
-      el('title-status').insertAdjacentElement('afterend', wb);
-    }
-  }
+  window.__lastClient = c;
+  fillLeadDetail(c);
 
   if (c.service || c.message) {
     el('inquiry-section').style.display = '';

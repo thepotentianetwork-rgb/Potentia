@@ -238,6 +238,10 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
       <span class="cat-bar-label">Category</span>
       <div class="filters" id="cat-filters"></div>
       <button class="chip" id="group-toggle" type="button">Group</button>
+    </div>
+    <div class="toolbar toolbar-cats" id="trade-bar-wrap" hidden>
+      <span class="cat-bar-label">Trade</span>
+      <div class="filters" id="trade-filters"></div>
       <input id="search" type="search" placeholder="Search name, email, domain…" autocomplete="off">
       <button class="btn" id="new-btn">+ New Client</button>
     </div>
@@ -284,6 +288,9 @@ var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', '
 /* Filled in from /crm/leads/segments so the wording matches the toggles above.
    The raw key is a perfectly readable fallback if that call has not landed. */
 var SEGMENT_LABELS = {};
+/* Search term -> the name shown for it, from the same endpoint. A lead stores
+   the raw term it was found by; this is only ever for display and grouping. */
+var TRADE_LABELS = {};
 var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 
@@ -386,8 +393,9 @@ function authFetch(path, options) {
      read and write lead_sources directly. */
   var cats = document.getElementById('lp-cats');
 
-  function rememberLabels(list) {
+  function rememberLabels(list, trades) {
     (list || []).forEach(function (seg) { SEGMENT_LABELS[seg.key] = seg.label; });
+    if (trades) Object.keys(trades).forEach(function (k) { TRADE_LABELS[k] = trades[k]; });
     if (typeof paintCategoryFilters === 'function') paintCategoryFilters();
   }
 
@@ -431,7 +439,7 @@ function authFetch(path, options) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ segment: seg.key, enabled: !seg.enabled })
     }).then(function (r) {
-      if (r.ok && r.data && r.data.segments) { rememberLabels(r.data.segments); paintCats(r.data.segments); }
+      if (r.ok && r.data && r.data.segments) { rememberLabels(r.data.segments, r.data.trades); paintCats(r.data.segments); }
       else {
         btn.disabled = false;
         show('<span class="lp-err">Could not change that: ' +
@@ -444,7 +452,7 @@ function authFetch(path, options) {
 
   function loadCats() {
     authFetch('/crm/leads/segments').then(function (r) {
-      if (r.ok && r.data) { rememberLabels(r.data.segments); paintCats(r.data.segments); }
+      if (r.ok && r.data) { rememberLabels(r.data.segments, r.data.trades); paintCats(r.data.segments); }
     }).catch(function () { /* the run buttons still work without these */ });
   }
   loadCats();
@@ -658,6 +666,15 @@ var activeFilter = 'all';
 var searchTerm = '';
 
 var activeSegment = 'all';
+var activeTrade = 'all';
+
+/* The sub-category a lead belongs to. Searching stays broad — one Home
+   Services category generating everything — and the split happens here, on
+   the search term the lead was found by. */
+function tradeOf(c) {
+  if (!c.lead_trade) return '';
+  return TRADE_LABELS[c.lead_trade] || c.lead_trade;
+}
 /* Per-viewer convenience only — nothing depends on it being there, and a
    private window or blocked site data just means it starts off. */
 var groupByCategory = false;
@@ -666,6 +683,41 @@ try { groupByCategory = localStorage.getItem('potentia_crm_group') === '1'; } ca
 /* Built from the leads that are actually there rather than from a fixed list,
    so the row only offers categories you have leads in — and disappears
    entirely before the pipeline has found anything. */
+/* Only the trades actually present in what is currently selected, so the row
+   narrows as you narrow the category and disappears when there is nothing to
+   split. */
+function paintTradeFilters() {
+  var wrap = document.getElementById('trade-bar-wrap');
+  var bar = document.getElementById('trade-filters');
+  var counts = {};
+  allClients.forEach(function (c) {
+    if (activeSegment !== 'all' && (c.lead_segment || '') !== activeSegment) return;
+    var t = tradeOf(c);
+    if (t) counts[t] = (counts[t] || 0) + 1;
+  });
+  var keys = Object.keys(counts).sort();
+  if (keys.length < 2) {
+    wrap.hidden = true;
+    activeTrade = 'all';
+    return;
+  }
+  wrap.hidden = false;
+  bar.innerHTML = '';
+  var total = keys.reduce(function (a, k) { return a + counts[k]; }, 0);
+  [['all', 'All', total]].concat(keys.map(function (k) { return [k, k, counts[k]]; }))
+    .forEach(function (f) {
+      var b = document.createElement('button');
+      b.className = 'chip' + (f[0] === activeTrade ? ' on' : '');
+      b.textContent = f[1] + ' (' + f[2] + ')';
+      b.addEventListener('click', function () {
+        activeTrade = f[0];
+        paintTradeFilters();
+        render();
+      });
+      bar.appendChild(b);
+    });
+}
+
 function paintCategoryFilters() {
   var wrap = document.getElementById('cat-bar-wrap');
   var bar = document.getElementById('cat-filters');
@@ -677,6 +729,7 @@ function paintCategoryFilters() {
   if (!keys.length) {
     wrap.hidden = true;
     if (activeSegment !== 'all') { activeSegment = 'all'; }
+    paintTradeFilters();
     return;
   }
   wrap.hidden = false;
@@ -689,7 +742,9 @@ function paintCategoryFilters() {
       b.textContent = f[1] + ' (' + f[2] + ')';
       b.addEventListener('click', function () {
         activeSegment = f[0];
+        activeTrade = 'all';        // a trade from the old category means nothing here
         paintCategoryFilters();
+        paintTradeFilters();
         render();
       });
       bar.appendChild(b);
@@ -728,6 +783,7 @@ document.getElementById('search').addEventListener('input', function (e) {
 function matches(c) {
   if (activeFilter !== 'all' && (c.status || 'lead') !== activeFilter) return false;
   if (activeSegment !== 'all' && (c.lead_segment || '') !== activeSegment) return false;
+  if (activeTrade !== 'all' && tradeOf(c) !== activeTrade) return false;
   if (!searchTerm) return true;
   var hay = [c.business_name, c.contact_name, c.email, c.phone, c.domain, c.website_url,
              c.lead_area, c.lead_trade]
@@ -755,9 +811,19 @@ function render() {
        list — you get into a rhythm pitching roofers and you do not want a car
        dealership in the middle of it. Everyone who did not come from the
        pipeline keeps their own group at the end. */
+    /* Grouped by trade where we know it, category where we do not. One block
+       of forty "Home Services" is not a call list; "Roofing 6, Drywall 4" is. */
     var groups = {};
+    var titles = {};
     list.forEach(function (c) {
-      var k = Number(c.created_by_pipeline) === 1 ? (c.lead_segment || 'uncategorised') : '__own';
+      var k, title;
+      if (Number(c.created_by_pipeline) !== 1) { k = '__own'; title = 'Your clients'; }
+      else if (tradeOf(c)) { k = 't:' + tradeOf(c); title = tradeOf(c); }
+      else {
+        k = 's:' + (c.lead_segment || 'uncategorised');
+        title = SEGMENT_LABELS[c.lead_segment] || c.lead_segment || 'Uncategorised';
+      }
+      titles[k] = title;
       (groups[k] = groups[k] || []).push(c);
     });
     Object.keys(groups)
@@ -773,8 +839,7 @@ function render() {
         td.colSpan = 8;
         var t = document.createElement('span');
         t.className = 'group-title';
-        t.textContent = k === '__own' ? 'Your clients'
-          : (SEGMENT_LABELS[k] || k);
+        t.textContent = titles[k];
         td.appendChild(t);
         var n = document.createElement('span');
         n.className = 'group-count';
@@ -976,6 +1041,7 @@ function loadClients() {
     allClients = r.data.clients || [];
     renderStats(r.data.stats || {});
     paintCategoryFilters();
+    paintTradeFilters();
     render();
   }).catch(function () {
     showLoadError('Could not reach the server.');
