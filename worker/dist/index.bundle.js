@@ -1533,7 +1533,12 @@ const LEAD_COST = {
 };                            // PageSpeed is free; there is nothing else to pay for.
 
 const LEAD_DEFAULTS = {
-  perRun: 5,                  // websites checked per run
+  /* Websites checked per run. This was 5 when each one cost six cents of AI
+     research; checking is free now, so the only cost is the ten to thirty
+     seconds Google takes per site that actually has one. At 20 the run drains
+     its queue at roughly the rate sourcing fills it, instead of paying Places
+     for candidates that pile up unjudged. */
+  perRun: 20,
   dailyUsdCap: 5.0,
   maxAttempts: 3,
   sourceBatch: 2,             // Places queries per run
@@ -2157,7 +2162,7 @@ async function spentToday(env) {
 }
 
 // ── the run ───────────────────────────────────────────────────────────────
-/* One run: source a couple of queries, then enrich+score up to `perRun`
+/* One run: source a couple of queries, then check up to `perRun`
    candidates. Every paid call is preceded by a ceiling check, so a run that
    starts under budget and crosses it mid-way stops cleanly rather than
    finishing the batch.
@@ -5245,7 +5250,11 @@ export default {
          cron path — ?dry=1 sources and dedupes without spending on AI. */
       if (path === "/crm/leads/run-now" && request.method === "POST") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
-        const limit = Number(url.searchParams.get("limit") || 5);
+        /* Only pass a limit if the caller actually named one — otherwise the
+           pipeline's own default applies. This used to hardcode 5 here as
+           well, which quietly overrode it. */
+        const limitParam = Number(url.searchParams.get("limit"));
+        const limit = isFinite(limitParam) && limitParam > 0 ? limitParam : undefined;
         const dryRun = url.searchParams.get("dry") === "1";
         // ?reseed=1 replaces the search grid from the code's own defaults —
         // needed after changing which segments or cities ship, since the grid

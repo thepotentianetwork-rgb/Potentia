@@ -2891,7 +2891,11 @@ export default {
          cron path — ?dry=1 sources and dedupes without spending on AI. */
       if (path === "/crm/leads/run-now" && request.method === "POST") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
-        const limit = Number(url.searchParams.get("limit") || 5);
+        /* Only pass a limit if the caller actually named one — otherwise the
+           pipeline's own default applies. This used to hardcode 5 here as
+           well, which quietly overrode it. */
+        const limitParam = Number(url.searchParams.get("limit"));
+        const limit = isFinite(limitParam) && limitParam > 0 ? limitParam : undefined;
         const dryRun = url.searchParams.get("dry") === "1";
         // ?reseed=1 replaces the search grid from the code's own defaults —
         // needed after changing which segments or cities ship, since the grid
