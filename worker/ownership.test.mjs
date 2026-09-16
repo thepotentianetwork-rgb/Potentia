@@ -76,6 +76,24 @@ test("the lead generator is locked to a CRM login alone", async () => {
   assert.equal((await call("GET", "/crm/leads/segments")).status, 401);
 });
 
+test("the ShedPro price-unlock password does not open the lead generator", async () => {
+  const { env, call, crmTok } = await setup();
+
+  /* ADMIN_PASSWORD is what ShedPro staff type to see prices in the designer —
+     handed around daily. It must not also unlock a thing that spends money,
+     and it must not do so quietly just because the generator's own secret has
+     not been set yet. */
+  assert.equal((await call("POST", "/crm/leads/unlock", { password: "adminpw" }, crmTok)).status, 401);
+
+  delete env.LEADS_PASSWORD;
+  const unset = await call("POST", "/crm/leads/unlock", { password: "adminpw" }, crmTok);
+  assert.equal(unset.status, 503, "no password set means shut, not open");
+  assert.match(unset.data.error, /LEADS_PASSWORD/, "and it says what to go and add");
+
+  // Nothing got through while it was unconfigured.
+  assert.equal((await call("GET", "/crm/leads/segments", null, crmTok)).status, 403);
+});
+
 test("the right password unlocks it; the wrong one does not", async () => {
   const { call, crmTok } = await setup();
 

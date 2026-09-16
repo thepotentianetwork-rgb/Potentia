@@ -3013,11 +3013,18 @@ async function leadsGate(request, env) {
   return null;
 }
 
-/* Falls back to the ShedPro admin password when LEADS_PASSWORD is unset, so
-   the lock works the moment it ships rather than leaving the generator open
-   until someone remembers to add a secret. */
+/* LEADS_PASSWORD only — deliberately no fall back to ADMIN_PASSWORD, which is
+   what unlocks prices in the ShedPro designer. Those are two different jobs
+   for two different businesses: showing a customer their shed price is a
+   thing every ShedPro staffer does all day, and spending Potentia's money
+   sourcing leads is not. One password doing both means the first is handed
+   out until the second is no longer protected.
+
+   Unset means nobody can unlock, which is the right way round to fail: the
+   generator spends money, so "no password configured" has to mean shut, not
+   open. */
 function leadsPassword(env) {
-  return env.LEADS_PASSWORD || env.ADMIN_PASSWORD || null;
+  return env.LEADS_PASSWORD || null;
 }
 
 // ---- /chat: AI assistant ----
@@ -5780,7 +5787,7 @@ export default {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const secret = leadsPassword(env);
         if (!secret || !env.ADMIN_SESSION_SECRET) {
-          return json({ error: "Lead generator password not configured" }, 503, origin);
+          return json({ error: "No lead generator password is set. Add LEADS_PASSWORD as a secret on the Worker." }, 503, origin);
         }
         const body = await request.json().catch(() => ({}));
         const given = typeof body.password === "string" ? body.password : "";
