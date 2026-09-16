@@ -471,22 +471,26 @@ test('a run reports each business as it is checked', async () => {
   assert.match(judged.reason, /No website/);
 });
 
-test('a PageSpeed account failure stops the run and spares the candidates', async () => {
+test('a refused speed test never burns a candidate\u2019s attempts', async () => {
   const { env, db } = await seededEnv();
-  const calls = stubFetch({
+  stubFetch({
     places: () => ok({ places: [WITH_SITE(1), WITH_SITE(2), WITH_SITE(3)] }),
     pagespeed: () => new Response(JSON.stringify({
-      error: { code: 403, message: 'PageSpeed Insights API has not been used in project 123 before or it is disabled.' }
+      error: { code: 403, message: 'Requests to this API pagespeedonline method ... are blocked.' }
     }), { status: 403 })
   });
 
   const out = await runLeadPipeline(env, { trigger: 'manual', limit: 3 });
-  assert.equal(calls.pagespeed, 1, 'asked once — the API being off is the same answer every time');
-  assert.match(out.errors.join(' '), /stopped: PageSpeed 403/);
+  assert.equal(out.deferred, 3, 'all three are waiting for a working speed test');
+  assert.equal(out.failed, 0, 'none retired');
 
-  const row = db.prepare("SELECT attempts, status FROM lead_candidates WHERE place_id='P1'").get();
-  assert.equal(Number(row.attempts), 0, 'not the business’s fault');
-  assert.equal(out.failed, 0);
+  /* Three runs during a misconfigured key must not retire three good
+     businesses for something that was never about them. */
+  for (const id of ['P1', 'P2', 'P3']) {
+    const row = db.prepare("SELECT status, attempts FROM lead_candidates WHERE place_id=?").get(id);
+    assert.equal(row.status, 'new');
+    assert.equal(Number(row.attempts), 0, id + ' kept its attempts');
+  }
 });
 
 test('the businesses with no site at all still land when PageSpeed is off', async () => {
@@ -959,4 +963,111 @@ test('a switched-on category actually gets searched', async () => {
   assert.ok(queries.length > 0, 'it searched something');
   for (const q of queries)
     assert.match(q, /detail|ceramic coating/, 'and only the category that is on: ' + q);
+});
+
+test('a lead remembers which trade found it, not just its category', async () => {
+  const { env, db } = await freshEnv();
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
+              VALUES ('roofing contractor','Carlsbad','CA','subcontractor',2,1,?)`).run(now);
+
+  stubFetch({ places: () => ok({ places: [PLACE(1)] }), pagespeed: PS(10) });
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+
+  const row = db.prepare("SELECT * FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(row.lead_trade, 'roofing contractor',
+    '"subcontractor" is a bucket; "roofing contractor" is what you say on the phone');
+  assert.equal(row.lead_segment, 'subcontractor', 'the category is still there to group by');
+});
+
+test('the trade survives a reseed, because it is not a foreign key', async () => {
+  const { env, db } = await freshEnv();
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
+              VALUES ('ceramic coating','Irvine','CA','detailer',1,1,?)`).run(now);
+
+  stubFetch({ places: () => ok({ places: [PLACE(1)] }), pagespeed: PS(10) });
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+
+  /* A reseed deletes every lead_sources row, so a lead that pointed at one by
+     id would lose its trade. It is copied onto the candidate instead. */
+  await seedLeadSources(env, true);
+  const row = db.prepare("SELECT lead_trade FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(row.lead_trade, 'ceramic coating');
+});
+
+// ── PageSpeed must never be able to stop the whole pipeline ───────────────
+
+test('a key the project refuses falls back to a keyless request', async () => {
+  const seen = [];
+  const reply = async (u) => {
+    seen.push(String(u));
+    if (String(u).includes('key=')) {
+      return new Response(JSON.stringify({ error: { code: 403,
+        message: 'Requests to this API pagespeedonline method ... are blocked.' } }), { status: 403 });
+    }
+    return new Response(JSON.stringify({ lighthouseResult: {
+      categories: { performance: { score: 0.4 } }, audits: { viewport: { score: 1 } }
+    } }), { status: 200 });
+  };
+
+  /* PageSpeed works with no key at all — the key only buys a higher rate
+     limit — so a restriction the project will not accept is a reason to drop
+     the key, not to stop working. */
+  const out = await pageSpeed({ GOOGLE_PLACES_API_KEY: 'restricted' }, 'https://x.example', reply);
+  assert.equal(out.performance, 40, 'it got the answer anyway');
+  assert.equal(seen.length, 2);
+  assert.match(seen[0], /key=restricted/);
+  assert.ok(!seen[1].includes('key='), 'the retry drops the key');
+});
+
+test('a 403 with no key set is not retried pointlessly', async () => {
+  let calls = 0;
+  const reply = async () => { calls++; return new Response('{}', { status: 403 }); };
+  await assert.rejects(() => pageSpeed({}, 'https://x.example', reply), /PageSpeed 403/);
+  assert.equal(calls, 1);
+});
+
+test('no speed test still means leads, just not the ones needing one', async () => {
+  const { env, db } = await seededEnv();
+  const calls = stubFetch({
+    places: () => ok({ places: [
+      WITH_SITE(1),   // needs a speed test
+      PLACE(2),       // no website — judgeable for free
+      WITH_SITE(3),   // needs one
+      PLACE(4)        // no website
+    ] }),
+    pagespeed: () => new Response(JSON.stringify({ error: { code: 403,
+      message: 'Requests to this API pagespeedonline method ... are blocked.' } }), { status: 403 })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 4 });
+
+  /* The old behaviour stopped the whole run at the first refused check, so a
+     misconfigured key cost every lead in the queue, not just the two that
+     needed a speed test. */
+  assert.equal(out.pushed, 2, 'both no-website businesses still landed');
+  assert.equal(out.deferred, 2, 'and the two needing a check were put back');
+  assert.match(out.errors.join(' '), /speed test unavailable/);
+  assert.ok(!out.errors.join(' ').includes('stopped:'), 'the run did not stop');
+
+  // Asked once with the key, once without, then never again this run.
+  assert.equal(calls.pagespeed, 2, 'it stops asking after the first refusal');
+
+  const deferred = db.prepare("SELECT status, attempts FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(deferred.status, 'new', 'waiting, not failed');
+  assert.equal(Number(deferred.attempts), 0, 'and it did not burn an attempt it never used');
+});
+
+test('an account failure that is not PageSpeed still stops the run', async () => {
+  const { env } = await seededEnv();
+  const calls = stubFetch({
+    places: () => new Response(JSON.stringify({ error: { message: 'credit balance is too low' } }), { status: 400 }),
+    pagespeed: PS(10)
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 4 });
+  assert.equal(calls.places, 1);
+  assert.equal(out.sourced, 0);
 });
