@@ -32,7 +32,9 @@
     if (/business\.site/.test(r)) return { tone: 'bad', text: 'Dead Google site' };
     if (/just a ([a-z.]+) page/.test(r)) return { tone: 'bad', text: r.match(/just a ([a-z.]+) page/)[1] + ' only' };
     if (/plain http/.test(r)) return { tone: 'bad', text: 'No https' };
-    if (/cannot load/.test(r)) return { tone: 'bad', text: 'Site will not load' };
+    if (/does not load|does not resolve|returns an error|never finishes loading|not served securely|cannot load/.test(r)) {
+    return { tone: 'bad', text: 'Site will not load' };
+  }
     return null;
   }
 

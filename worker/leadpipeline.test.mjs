@@ -13,7 +13,7 @@ import {
   pushLeadToCrm, stripCandidate, spentToday, defaultSources, seedLeadSources,
   offerName, LEAD_DEFAULTS, placesReject, placesPromise,
   apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT,
-  placeArea, coprimeStride, SEGMENTS, LEAD_SEGMENTS, HOME_STATE,
+  placeArea, coprimeStride, SEGMENTS, LEAD_SEGMENTS, HOME_STATE, brokenSiteCode,
   listSegments, setSegmentEnabled, tradeLabel, tradeLabels
 } from './leadpipeline.js';
 
@@ -338,7 +338,7 @@ test('a real site is judged on Google’s own mobile test', async () => {
 
   const broken = await websiteVerdict({}, site, ps({ unreachable: true, code: 'FAILED_DOCUMENT_REQUEST' }));
   assert.equal(broken.qualified, true);
-  assert.match(broken.reason, /cannot load/);
+  assert.match(broken.reason, /does not load/, 'in words, not a Lighthouse error code');
 
   const fine = await websiteVerdict({}, site, ps({ performance: 91, hasViewport: true }));
   assert.equal(fine.qualified, false, 'a business with a good site is not a lead');
@@ -1375,4 +1375,64 @@ test('a recheck stops if the speed test is still unavailable', async () => {
   assert.match(out.errors.join(' '), /still unavailable/);
   assert.equal(db.prepare("SELECT status FROM clients WHERE id = ?").get(a).status, 'lead',
     'and nothing is retired on the strength of a check that never ran');
+});
+
+// ── a website that does not load is a lead, not a failure ────────────────
+
+test('Lighthouse’s ways of saying "I could not load this" are recognised', () => {
+  const body = (code) => JSON.stringify({ error: { code: 400,
+    message: 'Lighthouse returned error: ' + code + '. Lighthouse was unable to reliably load the page.' } });
+
+  assert.equal(brokenSiteCode(body('FAILED_DOCUMENT_REQUEST')), 'FAILED_DOCUMENT_REQUEST');
+  assert.equal(brokenSiteCode(body('DNS_FAILURE')), 'DNS_FAILURE');
+  assert.equal(brokenSiteCode(body('NO_FCP')), 'NO_FCP');
+  assert.equal(brokenSiteCode(body('ERRORED_DOCUMENT_REQUEST')), 'ERRORED_DOCUMENT_REQUEST');
+
+  // A refused key is not a broken site and must not be read as one.
+  assert.equal(brokenSiteCode('{"error":{"code":403,"message":"Requests to this API ... are blocked."}}'), null);
+  assert.equal(brokenSiteCode('{"error":{"code":429,"message":"Quota exceeded"}}'), null);
+  assert.equal(brokenSiteCode(''), null);
+  assert.equal(brokenSiteCode(null), null);
+});
+
+test('a 400 saying the page would not load qualifies the business', async () => {
+  /* Google answers this as a 400 rather than as a result, so it used to throw:
+     the candidate was counted "could not be researched" and retried until it
+     retired. A business whose website does not answer is the best call on the
+     list after one with no website at all. */
+  const reply = async () => new Response(JSON.stringify({ error: { code: 400,
+    message: 'Lighthouse returned error: FAILED_DOCUMENT_REQUEST. Lighthouse was unable to reliably load the page you requested.' } }),
+    { status: 400 });
+
+  const ps = await pageSpeed({ GOOGLE_PLACES_API_KEY: 'k' }, 'https://broken.example', reply);
+  assert.equal(ps.unreachable, true);
+  assert.equal(ps.code, 'FAILED_DOCUMENT_REQUEST');
+
+  const v = await websiteVerdict({}, { website: 'https://broken.example', review_count: 22 },
+    { pageSpeed: async () => ps });
+  assert.equal(v.qualified, true);
+  assert.match(v.reason, /does not load/, 'and it says so in words a caller can read out');
+  assert.match(v.reason, /22 Google reviews/);
+  assert.ok(v.score > 88, 'ranked near a business with no website at all');
+});
+
+test('a real PageSpeed failure still fails', async () => {
+  const reply = async () => new Response(
+    '{"error":{"code":403,"message":"Requests to this API pagespeedonline method ... are blocked."}}',
+    { status: 403 });
+  await assert.rejects(() => pageSpeed({}, 'https://x.example', reply), /PageSpeed 403/);
+});
+
+test('a broken site found by a run lands as a lead', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [WITH_SITE(1)] }),
+    pagespeed: () => new Response(JSON.stringify({ error: { code: 400,
+      message: 'Lighthouse returned error: DNS_FAILURE.' } }), { status: 400 })
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(out.pushed, 1);
+  assert.equal(out.failed, 0, 'not a failure');
+  const row = db.prepare("SELECT lead_reason FROM clients WHERE created_by_pipeline = 1").get();
+  assert.match(row.lead_reason, /domain does not resolve/);
 });
