@@ -19,6 +19,7 @@
 // other module-level const here.
 
 import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget } from "./pricing.js";
+import { runLeadPipeline, ensureLeadPipelineTables } from "./leadpipeline.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -2886,6 +2887,23 @@ export default {
       if (path === "/crm/lead" && request.method === "POST") {
         return await handleCrmLead(request, env, origin);
       }
+      /* Manual trigger for testing. Admin-gated and capped the same as the
+         cron path — ?dry=1 sources and dedupes without spending on AI. */
+      if (path === "/crm/leads/run-now" && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const limit = Number(url.searchParams.get("limit") || 5);
+        const dryRun = url.searchParams.get("dry") === "1";
+        const out = await runLeadPipeline(env, { trigger: "manual", limit, dryRun });
+        return json(out, 200, origin);
+      }
+      if (path === "/crm/leads/runs" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        await ensureLeadPipelineTables(env);
+        const rows = await env.CRM_DB.prepare(
+          "SELECT * FROM enrichment_runs ORDER BY id DESC LIMIT 30"
+        ).all();
+        return json({ runs: rows.results || [] }, 200, origin);
+      }
       if (path === "/crm/analytics" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleCrmAnalytics(request, env, origin);
@@ -3023,5 +3041,21 @@ export default {
     } catch (e) {
       return json({ error: "Server error", detail: String(e) }, 500, origin);
     }
+  },
+
+  /* Cron Triggers. Schedule this at an interval of an hour or MORE: Cloudflare
+     gives a scheduled handler 30s of CPU below an hour and 15 minutes at an
+     hour or above, and this run makes several slow AI calls. Waiting on fetch()
+     is not CPU time, so the work fits comfortably in the 15-minute tier and
+     would be tight in the 30-second one.
+
+     Wrapped in waitUntil so the run is not cut short when the handler returns,
+     and swallowed on error — a failed run is already recorded in
+     enrichment_runs, and throwing here just retries the whole thing. */
+  async scheduled(event, env, ctx) {
+    if (!env.CRM_DB || !env.GOOGLE_PLACES_API_KEY) return;
+    ctx.waitUntil(
+      runLeadPipeline(env, { trigger: "cron" }).catch(() => {})
+    );
   }
 };

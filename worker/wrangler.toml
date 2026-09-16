@@ -1,3 +1,18 @@
 name = "potentia-assistant"
 main = "index.js"
 compatibility_date = "2026-08-01"
+
+# Lead pipeline schedule.
+#
+# The interval must stay at an hour or MORE. Cloudflare gives a scheduled
+# handler 30 seconds of CPU below an hour and 15 minutes at an hour or above,
+# and a run makes several slow AI calls. Waiting on fetch() is not CPU time, so
+# the work fits the 15-minute tier easily and would be tight in the 30-second
+# one — dropping this to */30 would quietly move it to the short tier.
+#
+# NOTE: this Worker is deployed by pasting worker/dist/index.bundle.js into the
+# dashboard, not by `wrangler deploy`, so this block documents the intent — the
+# trigger itself has to be added in the dashboard under
+#   Workers & Pages -> potentia-assistant -> Settings -> Triggers -> Cron.
+[triggers]
+crons = ["0 * * * *"]
