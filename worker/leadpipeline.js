@@ -36,7 +36,12 @@ export const LEAD_COST = {
 };                            // PageSpeed is free; there is nothing else to pay for.
 
 export const LEAD_DEFAULTS = {
-  perRun: 5,                  // websites checked per run
+  /* Websites checked per run. This was 5 when each one cost six cents of AI
+     research; checking is free now, so the only cost is the ten to thirty
+     seconds Google takes per site that actually has one. At 20 the run drains
+     its queue at roughly the rate sourcing fills it, instead of paying Places
+     for candidates that pile up unjudged. */
+  perRun: 20,
   dailyUsdCap: 5.0,
   maxAttempts: 3,
   sourceBatch: 2,             // Places queries per run
@@ -660,7 +665,7 @@ export async function spentToday(env) {
 }
 
 // ── the run ───────────────────────────────────────────────────────────────
-/* One run: source a couple of queries, then enrich+score up to `perRun`
+/* One run: source a couple of queries, then check up to `perRun`
    candidates. Every paid call is preceded by a ceiling check, so a run that
    starts under budget and crosses it mid-way stops cleanly rather than
    finishing the batch.

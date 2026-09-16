@@ -634,3 +634,34 @@ test('a measured score is kept even when the verdict turns on something else', a
   assert.equal(v.speed, 78, 'the caller should still see what Google scored it');
   assert.equal(v.mobileReady, false);
 });
+
+test('a run with no limit named checks the default batch, not five', async () => {
+  const { env, db } = await seededEnv();
+  const now = new Date().toISOString();
+  // Twelve staged candidates, none with a website, so nothing is slow.
+  for (let i = 1; i <= 12; i++) {
+    db.prepare(`INSERT INTO lead_candidates (place_id, segment, offer_hint, status, places_json, promise, created_at, updated_at)
+                VALUES (?, 'handyman', 1, 'new', ?, 50, ?, ?)`)
+      .run('Q' + i, JSON.stringify({ place_id: 'Q' + i, name: 'Q Co ' + i, website: '', review_count: 20 }), now, now);
+  }
+  stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual' });
+  assert.equal(LEAD_DEFAULTS.perRun, 20, 'the default is the one number that decides this');
+  assert.equal(out.pushed, 12, 'the whole queue was worked, not the first five');
+});
+
+test('the batch size is clamped, however it is asked for', async () => {
+  const { env, db } = await seededEnv();
+  const now = new Date().toISOString();
+  for (let i = 1; i <= 30; i++) {
+    db.prepare(`INSERT INTO lead_candidates (place_id, segment, offer_hint, status, places_json, promise, created_at, updated_at)
+                VALUES (?, 'handyman', 1, 'new', ?, 50, ?, ?)`)
+      .run('R' + i, JSON.stringify({ place_id: 'R' + i, name: 'R Co ' + i, website: '', review_count: 20 }), now, now);
+  }
+  stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
+
+  // A run cannot be talked into an unbounded batch by the query string.
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 500 });
+  assert.equal(out.pushed, 25, 'the hard ceiling holds');
+});

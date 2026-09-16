@@ -173,14 +173,15 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
     <h2>Find new leads</h2>
     <div class="lp-row">
       <button class="lp-btn lp-dry" id="lp-dry">Dry run &mdash; find &amp; dedupe only</button>
-      <button class="lp-btn lp-live" id="lp-live">Real run &mdash; check 5 websites</button>
+      <button class="lp-btn lp-live" id="lp-live">Real run &mdash; check websites &amp; add leads</button>
     </div>
     <p class="lp-note">
-      A dry run searches your configured cities and stages what it finds. A real run then
-      checks 5 of those for a website: no site, a dead or Facebook-only one, plain http, or
-      one that fails Google's mobile speed test means they go straight into the list below.
-      Google runs the speed test, which takes a few seconds per site, so give it a couple of
-      minutes. Everything it finishes is saved even if you close the page.
+      A dry run searches your configured cities and stages what it finds. A real run works
+      through the queue: no site, a dead or Facebook-only one, plain http, or one that fails
+      Google's mobile speed test, and they go straight into the list below. It tells you how
+      many it is checking as it starts. The ones with no website are instant; the rest wait
+      on Google's speed test, so a full batch takes several minutes. Everything it finishes
+      is saved even if you close the page.
     </p>
     <div class="lp-out" id="lp-out" hidden></div>
   </section>
@@ -282,7 +283,7 @@ function authFetch(path, options) {
      this reads the body as it arrives instead of using authFetch, which waits
      for the whole response and parses it as one JSON object. */
   function streamRun(isDry, onLine) {
-    return fetch(API_BASE + '/crm/leads/run-now?' + (isDry ? 'dry=1' : 'limit=5'), {
+    return fetch(API_BASE + '/crm/leads/run-now' + (isDry ? '?dry=1' : ''), {
       method: 'POST', headers: { 'Authorization': 'Bearer ' + token }
     }).then(function (res) {
       if (res.status === 401) {
