@@ -267,6 +267,33 @@ async function requireCrmAuth(request, env) {
   return payload && payload.crm === true ? payload : null;
 }
 
+/* A second gate in front of the lead generator. Everyone working the phones
+   gets a CRM login; the generator spends real money and rewrites the search
+   grid, and that is not something a caller should be able to do by accident.
+
+   Enforced here rather than by hiding the section, because a hidden button is
+   not a lock — the endpoints are one fetch away from anyone with a login.
+
+   The unlock token is sent in its own header. Piggybacking on Authorization
+   would mean a caller's CRM token being swapped out for this one. */
+async function leadsGate(request, env) {
+  /* 401 and 403 mean different things to the page: a 401 sends someone to the
+     login screen, a 403 shows the unlock box. Collapsing both into one would
+     bounce a signed-in caller to a login they have already done. */
+  if (!(await requireCrmAuth(request, env))) return { status: 401, error: "Unauthorized" };
+  const raw = request.headers.get("X-Leads-Unlock") || "";
+  const payload = await verifyToken(env.ADMIN_SESSION_SECRET, raw);
+  if (!payload || payload.leads !== true) return { status: 403, error: "Locked" };
+  return null;
+}
+
+/* Falls back to the ShedPro admin password when LEADS_PASSWORD is unset, so
+   the lock works the moment it ships rather than leaving the generator open
+   until someone remembers to add a secret. */
+function leadsPassword(env) {
+  return env.LEADS_PASSWORD || env.ADMIN_PASSWORD || null;
+}
+
 // ---- /chat: AI assistant ----
 async function handleChat(request, env, origin) {
   let body;
@@ -2232,6 +2259,7 @@ async function ensureCrmTables(env) {
         outcome TEXT NOT NULL,
         duration_min REAL,
         notes TEXT,
+        logged_by TEXT,
         called_at TEXT NOT NULL,
         created_at TEXT NOT NULL
       )`
@@ -2248,6 +2276,24 @@ async function ensureCrmTables(env) {
       )`
     )
   ]);
+
+  /* CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+     so anything added after the first deploy has to be an ALTER. D1 has no
+     "ADD COLUMN IF NOT EXISTS" and a duplicate ADD throws, so read the table
+     and add only what is missing. */
+  for (const [table, cols] of [
+    ["clients", [["owner", "TEXT"], ["owner_since", "TEXT"]]],
+    ["client_calls", [["logged_by", "TEXT"]]]
+  ]) {
+    const have = await env.CRM_DB.prepare(`PRAGMA table_info(${table})`).all();
+    const names = (have.results || []).map((r) => r.name);
+    for (const [name, decl] of cols) {
+      if (names.indexOf(name) === -1) {
+        await env.CRM_DB.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${decl}`).run();
+      }
+    }
+  }
+
   crmTablesReady = true;
 }
 
@@ -2418,7 +2464,7 @@ async function handleCrmGetClient(request, env, origin, id) {
     .bind(id)
     .all();
   const { results: calls } = await env.CRM_DB.prepare(
-    "SELECT id, direction, outcome, duration_min, notes, called_at, created_at FROM client_calls WHERE client_id = ? ORDER BY called_at DESC, id DESC"
+    "SELECT id, direction, outcome, duration_min, notes, logged_by, called_at, created_at FROM client_calls WHERE client_id = ? ORDER BY called_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -2669,16 +2715,36 @@ async function handleCrmAddCall(request, env, origin, clientId) {
   const durationRaw = Number(body.duration_min);
   const duration = Number.isFinite(durationRaw) && durationRaw > 0 ? Math.min(durationRaw, 600) : null;
   const notes = crmStr(body.notes, 2000);
+  const loggedBy = crmStr(body.logged_by, 60);
   const calledAt = body.called_at ? String(body.called_at).slice(0, 40) : new Date().toISOString();
 
   const now = new Date().toISOString();
   const res = await env.CRM_DB.prepare(
-    "INSERT INTO client_calls (client_id, direction, outcome, duration_min, notes, called_at, created_at) VALUES (?,?,?,?,?,?,?)"
+    "INSERT INTO client_calls (client_id, direction, outcome, duration_min, notes, logged_by, called_at, created_at) VALUES (?,?,?,?,?,?,?,?)"
   )
-    .bind(clientId, direction, outcome, duration, notes, calledAt, now)
+    .bind(clientId, direction, outcome, duration, notes, loggedBy, calledAt, now)
     .run();
+
+  /* Whoever gets the customer on the phone owns the lead. Voicemail and
+     no-answer are not contact — you can leave five of those and have spoken
+     to nobody — so they claim nothing. And it is FIRST contact: this only
+     ever writes into an empty owner, so a later caller opening the record
+     cannot take a lead off the person who actually earned it. */
+  const claimed = await claimLead(env, clientId, loggedBy, outcome);
+
   await touchClient(env, clientId);
-  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+  return json({ ok: true, id: res.meta.last_row_id, claimed_by: claimed }, 200, origin);
+}
+
+const CONTACT_OUTCOMES = ["connected", "callback"];
+
+async function claimLead(env, clientId, loggedBy, outcome) {
+  if (!loggedBy || CONTACT_OUTCOMES.indexOf(outcome) === -1) return null;
+  const res = await env.CRM_DB.prepare(
+    `UPDATE clients SET owner = ?, owner_since = ?
+      WHERE id = ? AND (owner IS NULL OR owner = '')`
+  ).bind(loggedBy, new Date().toISOString(), clientId).run();
+  return res && res.meta && res.meta.changes ? loggedBy : null;
 }
 
 async function handleCrmDeleteCall(request, env, origin, id) {
@@ -2890,7 +2956,8 @@ export default {
       /* Manual trigger for testing. Admin-gated and capped the same as the
          cron path — ?dry=1 sources and dedupes without spending on AI. */
       if (path === "/crm/leads/run-now" && request.method === "POST") {
-        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
         /* Only pass a limit if the caller actually named one — otherwise the
            pipeline's own default applies. This used to hardcode 5 here as
            well, which quietly overrode it. */
@@ -2951,7 +3018,8 @@ export default {
         });
       }
       if (path === "/crm/leads/segments" && request.method === "GET") {
-        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
         await ensureLeadPipelineTables(env);
         // Seed on first read so the toggles are never an empty list.
         await seedLeadSources(env, false);
@@ -2961,7 +3029,8 @@ export default {
         return json({ segments: await listSegments(env), trades: tradeLabels() }, 200, origin);
       }
       if (path === "/crm/leads/segments" && request.method === "POST") {
-        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
         await ensureLeadPipelineTables(env);
         const body = await request.json().catch(() => ({}));
         try {
@@ -2973,12 +3042,47 @@ export default {
         }
       }
       if (path === "/crm/leads/runs" && request.method === "GET") {
-        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
         await ensureLeadPipelineTables(env);
         const rows = await env.CRM_DB.prepare(
           "SELECT * FROM enrichment_runs ORDER BY id DESC LIMIT 30"
         ).all();
         return json({ runs: rows.results || [] }, 200, origin);
+      }
+      if (path === "/crm/leads/unlock" && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const secret = leadsPassword(env);
+        if (!secret || !env.ADMIN_SESSION_SECRET) {
+          return json({ error: "Lead generator password not configured" }, 503, origin);
+        }
+        const body = await request.json().catch(() => ({}));
+        const given = typeof body.password === "string" ? body.password : "";
+        if (!timingSafeEqual(given, secret)) {
+          return json({ error: "Wrong password" }, 401, origin);
+        }
+        const unlock = await signToken(env.ADMIN_SESSION_SECRET,
+          { leads: true, exp: Date.now() + SESSION_TTL_MS });
+        return json({ ok: true, unlock }, 200, origin);
+      }
+      if (path === "/crm/callers" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        await ensureCrmTables(env);
+        /* Built from who has actually logged calls rather than a list someone
+           has to maintain: the first caller types their name, everyone after
+           picks it. */
+        const rows = await env.CRM_DB.prepare(
+          `SELECT logged_by AS name, COUNT(*) AS calls FROM client_calls
+            WHERE logged_by IS NOT NULL AND logged_by != ''
+            GROUP BY logged_by ORDER BY calls DESC LIMIT 50`
+        ).all();
+        const owners = await env.CRM_DB.prepare(
+          "SELECT owner AS name, COUNT(*) AS leads FROM clients WHERE owner IS NOT NULL AND owner != '' GROUP BY owner"
+        ).all();
+        const seen = {};
+        for (const r of rows.results || []) seen[r.name] = true;
+        for (const r of owners.results || []) seen[r.name] = true;
+        return json({ callers: Object.keys(seen).sort() }, 200, origin);
       }
       if (path === "/crm/analytics" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

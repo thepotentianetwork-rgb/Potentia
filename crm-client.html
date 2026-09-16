@@ -57,6 +57,9 @@ section{margin-bottom:52px}
 .why-badge{display:inline-flex;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;border:1px solid;margin-left:12px;vertical-align:middle}
 .why-bad{color:#e0725f;border-color:rgba(224,114,95,0.45);background:rgba(224,114,95,0.1)}
 .why-mid{color:#d8a15f;border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
+.call-hint{font-size:12px;color:var(--dim);line-height:1.6;margin:8px 0 14px}
+.call-by{font-family:'DM Mono',monospace;font-size:10px;color:var(--warm);margin-left:10px}
+.owner-tag{display:inline-flex;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;border:1px solid rgba(216,161,95,0.45);background:rgba(216,161,95,0.1);color:var(--warm);margin-left:12px;vertical-align:middle}
 .summary-line{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:30px}
 
 /* details form */
@@ -237,8 +240,11 @@ section{margin-bottom:52px}
       <input id="call-dur" type="number" min="1" max="600" step="1" placeholder="Min" style="width:90px">
       <input id="call-date" type="date" style="width:150px">
       <input id="call-notes" class="grow" type="text" placeholder="What was said — e.g. wants the booking page live before the 1st">
+      <input id="call-by" list="caller-names" type="text" placeholder="Logged by" style="width:150px" autocomplete="off">
+      <datalist id="caller-names"></datalist>
       <button class="btn" type="submit">Log Call</button>
     </form>
+    <p class="call-hint">Whoever first gets the customer on the phone owns the lead &mdash; voicemail and no answer claim nothing.</p>
     <div class="call-count" id="call-count"></div>
     <div id="calls-list"><p class="empty">Loading…</p></div>
   </section>
@@ -491,6 +497,13 @@ function fillDetails(c) {
 
   /* A pipeline lead gets the same block as the list, from the same code, so
      the two pages can never tell you different things about a business. */
+  if (c.owner && !document.querySelector('.owner-tag')) {
+    var ot = document.createElement('span');
+    ot.className = 'owner-tag';
+    ot.textContent = c.owner + "'s lead";
+    el('title-status').insertAdjacentElement('afterend', ot);
+  }
+
   window.__lastClient = c;
   fillLeadDetail(c);
 
@@ -858,6 +871,13 @@ function renderCalls(calls) {
       authFetch('/crm/calls/' + c.id, { method: 'DELETE' }).then(loadClient).catch(function () {});
     });
 
+    if (c.logged_by) {
+      var by = document.createElement('span');
+      by.className = 'call-by';
+      by.textContent = c.logged_by;
+      body.appendChild(by);
+    }
+
     row.appendChild(dir);
     row.appendChild(body);
     row.appendChild(del);
@@ -865,9 +885,29 @@ function renderCalls(calls) {
   });
 }
 
+/* Names of people who have logged calls before. The first caller types theirs;
+   everyone after picks it from the list, which keeps "Nando" from becoming
+   three different owners. */
+authFetch('/crm/callers').then(function (r) {
+  if (!r.ok || !r.data) return;
+  var dl = el('caller-names');
+  (r.data.callers || []).forEach(function (name) {
+    var o = document.createElement('option');
+    o.value = name;
+    dl.appendChild(o);
+  });
+}).catch(function () {});
+
+try {
+  var lastBy = localStorage.getItem('potentia_crm_caller');
+  if (lastBy) el('call-by').value = lastBy;
+} catch (e) {}
+
 el('call-form').addEventListener('submit', function (e) {
   e.preventDefault();
   var dateVal = el('call-date').value;
+  var by = el('call-by').value.trim();
+  try { if (by) localStorage.setItem('potentia_crm_caller', by); } catch (e2) {}
   authFetch('/crm/clients/' + clientId + '/calls', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -876,12 +916,16 @@ el('call-form').addEventListener('submit', function (e) {
       outcome: el('call-outcome').value,
       duration_min: el('call-dur').value || null,
       notes: el('call-notes').value,
+      logged_by: by,
       // Midday, not midnight, so a back-dated call doesn't sort behind
       // everything else logged that day. Blank means now.
       called_at: dateVal ? dateVal + 'T12:00:00.000Z' : null
     })
   }).then(function (r) {
     if (!r.ok) { alert((r.data && r.data.error) || 'Could not log that call.'); return; }
+    if (r.data && r.data.claimed_by) {
+      alert('This lead now belongs to ' + r.data.claimed_by + '.');
+    }
     el('call-dur').value = '';
     el('call-notes').value = '';
     el('call-date').value = '';

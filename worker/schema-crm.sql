@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS clients (
   domain TEXT,
   domain_renews_at TEXT,
   launched_at TEXT,
+  -- Whoever first got the customer on the phone. Set by the call log, never
+  -- overwritten: first contact wins.
+  owner TEXT,
+  owner_since TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -81,6 +85,7 @@ CREATE TABLE IF NOT EXISTS client_calls (
   outcome TEXT NOT NULL,     -- 'connected' | 'voicemail' | 'no-answer' | 'callback' | 'wrong-number'
   duration_min REAL,
   notes TEXT,
+  logged_by TEXT,            -- who made the call; claims the lead on first contact
   called_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );

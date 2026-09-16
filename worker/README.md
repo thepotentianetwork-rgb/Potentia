@@ -478,6 +478,7 @@ All server-side, set as Worker secrets — none of these reach the browser.
 | `GOOGLE_PLACES_API_KEY` | yes | Places API (New) Text Search, and PageSpeed Insights |
 | `LEADS_DAILY_USD_CAP` | no | rolling 24h ceiling, default `5.00` |
 | `LEADS_MIN_RATING` | no | star rating a business must clear, default `4.0` |
+| `LEADS_PASSWORD` | no | unlocks the lead generator; falls back to `ADMIN_PASSWORD` |
 
 Moving `LEADS_MIN_RATING` only affects businesses found after the change: one
 already screened out carries a tombstone that dedupes it away. To apply a new
@@ -495,6 +496,36 @@ first one that needs a speed test and says so.
 Set the key with `wrangler secret put NAME`, or in the dashboard under
 Settings → Variables and Secrets. `scheduled()` returns immediately if
 `GOOGLE_PLACES_API_KEY` is unset.
+
+### The lock
+
+Everyone working the phones gets a CRM login. The lead generator spends money
+and rewrites the search grid, so it sits behind a second password —
+`LEADS_PASSWORD`, falling back to `ADMIN_PASSWORD` so the lock works from the
+moment it ships rather than leaving the generator open until someone sets a
+secret.
+
+Unlocking returns a separate token sent as `X-Leads-Unlock`, not in
+`Authorization`: it says what you may do, not who you are, so unlocking never
+swaps out a caller's identity. Every `/crm/leads/*` endpoint checks it. The
+page hides the section too, but that is a convenience — a hidden button is not
+a lock, and the endpoints are one fetch away from anyone with a login.
+
+`401` and `403` are kept apart on purpose: a `401` sends someone to the login
+screen, a `403` shows the unlock box. Collapsing them would bounce a signed-in
+caller to a login they have already done.
+
+### Lead ownership
+
+Whoever first gets the customer on the phone owns the lead. The call log takes
+a `logged_by` name; an outcome of `connected` or `callback` writes it to
+`clients.owner`, but only into an empty one — a later caller opening the record
+cannot take a lead off the person who earned it. Voicemail, no answer and wrong
+number claim nothing; you can leave five voicemails and have spoken to nobody.
+
+`GET /crm/callers` returns the names that have logged calls, so the first
+caller types theirs and everyone after picks it from the list rather than
+turning one person into three owners by spelling.
 
 ### Categories
 

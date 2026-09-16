@@ -1,0 +1,164 @@
+/* Two rules that decide who may spend money and who owns a lead.
+ *
+ * Both are enforced in the Worker, not in the page. A hidden button is not a
+ * lock, and an owner the browser assigns is an owner anyone can reassign.
+ * Run: node --test worker/ownership.test.mjs
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import worker from "./index.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+function makeD1(db) {
+  function shape(sql) {
+    const stmt = db.prepare(sql);
+    const isSelect = /^\s*(select|pragma)/i.test(sql);
+    return (args) => ({
+      first() { return isSelect ? (stmt.get(...args) ?? null) : (stmt.run(...args), null); },
+      all() { return { results: stmt.all(...args) }; },
+      run() {
+        if (isSelect) return { results: stmt.all(...args) };
+        const r = stmt.run(...args);
+        return { meta: { last_row_id: Number(r.lastInsertRowid), changes: Number(r.changes) } };
+      }
+    });
+  }
+  return { prepare(sql) { const m = shape(sql); return { ...m([]), bind: (...a) => m(a) }; },
+           async batch(st) { return st.map((s) => s.run()); } };
+}
+
+async function setup() {
+  const crmDb = new DatabaseSync(":memory:");
+  /* Loaded from the schema file rather than left to ensureCrmTables, which
+     caches "already done" in a module-level flag — so the second test in a
+     process would get a database with no tables in it. */
+  crmDb.exec(fs.readFileSync(path.join(here, "schema-crm.sql"), "utf8"));
+  const env = { CRM_DB: makeD1(crmDb), ADMIN_PASSWORD: "adminpw", CRM_PASSWORD: "cpw",
+                LEADS_PASSWORD: "leadspw", ADMIN_SESSION_SECRET: "k",
+                GOOGLE_PLACES_API_KEY: "g" };
+
+  async function call(method, p, body, tok, unlock) {
+    const h = { Origin: "https://potentianetwork.com" };
+    if (body) h["Content-Type"] = "application/json";
+    if (tok) h.Authorization = "Bearer " + tok;
+    if (unlock) h["X-Leads-Unlock"] = unlock;
+    const res = await worker.fetch(new Request("https://x" + p,
+      { method, headers: h, body: body ? JSON.stringify(body) : undefined }), env);
+    const text = await res.text();
+    let data = null; try { data = JSON.parse(text); } catch (e) {}
+    return { status: res.status, data, text };
+  }
+
+  const crmTok = (await call("POST", "/crm/login", { password: "cpw" })).data.token;
+  await call("POST", "/crm/clients", { business_name: "Valley Drywall", phone: "9495551234" }, crmTok);
+  return { env, crmDb, call, crmTok };
+}
+
+test("the lead generator is locked to a CRM login alone", async () => {
+  const { call, crmTok } = await setup();
+
+  /* Everyone working the phones has one of these. Spending money and
+     rewriting the search grid is not theirs to do. */
+  for (const [method, path] of [["GET", "/crm/leads/segments"],
+                                ["POST", "/crm/leads/segments"],
+                                ["POST", "/crm/leads/run-now?dry=1"],
+                                ["GET", "/crm/leads/runs"]]) {
+    const r = await call(method, path, method === "POST" ? {} : null, crmTok);
+    assert.equal(r.status, 403, method + " " + path + " should be locked");
+  }
+
+  // And without any login at all it is still 401, not 403.
+  assert.equal((await call("GET", "/crm/leads/segments")).status, 401);
+});
+
+test("the right password unlocks it; the wrong one does not", async () => {
+  const { call, crmTok } = await setup();
+
+  assert.equal((await call("POST", "/crm/leads/unlock", { password: "nope" }, crmTok)).status, 401);
+  // The unlock itself needs a CRM login — it is a second gate, not a way past the first.
+  assert.equal((await call("POST", "/crm/leads/unlock", { password: "leadspw" })).status, 401);
+
+  const ok = await call("POST", "/crm/leads/unlock", { password: "leadspw" }, crmTok);
+  assert.equal(ok.status, 200);
+  assert.ok(ok.data.unlock, "an unlock token comes back");
+
+  const seg = await call("GET", "/crm/leads/segments", null, crmTok, ok.data.unlock);
+  assert.equal(seg.status, 200);
+  assert.ok(Array.isArray(seg.data.segments));
+});
+
+test("an unlock token is not a login, and a login is not an unlock", async () => {
+  const { call, crmTok } = await setup();
+  const unlock = (await call("POST", "/crm/leads/unlock", { password: "leadspw" }, crmTok)).data.unlock;
+
+  // The unlock alone gets you nothing — it says what you may do, not who you are.
+  assert.equal((await call("GET", "/crm/leads/segments", null, null, unlock)).status, 401);
+  // And a CRM token in the unlock header is not an unlock.
+  assert.equal((await call("GET", "/crm/leads/segments", null, crmTok, crmTok)).status, 403);
+});
+
+test("whoever gets them on the phone owns the lead", async () => {
+  const { call, crmTok, crmDb } = await setup();
+
+  await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "connected", logged_by: "Maya" }, crmTok);
+  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, "Maya");
+
+  /* First contact wins. A second caller opening the record later cannot take
+     a lead off the person who actually earned it. */
+  const second = await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "connected", logged_by: "Chris" }, crmTok);
+  assert.equal(second.data.claimed_by, null, "nothing to claim");
+  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, "Maya");
+});
+
+test("voicemail and no answer claim nothing", async () => {
+  const { call, crmTok, crmDb } = await setup();
+
+  for (const outcome of ["voicemail", "no-answer", "wrong-number"]) {
+    const r = await call("POST", "/crm/clients/1/calls",
+      { direction: "outbound", outcome, logged_by: "Maya" }, crmTok);
+    assert.equal(r.data.claimed_by, null, outcome + " is not contact");
+  }
+  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, null,
+    "you can leave five voicemails and have spoken to nobody");
+
+  // A callback request is contact — they picked up and asked to be rung back.
+  const cb = await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "callback", logged_by: "Chris" }, crmTok);
+  assert.equal(cb.data.claimed_by, "Chris");
+});
+
+test("a call with no name logged claims nothing, and is still logged", async () => {
+  const { call, crmTok, crmDb } = await setup();
+  const r = await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "connected" }, crmTok);
+  assert.equal(r.status, 200);
+  assert.equal(r.data.claimed_by, null);
+  assert.equal(crmDb.prepare("SELECT owner FROM clients WHERE id = 1").get().owner, null);
+  assert.equal(Number(crmDb.prepare("SELECT COUNT(*) AS c FROM client_calls").get().c), 1);
+});
+
+test("the caller list is built from who has actually called", async () => {
+  const { call, crmTok } = await setup();
+  await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "connected", logged_by: "Maya" }, crmTok);
+  await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "voicemail", logged_by: "Chris" }, crmTok);
+
+  const r = await call("GET", "/crm/callers", null, crmTok);
+  assert.deepEqual(r.data.callers, ["Chris", "Maya"], "including whoever only left a voicemail");
+});
+
+test("who logged a call is returned with it", async () => {
+  const { call, crmTok } = await setup();
+  await call("POST", "/crm/clients/1/calls",
+    { direction: "outbound", outcome: "connected", logged_by: "Maya", notes: "wants a quote" }, crmTok);
+  const r = await call("GET", "/crm/clients/1", null, crmTok);
+  assert.equal(r.data.calls[0].logged_by, "Maya");
+});
