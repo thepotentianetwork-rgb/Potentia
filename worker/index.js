@@ -54,19 +54,22 @@ const ALLOWED_ORIGINS = [
   "http://localhost:8080"
 ];
 
-const SYSTEM_PROMPT = `You are the AI assistant embedded on the Potentia Studio website (a small web design & digital growth studio). Potentia builds custom, hand-built websites — no templates, no bloated platforms. 72-hour turnaround, free domain included for the first year.
+const SYSTEM_PROMPT = `You are the AI assistant embedded on the Potentia Studio website. Potentia builds two things: custom, hand-built websites — no templates, no bloated platforms, 72-hour turnaround, free domain for the first year — and the software a business runs on once the work arrives: fully custom CRMs and tailored sales platforms with data tracking. The website is where a client starts, not the whole offer; Potentia is looking for clients who want to grow with them over years, adding each piece when they need it rather than buying everything at once.
 
-Packages:
-01 — Foundation: 3-Page Essential Site. Home, About & Contact pages, 5 images, free domain (1 year). One-time build, no monthly subscription (edits after the first 7 days are billed per change request).
-02 — Booking: 3-Page Booking Site. Everything in Foundation, plus a live booking calendar. Includes a monthly plan for ongoing management & edits.
-03 — Gallery: 4-Page Gallery Site. 15-photo gallery page, 1 featured video, free domain (1 year). Includes a monthly plan to edit, manage & update photos.
-04 — Operator: Website + Growth System. Everything in Gallery, plus an AI chat assistant (like this one!), instant lead alerts, a built-in CRM, and a monthly performance report. Includes a monthly plan for the growth system & ongoing management.
+Stage One — the website (yours outright, no page builder underneath):
+Tier 1 — Home & Contact Site: two pages, who you are and how to reach you. 3 images, free domain (1 year). Includes a monthly plan for hosting & upkeep; edits after the first 7 days of launch are billed per change request.
+Tier 2 — Home, Gallery & Contact Site: everything in Tier 1, plus a gallery page (12 photos and 1 featured video). For businesses where seeing the work is what makes the customer call. Includes a monthly plan to edit, manage & update photos.
+Tier 3 — Gallery Site + Scheduling: everything in Tier 2, plus a live booking calendar — the customer picks a service and books a slot instead of waiting on a callback. Includes a monthly plan for the calendar & ongoing management.
 
-Add-ons: Promotional Video, Google Business Setup, Google Profile Management (monthly), AI Content Engine (monthly), Professional Photography, Logo Vectorization, Service Menu Design.
+Stage Two — the system (scoped and quoted per business):
+Fully Custom CRM: the software that manages the work once it arrives, built around the client's own pipeline stages and language, not a template. Website leads captured automatically, call logs, notes and follow-ups, per-person lead ownership, role-based access, their data exportable any time. Includes a monthly plan for hosting, support and changes.
+Sales Platform & Data Tracking: the tool the client's team works in all day — quoting, configuring, scheduling, inventory, customer portals — with live pipeline and revenue reporting underneath. Built in stages so each piece earns its keep before the next. Two logins are included and further logins are charged monthly per person.
+
+Add-ons, available at any stage: AI Chat Assistant (like this one!), Lead Alerts & Monthly Reporting, Promotional Video, Google Business Setup, Google Profile Management (monthly), AI Content Engine (monthly), Professional Photography, Logo Vectorization, Service Menu Design.
 
 Important: Potentia does not publish prices publicly — every quote is custom. NEVER state or guess a dollar amount, even if asked directly or pressured. If asked about cost, explain that pricing is tailored to the project and invite them to share project details on the contact page or by calling/texting (435) 277-0764; Potentia responds within 24 hours.
 
-Be warm, concise, and confident — a few sentences at most. You are a live example of what Potentia builds (the Operator package's AI assistant), so when it's natural you can mention that this chat is itself a sample of that add-on. Don't be pushy. If asked something unrelated to Potentia or web design, answer briefly and steer back.`;
+Be warm, concise, and confident — a few sentences at most. You are a live example of what Potentia builds (the AI Chat Assistant add-on), so when it's natural you can mention that this chat is itself a sample of it. Don't be pushy. If asked something unrelated to Potentia or web design, answer briefly and steer back.`;
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
@@ -2215,7 +2218,42 @@ const CRM_STATUSES = ["lead", "contacted", "proposal", "building", "live", "paus
 // Statuses that count as a paying client for MRR — a build in progress is
 // already on its monthly plan, a paused or lost one is not.
 const CRM_ACTIVE_STATUSES = ["building", "live"];
-const CRM_PACKAGES = ["", "foundation", "booking", "gallery", "operator", "custom"];
+/* The packages a client can be on, and what a build of each one costs.
+
+   `price` is the one-time build; `monthly` is the retainer that keeps the
+   site hosted, patched and looked after. Both are INTERNAL. The public site quotes nothing — every plan on
+   pricing.html says "Request Info", and the site's assistant is told in its
+   system prompt never to state a figure. They live here, behind CRM auth,
+   rather than in crm.html, because crm.html is a public file: anyone can read
+   its source without logging in. Nothing that should not be on a billboard
+   goes in a page.
+
+   Written once here and served to the CRM pages, so a price change is one
+   edit rather than a hunt through three files.
+
+   The retired names stay in the list. A client who bought a 4-Page Gallery
+   Site bought that, not a Tier 2, and rewriting their row would falsify the
+   record of what they paid for. They are marked retired so the CRM can stop
+   offering them for new work while still showing them on the clients who
+   have one. */
+const CRM_PACKAGE_LIST = [
+  { key: "tier1", label: "Tier 1 — Home & Contact", price: 500, monthly: 20 },
+  { key: "tier2", label: "Tier 2 — Home, Gallery & Contact", price: 1200, monthly: 75 },
+  { key: "tier3", label: "Tier 3 — Gallery + Scheduling", price: 1800, monthly: 150 },
+  /* `from: true` means the figure is a FLOOR, not the price. A CRM build is
+     scoped per business and starts here; quoting exactly 2000 because the box
+     was filled in with 2000 is the mistake this flag exists to prevent, so
+     the CRM says "from" next to it rather than showing it as a price. */
+  { key: "crm", label: "Custom CRM", price: 2000, monthly: 250, from: true },
+  { key: "platform", label: "Sales Platform", price: 5000, monthly: 350, from: true,
+    seatsIncluded: 2, perSeat: 50, perSeatFrom: true },
+  { key: "custom", label: "Custom", price: null, monthly: null },
+  { key: "foundation", label: "Foundation", price: null, retired: true },
+  { key: "booking", label: "Booking", price: null, retired: true },
+  { key: "gallery", label: "Gallery", price: null, retired: true },
+  { key: "operator", label: "Operator", price: null, retired: true }
+];
+const CRM_PACKAGES = [""].concat(CRM_PACKAGE_LIST.map((p) => p.key));
 const CRM_SOURCES = ["", "website", "referral", "instagram", "facebook", "google", "outreach", "repeat", "other"];
 const CRM_PAYMENT_METHODS = ["cash", "check", "venmo", "zelle", "card", "stripe", "paypal", "invoice", "other"];
 // What a payment was for. Keeps a $150/mo retainer from being read as another
@@ -3109,6 +3147,13 @@ export default {
           "SELECT * FROM enrichment_runs ORDER BY id DESC LIMIT 30"
         ).all();
         return json({ runs: rows.results || [] }, 200, origin);
+      }
+      if (path === "/crm/packages" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        /* Behind CRM auth because it carries the build prices, which are not
+           public. The labels alone would be harmless; the prices are why this
+           is an endpoint and not a constant in the page. */
+        return json({ packages: CRM_PACKAGE_LIST }, 200, origin);
       }
       if (path === "/crm/segment-names" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

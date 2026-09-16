@@ -96,6 +96,8 @@ tr.group-head td{background:rgba(216,161,95,0.07);border-top:1px solid rgba(216,
 .new-panel.open{display:block}
 .field-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
 .field label{display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.fee-hint{grid-column:1 / -1;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.04em;color:var(--silver);margin:-6px 0 4px;min-height:13px}
+
 .field input,.field select{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none;appearance:none}
 .field select{font-family:'DM Mono',monospace;font-size:12px;text-transform:uppercase}
 .field input:focus,.field select:focus{border-color:var(--silver)}
@@ -306,6 +308,7 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
         <div class="field"><label for="n-build">Build Fee ($)</label><input id="n-build" type="number" min="0" step="0.01"></div>
         <div class="field"><label for="n-monthly">Monthly ($)</label><input id="n-monthly" type="number" min="0" step="0.01"></div>
         <div class="field"><label for="n-source">Source</label><select id="n-source"></select></div>
+        <p class="fee-hint" id="n-fee-hint"></p>
       </div>
       <div class="panel-actions">
         <button class="btn" id="n-save">Add Client</button>
@@ -380,7 +383,11 @@ authFetch('/crm/segment-names').then(function (r) {
 /* Search term -> the name shown for it, from the same endpoint. A lead stores
    the raw term it was found by; this is only ever for display and grouping. */
 var TRADE_LABELS = {};
-var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
+/* Filled from /crm/packages. Not written here: the list carries the build
+   prices, and this file is readable by anyone who visits it. */
+var PACKAGES = [['', '—']];
+var PACKAGE_PRICE = {};   // key -> { price, monthly }
+var PACKAGE_LABELS = {};
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 
 function authFetch(path, options) {
@@ -873,7 +880,26 @@ function fillSelect(el, pairs) {
 function today() { return new Date().toISOString().slice(0, 10); }
 
 // ---- new-client panel ----
-fillSelect(document.getElementById('n-package'), PACKAGES);
+/* The select is filled when the packages land rather than at load, so it is
+   populated once, from one place. Everything else on the panel works
+   meanwhile; only the package dropdown waits. */
+function loadPackages() {
+  return authFetch('/crm/packages').then(function (r) {
+    if (!r.ok || !r.data || !r.data.packages) return;
+    r.data.packages.forEach(function (p) {
+      if (p.retired) return;               // still shown on clients who have one, not offered for new work
+      PACKAGES.push([p.key, p.label]);
+      /* The whole row, not picked-out fields: `from`, `seatsIncluded` and
+         `perSeat` are what make the hint say "starts at" instead of "list",
+         and copying two keys silently dropped them. */
+      PACKAGE_PRICE[p.key] = p;
+    });
+    (r.data.packages || []).forEach(function (p) { PACKAGE_LABELS[p.key] = p.label; });
+    fillSelect(document.getElementById('n-package'), PACKAGES);
+    if (allClients && allClients.length) render();
+  }).catch(function () { /* the raw key still reads */ });
+}
+loadPackages();
 fillSelect(document.getElementById('n-source'), SOURCES);
 fillSelect(document.getElementById('n-status'), STATUSES.map(function (s) { return [s, s]; }));
 
@@ -885,6 +911,14 @@ document.getElementById('new-btn').addEventListener('click', function () {
 document.getElementById('n-cancel').addEventListener('click', function () {
   newPanel.classList.remove('open');
 });
+/* Build fee and monthly retainer both fill in from the package. The rules
+   live in crm-lead.js so this page and the client page cannot drift apart. */
+LeadDetail.bindFeePrefill(
+  document.getElementById('n-package'),
+  [{ key: 'price', el: document.getElementById('n-build') },
+   { key: 'monthly', el: document.getElementById('n-monthly') }],
+  PACKAGE_PRICE,
+  document.getElementById('n-fee-hint'));
 document.getElementById('n-save').addEventListener('click', function () {
   var msg = document.getElementById('n-msg');
   var payload = {
@@ -1190,7 +1224,10 @@ function render() {
     // package
     var tdPkg = document.createElement('td');
     tdPkg.setAttribute('data-label', 'Package');
-    tdPkg.textContent = label(c.package, PACKAGES);
+    /* PACKAGE_LABELS, not PACKAGES: a retired package is not offered for new
+       work, so it is not in the dropdown — but a client who bought one still
+       has to read as "Gallery" rather than "gallery". */
+    tdPkg.textContent = c.package ? (PACKAGE_LABELS[c.package] || c.package) : '—';
 
     // status
     var tdStatus = document.createElement('td');

@@ -65,6 +65,8 @@ section{margin-bottom:52px}
 /* details form */
 .field-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;padding:24px 0;border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
 .field label{display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.fee-hint{grid-column:1 / -1;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.04em;color:var(--silver);margin:-6px 0 4px;min-height:13px}
+
 .field input,.field select{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none;appearance:none}
 .field select,.field input[type="date"]{font-family:'DM Mono',monospace;font-size:12px;text-transform:uppercase}
 .field input:focus,.field select:focus{border-color:var(--silver)}
@@ -187,6 +189,7 @@ section{margin-bottom:52px}
       <div class="field"><label for="f-package">Package</label><select id="f-package"></select></div>
       <div class="field"><label for="f-build">Build Fee ($)</label><input id="f-build" type="number" min="0" step="0.01"></div>
       <div class="field"><label for="f-monthly">Monthly ($)</label><input id="f-monthly" type="number" min="0" step="0.01"></div>
+      <p class="fee-hint" id="f-fee-hint"></p>
       <div class="field"><label for="f-source">Source</label><select id="f-source"></select></div>
       <div class="field"><label for="f-website">Live Site URL</label><input id="f-website" type="url" placeholder="https://"></div>
       <div class="field"><label for="f-domain">Domain</label><input id="f-domain" type="text" placeholder="example.com"></div>
@@ -298,12 +301,16 @@ if (!token) window.location.href = 'crm-login.html';
 if (!clientId) window.location.href = 'crm.html';
 
 var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
-var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
+/* Filled from /crm/packages. Not written here: the list carries the build
+   prices, and this file is readable by anyone who visits it. */
+var PACKAGES = [['', '—']];
+var PACKAGE_PRICE = {};   // key -> { price, monthly }
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 var PAY_METHODS = ['cash', 'check', 'venmo', 'zelle', 'card', 'stripe', 'paypal', 'invoice', 'other'];
 var PAY_KINDS = [['build', 'Build'], ['monthly', 'Monthly'], ['addon', 'Add-on'], ['other', 'Other']];
 
 var currentClient = null;
+var PACKAGE_LABELS = {};
 
 function authFetch(path, options) {
   options = options || {};
@@ -350,12 +357,19 @@ function fillSelect(el, pairs) {
 function el(id) { return document.getElementById(id); }
 
 fillSelect(el('f-status'), STATUSES.map(function (s) { return [s, s]; }));
-fillSelect(el('f-package'), PACKAGES);
 fillSelect(el('f-source'), SOURCES);
 fillSelect(el('pay-method'), PAY_METHODS.map(function (m) { return [m, m]; }));
 fillSelect(el('pay-kind'), PAY_KINDS);
 el('pay-date').value = today();
 el('f-phone').addEventListener('input', renderPhoneActions);
+/* Build fee and monthly retainer both fill in from the package. The rules
+   live in crm-lead.js so this page and the list page cannot drift apart. What
+   a client is actually being charged is never overwritten by a list price. */
+LeadDetail.bindFeePrefill(
+  el('f-package'),
+  [{ key: 'price', el: el('f-build') }, { key: 'monthly', el: el('f-monthly') }],
+  PACKAGE_PRICE,
+  el('f-fee-hint'));
 
 // ---- details ----
 // ---- Google Voice quick actions ----
@@ -484,7 +498,11 @@ function fillDetails(c) {
   el('f-phone').value = c.phone || '';
   renderPhoneActions();
   el('f-status').value = status;
-  el('f-package').value = c.package || '';
+  setPackage(c.package || '');
+  /* The hint, for the package they are already on — read from the same table
+     the prefill uses, but nothing is written into the fee fields here. What a
+     client is being charged is what the record says, not what the list says. */
+  el('f-fee-hint').textContent = LeadDetail.feeHint(PACKAGE_PRICE[c.package] || null);
   el('f-source').value = c.source || '';
   el('f-build').value = c.build_fee == null ? '' : c.build_fee;
   el('f-monthly').value = c.monthly_fee == null ? '' : c.monthly_fee;
@@ -944,6 +962,51 @@ el('call-form').addEventListener('submit', function (e) {
 });
 
 // ---- load ----
+/* Selecting the package by hand, because the option may not exist.
+
+   A client can be on a retired package, and a retired package is not offered
+   for new work — so it is not in the dropdown. Assigning a value no option
+   carries silently leaves the select on '', and the next Save would write
+   that empty value back and erase what the client actually bought. So: if
+   the option is missing, add it before selecting it. Nothing is ever lost by
+   opening the page. */
+function setPackage(key) {
+  var sel = el('f-package');
+  if (key) {
+    var found = false;
+    for (var i = 0; i < sel.options.length; i++) if (sel.options[i].value === key) { found = true; break; }
+    if (!found) {
+      var o = document.createElement('option');
+      o.value = key;
+      o.textContent = PACKAGE_LABELS[key] || key;
+      sel.appendChild(o);
+    }
+  }
+  sel.value = key;
+}
+
+function loadPackages() {
+  return authFetch('/crm/packages').then(function (r) {
+    if (!r.ok || !r.data || !r.data.packages) return;
+    r.data.packages.forEach(function (p) {
+      PACKAGE_LABELS[p.key] = p.label;
+      /* The whole row, not picked-out fields: `from`, `seatsIncluded` and
+         `perSeat` are what make the hint say "starts at" instead of "list",
+         and copying two keys silently dropped them. */
+      PACKAGE_PRICE[p.key] = p;
+      if (!p.retired) PACKAGES.push([p.key, p.label]);
+    });
+    fillSelect(el('f-package'), PACKAGES);
+    /* The client can already be on screen by the time this lands — it is a
+       second request. Re-apply both, or a client loaded first sits there with
+       an empty dropdown and no hint. */
+    if (currentClient) {
+      setPackage(currentClient.package || '');
+      el('f-fee-hint').textContent = LeadDetail.feeHint(PACKAGE_PRICE[currentClient.package] || null);
+    }
+  }).catch(function () { /* setPackage still adds whatever the client has */ });
+}
+
 function loadClient() {
   return authFetch('/crm/clients/' + clientId).then(function (r) {
     if (!r.ok) {
@@ -970,7 +1033,10 @@ function loadClient() {
   });
 }
 
-if (token && clientId) loadClient();
+/* Packages first, so the dropdown is populated before a client's package is
+   selected into it. loadClient runs either way if that call fails — setPackage
+   covers the gap. */
+if (token && clientId) loadPackages().then(loadClient);
 </script>
 </body>
 </html>

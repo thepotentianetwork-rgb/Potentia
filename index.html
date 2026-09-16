@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Potentia — Exceptional Websites</title>
+<title>Potentia — Websites, Custom CRMs &amp; Sales Platforms</title>
+<meta name="description" content="We build the website that brings the work in, then the system that runs it — a fully custom CRM and a sales platform shaped around how you actually sell, with the data to see what is working.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <style>
@@ -100,6 +101,41 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   footer{padding:32px 20px;flex-direction:column;text-align:center}
   .footer-links{justify-content:center}
 }
+
+/* What we build — the page had no services section at all, which is the one
+   thing a visitor deciding whether to call actually needs. */
+.build{max-width:1180px;margin:0 auto;padding:120px 40px 40px}
+.section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:22px}
+.build h2{font-size:clamp(30px,5vw,52px);font-weight:300;color:var(--bright);line-height:1.1;letter-spacing:-0.01em;margin-bottom:22px}
+.build h2 em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.build-intro{font-size:18px;font-weight:300;color:var(--silver);line-height:1.8;max-width:620px;margin-bottom:70px}
+.build-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim)}
+.build-card{background:var(--deep);padding:40px 34px 44px}
+.bc-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);margin-bottom:26px}
+.build-card h3{font-size:25px;font-weight:300;color:var(--bright);margin-bottom:16px;line-height:1.25}
+.build-card p{font-size:15px;font-weight:300;color:var(--silver);line-height:1.8;margin-bottom:22px}
+.bc-list{display:flex;flex-direction:column;gap:9px}
+.bc-list span{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.06em;color:var(--chrome);padding-left:16px;position:relative;line-height:1.6}
+.bc-list span::before{content:'—';position:absolute;left:0;color:var(--dim)}
+
+/* The long-term promise, stated plainly rather than implied. */
+.ladder{max-width:1180px;margin:0 auto;padding:90px 40px 130px}
+.ladder-box{border:1px solid var(--dim);background:var(--deep);padding:56px 48px;display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start}
+.ladder h2{font-size:clamp(26px,4vw,40px);font-weight:300;color:var(--bright);line-height:1.2;letter-spacing:-0.01em}
+.ladder h2 em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.ladder-body p{font-size:16px;font-weight:300;color:var(--silver);line-height:1.85;margin-bottom:20px}
+.ladder-body p:last-of-type{margin-bottom:30px}
+.ladder-body strong{color:var(--chrome);font-weight:400}
+@media(max-width:900px){
+  .build-grid{grid-template-columns:1fr}
+  .ladder-box{grid-template-columns:1fr;gap:28px;padding:40px 28px}
+  .build{padding:80px 24px 20px}
+  .ladder{padding:60px 24px 90px}
+}
+.reveal{opacity:0;transform:translateY(20px);transition:opacity 0.6s ease,transform 0.6s ease}
+.reveal.on{opacity:1;transform:translateY(0)}
+.delay-1{transition-delay:0.12s}
+.delay-2{transition-delay:0.24s}
 </style>
 </head>
 <body>
@@ -154,8 +190,8 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <div class="hero-overlay"></div>
   <div class="hero-content">
     <img class="hero-logo" src="Potentia_Logo.png" alt="Potentia">
-    <h1 class="hero-title">Websites that<br><em>command</em> attention</h1>
-    <p class="hero-sub">We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.</p>
+    <h1 class="hero-title">Your website is<br>where we <em>start</em></h1>
+    <p class="hero-sub">We build the site, then the system behind it — a custom CRM, a sales platform shaped to how you actually sell, and the data to see what is working. For businesses that plan to outgrow their tools.</p>
     <div class="hero-btns">
       <a href="portfolio.html" class="btn-solid">See Our Work</a>
       <a href="contact.html" class="btn-outline">Get Started</a>
@@ -165,20 +201,79 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
 
 <div class="marquee">
   <div class="marquee-inner">
+    <span>Custom CRM</span><span class="dot">✦</span>
+    <span>Sales Platforms</span><span class="dot">✦</span>
+    <span>Data You Can Act On</span><span class="dot">✦</span>
+    <span>Built Around You</span><span class="dot">✦</span>
+    <span>Owned, Not Rented</span><span class="dot">✦</span>
+    <span>Built to Grow</span><span class="dot">✦</span>
     <span>Precision Design</span><span class="dot">✦</span>
     <span>Delivered in Days</span><span class="dot">✦</span>
-    <span>Built to Convert</span><span class="dot">✦</span>
-    <span>Pixel Perfect</span><span class="dot">✦</span>
-    <span>Future-Proof Code</span><span class="dot">✦</span>
-    <span>Fully Custom</span><span class="dot">✦</span>
+    <span>Custom CRM</span><span class="dot">✦</span>
+    <span>Sales Platforms</span><span class="dot">✦</span>
+    <span>Data You Can Act On</span><span class="dot">✦</span>
+    <span>Built Around You</span><span class="dot">✦</span>
+    <span>Owned, Not Rented</span><span class="dot">✦</span>
+    <span>Built to Grow</span><span class="dot">✦</span>
     <span>Precision Design</span><span class="dot">✦</span>
     <span>Delivered in Days</span><span class="dot">✦</span>
-    <span>Built to Convert</span><span class="dot">✦</span>
-    <span>Pixel Perfect</span><span class="dot">✦</span>
-    <span>Future-Proof Code</span><span class="dot">✦</span>
-    <span>Fully Custom</span><span class="dot">✦</span>
   </div>
 </div>
+
+<section class="build">
+  <p class="section-label reveal">What We Build</p>
+  <h2 class="reveal">Three things, and they <em>fit together</em></h2>
+  <p class="build-intro reveal">Most studios hand you a website and disappear. We build the thing that brings the work in, then the thing that manages it once it arrives — and because we build both, they are one system rather than two subscriptions that do not talk to each other.</p>
+
+  <div class="build-grid">
+    <div class="build-card reveal">
+      <p class="bc-num">01</p>
+      <h3>Websites</h3>
+      <p>Fast, sharp, and built to turn a visitor into an enquiry. Yours outright — no page builder underneath it, and you can take it with you.</p>
+      <div class="bc-list">
+        <span>Built for phones first</span>
+        <span>Free domain, first year</span>
+        <span>Live in days, not months</span>
+        <span>Bilingual where you need it</span>
+      </div>
+    </div>
+
+    <div class="build-card reveal delay-1">
+      <p class="bc-num">02</p>
+      <h3>Fully custom CRM</h3>
+      <p>Not a subscription to somebody else's idea of your business. Built around your pipeline, your stages, your words — so your team uses it instead of working around it.</p>
+      <div class="bc-list">
+        <span>Your stages, not a template's</span>
+        <span>Leads land in it automatically</span>
+        <span>Call logs, notes and follow-ups</span>
+        <span>Per-person ownership</span>
+      </div>
+    </div>
+
+    <div class="build-card reveal delay-2">
+      <p class="bc-num">03</p>
+      <h3>Sales platforms &amp; data</h3>
+      <p>The tool your team actually works in — quoting, scheduling, inventory, whatever the job needs — with tracking underneath, so you know which work is worth repeating.</p>
+      <div class="bc-list">
+        <span>Instant, accurate quoting</span>
+        <span>Customer-facing portals</span>
+        <span>Live pipeline and revenue</span>
+        <span>Reports you will actually read</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="ladder">
+  <div class="ladder-box">
+    <h2 class="reveal">We would rather build for you<br>for <em>ten years</em></h2>
+    <div class="ladder-body reveal delay-1">
+      <p>You do not have to buy all of it at once, and you should not. Start with the site. Add the CRM when chasing leads by text stops working. Add the platform when the quoting, the scheduling or the inventory becomes the bottleneck.</p>
+      <p><strong>Same team, same codebase, nothing thrown away.</strong> Each piece is built knowing the next one is coming, so growing into it costs you a conversation — not a rebuild.</p>
+      <a href="contact.html" class="btn-solid">Start the conversation</a>
+    </div>
+  </div>
+</section>
 
 <footer>
   <a href="index.html" class="footer-logo">
@@ -217,9 +312,15 @@ overlay.querySelectorAll('a').forEach(function(a) {
 
 // Language toggle
 var T = {
-  en: { title: 'Websites that<br><em>command</em> attention', sub: 'We build stunning, high-performance websites with obsessive attention to craft — faster than an agency, sharper than a template.', cta1: 'See Our Work', cta2: 'Get Started' },
-  es: { title: 'Sitios web que<br><em>dominan</em> la atención', sub: 'Creamos sitios web impresionantes con atención obsesiva al detalle — más rápido que una agencia, más preciso que una plantilla.', cta1: 'Ver Nuestro Trabajo', cta2: 'Comenzar' }
+  en: { title: 'Your website is<br>where we <em>start</em>', sub: 'We build the site, then the system behind it — a custom CRM, a sales platform shaped to how you actually sell, and the data to see what is working. For businesses that plan to outgrow their tools.', cta1: 'See Our Work', cta2: 'Get Started' },
+  es: { title: 'Tu sitio web es<br>donde <em>empezamos</em>', sub: 'Creamos el sitio, y después el sistema que lo sostiene — un CRM a medida, una plataforma de ventas adaptada a cómo vendes de verdad, y los datos para ver qué funciona. Para negocios que piensan crecer.', cta1: 'Ver Nuestro Trabajo', cta2: 'Comenzar' }
 };
+var reveals = document.querySelectorAll('.reveal');
+var io = new IntersectionObserver(function (entries) {
+  entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } });
+}, { threshold: 0.1 });
+reveals.forEach(function (el) { io.observe(el); });
+
 function setLang(l) {
   document.querySelector('.hero-title').innerHTML = T[l].title;
   document.querySelector('.hero-sub').textContent = T[l].sub;

@@ -60,6 +60,15 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .plan-note{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);line-height:1.6}
 .plan-note strong{color:var(--silver);font-weight:400}
 
+/* Stage headings — the page now carries two kinds of work, so it has to say
+   which rung you are looking at rather than running six plans together. */
+.stage-head{border-top:1px solid var(--dim);padding-top:36px;margin-bottom:32px}
+.stage-head:first-child{border-top:none;padding-top:0}
+.stage-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:14px}
+.stage-head h2{font-size:clamp(26px,3.4vw,38px);font-weight:300;color:var(--bright);line-height:1.15;margin-bottom:14px}
+.stage-head h2 em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.stage-head p{font-size:16px;color:var(--silver);font-weight:300;line-height:1.75;max-width:640px}
+
 /* ADD-ONS */
 .addons-wrap{max-width:1300px;margin:0 auto;padding:0 80px 140px}
 .section-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:32px}
@@ -104,6 +113,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   .plan-top{flex-direction:column}
   .plan-price{text-align:left}
   .plan-features{flex-direction:column;gap:12px}
+  .stage-head{padding-top:28px;margin-bottom:24px}
   .addons-wrap{padding:0 24px 80px}
   .addons-grid{grid-template-columns:1fr}
   .cta{padding:0 24px 80px}
@@ -139,7 +149,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
 <div class="page-top">
   <p class="page-label reveal">Services &amp; Investment</p>
   <h1 class="page-title reveal">Built for you.<br><em>Priced for you.</em></h1>
-  <p class="page-sub reveal">Every project is built custom, by hand, with restraint and precision. No templates, no bloated platforms — and no two quotes are the same. Reach out and we'll put together pricing for your project.</p>
+  <p class="page-sub reveal">We build two things: the website that brings the work in, and the system that runs it once it arrives — a CRM shaped around your pipeline, a sales platform shaped around how you actually sell. You do not buy it all at once. Start where you are, add the next piece when you need it. Every quote is put together for the project in front of us.</p>
 </div>
 
 <div class="perks reveal">
@@ -161,88 +171,127 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
 
 <div class="plans-wrap">
 
+  <div class="stage-head reveal">
+    <p class="stage-tag">Stage One</p>
+    <h2>The website — <em>where we start</em></h2>
+    <p>Fast, sharp, and yours outright — no page builder underneath it, and the site is yours to take with you. Every tier carries a monthly plan that keeps it hosted, patched and looked after. For most businesses this is the whole job, and it is built so the rest can be added later without starting over.</p>
+  </div>
+
   <div class="plan reveal">
     <div class="plan-top">
       <div>
-        <p class="plan-tag">01 — Foundation</p>
-        <h2 class="plan-name">3-Page Essential Site</h2>
+        <p class="plan-tag">Tier 1</p>
+        <h3 class="plan-name">Home &amp; Contact Site</h3>
       </div>
       <div class="plan-price">
         <a href="contact.html" class="plan-request">Request Info →</a>
       </div>
     </div>
-    <p class="plan-desc">A clean, professional entry point — built to introduce your business and make it easy to get in touch.</p>
+    <p class="plan-desc">Two pages: who you are, and how to reach you. For most businesses this is the whole website — and it is built so the rest can be added later without starting over.</p>
     <div class="plan-features">
-      <span>Home, About &amp; Contact pages</span>
-      <span>5 images throughout</span>
-      <span>No monthly subscription</span>
+      <span>Home &amp; Contact pages</span>
+      <span>3 images throughout</span>
+      <span>Hosting, patching &amp; upkeep</span>
       <span>Free domain — 1 year included</span>
     </div>
-    <p class="plan-note">Edits after the first <strong>7 days</strong> of launch are billed per change request — contact us for details.</p>
+    <p class="plan-note">Includes a <strong>monthly plan</strong> for hosting &amp; upkeep. Edits after the first <strong>7 days</strong> of launch are billed per change request — contact us for details.</p>
   </div>
 
   <div class="plan reveal delay-1">
     <div class="plan-top">
       <div>
-        <p class="plan-tag">02 — Booking</p>
-        <h2 class="plan-name">3-Page Booking Site</h2>
+        <p class="plan-tag">Tier 2</p>
+        <h3 class="plan-name">Home, Gallery &amp; Contact Site</h3>
       </div>
       <div class="plan-price">
         <a href="contact.html" class="plan-request">Request Info →</a>
       </div>
     </div>
-    <p class="plan-desc">Everything in the Essential Site, plus a live booking calendar — clients select a service and schedule directly on your site.</p>
+    <p class="plan-desc">Everything in Tier 1, plus a gallery page. For the businesses where seeing the work is what makes the customer call.</p>
     <div class="plan-features">
-      <span>Service selection &amp; calendar booking</span>
-      <span>5 images throughout</span>
-      <span>Free domain — 1 year included</span>
-    </div>
-    <p class="plan-note">Includes a <strong>monthly plan</strong> for ongoing management &amp; edits — contact us for details.</p>
-  </div>
-
-  <div class="plan reveal delay-2">
-    <div class="plan-top">
-      <div>
-        <p class="plan-tag">03 — Gallery</p>
-        <h2 class="plan-name">4-Page Gallery Site</h2>
-      </div>
-      <div class="plan-price">
-        <a href="contact.html" class="plan-request">Request Info →</a>
-      </div>
-    </div>
-    <p class="plan-desc">A visual showcase for businesses where the work speaks for itself — built with a dedicated gallery page to display your portfolio in full.</p>
-    <div class="plan-features">
-      <span>15-photo gallery page</span>
+      <span>Home, Gallery &amp; Contact pages</span>
+      <span>12-photo gallery page</span>
       <span>1 video featured on-site</span>
       <span>Free domain — 1 year included</span>
     </div>
     <p class="plan-note">Includes a <strong>monthly plan</strong> to edit, manage &amp; update photos — contact us for details.</p>
   </div>
 
-  <div class="plan reveal">
+  <div class="plan reveal delay-2">
     <div class="plan-top">
       <div>
-        <p class="plan-tag">04 — Operator</p>
-        <h2 class="plan-name">Website + Growth System</h2>
+        <p class="plan-tag">Tier 3</p>
+        <h3 class="plan-name">Gallery Site + Scheduling</h3>
       </div>
       <div class="plan-price">
         <a href="contact.html" class="plan-request">Request Info →</a>
       </div>
     </div>
-    <p class="plan-desc">Everything in the Gallery Site, plus a full growth system built in — an AI chat assistant to capture leads, instant lead alerts, a built-in CRM to manage them, and a monthly performance report so you always know what's working.</p>
+    <p class="plan-desc">Everything in Tier 2, plus a live booking calendar. The customer picks a service and books a slot instead of waiting on a callback.</p>
     <div class="plan-features">
-      <span>AI chat assistant</span>
-      <span>Instant lead alerts</span>
-      <span>Built-in CRM</span>
-      <span>Monthly performance report</span>
+      <span>Home, Gallery &amp; Contact pages</span>
+      <span>Service selection &amp; calendar booking</span>
+      <span>12-photo gallery page</span>
+      <span>Free domain — 1 year included</span>
     </div>
-    <p class="plan-note">Includes a <strong>monthly plan</strong> for the growth system &amp; ongoing management — contact us for details.</p>
+    <p class="plan-note">Includes a <strong>monthly plan</strong> for the calendar &amp; ongoing management — contact us for details.</p>
+  </div>
+
+  <div class="stage-head reveal">
+    <p class="stage-tag">Stage Two</p>
+    <h2>The system — <em>built around you</em></h2>
+    <p>This is where we stop looking like a web studio. When the spreadsheet stops holding it together, we build the software your business runs on — designed around the way you already work, rather than asking you to work the way a subscription expects.</p>
+  </div>
+
+  <div class="plan reveal">
+    <div class="plan-top">
+      <div>
+        <p class="plan-tag">Custom CRM</p>
+        <h3 class="plan-name">Fully Custom CRM</h3>
+      </div>
+      <div class="plan-price">
+        <a href="contact.html" class="plan-request">Request Info →</a>
+      </div>
+    </div>
+    <p class="plan-desc">The software that manages the work once it arrives — built around how it actually moves through your shop, not around a template. Leads from your site land in it on their own, and every call, note and follow-up lives in one place your team will actually open.</p>
+    <div class="plan-features">
+      <span>Your pipeline stages, not a template's</span>
+      <span>Website leads captured automatically</span>
+      <span>Call logs, notes &amp; follow-ups</span>
+      <span>Per-person lead ownership</span>
+      <span>Role-based access for your team</span>
+      <span>Built on your data, exportable any time</span>
+    </div>
+    <p class="plan-note">Scoped and quoted per business — the build depends on how you sell. Includes a <strong>monthly plan</strong> for hosting, support and changes as the process changes.</p>
+  </div>
+
+  <div class="plan reveal delay-1">
+    <div class="plan-top">
+      <div>
+        <p class="plan-tag">Sales Platform</p>
+        <h3 class="plan-name">Sales Platform &amp; Data Tracking</h3>
+      </div>
+      <div class="plan-price">
+        <a href="contact.html" class="plan-request">Request Info →</a>
+      </div>
+    </div>
+    <p class="plan-desc">The tool your team works in all day — quoting, configuring, scheduling, inventory, customer portals — with tracking underneath it. Priced live and correctly every time, so a quote is never wrong by the time it reaches the customer, and you can see which work is worth repeating.</p>
+    <div class="plan-features">
+      <span>Instant, accurate quoting</span>
+      <span>Customer-facing portals</span>
+      <span>Live pipeline &amp; revenue</span>
+      <span>Reporting you will actually read</span>
+      <span>Built to your rules &amp; your pricing</span>
+      <span>2 logins included</span>
+      <span>Bilingual where you need it</span>
+    </div>
+    <p class="plan-note">Two logins are included; further logins are charged monthly per person. Built in stages so it earns its keep before the next piece is added. Scoped and quoted per business — contact us and we will map it with you.</p>
   </div>
 
 </div>
 
 <div class="addons-wrap">
-  <p class="section-label reveal">Add-On Services</p>
+  <p class="section-label reveal">Add-On Services — Any Stage</p>
   <div class="addons-grid reveal">
     <div class="addon">
       <div class="addon-top">
@@ -250,6 +299,20 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
         <div class="addon-price"><a href="contact.html">Request Info →</a></div>
       </div>
       <p>Two videos — one to promote your website, one featured directly on the site.</p>
+    </div>
+    <div class="addon">
+      <div class="addon-top">
+        <h3>AI Chat Assistant</h3>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
+      </div>
+      <p>An assistant on your site that answers questions and captures the lead while the visitor is still reading — the one in the corner of this page is a live sample.</p>
+    </div>
+    <div class="addon">
+      <div class="addon-top">
+        <h3>Lead Alerts &amp; Monthly Reporting</h3>
+        <div class="addon-price"><a href="contact.html">Request Info →</a></div>
+      </div>
+      <p>Every enquiry sent to you the moment it lands, and a monthly report on where the work is actually coming from.</p>
     </div>
     <div class="addon">
       <div class="addon-top">

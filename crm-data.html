@@ -136,7 +136,9 @@ var token = localStorage.getItem('potentia_crm_token');
 if (!token) window.location.href = 'crm-login.html';
 
 var STAGES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
-var PACKAGE_LABELS = { foundation:'Foundation', booking:'Booking', gallery:'Gallery', operator:'Operator', custom:'Custom' };
+/* Filled from /crm/packages — including the retired ones, because a won deal
+   on a retired package still has to read by name on this chart. */
+var PACKAGE_LABELS = {};
 
 function authFetch(path, options) {
   options = options || {};
@@ -256,6 +258,13 @@ function render(d) {
 }
 
 if (token) {
+  /* Names first so the package chart is labelled on its first paint. If that
+     call fails, renderBars falls back to the raw key, which still reads. */
+  authFetch('/crm/packages').then(function (r) {
+    if (r.ok && r.data && r.data.packages) {
+      r.data.packages.forEach(function (p) { PACKAGE_LABELS[p.key] = p.label; });
+    }
+  }).catch(function () { /* raw keys */ }).then(function () {
   authFetch('/crm/analytics').then(function (r) {
     if (!r.ok) {
       document.getElementById('loading').textContent =
@@ -267,6 +276,7 @@ if (token) {
     render(r.data);
   }).catch(function () {
     document.getElementById('loading').textContent = 'Could not reach the server.';
+  });
   });
 }
 </script>
