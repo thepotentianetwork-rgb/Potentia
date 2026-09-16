@@ -19,7 +19,7 @@
 // other module-level const here.
 
 import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget } from "./pricing.js";
-import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels } from "./leadpipeline.js";
+import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads } from "./leadpipeline.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -3057,6 +3057,49 @@ export default {
         } catch (e) {
           return json({ error: String(e.message || e) }, 400, origin);
         }
+      }
+      if (path === "/crm/leads/recheck" && request.method === "POST") {
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
+
+        /* Streamed like a run, and for the same reason: each site is a fresh
+           speed test and fifty of them is well past the 100 seconds Cloudflare
+           will hold a silent request open. */
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const enc = new TextEncoder();
+        let gone = false;
+        const emit = async (evt) => {
+          if (gone) return;
+          try { await writer.write(enc.encode(JSON.stringify(evt) + "\n")); }
+          catch (e) { gone = true; }
+        };
+
+        (async () => {
+          try {
+            /* Both: recheckLeads reads client_calls, which belongs to the CRM
+               tables rather than the pipeline's. */
+            await ensureCrmTables(env);
+            const out = await recheckLeads(env, {
+              limit: Number(url.searchParams.get("limit")) || undefined,
+              onProgress: emit
+            });
+            await emit({ event: "done", result: out });
+          } catch (e) {
+            await emit({ event: "error", error: String(e).slice(0, 300) });
+          }
+          try { await writer.close(); } catch (e) { /* client already gone */ }
+        })();
+
+        return new Response(readable, {
+          status: 200,
+          headers: {
+            ...corsHeaders(origin),
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no"
+          }
+        });
       }
       if (path === "/crm/leads/runs" && request.method === "GET") {
         const gate = await leadsGate(request, env);

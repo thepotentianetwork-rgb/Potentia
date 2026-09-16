@@ -44,7 +44,14 @@ async function freshEnv() {
     email TEXT, phone TEXT, website_url TEXT, package TEXT,
     status TEXT NOT NULL DEFAULT 'lead', source TEXT, service TEXT, message TEXT,
     build_fee REAL, monthly_fee REAL, domain TEXT, domain_renews_at TEXT,
-    launched_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+    launched_at TEXT, owner TEXT, owner_since TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+  /* The recheck asks whether anyone has called a business before retiring it,
+     so the table has to be here even though the pipeline does not own it. */
+  db.exec(`CREATE TABLE client_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER NOT NULL,
+    direction TEXT NOT NULL, outcome TEXT NOT NULL, duration_min REAL,
+    notes TEXT, logged_by TEXT, called_at TEXT NOT NULL, created_at TEXT NOT NULL)`);
   const env = { CRM_DB: makeD1(db) };
   await ensureLeadPipelineTables(env);
   return { env, db };
@@ -1272,4 +1279,100 @@ test('a keyless fallback that is out of shared quota still names the key', async
       assert.equal(e.accountFailure, true, 'still stops the run rather than asking 20 times');
       return true;
     });
+});
+
+// ── rechecking leads judged while the speed test was down ─────────────────
+import { recheckLeads } from './leadpipeline.js';
+
+async function leadEnv() {
+  const { env, db } = await freshEnv();
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
+  const now = new Date().toISOString();
+  const add = (name, website, extra) => {
+    db.prepare(`INSERT INTO clients (business_name, website_url, status, created_at, updated_at)
+                VALUES (?,?,'lead',?,?)`).run(name, website, now, now);
+    const id = db.prepare("SELECT last_insert_rowid() AS id").get().id;
+    db.prepare("UPDATE clients SET created_by_pipeline = 1 WHERE id = ?").run(id);
+    if (extra) db.prepare(`UPDATE clients SET ${extra} WHERE id = ?`).run(id);
+    return id;
+  };
+  return { env, db, add };
+}
+
+test('a recheck retires the ones whose site turns out to be fine', async () => {
+  const { env, db, add } = await leadEnv();
+  const slow = add('Slow Co', 'https://slow.example');
+  const fine = add('Fine Co', 'https://fine.example');
+
+  const out = await recheckLeads(env, { deps: { pageSpeed: async (e, u) =>
+    /slow/.test(u) ? { performance: 22, hasViewport: true } : { performance: 95, hasViewport: true } } });
+
+  assert.equal(out.looked, 2);
+  assert.equal(out.kept, 1);
+  assert.equal(out.retired, 1);
+
+  const a = db.prepare("SELECT * FROM clients WHERE id = ?").get(slow);
+  assert.equal(a.status, 'lead', 'still worth a call');
+  assert.equal(Number(a.lead_speed), 22, 'and now carries the evidence it should have had');
+
+  const b = db.prepare("SELECT * FROM clients WHERE id = ?").get(fine);
+  assert.equal(b.status, 'lost');
+  assert.match(b.lead_reason, /^Rechecked:/, 'it says why it stopped being a lead');
+  /* Marked lost rather than deleted: it was put in front of someone as a lead,
+     and a row that quietly disappears is worse than one that explains itself. */
+  assert.ok(db.prepare("SELECT id FROM clients WHERE id = ?").get(fine), 'still there');
+});
+
+test('a recheck never touches a lead someone has worked', async () => {
+  const { env, db, add } = await leadEnv();
+  const owned = add('Owned Co', 'https://owned.example', "owner = 'Fernando M'");
+  const called = add('Called Co', 'https://called.example');
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO client_calls (client_id, direction, outcome, called_at, created_at)
+              VALUES (?, 'outbound', 'voicemail', ?, ?)`).run(called, now, now);
+  const contacted = add('Contacted Co', 'https://contacted.example', "status = 'contacted'");
+
+  const out = await recheckLeads(env, { deps: { pageSpeed: async () => ({ performance: 99, hasViewport: true }) } });
+  assert.equal(out.looked, 0, 'nothing to look at — all three are somebody’s');
+
+  for (const id of [owned, called, contacted]) {
+    assert.notEqual(db.prepare("SELECT status FROM clients WHERE id = ?").get(id).status, 'lost');
+  }
+});
+
+test('a recheck leaves alone what the free checks already settled', async () => {
+  const { env, add } = await leadEnv();
+  add('FB Co', 'https://facebook.com/fbco');
+  add('Dead Co', 'https://deadco.business.site');
+  add('Insecure Co', 'http://insecure.example');
+
+  const out = await recheckLeads(env, { deps: { pageSpeed: async () => {
+    throw new Error('these never needed a speed test'); } } });
+  assert.equal(out.skipped, 3);
+  assert.equal(out.looked, 0);
+});
+
+test('a lead already carrying a speed score is not rechecked', async () => {
+  const { env, add } = await leadEnv();
+  add('Scored Co', 'https://scored.example', "lead_speed = 31");
+  const out = await recheckLeads(env, { deps: { pageSpeed: async () => {
+    throw new Error('it was already checked'); } } });
+  assert.equal(out.looked, 0);
+});
+
+test('a recheck stops if the speed test is still unavailable', async () => {
+  const { env, db, add } = await leadEnv();
+  const a = add('One Co', 'https://one.example');
+  add('Two Co', 'https://two.example');
+
+  let asked = 0;
+  const out = await recheckLeads(env, { deps: { pageSpeed: async () => {
+    asked++;
+    throw providerError('PageSpeed', 403, 'blocked');
+  } } });
+
+  assert.equal(asked, 1, 'it does not ask fifty times to be told the same thing');
+  assert.match(out.errors.join(' '), /still unavailable/);
+  assert.equal(db.prepare("SELECT status FROM clients WHERE id = ?").get(a).status, 'lead',
+    'and nothing is retired on the strength of a check that never ran');
 });

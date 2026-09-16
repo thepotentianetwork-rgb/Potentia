@@ -535,6 +535,22 @@ the people on the phones change in Cloudflare rather than in a deploy — merged
 with every name already in the call log, so someone leaving the roster never
 makes the leads they own unattributable.
 
+### Rechecking
+
+A lead with a real website should carry a speed score. One that does not was
+judged while PageSpeed was unavailable, so nobody ever looked at its site.
+`POST /crm/leads/recheck` re-runs the website check on those: the ones that
+still fail keep their place and gain the evidence they should have had, and the
+ones whose site turns out to be fine are marked `lost` with a reason.
+
+Only untouched leads are considered — status still `lead`, no owner, no calls
+logged. Once a person has engaged with a business, what the pipeline thinks
+about their website stops being the deciding fact.
+
+Marked, not deleted. It was put in front of someone as a lead, and a row that
+quietly disappears is worse than one that says why it is no longer worth a
+call.
+
 ### Categories
 
 Every category is seeded for every city whether or not it ships switched on,
