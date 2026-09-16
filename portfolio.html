@@ -50,7 +50,14 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .section-title em{font-style:italic;color:var(--silver)}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim)}
 .grid-item{position:relative;aspect-ratio:4/3;overflow:hidden;background:var(--dim);cursor:pointer}
-.grid-item.wide{grid-column:span 2;aspect-ratio:16/9}
+/* No aspect ratio of its own: the wide card takes its height from the 4/3
+   card beside it, so their row has no hole in it. A fixed ratio cannot do
+   that — the wide card is two columns PLUS the gap between them, so the
+   ratio that lines the two up is a different number at every page width,
+   and 16/9 left 142px of dead space under the narrow card.
+   The mobile rule below puts a ratio back, because there it is alone in its
+   row and has nothing to take a height from. */
+.grid-item.wide{grid-column:span 2;aspect-ratio:auto}
 .iframe-wrap{position:absolute;inset:0;overflow:hidden;pointer-events:none}
 .iframe-wrap iframe{width:1400px;height:900px;border:none;transform-origin:top left;transform:scale(0.3)}
 .grid-item.wide .iframe-wrap iframe{transform:scale(0.48)}
@@ -372,6 +379,34 @@ var io = new IntersectionObserver(function(entries) {
   entries.forEach(function(e) { if(e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } });
 }, {threshold: 0.1});
 reveals.forEach(function(el) { io.observe(el); });
+
+/* Each preview is a fixed 1400x900 render of the real site, shrunk to fit its
+   card. The shrink factor cannot be a constant: a card is a third of the page
+   width minus a gap, so the factor that makes the render cover it is a
+   different number at every window size. The fixed values were close enough
+   around 1000px and wrong either side of it — at 1300px the wide card was
+   760px across and its render only 672, leaving a dead strip down the side of
+   a client's website.
+   The CSS keeps its fixed scale as the starting value, so this only ever
+   improves on it and the cards still fill without JavaScript. */
+function fitPreviews() {
+  document.querySelectorAll('.iframe-wrap').forEach(function (wrap) {
+    var frame = wrap.querySelector('iframe');
+    if (!frame) return;
+    var box = wrap.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    // cover, not contain: the card must never show through
+    var scale = Math.max(box.width / 1400, box.height / 900);
+    frame.style.transform = 'scale(' + scale.toFixed(4) + ')';
+  });
+}
+fitPreviews();
+window.addEventListener('load', fitPreviews);
+var fitTimer = null;
+window.addEventListener('resize', function () {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(fitPreviews, 120);
+});
 </script>
 <script src="assistant.js" defer></script>
 </body>
