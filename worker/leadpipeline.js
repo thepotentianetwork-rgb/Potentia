@@ -671,13 +671,26 @@ export function notARealWebsite(url) {
    streams its progress. */
 export async function pageSpeed(env, url, fetchImpl) {
   const key = apiKey(env.GOOGLE_PLACES_API_KEY);
-  const q = new URLSearchParams({ url: url, strategy: "mobile", category: "performance" });
-  if (key) q.set("key", key);
+  const go = async (withKey) => {
+    const q = new URLSearchParams({ url: url, strategy: "mobile", category: "performance" });
+    if (withKey && key) q.set("key", key);
+    return (fetchImpl || fetch)(
+      "https://www.googleapis.com/pagespeedonline/v5/runPagespeed?" + q.toString(),
+      { signal: AbortSignal.timeout(120000) }
+    );
+  };
 
-  const res = await (fetchImpl || fetch)(
-    "https://www.googleapis.com/pagespeedonline/v5/runPagespeed?" + q.toString(),
-    { signal: AbortSignal.timeout(120000) }
-  );
+  let res = await go(true);
+
+  /* PageSpeed is one of the few Google APIs that works with no key at all —
+     the key only buys a higher rate limit. So a key the project will not
+     accept for this API is a reason to drop the key, not to stop working.
+     This is the difference between a misconfigured restriction costing you a
+     setting to fix later and costing you every lead in the meantime. */
+  if (res.status === 403 && key) {
+    res = await go(false);
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw providerError("PageSpeed", res.status, body);
@@ -736,6 +749,12 @@ export async function websiteVerdict(env, places, deps) {
     return { qualified: true, score: 85, checked: "places", speed: null, mobileReady: null,
              reason: "Site is still on plain http — browsers mark it not secure" + trading + "." };
   }
+
+  /* No speed test available — the key is refused and keyless failed too.
+     Everything above this line still worked, so businesses with no usable
+     site keep qualifying; this one is simply put back for a later run rather
+     than guessed at in either direction. */
+  if (deps && deps.noPageSpeed) return { defer: true };
 
   const ps = await (deps && deps.pageSpeed ? deps.pageSpeed : pageSpeed)(env, places.website);
 
@@ -990,6 +1009,7 @@ export async function runLeadPipeline(env, opts) {
       await emit({ event: "batch", total: queue.length });
 
       let position = 0;
+      let noPageSpeed = false;
       for (const cand of queue) {
         position++;
         if (overBudget()) { counts.errors.push("daily cost ceiling reached"); break; }
@@ -1009,7 +1029,19 @@ export async function runLeadPipeline(env, opts) {
              the AI research; a PageSpeed run that fails is either a site that
              will not load — which is itself a qualification — or an account
              problem, which stops the run. */
-          const verdict = await websiteVerdict(env, places, o.deps);
+          const verdict = await websiteVerdict(env, places,
+            Object.assign({}, o.deps, { noPageSpeed: noPageSpeed }));
+
+          if (verdict.defer) {
+            /* Put it back exactly as it was, attempt included: it was never
+               looked at, and it must not burn its way to 'failed' while the
+               speed test is unavailable. */
+            await db.prepare(
+              "UPDATE lead_candidates SET status = 'new', attempts = ?, updated_at = ? WHERE id = ?"
+            ).bind(Number(cand.attempts || 0), new Date().toISOString(), cand.id).run();
+            counts.deferred = (counts.deferred || 0) + 1;
+            continue;
+          }
           counts.scored++;
 
           if (verdict.qualified) {
@@ -1040,6 +1072,22 @@ export async function runLeadPipeline(env, opts) {
              candidate in the queue. Carrying on costs five cents a head to be
              told it five times, so the run stops and says what to go and fix. */
           if (account) {
+            /* A refused PageSpeed only costs us the speed test. The rest of
+               the queue — every business with no website, a Facebook-only
+               page, a dead builder page or plain http — is still judgeable
+               for free, so the run carries on without it. Anything else that
+               fails on the account stops the run. */
+            if (/^PageSpeed /.test(String(e.message || e))) {
+              if (!noPageSpeed) {
+                noPageSpeed = true;
+                counts.errors.push("speed test unavailable: " + String(e.message || e).slice(0, 160));
+                await emit({ event: "no_pagespeed" });
+              }
+              // failCandidate has already put it back untouched; report it the
+              // same way as the ones deferred without even trying.
+              counts.deferred = (counts.deferred || 0) + 1;
+              continue;
+            }
             counts.errors.push("stopped: " + String(e.message || e).slice(0, 200));
             break;
           }
