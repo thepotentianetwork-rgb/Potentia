@@ -34,14 +34,14 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
 
 /* headline numbers */
 /* Lead pipeline controls */
-.lp-locked{border:1px solid var(--dim);padding:22px 24px;margin-bottom:30px;max-width:640px}
-.lp-locked-text{font-size:14px;color:var(--silver);line-height:1.6;margin-bottom:16px}
-.lp-unlock-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.lp-unlock-row input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:13px;padding:11px 13px;outline:none;width:200px}
+.lp-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:24px}
+.lp-head h2{margin-bottom:0}
+.lp-lock-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;padding:8px 14px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.2s}
+.lp-lock-btn:hover{border-color:var(--silver);color:var(--bright)}
+.lp-unlock-row{display:flex;gap:8px;align-items:center}
+.lp-unlock-row input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:13px;padding:9px 12px;outline:none;width:170px}
 .lp-unlock-row input:focus{border-color:var(--silver)}
 .lp-unlock-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--danger)}
-.lp-relock{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;padding:7px 13px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--dim);margin-bottom:34px}
-.lp-relock:hover{border-color:var(--silver);color:var(--silver)}
 .lp-cat-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:10px}
 .lp-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
 .lp-cat{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:9px 14px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.2s;display:inline-flex;align-items:center;gap:8px}
@@ -202,17 +202,14 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
        paste: this gets used from an iPad and a phone, where neither exists. -->
   <section id="lp-section">
     <p class="sec-label">Lead Pipeline</p>
-    <h2>Find new leads</h2>
-    <div class="lp-locked" id="lp-locked">
-      <p class="lp-locked-text">
-        The lead generator is locked. It spends money and rewrites the search grid,
-        so it stays shut for everyone working the phones.
-      </p>
-      <form class="lp-unlock-row" id="lp-unlock-form">
+    <div class="lp-head">
+      <h2>Find new leads</h2>
+      <button class="lp-lock-btn" id="lp-lock-btn" type="button">&#128274; Unlock</button>
+      <form class="lp-unlock-row" id="lp-unlock-form" hidden>
         <input id="lp-pw" type="password" placeholder="Password" autocomplete="current-password">
-        <button class="btn" type="submit">Unlock</button>
-        <span class="lp-unlock-msg" id="lp-unlock-msg"></span>
+        <button class="btn" type="submit">Go</button>
       </form>
+      <span class="lp-unlock-msg" id="lp-unlock-msg"></span>
     </div>
 
     <div id="lp-body" hidden>
@@ -240,7 +237,6 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
       back to their defaults.
       <button class="lp-reseed" id="lp-reseed" type="button">Rebuild search grid</button>
     </p>
-    <button class="lp-relock" id="lp-relock" type="button">Lock again</button>
     </div>
   </section>
 
@@ -352,31 +348,42 @@ function authFetch(path, options) {
     });
   }
 
-  var lockedBox = document.getElementById('lp-locked');
   var lpBody = document.getElementById('lp-body');
+  var lockBtn = document.getElementById('lp-lock-btn');
   var unlockForm = document.getElementById('lp-unlock-form');
   var unlockMsg = document.getElementById('lp-unlock-msg');
+  var pwField = document.getElementById('lp-pw');
 
   function setUnlocked() {
-    lockedBox.hidden = true;
     lpBody.hidden = false;
+    unlockForm.hidden = true;
+    unlockMsg.textContent = '';
+    lockBtn.innerHTML = '\uD83D\uDD13 Lock';
     loadCats();
   }
   function setLocked() {
     unlockToken = null;
     try { localStorage.removeItem('potentia_leads_unlock'); } catch (e) {}
-    lockedBox.hidden = false;
     lpBody.hidden = true;
+    unlockForm.hidden = true;
+    lockBtn.innerHTML = '\uD83D\uDD12 Unlock';
   }
 
-  if (unlockForm) unlockForm.addEventListener('submit', function (e) {
+  // One button: asks for the password when shut, closes up again when open.
+  lockBtn.addEventListener('click', function () {
+    if (!lpBody.hidden) { setLocked(); return; }
+    unlockMsg.textContent = '';
+    unlockForm.hidden = !unlockForm.hidden;
+    if (!unlockForm.hidden) pwField.focus();
+  });
+
+  unlockForm.addEventListener('submit', function (e) {
     e.preventDefault();
-    var pw = document.getElementById('lp-pw');
     unlockMsg.textContent = '';
     authFetch('/crm/leads/unlock', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pw.value })
+      body: JSON.stringify({ password: pwField.value })
     }).then(function (r) {
       if (!r.ok || !r.data || !r.data.unlock) {
         unlockMsg.textContent = (r.data && r.data.error) || 'Could not unlock.';
@@ -384,13 +391,10 @@ function authFetch(path, options) {
       }
       unlockToken = r.data.unlock;
       try { localStorage.setItem('potentia_leads_unlock', unlockToken); } catch (e) {}
-      pw.value = '';
+      pwField.value = '';
       setUnlocked();
     }).catch(function () { unlockMsg.textContent = 'Could not reach the server.'; });
   });
-
-  var relock = document.getElementById('lp-relock');
-  if (relock) relock.addEventListener('click', setLocked);
 
   if (unlockToken) setUnlocked(); else setLocked();
 

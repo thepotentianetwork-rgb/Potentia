@@ -479,6 +479,7 @@ All server-side, set as Worker secrets — none of these reach the browser.
 | `LEADS_DAILY_USD_CAP` | no | rolling 24h ceiling, default `5.00` |
 | `LEADS_MIN_RATING` | no | star rating a business must clear, default `4.0` |
 | `LEADS_PASSWORD` | yes, to use the generator | unlocks the lead generator |
+| `CRM_CALLERS` | no | who is on the phones, comma-separated |
 
 Moving `LEADS_MIN_RATING` only affects businesses found after the change: one
 already screened out carries a tombstone that dedupes it away. To apply a new
@@ -527,9 +528,12 @@ a `logged_by` name; an outcome of `connected` or `callback` writes it to
 cannot take a lead off the person who earned it. Voicemail, no answer and wrong
 number claim nothing; you can leave five voicemails and have spoken to nobody.
 
-`GET /crm/callers` returns the names that have logged calls, so the first
-caller types theirs and everyone after picks it from the list rather than
-turning one person into three owners by spelling.
+The name is picked from a list, not typed: "Fernando M", "fernando" and
+"Fernando" are three owners of the same lead, and nobody notices until someone
+asks whose it is. `GET /crm/callers` returns `roster` — from `CRM_CALLERS`, so
+the people on the phones change in Cloudflare rather than in a deploy — merged
+with every name already in the call log, so someone leaving the roster never
+makes the leads they own unattributable.
 
 ### Categories
 

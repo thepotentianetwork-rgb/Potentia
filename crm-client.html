@@ -240,8 +240,7 @@ section{margin-bottom:52px}
       <input id="call-dur" type="number" min="1" max="600" step="1" placeholder="Min" style="width:90px">
       <input id="call-date" type="date" style="width:150px">
       <input id="call-notes" class="grow" type="text" placeholder="What was said — e.g. wants the booking page live before the 1st">
-      <input id="call-by" list="caller-names" type="text" placeholder="Logged by" style="width:150px" autocomplete="off">
-      <datalist id="caller-names"></datalist>
+      <select id="call-by" style="width:160px"><option value="">Logged by…</option></select>
       <button class="btn" type="submit">Log Call</button>
     </form>
     <p class="call-hint">Whoever first gets the customer on the phone owns the lead &mdash; voicemail and no answer claim nothing.</p>
@@ -885,28 +884,30 @@ function renderCalls(calls) {
   });
 }
 
-/* Names of people who have logged calls before. The first caller types theirs;
-   everyone after picks it from the list, which keeps "Nando" from becoming
-   three different owners. */
+/* Who is on the phones. A list to pick from rather than a box to type in:
+   "Fernando M", "fernando" and "Fernando" are three owners of the same lead,
+   and nobody notices until someone asks whose it is. */
 authFetch('/crm/callers').then(function (r) {
   if (!r.ok || !r.data) return;
-  var dl = el('caller-names');
+  var sel = el('call-by');
   (r.data.callers || []).forEach(function (name) {
     var o = document.createElement('option');
     o.value = name;
-    dl.appendChild(o);
+    o.textContent = name;
+    sel.appendChild(o);
   });
+  // Whoever this browser is, remembered — nobody picks their own name forty
+  // times a day.
+  try {
+    var lastBy = localStorage.getItem('potentia_crm_caller');
+    if (lastBy) sel.value = lastBy;
+  } catch (e) {}
 }).catch(function () {});
-
-try {
-  var lastBy = localStorage.getItem('potentia_crm_caller');
-  if (lastBy) el('call-by').value = lastBy;
-} catch (e) {}
 
 el('call-form').addEventListener('submit', function (e) {
   e.preventDefault();
   var dateVal = el('call-date').value;
-  var by = el('call-by').value.trim();
+  var by = el('call-by').value;
   try { if (by) localStorage.setItem('potentia_crm_caller', by); } catch (e2) {}
   authFetch('/crm/clients/' + clientId + '/calls', {
     method: 'POST',
