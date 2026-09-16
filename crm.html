@@ -318,7 +318,8 @@ function authFetch(path, options) {
     }
 
     function render(d) {
-      var html = 'Found ' + n(d.sourced) + ' businesses, ' + n(d.deduped) + ' already known.';
+      var html = 'Found ' + n(d.sourced) + ' businesses, ' + n(d.deduped) + ' already known, ' +
+                 n(d.screened) + ' screened out before spending anything.';
       if (!d.dry_run) {
         html += '<br>Researched ' + n(d.enriched) + ', scored ' + n(d.scored) +
                 ' &rarr; ' + n(d.pushed) + ' added as leads, ' + n(d.rejected) + ' not worth a call.';
@@ -339,7 +340,7 @@ function authFetch(path, options) {
       if (evt.event === 'sourcing') { note('Searching your cities&hellip;'); return; }
       if (evt.event === 'sourced') {
         note('Found ' + n(evt.sourced) + ', ' + n(evt.deduped) + ' already known, ' +
-             n(evt.rejected) + ' screened out for free.');
+             n(evt.screened) + ' screened out for free.');
         return;
       }
       if (evt.event === 'batch') {
@@ -360,6 +361,11 @@ function authFetch(path, options) {
       if (evt.event === 'candidate_failed') {
         note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' +
              esc(evt.name || 'a business') + ' &mdash; could not be researched.');
+        if (evt.auth) {
+          note('<span class="lp-err">One of the API keys was rejected. The run stopped ' +
+               'here rather than spending on the rest &mdash; fix the key in Cloudflare ' +
+               'and run again. Nothing already researched is lost.</span>');
+        }
         return;
       }
       if (evt.event === 'done') { result = evt.result; return; }

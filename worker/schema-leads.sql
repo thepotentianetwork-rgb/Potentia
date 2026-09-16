@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS enrichment_runs (
   enriched INTEGER NOT NULL DEFAULT 0,
   scored INTEGER NOT NULL DEFAULT 0,
   pushed INTEGER NOT NULL DEFAULT 0,
-  rejected INTEGER NOT NULL DEFAULT 0,
+  screened INTEGER NOT NULL DEFAULT 0,   -- vetoed free, before any paid call
+  rejected INTEGER NOT NULL DEFAULT 0,   -- researched, scored, not worth a call
   failed INTEGER NOT NULL DEFAULT 0,
   est_cost_usd REAL NOT NULL DEFAULT 0,
   error TEXT

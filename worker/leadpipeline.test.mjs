@@ -12,7 +12,8 @@ import {
   normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
   pushLeadToCrm, stripCandidate, spentToday, withRetry, parseClaudeJson,
   parseGrokJson, enrichmentSchemaFor, defaultSources, seedLeadSources,
-  offerName, LEAD_DEFAULTS, scorePrompt, placesReject, placesPromise
+  offerName, LEAD_DEFAULTS, scorePrompt, placesReject, placesPromise,
+  apiKey, providerError
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -484,7 +485,8 @@ test('hopeless candidates are vetoed at sourcing, before any paid call', async (
   });
   const out = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
   assert.equal(out.sourced, 3);
-  assert.equal(out.rejected, 2, 'the dead one and the huge one are vetoed for free');
+  assert.equal(out.screened, 2, 'the dead one and the huge one are vetoed for free');
+  assert.equal(out.rejected, 0, 'nothing was researched, so nothing was rejected on merit');
   assert.equal(calls.xai + calls.anthropic, 0);
 
   const staged = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status='new'").get();
@@ -504,7 +506,7 @@ test('a vetoed business is not re-sourced on the next run', async () => {
               anthropic: () => { throw new Error('no'); } });
   await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
   const second = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
-  assert.equal(second.rejected, 0, 'the second sighting dedupes, it does not re-veto');
+  assert.equal(second.screened, 0, 'the second sighting dedupes, it does not re-veto');
   assert.equal(second.deduped, 1);
   const n = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates").get();
   assert.equal(Number(n.c), 1);
@@ -651,4 +653,103 @@ test('candidates stranded by a killed run are picked back up', async () => {
 
   const live = db.prepare("SELECT status FROM lead_candidates WHERE place_id='PY'").get();
   assert.equal(live.status, 'enriching', 'a row a live run is holding is left alone');
+});
+
+test('a key pasted with stray whitespace still works', () => {
+  assert.equal(apiKey('  sk-ant-abc123\n'), 'sk-ant-abc123');
+  assert.equal(apiKey(undefined), '');
+  assert.equal(apiKey(null), '');
+});
+
+test('only 401 and 403 are marked unretryable', () => {
+  assert.equal(providerError('Anthropic', 401, 'bad key').authFailure, true);
+  assert.equal(providerError('Anthropic', 403, 'forbidden').authFailure, true);
+  assert.equal(providerError('xAI', 429, 'slow down').authFailure, undefined);
+  assert.equal(providerError('xAI', 500, 'oops').authFailure, undefined);
+  assert.match(providerError('Anthropic', 401, 'bad key').message, /^Anthropic 401: bad key/);
+});
+
+test('withRetry gives up on a rejected key instead of hammering it', async () => {
+  let calls = 0;
+  await assert.rejects(() => withRetry(() => {
+    calls++;
+    throw providerError('Anthropic', 401, 'API key is invalid.');
+  }, async () => {}), /401/);
+  assert.equal(calls, 1, 'a wrong key is still wrong six seconds later');
+});
+
+test('a rejected key stops the run instead of repricing the same answer', async () => {
+  const { env, db } = await seededEnv();
+  const calls = stubFetch({
+    places: () => ok({ places: [PLACE(1), PLACE(2), PLACE(3), PLACE(4), PLACE(5)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => new Response(JSON.stringify({
+      type: 'error', error: { type: 'authentication_error', message: 'API key is invalid.' }
+    }), { status: 401 })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+
+  /* The old behaviour: five candidates, five Grok calls at five cents each,
+     fifteen Anthropic calls, to be told one thing five times. */
+  assert.equal(calls.anthropic, 1, 'asked once, believed it');
+  assert.equal(calls.xai, 1, 'stopped before buying research for the other four');
+  assert.equal(out.enriched, 1);
+  assert.match(out.errors.join(' '), /stopped: Anthropic 401/);
+
+  const left = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status != 'rejected'").get();
+  assert.equal(Number(left.c), 5, 'the other four are untouched, waiting for a good key');
+});
+
+test('research survives a scoring failure and is never bought twice', async () => {
+  const { env, db } = await seededEnv();
+  let anthropicOk = false;
+  const calls = stubFetch({
+    places: () => ok({ places: [PLACE(1)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'researched once', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => anthropicOk
+      ? ok({ content: [{ type: 'text', text: JSON.stringify({
+          score: 90, best_offer: 1, reason: 'r', opener: 'o' }) }] })
+      : new Response('{"error":"boom"}', { status: 500 })
+  });
+
+  // Run one: research succeeds, scoring is broken.
+  const first = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(first.enriched, 1);
+  assert.equal(first.pushed, 0);
+  const banked = db.prepare("SELECT enrichment_json FROM lead_candidates WHERE place_id='P1'").get();
+  assert.match(banked.enrichment_json, /researched once/, 'the paid research was banked');
+
+  // Run two: scoring works now. The research must NOT be bought again.
+  anthropicOk = true;
+  const xaiBefore = calls.xai;
+  const second = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(calls.xai, xaiBefore, 'no second Grok call for the same business');
+  assert.equal(second.enriched, 0, 'nothing new was researched');
+  assert.equal(second.pushed, 1, 'and it still made it into the CRM');
+});
+
+test('screened-for-free is counted apart from researched-and-rejected', async () => {
+  const { env } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [Object.assign(PLACE(1), { userRatingCount: 1 }), PLACE(2)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 10, best_offer: 1, reason: 'r', opener: 'o' }) }] })
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+  assert.equal(out.screened, 1, 'one was vetoed before a cent was spent');
+  assert.equal(out.rejected, 1, 'one was researched, scored and turned down');
 });

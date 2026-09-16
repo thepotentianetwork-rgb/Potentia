@@ -73,7 +73,8 @@ export async function ensureLeadPipelineTables(env) {
       started_at TEXT NOT NULL, finished_at TEXT,
       sourced INTEGER NOT NULL DEFAULT 0, deduped INTEGER NOT NULL DEFAULT 0,
       enriched INTEGER NOT NULL DEFAULT 0, scored INTEGER NOT NULL DEFAULT 0,
-      pushed INTEGER NOT NULL DEFAULT 0, rejected INTEGER NOT NULL DEFAULT 0,
+      pushed INTEGER NOT NULL DEFAULT 0, screened INTEGER NOT NULL DEFAULT 0,
+      rejected INTEGER NOT NULL DEFAULT 0,
       failed INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0,
       error TEXT)`
   ).run();
@@ -87,6 +88,12 @@ export async function ensureLeadPipelineTables(env) {
   const candCols = await db.prepare("PRAGMA table_info(lead_candidates)").all();
   if ((candCols.results || []).map((r) => r.name).indexOf("promise") === -1) {
     await db.prepare("ALTER TABLE lead_candidates ADD COLUMN promise INTEGER").run();
+  }
+
+  // Same for `screened` — free screening used to be lumped in with `rejected`.
+  const runCols = await db.prepare("PRAGMA table_info(enrichment_runs)").all();
+  if ((runCols.results || []).map((r) => r.name).indexOf("screened") === -1) {
+    await db.prepare("ALTER TABLE enrichment_runs ADD COLUMN screened INTEGER NOT NULL DEFAULT 0").run();
   }
 
   const have = await db.prepare("PRAGMA table_info(clients)").all();
@@ -160,7 +167,7 @@ export async function placesTextSearch(env, query, signal) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Goog-Api-Key": env.GOOGLE_PLACES_API_KEY,
+      "X-Goog-Api-Key": apiKey(env.GOOGLE_PLACES_API_KEY),
       "X-Goog-FieldMask": PLACES_FIELDS
     },
     body: JSON.stringify({ textQuery: query, maxResultCount: 20 }),
@@ -390,7 +397,7 @@ export async function sourceCandidates(env, counts, opts) {
              (place_id, segment, offer_hint, source_id, status, promise, score, reason, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'rejected', 0, 0, ?, ?, ?)`
         ).bind(p.place_id, s.segment, s.offer_hint, s.id, veto.slice(0, 300), now, now).run();
-        counts.rejected++;
+        counts.screened++;
         continue;
       }
 
@@ -503,6 +510,22 @@ function enrichPrompt(segment, p) {
     `"established". Use null if you genuinely cannot tell.`;
 }
 
+/* Pasting a key into a dashboard field catches a trailing newline or a
+   leading space more often than anyone admits, and the provider answers with
+   a flat "API key is invalid" that sends you looking at the wrong thing. */
+export function apiKey(v) { return String(v == null ? "" : v).trim(); }
+
+/* A 401 or 403 is the one failure that will not come right by trying again:
+   the key is wrong now and will still be wrong in six seconds, and on the
+   next candidate, and the one after that. Marking it lets withRetry give up
+   at once and lets the run stop instead of buying the same answer five times.
+   Everything else — a timeout, a 429, a 500 — retries as before. */
+export function providerError(who, status, body) {
+  const e = new Error(who + " " + status + ": " + String(body).slice(0, 300));
+  if (status === 401 || status === 403) e.authFailure = true;
+  return e;
+}
+
 /* xAI Responses API. Verified against docs.x.ai (Sept 2026):
      - endpoint POST /v1/responses, model grok-4.6
      - server-side search is tools: [{type:"web_search"}]
@@ -515,7 +538,7 @@ export async function enrichWithGrok(env, segment, places) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer " + env.XAI_API_KEY
+      Authorization: "Bearer " + apiKey(env.XAI_API_KEY)
     },
     body: JSON.stringify({
       model: "grok-4.6",
@@ -527,7 +550,7 @@ export async function enrichWithGrok(env, segment, places) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error("xAI " + res.status + ": " + body.slice(0, 300));
+    throw providerError("xAI", res.status, body);
   }
   const data = await res.json();
   return parseGrokJson(data);
@@ -637,7 +660,7 @@ export async function scoreWithClaude(env, segment, places, enrichment) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
+      "x-api-key": apiKey(env.ANTHROPIC_API_KEY),
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
@@ -651,7 +674,7 @@ export async function scoreWithClaude(env, segment, places, enrichment) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error("Anthropic " + res.status + ": " + body.slice(0, 300));
+    throw providerError("Anthropic", res.status, body);
   }
   const data = await res.json();
   return parseClaudeJson(data);
@@ -769,7 +792,7 @@ export async function runLeadPipeline(env, opts) {
 
   const counts = {
     sourced: 0, deduped: 0, enriched: 0, scored: 0,
-    pushed: 0, rejected: 0, failed: 0, est_cost_usd: 0, errors: []
+    pushed: 0, screened: 0, rejected: 0, failed: 0, est_cost_usd: 0, errors: []
   };
   const started = new Date().toISOString();
   const run = await db.prepare(
@@ -796,9 +819,9 @@ export async function runLeadPipeline(env, opts) {
     if (!runId) return;
     await db.prepare(
       `UPDATE enrichment_runs SET sourced = ?, deduped = ?, enriched = ?, scored = ?,
-              pushed = ?, rejected = ?, failed = ?, est_cost_usd = ? WHERE id = ?`
+              pushed = ?, screened = ?, rejected = ?, failed = ?, est_cost_usd = ? WHERE id = ?`
     ).bind(counts.sourced, counts.deduped, counts.enriched, counts.scored,
-           counts.pushed, counts.rejected, counts.failed,
+           counts.pushed, counts.screened, counts.rejected, counts.failed,
            Number(counts.est_cost_usd.toFixed(4)), runId).run();
   };
 
@@ -808,7 +831,7 @@ export async function runLeadPipeline(env, opts) {
     else counts.errors.push("daily cost ceiling reached before sourcing");
     await checkpoint();
     await emit({ event: "sourced", sourced: counts.sourced,
-                 deduped: counts.deduped, rejected: counts.rejected });
+                 deduped: counts.deduped, screened: counts.screened });
 
     if (!o.dryRun) {
       /* Recover anything a killed run left mid-flight. A candidate is set to
@@ -850,15 +873,26 @@ export async function runLeadPipeline(env, opts) {
           await db.prepare("UPDATE lead_candidates SET attempts = attempts + 1, status = 'enriching', updated_at = ? WHERE id = ?")
             .bind(new Date().toISOString(), cand.id).run();
 
-          await emit({ event: "researching", position: position, total: queue.length,
-                       name: places.name || null });
-          const enrichment = await withRetry(() => enrichWithGrok(env, cand.segment, places));
-          counts.enriched++; counts.est_cost_usd += LEAD_COST.grokEnrichUsd;
-          await checkpoint();
-
-          if (overBudget()) {
+          /* Research an earlier run already paid for is reused, never bought
+             twice. This used to be thrown away whenever scoring failed after
+             it — so a single bad Anthropic key had every run re-buying the
+             same web research at five cents a business. */
+          let enrichment = safeParse(cand.enrichment_json);
+          if (enrichment) {
+            await emit({ event: "researching", position: position, total: queue.length,
+                         name: places.name || null, cached: true });
+          } else {
+            await emit({ event: "researching", position: position, total: queue.length,
+                         name: places.name || null });
+            enrichment = await withRetry(() => enrichWithGrok(env, cand.segment, places));
+            counts.enriched++; counts.est_cost_usd += LEAD_COST.grokEnrichUsd;
+            // Banked before anything else can go wrong. It is bought and paid for.
             await db.prepare("UPDATE lead_candidates SET status = 'enriched', enrichment_json = ?, updated_at = ? WHERE id = ?")
               .bind(JSON.stringify(enrichment), new Date().toISOString(), cand.id).run();
+            await checkpoint();
+          }
+
+          if (overBudget()) {
             counts.errors.push("ceiling reached after enrichment; scoring deferred");
             break;
           }
@@ -889,7 +923,15 @@ export async function runLeadPipeline(env, opts) {
           await failCandidate(env, cand, String(e).slice(0, 300), counts);
           await checkpoint();
           await emit({ event: "candidate_failed", position: position,
-                       total: queue.length, name: (places && places.name) || null });
+                       total: queue.length, name: (places && places.name) || null,
+                       auth: !!(e && e.authFailure) });
+          /* A rejected key is the same answer for every candidate in the
+             queue. Carrying on costs five cents a head to be told it five
+             times, so the run stops and says which key to go and look at. */
+          if (e && e.authFailure) {
+            counts.errors.push("stopped: " + String(e.message || e).slice(0, 200));
+            break;
+          }
         }
       }
     }
@@ -900,10 +942,10 @@ export async function runLeadPipeline(env, opts) {
   if (runId) {
     await db.prepare(
       `UPDATE enrichment_runs SET finished_at = ?, sourced = ?, deduped = ?, enriched = ?,
-              scored = ?, pushed = ?, rejected = ?, failed = ?, est_cost_usd = ?, error = ?
+              scored = ?, pushed = ?, screened = ?, rejected = ?, failed = ?, est_cost_usd = ?, error = ?
         WHERE id = ?`
     ).bind(new Date().toISOString(), counts.sourced, counts.deduped, counts.enriched,
-           counts.scored, counts.pushed, counts.rejected, counts.failed,
+           counts.scored, counts.pushed, counts.screened, counts.rejected, counts.failed,
            Number(counts.est_cost_usd.toFixed(4)),
            counts.errors.length ? counts.errors.join(" | ").slice(0, 900) : null,
            runId).run();
@@ -932,6 +974,7 @@ export async function withRetry(fn, sleep) {
   for (let i = 0; i <= waits.length; i++) {
     try { return await fn(); } catch (e) {
       last = e;
+      if (e && e.authFailure) throw e;   // the key will not fix itself
       if (i < waits.length) await (sleep || defaultSleep)(waits[i]);
     }
   }
