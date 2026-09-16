@@ -51,7 +51,9 @@ async function setup() {
       { method, headers: h, body: body ? JSON.stringify(body) : undefined }), env);
     const text = await res.text();
     let data = null; try { data = JSON.parse(text); } catch (e) {}
-    return { status: res.status, data, text };
+    const headers = {};
+    res.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+    return { status: res.status, data, text, headers };
   }
 
   const crmTok = (await call("POST", "/crm/login", { password: "cpw" })).data.token;
@@ -198,4 +200,26 @@ test("who logged a call is returned with it", async () => {
     { direction: "outbound", outcome: "connected", logged_by: "Maya", notes: "wants a quote" }, crmTok);
   const r = await call("GET", "/crm/clients/1", null, crmTok);
   assert.equal(r.data.calls[0].logged_by, "Maya");
+});
+
+test("the preflight allows every custom header the pages actually send", async () => {
+  const { call } = await setup();
+  const r = await call("OPTIONS", "/crm/leads/segments");
+  const allowed = String(r.headers["access-control-allow-headers"] || "")
+    .split(",").map((h) => h.trim().toLowerCase());
+
+  /* Scanned from the pages rather than listed here, so the next custom header
+     someone adds is caught by this test instead of by a browser reporting
+     "Load failed" and sending everyone to look at the server. */
+  const fs = await import("node:fs");
+  const sent = new Set();
+  for (const f of ["crm.html", "crm-client.html", "crm-data.html", "crm-lead.js"]) {
+    let src; try { src = fs.readFileSync(path.join(here, "..", f), "utf8"); } catch (e) { continue; }
+    for (const m of src.matchAll(/['"]([Xx]-[A-Za-z0-9-]+)['"]\s*:/g)) sent.add(m[1].toLowerCase());
+  }
+
+  assert.ok(sent.has("x-leads-unlock"), "the scan found the header the CRM sends");
+  for (const h of sent) {
+    assert.ok(allowed.includes(h), h + " is sent by the CRM but blocked at the preflight");
+  }
 });
