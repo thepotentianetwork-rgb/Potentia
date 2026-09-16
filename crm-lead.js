@@ -131,5 +131,32 @@
     return box;
   }
 
-  global.LeadDetail = { badge: whyBadge, block: leadDetail };
+  /* Filling the fees in from the package, in one place because both CRM pages
+     do it and getting it subtly different on one of them is how a client ends
+     up quoted at another tier's price.
+
+     Three rules:
+       - An empty field gets the list price.
+       - A figure someone TYPED is never touched. That is the real quote.
+       - A figure this put there may be replaced — including with nothing,
+         when the new package has no list price. Without that last part,
+         picking Tier 1 and then changing to Custom CRM leaves 500 in the box
+         and a custom build goes out priced like a two-page website.
+
+     `prices` is { key: {price, monthly} }, read from /crm/packages. */
+  function bindFeePrefill(select, fields, prices) {
+    var filled = {};                       // field -> what we last put in it
+    select.addEventListener('change', function () {
+      var row = prices[select.value] || {};
+      fields.forEach(function (f) {
+        var el = f.el, cur = String(el.value).trim();
+        if (cur && cur !== filled[f.key]) return;   // typed by a person, leave it
+        var v = row[f.key];
+        el.value = v == null ? '' : v;
+        filled[f.key] = v == null ? undefined : String(v);
+      });
+    });
+  }
+
+  global.LeadDetail = { badge: whyBadge, block: leadDetail, bindFeePrefill: bindFeePrefill };
 })(window);

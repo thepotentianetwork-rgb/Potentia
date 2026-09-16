@@ -383,7 +383,7 @@ var TRADE_LABELS = {};
 /* Filled from /crm/packages. Not written here: the list carries the build
    prices, and this file is readable by anyone who visits it. */
 var PACKAGES = [['', '—']];
-var PACKAGE_PRICE = {};
+var PACKAGE_PRICE = {};   // key -> { price, monthly }
 var PACKAGE_LABELS = {};
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 
@@ -886,7 +886,7 @@ function loadPackages() {
     r.data.packages.forEach(function (p) {
       if (p.retired) return;               // still shown on clients who have one, not offered for new work
       PACKAGES.push([p.key, p.label]);
-      if (p.price != null) PACKAGE_PRICE[p.key] = p.price;
+      PACKAGE_PRICE[p.key] = { price: p.price, monthly: p.monthly };
     });
     (r.data.packages || []).forEach(function (p) { PACKAGE_LABELS[p.key] = p.label; });
     fillSelect(document.getElementById('n-package'), PACKAGES);
@@ -905,25 +905,13 @@ document.getElementById('new-btn').addEventListener('click', function () {
 document.getElementById('n-cancel').addEventListener('click', function () {
   newPanel.classList.remove('open');
 });
-/* Picking a tier fills the build fee in — but only ever into a field that is
-   empty or still holds the figure this put there. A number someone typed is
-   their quote and is never touched.
-
-   It also CLEARS the field when the new package has no list price. Otherwise
-   picking Tier 1 and then changing to Custom CRM leaves 500 sitting in the
-   box, and a custom CRM goes out quoted at the price of a two-page website. */
-var autoFee = null;
-function bindFeePrefill(selectId, buildId) {
-  var sel = document.getElementById(selectId), build = document.getElementById(buildId);
-  sel.addEventListener('change', function () {
-    var cur = String(build.value).trim();
-    if (cur && !(autoFee != null && cur === String(autoFee))) return;
-    var price = PACKAGE_PRICE[sel.value];
-    build.value = price == null ? '' : price;
-    autoFee = price == null ? null : price;
-  });
-}
-bindFeePrefill('n-package', 'n-build');
+/* Build fee and monthly retainer both fill in from the package. The rules
+   live in crm-lead.js so this page and the client page cannot drift apart. */
+LeadDetail.bindFeePrefill(
+  document.getElementById('n-package'),
+  [{ key: 'price', el: document.getElementById('n-build') },
+   { key: 'monthly', el: document.getElementById('n-monthly') }],
+  PACKAGE_PRICE);
 document.getElementById('n-save').addEventListener('click', function () {
   var msg = document.getElementById('n-msg');
   var payload = {

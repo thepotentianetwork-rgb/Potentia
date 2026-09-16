@@ -301,7 +301,7 @@ var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', '
 /* Filled from /crm/packages. Not written here: the list carries the build
    prices, and this file is readable by anyone who visits it. */
 var PACKAGES = [['', '—']];
-var PACKAGE_PRICE = {};
+var PACKAGE_PRICE = {};   // key -> { price, monthly }
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 var PAY_METHODS = ['cash', 'check', 'venmo', 'zelle', 'card', 'stripe', 'paypal', 'invoice', 'other'];
 var PAY_KINDS = [['build', 'Build'], ['monthly', 'Monthly'], ['addon', 'Add-on'], ['other', 'Other']];
@@ -359,20 +359,13 @@ fillSelect(el('pay-method'), PAY_METHODS.map(function (m) { return [m, m]; }));
 fillSelect(el('pay-kind'), PAY_KINDS);
 el('pay-date').value = today();
 el('f-phone').addEventListener('input', renderPhoneActions);
-/* Picking a tier fills the build fee in — but only into a field that is empty
-   or still holds the figure this put there. What a client is actually being
-   charged is never overwritten by a list price.
-
-   Clears it when the new package has no list price, so changing a client from
-   Tier 1 to Custom CRM does not leave them quoted at 500. */
-var autoFee = null;
-el('f-package').addEventListener('change', function () {
-  var cur = String(el('f-build').value).trim();
-  if (cur && !(autoFee != null && cur === String(autoFee))) return;
-  var price = PACKAGE_PRICE[this.value];
-  el('f-build').value = price == null ? '' : price;
-  autoFee = price == null ? null : price;
-});
+/* Build fee and monthly retainer both fill in from the package. The rules
+   live in crm-lead.js so this page and the list page cannot drift apart. What
+   a client is actually being charged is never overwritten by a list price. */
+LeadDetail.bindFeePrefill(
+  el('f-package'),
+  [{ key: 'price', el: el('f-build') }, { key: 'monthly', el: el('f-monthly') }],
+  PACKAGE_PRICE);
 
 // ---- details ----
 // ---- Google Voice quick actions ----
@@ -989,7 +982,7 @@ function loadPackages() {
     if (!r.ok || !r.data || !r.data.packages) return;
     r.data.packages.forEach(function (p) {
       PACKAGE_LABELS[p.key] = p.label;
-      if (p.price != null) PACKAGE_PRICE[p.key] = p.price;
+      PACKAGE_PRICE[p.key] = { price: p.price, monthly: p.monthly };
       if (!p.retired) PACKAGES.push([p.key, p.label]);
     });
     fillSelect(el('f-package'), PACKAGES);

@@ -350,14 +350,20 @@ password does not expose the other side.
 The website tiers and their build prices live in **one** place:
 `CRM_PACKAGE_LIST` in `worker/index.js`.
 
-| Key | Shown as | Build |
-|---|---|---|
-| `tier1` | Tier 1 — Home & Contact | $500 |
-| `tier2` | Tier 2 — Home, Gallery & Contact | $1,200 |
-| `tier3` | Tier 3 — Gallery + Scheduling | $1,800 |
-| `crm` | Custom CRM | scoped per business |
-| `platform` | Sales Platform | scoped per business |
-| `custom` | Custom | — |
+| Key | Shown as | Build | Monthly |
+|---|---|---|---|
+| `tier1` | Tier 1 — Home & Contact | $500 | $20 |
+| `tier2` | Tier 2 — Home, Gallery & Contact | $1,200 | $75 |
+| `tier3` | Tier 3 — Gallery + Scheduling | $1,800 | $150 |
+| `crm` | Custom CRM | scoped per business | scoped |
+| `platform` | Sales Platform | scoped per business | scoped |
+| `custom` | Custom | — | — |
+
+Every tier carries a retainer — hosting, patching and upkeep. That is load-
+bearing copy: `pricing.html` used to promise Tier 1 *"No monthly
+subscription"* and the home page *"no monthly ransom to keep it online"*, and
+both lines are now gone. A test fails if a tier loses its retainer while that
+copy stays deleted, or if either claim comes back.
 
 **The prices are internal.** Nothing on the public site quotes a figure —
 every plan on `pricing.html` says *Request Info*, and the site's assistant is
@@ -371,9 +377,12 @@ the assistant's prompt.
 `crm.html`, `crm-client.html` and `crm-data.html` all read that endpoint, so
 changing a price is one edit here and a bundle paste — no page changes.
 
-Selecting a package in the CRM fills the build fee in, and **clears it** when
-the new package has no list price, so a Custom CRM is never left quoted at the
-price of a two-page website. It never touches a number someone typed.
+Selecting a package in the CRM fills in **both** the build fee and the monthly
+retainer, and **clears** either one when the new package has no list price — so
+a Custom CRM is never left quoted at the price of a two-page website. It never
+touches a number someone typed, and the two fields are tracked separately: a
+negotiated retainer survives changing the tier. The rules live once in
+`crm-lead.js`, which both CRM pages load.
 
 Four package names are **retired**: `foundation`, `booking`, `gallery` and
 `operator`, from the old four-tier lineup. They are still in the list and

@@ -2938,8 +2938,8 @@ const ALLOWED_ORIGINS = [
 const SYSTEM_PROMPT = `You are the AI assistant embedded on the Potentia Studio website. Potentia builds two things: custom, hand-built websites — no templates, no bloated platforms, 72-hour turnaround, free domain for the first year — and the software a business runs on once the work arrives: fully custom CRMs and tailored sales platforms with data tracking. The website is where a client starts, not the whole offer; Potentia is looking for clients who want to grow with them over years, adding each piece when they need it rather than buying everything at once.
 
 Stage One — the website (yours outright, no page builder underneath):
-Tier 1 — Home & Contact Site: two pages, who you are and how to reach you. 3 images, free domain (1 year). One-time build, no monthly subscription (edits after the first 7 days are billed per change request).
-Tier 2 — Home, Gallery & Contact Site: everything in Tier 1, plus a gallery page (15 photos and 1 featured video). For businesses where seeing the work is what makes the customer call. Includes a monthly plan to edit, manage & update photos.
+Tier 1 — Home & Contact Site: two pages, who you are and how to reach you. 3 images, free domain (1 year). Includes a monthly plan for hosting & upkeep; edits after the first 7 days of launch are billed per change request.
+Tier 2 — Home, Gallery & Contact Site: everything in Tier 1, plus a gallery page (12 photos and 1 featured video). For businesses where seeing the work is what makes the customer call. Includes a monthly plan to edit, manage & update photos.
 Tier 3 — Gallery Site + Scheduling: everything in Tier 2, plus a live booking calendar — the customer picks a service and books a slot instead of waiting on a callback. Includes a monthly plan for the calendar & ongoing management.
 
 Stage Two — the system (scoped and quoted per business):
@@ -5101,7 +5101,8 @@ const CRM_STATUSES = ["lead", "contacted", "proposal", "building", "live", "paus
 const CRM_ACTIVE_STATUSES = ["building", "live"];
 /* The packages a client can be on, and what a build of each one costs.
 
-   The prices are INTERNAL. The public site quotes nothing — every plan on
+   `price` is the one-time build; `monthly` is the retainer that keeps the
+   site hosted, patched and looked after. Both are INTERNAL. The public site quotes nothing — every plan on
    pricing.html says "Request Info", and the site's assistant is told in its
    system prompt never to state a figure. They live here, behind CRM auth,
    rather than in crm.html, because crm.html is a public file: anyone can read
@@ -5117,12 +5118,12 @@ const CRM_ACTIVE_STATUSES = ["building", "live"];
    offering them for new work while still showing them on the clients who
    have one. */
 const CRM_PACKAGE_LIST = [
-  { key: "tier1", label: "Tier 1 — Home & Contact", price: 500 },
-  { key: "tier2", label: "Tier 2 — Home, Gallery & Contact", price: 1200 },
-  { key: "tier3", label: "Tier 3 — Gallery + Scheduling", price: 1800 },
-  { key: "crm", label: "Custom CRM", price: null },
-  { key: "platform", label: "Sales Platform", price: null },
-  { key: "custom", label: "Custom", price: null },
+  { key: "tier1", label: "Tier 1 — Home & Contact", price: 500, monthly: 20 },
+  { key: "tier2", label: "Tier 2 — Home, Gallery & Contact", price: 1200, monthly: 75 },
+  { key: "tier3", label: "Tier 3 — Gallery + Scheduling", price: 1800, monthly: 150 },
+  { key: "crm", label: "Custom CRM", price: null, monthly: null },
+  { key: "platform", label: "Sales Platform", price: null, monthly: null },
+  { key: "custom", label: "Custom", price: null, monthly: null },
   { key: "foundation", label: "Foundation", price: null, retired: true },
   { key: "booking", label: "Booking", price: null, retired: true },
   { key: "gallery", label: "Gallery", price: null, retired: true },

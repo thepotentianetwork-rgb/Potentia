@@ -70,9 +70,33 @@ test("the three tiers carry the prices we sell them at", async () => {
   assert.equal(by.tier1.price, 500);
   assert.equal(by.tier2.price, 1200);
   assert.equal(by.tier3.price, 1800);
+  // The retainer that keeps the site hosted, patched and looked after.
+  assert.equal(by.tier1.monthly, 20);
+  assert.equal(by.tier2.monthly, 75);
+  assert.equal(by.tier3.monthly, 150);
   // Scoped per business — a figure here would be a guess quoted as a price.
   assert.equal(by.crm.price, null);
+  assert.equal(by.crm.monthly, null);
   assert.equal(by.platform.price, null);
+  assert.equal(by.platform.monthly, null);
+});
+
+test("every tier carries a retainer, because the page now says so", async () => {
+  /* pricing.html used to promise Tier 1 "No monthly subscription" and the
+     home page "no monthly ransom to keep it online". Both are gone. If a tier
+     ever loses its retainer, that copy has to change back — so fail here
+     rather than leave the site making a promise the CRM contradicts. */
+  const { call, crmTok } = await setup();
+  const r = await call("GET", "/crm/packages", null, crmTok);
+  r.data.packages.forEach((p) => {
+    if (!/^tier\d$/.test(p.key)) return;
+    assert.ok(p.monthly > 0, p.key + " must have a monthly retainer");
+  });
+  for (const f of ["pricing.html", "index.html"]) {
+    const src = fs.readFileSync(path.join(repo, f), "utf8");
+    ["No monthly subscription", "no monthly fee to keep it online", "no monthly ransom"]
+      .forEach((claim) => assert.equal(src.indexOf(claim), -1, f + " still claims: " + claim));
+  }
 });
 
 test("a retired package is still offered to the client who has one", async () => {
@@ -157,6 +181,13 @@ test("the tier names on the page and in the assistant are the same names", async
     .forEach((name) => assert.ok(page.includes(name), "pricing.html names " + name));
   ["Home & Contact Site", "Home, Gallery & Contact Site", "Gallery Site + Scheduling"]
     .forEach((name) => assert.ok(prompt.includes(name), "the assistant names " + name));
+  // The gallery is 12 photos. It was 15 in both places, and they must agree.
+  assert.ok(page.includes("12-photo gallery page"), "pricing.html says 12 photos");
+  assert.ok(prompt.includes("12 photos"), "the assistant says 12 photos");
+  ["15-photo", "15 photos"].forEach((old) => {
+    assert.equal(page.indexOf(old), -1, "pricing.html still says " + old);
+    assert.equal(prompt.indexOf(old), -1, "the assistant still says " + old);
+  });
   ["3-Page Essential", "4-Page Gallery", "Operator: Website"].forEach((gone) => {
     assert.equal(prompt.indexOf(gone), -1, "the assistant still quotes " + gone);
     assert.equal(page.indexOf(gone), -1, "pricing.html still shows " + gone);
