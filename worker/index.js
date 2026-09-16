@@ -189,7 +189,11 @@ function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    /* Every custom header the pages send has to be named here or the browser
+       blocks the request at the preflight, before the Worker ever sees it —
+       and reports it as a network failure, which sends you looking at the
+       server for something the browser did. */
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Leads-Unlock",
     "Vary": "Origin"
   };
 }
