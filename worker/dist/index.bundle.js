@@ -1519,7 +1519,7 @@ function mergedPricingConfig(saved){
       estimated cost, and a daily ceiling is checked before each paid call.
    ══════════════════════════════════════════════════════════════════════════ */
 
-const LEAD_SEGMENTS = ["contractor", "handyman", "dealer"];
+const LEAD_SEGMENTS = ["subcontractor", "general", "handyman", "dealer"];
 
 /* Estimated unit costs, in USD, used for the daily ceiling and the per-run
    log. Only the Claude figure is derived from published per-token rates
@@ -1530,7 +1530,7 @@ const LEAD_SEGMENTS = ["contractor", "handyman", "dealer"];
 // owns those at top level, and the bundler flattens both modules into one
 // file where a duplicate const is a hard SyntaxError.
 const LEAD_COST = {
-  placesSearchUsd: 0.035,     // per Text Search call (~20 results) — CALIBRATE
+  placesSearchUsd: 0.035,     // Text Search Enterprise, $35/1000 — VERIFIED
   grokEnrichUsd: 0.05,        // per candidate, incl. web_search — CALIBRATE
   claudeScoreUsd: 0.01        // per candidate — from published token rates
 };
@@ -1561,7 +1561,7 @@ async function ensureLeadPipelineTables(env) {
       source_id INTEGER, status TEXT NOT NULL DEFAULT 'new',
       attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
       places_json TEXT, places_fetched_at TEXT, enrichment_json TEXT,
-      score INTEGER, best_offer INTEGER, reason TEXT, opener TEXT,
+      promise INTEGER, score INTEGER, best_offer INTEGER, reason TEXT, opener TEXT,
       crm_client_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`
   ).run();
   await db.prepare(
@@ -1570,7 +1570,8 @@ async function ensureLeadPipelineTables(env) {
       started_at TEXT NOT NULL, finished_at TEXT,
       sourced INTEGER NOT NULL DEFAULT 0, deduped INTEGER NOT NULL DEFAULT 0,
       enriched INTEGER NOT NULL DEFAULT 0, scored INTEGER NOT NULL DEFAULT 0,
-      pushed INTEGER NOT NULL DEFAULT 0, rejected INTEGER NOT NULL DEFAULT 0,
+      pushed INTEGER NOT NULL DEFAULT 0, screened INTEGER NOT NULL DEFAULT 0,
+      rejected INTEGER NOT NULL DEFAULT 0,
       failed INTEGER NOT NULL DEFAULT 0, est_cost_usd REAL NOT NULL DEFAULT 0,
       error TEXT)`
   ).run();
@@ -1578,6 +1579,20 @@ async function ensureLeadPipelineTables(env) {
   /* D1 has no "ADD COLUMN IF NOT EXISTS", and a duplicate ADD throws. Read the
      table first and add only what is missing — the same lazy-migration shape
      the rest of this Worker uses. */
+
+  // `promise` arrived after the first candidates were staged, so it has to be
+  // added to an existing table as well as declared in CREATE TABLE above.
+  const candCols = await db.prepare("PRAGMA table_info(lead_candidates)").all();
+  if ((candCols.results || []).map((r) => r.name).indexOf("promise") === -1) {
+    await db.prepare("ALTER TABLE lead_candidates ADD COLUMN promise INTEGER").run();
+  }
+
+  // Same for `screened` — free screening used to be lumped in with `rejected`.
+  const runCols = await db.prepare("PRAGMA table_info(enrichment_runs)").all();
+  if ((runCols.results || []).map((r) => r.name).indexOf("screened") === -1) {
+    await db.prepare("ALTER TABLE enrichment_runs ADD COLUMN screened INTEGER NOT NULL DEFAULT 0").run();
+  }
+
   const have = await db.prepare("PRAGMA table_info(clients)").all();
   const cols = (have.results || []).map((r) => r.name);
   const wanted = [
@@ -1624,6 +1639,14 @@ function registrableDomain(url) {
 /* Places API (New) Text Search. The field mask is deliberately short: it sets
    the billing tier, and every field we ask for is one we would then have to
    delete at judgement time anyway. */
+/* places.photos is a Pro-tier field and rating/userRatingCount/websiteUri/
+   nationalPhoneNumber are Enterprise-tier, so this mask bills at Enterprise
+   either way — the photo list rides along for nothing. We only ever COUNT the
+   references; fetching an actual photo is a separate SKU we never call.
+
+   Photo count is one of the better tells in this whole pipeline. A working
+   trade business with four photos on its listing is not managing its online
+   presence; one with sixty has someone who is. */
 const PLACES_FIELDS = [
   "places.id",
   "places.displayName",
@@ -1632,6 +1655,7 @@ const PLACES_FIELDS = [
   "places.websiteUri",
   "places.rating",
   "places.userRatingCount",
+  "places.photos",
   "places.businessStatus"
 ].join(",");
 
@@ -1640,7 +1664,7 @@ async function placesTextSearch(env, query, signal) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Goog-Api-Key": env.GOOGLE_PLACES_API_KEY,
+      "X-Goog-Api-Key": apiKey(env.GOOGLE_PLACES_API_KEY),
       "X-Goog-FieldMask": PLACES_FIELDS
     },
     body: JSON.stringify({ textQuery: query, maxResultCount: 20 }),
@@ -1659,6 +1683,7 @@ async function placesTextSearch(env, query, signal) {
     website: p.websiteUri || "",
     rating: p.rating == null ? null : Number(p.rating),
     review_count: p.userRatingCount == null ? null : Number(p.userRatingCount),
+    photo_count: Array.isArray(p.photos) ? p.photos.length : 0,
     status: p.businessStatus || ""
   }));
 }
@@ -1702,6 +1727,51 @@ async function findExisting(env, cand) {
   return null;
 }
 
+/* ── CHEAP TRIAGE, BEFORE ANY MONEY IS SPENT ────────────────────────────────
+   Places gives us review count, photo count and whether a website exists for
+   the price of the search we already paid for. Research costs ~$0.06 a head,
+   so spending it on a business that visibly cannot fit the profile is waste —
+   and worse, it fills the caller's list with near-misses.
+
+   Two jobs here. reject() throws out the clearly-hopeless for free. promise()
+   ranks what is left, so the five we DO pay to research each run are the five
+   that look most like the profile, rather than whichever happened to be
+   sourced first.
+
+   Both read only free fields. Nothing here is a final verdict — the scorer
+   still decides, having actually read the business. */
+function placesReject(p) {
+  const rc = p.review_count;
+  if (rc == null || rc < 5) {
+    return "only " + (rc == null ? "no" : rc) + " reviews — no evidence of real trading";
+  }
+  if (rc > 150) {
+    return rc + " reviews — too established to buy a cheap site";
+  }
+  return null;
+}
+
+function placesPromise(p) {
+  let score = 0;
+  const rc = Number(p.review_count || 0);
+
+  // A real, working business, not a giant one. 8-80 is the sweet spot.
+  if (rc >= 8 && rc <= 80) score += 40;
+  else if (rc > 80 && rc <= 150) score += 15;
+  else score += 5;
+
+  // No website at all is the strongest free signal we get.
+  if (!p.website) score += 35;
+
+  // Few photos means nobody is tending the listing.
+  const ph = Number(p.photo_count || 0);
+  if (ph <= 5) score += 25;
+  else if (ph <= 15) score += 12;
+  else if (ph >= 40) score -= 10;
+
+  return Math.max(0, Math.min(100, score));
+}
+
 // ── the search grid ───────────────────────────────────────────────────────
 /* Trades that sub to general contractors, the handyman end of the same
    market, and independent dealers. Second-tier cities on purpose: far more
@@ -1712,12 +1782,18 @@ async function findExisting(env, cand) {
    could not resolve without knowing which town is home — enable the ones you
    want with a single UPDATE (see the README). Nothing in Utah is called until
    you do. */
-const CONTRACTOR_QUERIES = [
+const SUBCONTRACTOR_QUERIES = [
   "concrete contractor", "framing contractor", "drywall contractor",
   "electrician", "plumber", "HVAC contractor", "roofing contractor",
   "painting contractor", "flooring installer", "fencing contractor",
-  "excavation contractor", "landscaping contractor"
+  "excavation contractor", "siding contractor", "masonry contractor",
+  "stucco contractor", "insulation contractor", "gutter installer"
 ];
+/* General contractors are a different animal: an established GC has a real
+   site, a real crew and no interest in a $99 anything. They are searched, but
+   the scorer is told to reject any that look established — so this list earns
+   its place only through the small and new ones. */
+const GENERAL_QUERIES = ["general contractor", "home builder", "remodeling contractor"];
 const HANDYMAN_QUERIES = ["handyman", "handyman services", "home repair service"];
 const DEALER_QUERIES = ["used car dealer", "auto sales", "pre-owned vehicles"];
 
@@ -1732,19 +1808,36 @@ const CITIES = [
 ];
 
 function defaultSources() {
+  /* Subcontractors are the target. General contractors ride along but only
+     convert when they are small; handymen and dealers are seeded so the grid
+     is there to switch on, but ship DISABLED — one UPDATE turns either back on
+     without re-deriving the whole city list. Utah likewise. */
   const out = [];
-  for (const [city, state, enabled] of CITIES) {
-    for (const q of CONTRACTOR_QUERIES) out.push({ query_template: q, city, state, segment: "contractor", offer_hint: 2, enabled });
-    for (const q of HANDYMAN_QUERIES) out.push({ query_template: q, city, state, segment: "handyman", offer_hint: 1, enabled });
-    for (const q of DEALER_QUERIES) out.push({ query_template: q, city, state, segment: "dealer", offer_hint: 3, enabled });
+  for (const [city, state, on] of CITIES) {
+    for (const q of SUBCONTRACTOR_QUERIES)
+      out.push({ query_template: q, city, state, segment: "subcontractor", offer_hint: 2, enabled: on });
+    for (const q of GENERAL_QUERIES)
+      out.push({ query_template: q, city, state, segment: "general", offer_hint: 2, enabled: on });
+    for (const q of HANDYMAN_QUERIES)
+      out.push({ query_template: q, city, state, segment: "handyman", offer_hint: 1, enabled: 0 });
+    for (const q of DEALER_QUERIES)
+      out.push({ query_template: q, city, state, segment: "dealer", offer_hint: 3, enabled: 0 });
   }
   return out;
 }
 
-async function seedLeadSources(env) {
+/* Seeds the grid on an empty table. With force=true it REPLACES the grid —
+   which matters because the table is only ever seeded once, so a change to
+   defaultSources() is invisible to a database that has already been seeded.
+   A reseed drops manual edits with it: any row you switched on by hand goes
+   back to whatever this file ships. That is why it is opt-in. */
+async function seedLeadSources(env, force) {
   const db = env.CRM_DB;
   const n = await db.prepare("SELECT COUNT(*) AS c FROM lead_sources").first();
-  if (n && Number(n.c) > 0) return 0;
+  if (n && Number(n.c) > 0) {
+    if (!force) return 0;
+    await db.prepare("DELETE FROM lead_sources").run();
+  }
   const now = new Date().toISOString();
   const rows = defaultSources();
   for (const r of rows) {
@@ -1788,11 +1881,29 @@ async function sourceCandidates(env, counts, opts) {
       counts.sourced++;
       const existing = await findExisting(env, p);
       if (existing) { counts.deduped++; continue; }
+
+      /* Free triage, before a single paid call. A hopeless candidate is still
+         written down — as a tombstone carrying place_id, the verdict and the
+         reason, and none of the Places content — so the next run that meets
+         this business again dedupes it away instead of paying to look at it
+         a second time. */
+      const veto = placesReject(p);
+      if (veto) {
+        await db.prepare(
+          `INSERT INTO lead_candidates
+             (place_id, segment, offer_hint, source_id, status, promise, score, reason, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'rejected', 0, 0, ?, ?, ?)`
+        ).bind(p.place_id, s.segment, s.offer_hint, s.id, veto.slice(0, 300), now, now).run();
+        counts.screened++;
+        continue;
+      }
+
       await db.prepare(
         `INSERT INTO lead_candidates
-           (place_id, segment, offer_hint, source_id, status, places_json, places_fetched_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?)`
-      ).bind(p.place_id, s.segment, s.offer_hint, s.id, JSON.stringify(p), now, now, now).run();
+           (place_id, segment, offer_hint, source_id, status, promise, places_json, places_fetched_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?)`
+      ).bind(p.place_id, s.segment, s.offer_hint, s.id, placesPromise(p),
+             JSON.stringify(p), now, now, now).run();
     }
   }
 }
@@ -1824,7 +1935,23 @@ const TRADE_PROPS = {
   web_presence: { type: "string", enum: ["none", "facebook_only", "own_site"] },
   site_is_http_only: { type: ["boolean", "null"] },
   shows_license_or_insured: { type: ["boolean", "null"] },
-  does_subcontract_work: { type: ["boolean", "null"] }
+  does_subcontract_work: { type: ["boolean", "null"] },
+  /* How established they look. This is the field that keeps the caller off
+     the phone with a 40-truck outfit that has had a real website since 2011 —
+     those are not buying a $99 site, and a pitch to one wastes the call and
+     the reputation. Judged from what is visible: review volume, crew and fleet
+     size, multiple locations, years trading, the polish of what they already
+     have. Null where none of that is establishable. */
+  establishment: { type: ["string", "null"],
+                   enum: ["just_starting", "small", "growing", "established", null] },
+  establishment_evidence: { type: ["string", "null"] },
+  /* "No website OR one that is clearly old" is the buying trigger, so how
+     dated the existing site looks matters as much as whether one exists. A
+     copyright year several years stale, a Flash-era or early-responsive
+     layout, a phone number in an image, a blog that stops in 2019 — these are
+     things search results actually show, unlike a mobile-friendliness verdict. */
+  site_looks_dated: { type: ["boolean", "null"] },
+  site_dated_evidence: { type: ["string", "null"] }
 };
 
 const DEALER_PROPS = {
@@ -1862,12 +1989,38 @@ function enrichPrompt(segment, p) {
       `they last posted on Facebook, whether their website lists inventory at all, and ` +
       `whether that inventory looks current. Describe any mismatch in inventory_gap.`;
   }
+  const kind = segment === "handyman" ? "handyman / home repair"
+             : segment === "general" ? "general contracting / home building"
+             : "specialty trade (subcontracting)";
   return common +
-    `This is a ${segment === "handyman" ? "handyman / home repair" : "contracting"} business. ` +
-    `Establish whether they have a real website, only a Facebook page, or no web presence ` +
-    `at all; whether the site is http-only (no padlock); whether they show a license or ` +
-    `proof of insurance anywhere; and whether they take subcontract work for general ` +
-    `contractors.`;
+    `This is a ${kind} business. Establish whether they have a real website, only a ` +
+    `Facebook page, or no web presence at all; whether the site is http-only (no padlock); ` +
+    `whether they show a license or proof of insurance anywhere; and whether they take ` +
+    `subcontract work for general contractors.\n\n` +
+    `If they do have a site, judge whether it looks OLD and say what gave it away — a ` +
+    `stale copyright year, a dated layout, contact details only in an image, content or ` +
+    `a blog that stops years ago. Null if there is no site or you cannot tell.\n\n` +
+    `Also judge HOW ESTABLISHED they are, and say what you based it on. Look for review ` +
+    `volume, how long they have been trading, crew or fleet size, more than one location, ` +
+    `and how polished whatever they already have looks. A one-person outfit with 6 reviews ` +
+    `is "just_starting"; a 40-truck company with a professional site since 2011 is ` +
+    `"established". Use null if you genuinely cannot tell.`;
+}
+
+/* Pasting a key into a dashboard field catches a trailing newline or a
+   leading space more often than anyone admits, and the provider answers with
+   a flat "API key is invalid" that sends you looking at the wrong thing. */
+function apiKey(v) { return String(v == null ? "" : v).trim(); }
+
+/* A 401 or 403 is the one failure that will not come right by trying again:
+   the key is wrong now and will still be wrong in six seconds, and on the
+   next candidate, and the one after that. Marking it lets withRetry give up
+   at once and lets the run stop instead of buying the same answer five times.
+   Everything else — a timeout, a 429, a 500 — retries as before. */
+function providerError(who, status, body) {
+  const e = new Error(who + " " + status + ": " + String(body).slice(0, 300));
+  if (status === 401 || status === 403) e.authFailure = true;
+  return e;
 }
 
 /* xAI Responses API. Verified against docs.x.ai (Sept 2026):
@@ -1882,7 +2035,7 @@ async function enrichWithGrok(env, segment, places) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: "Bearer " + env.XAI_API_KEY
+      Authorization: "Bearer " + apiKey(env.XAI_API_KEY)
     },
     body: JSON.stringify({
       model: "grok-4.6",
@@ -1894,7 +2047,7 @@ async function enrichWithGrok(env, segment, places) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error("xAI " + res.status + ": " + body.slice(0, 300));
+    throw providerError("xAI", res.status, body);
   }
   const data = await res.json();
   return parseGrokJson(data);
@@ -1938,8 +2091,10 @@ const OFFERS = `
    costing them work.
 2. A credibility website for a subcontractor — the pitch is looking legitimate
    to the general contractors who hire them: licence, insurance, real photos of
-   finished work. For a handyman the same product sells to HOMEOWNERS instead,
-   on trust rather than bid-list credibility.
+   finished work. This is the main offer: specialty trades who want on a GC's
+   bid list. For a handyman the same product sells to HOMEOWNERS instead, on
+   trust rather than bid-list credibility. For a small general contractor it
+   sells to HOMEOWNERS choosing who to hire for a remodel.
 3. Dealership CRM / inventory software — for an independent used-car dealer who
    is active on Facebook while their own website's inventory sits stale. The
    gap between the two IS the pitch.`;
@@ -1954,6 +2109,37 @@ discount a dealer because a handyman has a worse website. 100 means the pain is
 obvious and the offer lands squarely. Below 55 means do not spend a call on it.
 A business with a good, current website scores low: there is nothing to sell them.
 
+THE PROFILE WE ARE ACTUALLY LOOKING FOR — a real, working business that has
+never invested in being found online:
+
+  Reviews: a decent number, nothing huge. Enough to prove they have real,
+  paying customers — roughly 8 to 80 is the sweet spot. Under about 5 may be a
+  dead or barely-trading listing and is worth little; over about 150 is a big
+  operation that already has an agency and will not take the call.
+
+  Web presence: none at all, or a site that is clearly old. "Clearly old" is as
+  good a signal as "none" — arguably better, because they have already shown
+  they will pay for a website; theirs has just aged out.
+
+  Google photos: FEW is good. A working trade business with a handful of photos
+  on its listing is one that nobody is managing. Thirty or more means somebody
+  already tends their presence, and the pitch lands badly.
+
+Score that profile high. A business missing one leg of it — plenty of reviews
+but a slick current site, or no site but two reviews and no evidence of trading
+— is a weaker lead, not an equal one.
+
+HOW ESTABLISHED THEY ARE IS A HARD GATE, not a tiebreaker. A big, settled firm
+does not buy a cheap website no matter how ordinary its current one is, and
+calling one wastes the call and looks amateur:
+  just_starting / small  -> no penalty; these are the target
+  growing                -> cap the score at 70
+  established            -> cap the score at 30, i.e. do not call
+For a GENERAL CONTRACTOR specifically, be stricter still: only score above 55 if
+they look genuinely small or new. An established GC is not a lead.
+If establishment is null, do not guess — judge on the web presence alone and say
+in the reason that you could not tell how established they are.
+
 Ignore any field that is null — null means the researcher could not verify it,
 not that the answer is no. Do not infer anything the research does not support.
 
@@ -1962,6 +2148,7 @@ something specific and verifiable about this business. No "Hi, I hope you're
 doing well", no invented facts, no claims about their site you were not told.
 
 BUSINESS: ${places.name} — ${places.address}
+GOOGLE LISTING: ${places.review_count == null ? "reviews unknown" : places.review_count + " reviews"}${places.rating ? " at " + places.rating : ""}, ${places.photo_count == null ? "photo count unknown" : places.photo_count + " photos"}
 RESEARCH: ${JSON.stringify(enrichment)}`;
 }
 
@@ -1970,7 +2157,7 @@ async function scoreWithClaude(env, segment, places, enrichment) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
+      "x-api-key": apiKey(env.ANTHROPIC_API_KEY),
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
@@ -1984,7 +2171,7 @@ async function scoreWithClaude(env, segment, places, enrichment) {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error("Anthropic " + res.status + ": " + body.slice(0, 300));
+    throw providerError("Anthropic", res.status, body);
   }
   const data = await res.json();
   return parseClaudeJson(data);
@@ -2098,11 +2285,11 @@ async function runLeadPipeline(env, opts) {
   const db = env.CRM_DB;
 
   await ensureLeadPipelineTables(env);
-  await seedLeadSources(env);
+  await seedLeadSources(env, !!o.reseed);
 
   const counts = {
     sourced: 0, deduped: 0, enriched: 0, scored: 0,
-    pushed: 0, rejected: 0, failed: 0, est_cost_usd: 0, errors: []
+    pushed: 0, screened: 0, rejected: 0, failed: 0, est_cost_usd: 0, errors: []
   };
   const started = new Date().toISOString();
   const run = await db.prepare(
@@ -2113,18 +2300,66 @@ async function runLeadPipeline(env, opts) {
   const already = await spentToday(env);
   const overBudget = () => already + counts.est_cost_usd >= cap;
 
+  /* A caller that is streaming the run to a browser passes onProgress. It is
+     never allowed to break the run: the client can hang up at any moment, and
+     a failed write must not cost a candidate that is already paid for. */
+  const emit = async (evt) => {
+    if (!o.onProgress) return;
+    try { await o.onProgress(evt); } catch (e) { /* client gone; keep going */ }
+  };
+
+  /* Write what has been spent so far back to the run row after every paid
+     candidate, instead of only at the end. A run that is cut off halfway --
+     the tab closed, the Worker killed -- has still spent that money, and the
+     daily ceiling has to know about it or it silently under-counts. */
+  const checkpoint = async () => {
+    if (!runId) return;
+    await db.prepare(
+      `UPDATE enrichment_runs SET sourced = ?, deduped = ?, enriched = ?, scored = ?,
+              pushed = ?, screened = ?, rejected = ?, failed = ?, est_cost_usd = ? WHERE id = ?`
+    ).bind(counts.sourced, counts.deduped, counts.enriched, counts.scored,
+           counts.pushed, counts.screened, counts.rejected, counts.failed,
+           Number(counts.est_cost_usd.toFixed(4)), runId).run();
+  };
+
   try {
+    await emit({ event: "sourcing" });
     if (!overBudget()) await sourceCandidates(env, counts, o);
     else counts.errors.push("daily cost ceiling reached before sourcing");
+    await checkpoint();
+    await emit({ event: "sourced", sourced: counts.sourced,
+                 deduped: counts.deduped, screened: counts.screened });
 
     if (!o.dryRun) {
+      /* Recover anything a killed run left mid-flight. A candidate is set to
+         'enriching' before the paid call and moved on after it, so a row still
+         sitting in 'enriching' long afterwards belongs to a run that died --
+         the tab closed, the request cut off. Nothing picks those up again,
+         because the batch query only looks at 'new' and 'enriched', so without
+         this they are stranded for good.
+
+         Half an hour is well past the longest a live candidate can take (three
+         attempts at a three-minute ceiling) so this cannot steal a row from a
+         run that is still working. The attempt it burned stays burned: if the
+         call really is what is killing the run, it still retires after three. */
+      const staleBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      await db.prepare(
+        `UPDATE lead_candidates SET status = 'new', updated_at = ?
+          WHERE status = 'enriching' AND updated_at < ?`
+      ).bind(new Date().toISOString(), staleBefore).run();
+
       const batch = await db.prepare(
         `SELECT * FROM lead_candidates
           WHERE status IN ('new','enriched') AND attempts < ?
-          ORDER BY id ASC LIMIT ?`
+          ORDER BY COALESCE(promise, -1) DESC, id ASC LIMIT ?`
       ).bind(LEAD_DEFAULTS.maxAttempts, perRun).all();
 
-      for (const cand of batch.results || []) {
+      const queue = batch.results || [];
+      await emit({ event: "batch", total: queue.length });
+
+      let position = 0;
+      for (const cand of queue) {
+        position++;
         if (overBudget()) { counts.errors.push("daily cost ceiling reached"); break; }
         const places = safeParse(cand.places_json);
         if (!places) {
@@ -2135,20 +2370,37 @@ async function runLeadPipeline(env, opts) {
           await db.prepare("UPDATE lead_candidates SET attempts = attempts + 1, status = 'enriching', updated_at = ? WHERE id = ?")
             .bind(new Date().toISOString(), cand.id).run();
 
-          const enrichment = await withRetry(() => enrichWithGrok(env, cand.segment, places));
-          counts.enriched++; counts.est_cost_usd += LEAD_COST.grokEnrichUsd;
-
-          if (overBudget()) {
+          /* Research an earlier run already paid for is reused, never bought
+             twice. This used to be thrown away whenever scoring failed after
+             it — so a single bad Anthropic key had every run re-buying the
+             same web research at five cents a business. */
+          let enrichment = safeParse(cand.enrichment_json);
+          if (enrichment) {
+            await emit({ event: "researching", position: position, total: queue.length,
+                         name: places.name || null, cached: true });
+          } else {
+            await emit({ event: "researching", position: position, total: queue.length,
+                         name: places.name || null });
+            enrichment = await withRetry(() => enrichWithGrok(env, cand.segment, places));
+            counts.enriched++; counts.est_cost_usd += LEAD_COST.grokEnrichUsd;
+            // Banked before anything else can go wrong. It is bought and paid for.
             await db.prepare("UPDATE lead_candidates SET status = 'enriched', enrichment_json = ?, updated_at = ? WHERE id = ?")
               .bind(JSON.stringify(enrichment), new Date().toISOString(), cand.id).run();
+            await checkpoint();
+          }
+
+          if (overBudget()) {
             counts.errors.push("ceiling reached after enrichment; scoring deferred");
             break;
           }
 
+          await emit({ event: "scoring", position: position, total: queue.length,
+                       name: places.name || null });
           const scored = await withRetry(() => scoreWithClaude(env, cand.segment, places, enrichment));
           counts.scored++; counts.est_cost_usd += LEAD_COST.claudeScoreUsd;
 
-          if (scored.score >= qualifyAt) {
+          const kept = scored.score >= qualifyAt;
+          if (kept) {
             const crmId = await pushLeadToCrm(env, cand, places, enrichment, scored);
             await stripCandidate(env, cand.id, "pushed", scored.score, scored.reason, crmId);
             counts.pushed++;
@@ -2156,8 +2408,27 @@ async function runLeadPipeline(env, opts) {
             await stripCandidate(env, cand.id, "rejected", scored.score, scored.reason, null);
             counts.rejected++;
           }
+          await checkpoint();
+          /* The name is safe to send down the wire and gone from the row a
+             line later -- the candidate was just stripped. It is here so the
+             person watching sees a business, not a row id. */
+          await emit({ event: "judged", position: position, total: queue.length,
+                       name: places.name || null, score: scored.score,
+                       kept: kept, reason: scored.reason || null,
+                       spent: Number(counts.est_cost_usd.toFixed(4)) });
         } catch (e) {
           await failCandidate(env, cand, String(e).slice(0, 300), counts);
+          await checkpoint();
+          await emit({ event: "candidate_failed", position: position,
+                       total: queue.length, name: (places && places.name) || null,
+                       auth: !!(e && e.authFailure) });
+          /* A rejected key is the same answer for every candidate in the
+             queue. Carrying on costs five cents a head to be told it five
+             times, so the run stops and says which key to go and look at. */
+          if (e && e.authFailure) {
+            counts.errors.push("stopped: " + String(e.message || e).slice(0, 200));
+            break;
+          }
         }
       }
     }
@@ -2168,10 +2439,10 @@ async function runLeadPipeline(env, opts) {
   if (runId) {
     await db.prepare(
       `UPDATE enrichment_runs SET finished_at = ?, sourced = ?, deduped = ?, enriched = ?,
-              scored = ?, pushed = ?, rejected = ?, failed = ?, est_cost_usd = ?, error = ?
+              scored = ?, pushed = ?, screened = ?, rejected = ?, failed = ?, est_cost_usd = ?, error = ?
         WHERE id = ?`
     ).bind(new Date().toISOString(), counts.sourced, counts.deduped, counts.enriched,
-           counts.scored, counts.pushed, counts.rejected, counts.failed,
+           counts.scored, counts.pushed, counts.screened, counts.rejected, counts.failed,
            Number(counts.est_cost_usd.toFixed(4)),
            counts.errors.length ? counts.errors.join(" | ").slice(0, 900) : null,
            runId).run();
@@ -2200,6 +2471,7 @@ async function withRetry(fn, sleep) {
   for (let i = 0; i <= waits.length; i++) {
     try { return await fn(); } catch (e) {
       last = e;
+      if (e && e.authFailure) throw e;   // the key will not fix itself
       if (i < waits.length) await (sleep || defaultSleep)(waits[i]);
     }
   }
@@ -5104,8 +5376,54 @@ export default {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const limit = Number(url.searchParams.get("limit") || 5);
         const dryRun = url.searchParams.get("dry") === "1";
-        const out = await runLeadPipeline(env, { trigger: "manual", limit, dryRun });
-        return json(out, 200, origin);
+        // ?reseed=1 replaces the search grid from the code's own defaults —
+        // needed after changing which segments or cities ship, since the grid
+        // is otherwise only ever written once. Drops manual enables with it.
+        const reseed = url.searchParams.get("reseed") === "1";
+
+        /* Streamed, not awaited. A real run researches five businesses one
+           after another and routinely takes several minutes; Cloudflare cuts
+           off any request that has sent nothing for 100 seconds, which killed
+           the run halfway and showed the page a spinner that never ended.
+           Sending the first byte immediately keeps the connection open for as
+           long as the run needs, and turns the wait into visible progress.
+
+           One NDJSON object per line: {event:"researching",...} as it goes,
+           then a final {event:"done", result:{...}} with the same payload the
+           endpoint used to return. */
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const enc = new TextEncoder();
+        let gone = false;
+        const emit = async (evt) => {
+          if (gone) return;
+          try { await writer.write(enc.encode(JSON.stringify(evt) + "\n")); }
+          catch (e) { gone = true; }
+        };
+
+        // Floating on purpose: the open response body is what keeps the
+        // Worker alive, and awaiting it here would defeat the streaming.
+        (async () => {
+          try {
+            const out = await runLeadPipeline(env, {
+              trigger: "manual", limit, dryRun, reseed, onProgress: emit
+            });
+            await emit({ event: "done", result: out });
+          } catch (e) {
+            await emit({ event: "error", error: String(e).slice(0, 300) });
+          }
+          try { await writer.close(); } catch (e) { /* client already gone */ }
+        })();
+
+        return new Response(readable, {
+          status: 200,
+          headers: {
+            ...corsHeaders(origin),
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no"   // no proxy in front should buffer this
+          }
+        });
       }
       if (path === "/crm/leads/runs" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

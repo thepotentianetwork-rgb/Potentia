@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS lead_candidates (
   enrichment_json TEXT,
 
   -- Kept: our own derived numbers, not Places content.
+  -- promise is the free pre-screen (0-100) from the Places row alone. It
+  -- decides WHICH candidates a run pays to research; score is the verdict
+  -- afterwards.
+  promise INTEGER,
   score INTEGER,
   best_offer INTEGER,
   reason TEXT,
@@ -81,7 +85,8 @@ CREATE TABLE IF NOT EXISTS enrichment_runs (
   enriched INTEGER NOT NULL DEFAULT 0,
   scored INTEGER NOT NULL DEFAULT 0,
   pushed INTEGER NOT NULL DEFAULT 0,
-  rejected INTEGER NOT NULL DEFAULT 0,
+  screened INTEGER NOT NULL DEFAULT 0,   -- vetoed free, before any paid call
+  rejected INTEGER NOT NULL DEFAULT 0,   -- researched, scored, not worth a call
   failed INTEGER NOT NULL DEFAULT 0,
   est_cost_usd REAL NOT NULL DEFAULT 0,
   error TEXT

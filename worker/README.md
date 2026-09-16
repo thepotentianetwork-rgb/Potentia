@@ -511,9 +511,36 @@ UPDATE lead_sources SET enabled = 1 WHERE state = 'UT';
 UPDATE lead_sources SET enabled = 0 WHERE query_template = 'landscaping contractor';
 ```
 
-`segment` is one of `contractor` / `handyman` / `dealer` and decides which
-research questions get asked. `offer_hint` is a starting guess (1 = $99 site,
-2 = credibility site, 3 = dealership CRM); the scorer can overrule it.
+`segment` is one of `subcontractor` / `general` / `handyman` / `dealer` and
+decides which research questions get asked. `offer_hint` is a starting guess
+(1 = $99 site, 2 = credibility site, 3 = dealership CRM); the scorer can
+overrule it.
+
+**Who is targeted, as shipped:** specialty trades who sub to general
+contractors, plus general contractors that turn out to be small or new.
+Handyman and dealer rows are seeded but `enabled = 0` — one UPDATE brings
+either back without rebuilding the city list.
+
+**How established a business looks is a hard gate**, not a tiebreaker. The
+research step judges it from review volume, years trading, crew and fleet size,
+multiple locations and how polished their current site is; the scorer then caps
+`growing` at 70 and `established` at 30, which puts the latter below the
+qualifying score. General contractors are held to a stricter bar again. A big
+settled firm does not buy a cheap website, and calling one wastes the call.
+
+### Changing which segments or cities ship
+
+`lead_sources` is written ONCE, on the first run against an empty table. Editing
+`defaultSources()` in the code therefore does nothing to a database that has
+already been seeded. To apply a change to the shipped grid:
+
+```
+POST /crm/leads/run-now?dry=1&reseed=1
+```
+
+That replaces the grid from the code's defaults. **It drops manual edits with
+it** — any row you enabled by hand goes back to what the file ships, so re-apply
+those afterwards. For a one-off change, the UPDATE statements above are safer.
 
 **Utah ships disabled.** Every UT row has `enabled = 0`, because "businesses
 that aren't local" needs a home town to be meaningful. Enable whichever you

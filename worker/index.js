@@ -2893,8 +2893,54 @@ export default {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const limit = Number(url.searchParams.get("limit") || 5);
         const dryRun = url.searchParams.get("dry") === "1";
-        const out = await runLeadPipeline(env, { trigger: "manual", limit, dryRun });
-        return json(out, 200, origin);
+        // ?reseed=1 replaces the search grid from the code's own defaults —
+        // needed after changing which segments or cities ship, since the grid
+        // is otherwise only ever written once. Drops manual enables with it.
+        const reseed = url.searchParams.get("reseed") === "1";
+
+        /* Streamed, not awaited. A real run researches five businesses one
+           after another and routinely takes several minutes; Cloudflare cuts
+           off any request that has sent nothing for 100 seconds, which killed
+           the run halfway and showed the page a spinner that never ended.
+           Sending the first byte immediately keeps the connection open for as
+           long as the run needs, and turns the wait into visible progress.
+
+           One NDJSON object per line: {event:"researching",...} as it goes,
+           then a final {event:"done", result:{...}} with the same payload the
+           endpoint used to return. */
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const enc = new TextEncoder();
+        let gone = false;
+        const emit = async (evt) => {
+          if (gone) return;
+          try { await writer.write(enc.encode(JSON.stringify(evt) + "\n")); }
+          catch (e) { gone = true; }
+        };
+
+        // Floating on purpose: the open response body is what keeps the
+        // Worker alive, and awaiting it here would defeat the streaming.
+        (async () => {
+          try {
+            const out = await runLeadPipeline(env, {
+              trigger: "manual", limit, dryRun, reseed, onProgress: emit
+            });
+            await emit({ event: "done", result: out });
+          } catch (e) {
+            await emit({ event: "error", error: String(e).slice(0, 300) });
+          }
+          try { await writer.close(); } catch (e) { /* client already gone */ }
+        })();
+
+        return new Response(readable, {
+          status: 200,
+          headers: {
+            ...corsHeaders(origin),
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no"   // no proxy in front should buffer this
+          }
+        });
       }
       if (path === "/crm/leads/runs" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

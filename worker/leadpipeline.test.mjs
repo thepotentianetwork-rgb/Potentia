@@ -12,7 +12,8 @@ import {
   normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
   pushLeadToCrm, stripCandidate, spentToday, withRetry, parseClaudeJson,
   parseGrokJson, enrichmentSchemaFor, defaultSources, seedLeadSources,
-  offerName, LEAD_DEFAULTS
+  offerName, LEAD_DEFAULTS, scorePrompt, placesReject, placesPromise,
+  apiKey, providerError
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -237,14 +238,74 @@ test('Grok JSON is found whether it arrives flat or nested past tool calls', () 
 });
 
 // ── the search grid ───────────────────────────────────────────────────────
-test('Utah ships disabled, California and Arizona ship enabled', async () => {
+test('only subcontractors and general contractors are switched on', () => {
   const rows = defaultSources();
-  const ut = rows.filter(r => r.state === 'UT');
+  const on = rows.filter(r => r.enabled);
+  const segs = [...new Set(on.map(r => r.segment))].sort();
+  assert.deepEqual(segs, ['general', 'subcontractor'],
+    'handymen and dealers are seeded but off until asked for');
+  // Still present, so switching either back on is one UPDATE, not a reseed.
+  for (const seg of ['handyman', 'dealer'])
+    assert.ok(rows.some(r => r.segment === seg), seg + ' is still in the grid');
+});
+
+test('Utah ships disabled in every segment', () => {
+  const ut = defaultSources().filter(r => r.state === 'UT');
   assert.ok(ut.length > 0);
   assert.ok(ut.every(r => r.enabled === 0), 'nothing local is called until it is switched on');
-  assert.ok(rows.filter(r => r.state !== 'UT').every(r => r.enabled === 1));
-  for (const seg of ['contractor', 'handyman', 'dealer'])
-    assert.ok(rows.some(r => r.segment === seg), seg + ' is covered');
+});
+
+test('the enabled grid is mostly subcontractors', () => {
+  const on = defaultSources().filter(r => r.enabled);
+  const subs = on.filter(r => r.segment === 'subcontractor').length;
+  assert.ok(subs / on.length > 0.7, 'subs are the target, GCs ride along');
+});
+
+test('establishment is a first-class enrichment field for trades, not dealers', () => {
+  const trade = enrichmentSchemaFor('subcontractor');
+  assert.ok('establishment' in trade.properties);
+  assert.ok('establishment_evidence' in trade.properties,
+    'the caller needs to know what the judgement was based on');
+  assert.ok(trade.properties.establishment.type.includes('null'),
+    'unknown must stay expressible — a guess here keeps the caller off good leads');
+  assert.ok(!('establishment' in enrichmentSchemaFor('dealer').properties));
+});
+
+test('the scoring prompt gates on establishment, hardest for general contractors', () => {
+  const prompt = scorePrompt('general',
+    { name: 'Big Build Co', address: '1 Main St' },
+    { establishment: 'established' });
+  assert.match(prompt, /established\s+-> cap the score at 30/,
+    'an established firm must be capped out of calling range');
+  assert.match(prompt, /GENERAL CONTRACTOR/, 'GCs are held to a stricter bar');
+  assert.match(prompt, /do not guess/, 'null establishment must not be invented');
+});
+
+test('the free triage vetoes the dead and the too-big, and nothing between', () => {
+  // Under 5 reviews: no evidence the business actually trades.
+  assert.match(placesReject({ review_count: 2 }), /reviews/);
+  assert.match(placesReject({ review_count: null }), /no reviews/);
+  // Over 150: they can afford an agency and are not buying a cheap site.
+  assert.match(placesReject({ review_count: 400 }), /too established/);
+  // The whole band in between is somebody's problem to research, not to veto.
+  assert.equal(placesReject({ review_count: 5 }), null);
+  assert.equal(placesReject({ review_count: 150 }), null);
+});
+
+test('promise ranks the profile: mid reviews, no site, few photos', () => {
+  const ideal = placesPromise({ review_count: 24, website: '', photo_count: 3 });
+  const hasSite = placesPromise({ review_count: 24, website: 'x.com', photo_count: 3 });
+  const tended = placesPromise({ review_count: 24, website: '', photo_count: 50 });
+  const big = placesPromise({ review_count: 140, website: '', photo_count: 3 });
+
+  assert.equal(ideal, 100);
+  assert.ok(hasSite < ideal, 'an existing site is the weakest lead of the four');
+  assert.ok(tended < ideal, 'a listing somebody tends is a worse lead');
+  assert.ok(big < ideal, 'near the review ceiling is a worse lead');
+  // Always a usable ORDER BY key.
+  for (const v of [ideal, hasSite, tended, big]) {
+    assert.ok(v >= 0 && v <= 100 && Number.isFinite(v));
+  }
 });
 
 test('seeding is idempotent — a second call adds nothing', async () => {
@@ -383,4 +444,312 @@ test('a candidate that keeps failing is retired after three attempts', async () 
   assert.equal(row.status, 'failed');
   assert.ok(row.attempts >= LEAD_DEFAULTS.maxAttempts);
   assert.match(row.last_error, /503/);
+});
+
+test('a reseed replaces the grid; without force it leaves it alone', async () => {
+  const { env, db } = await freshEnv();
+  const first = await seedLeadSources(env);
+  assert.ok(first > 0);
+
+  // Someone switches a Utah row on by hand.
+  db.prepare("UPDATE lead_sources SET enabled = 1 WHERE state = 'UT'").run();
+  const utOn = () => Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources WHERE state='UT' AND enabled=1").get().c);
+  assert.ok(utOn() > 0);
+
+  // A normal run must not touch it.
+  assert.equal(await seedLeadSources(env), 0, 'no force, no change');
+  assert.ok(utOn() > 0, 'the manual enable survives an ordinary run');
+
+  // A forced reseed replaces the grid — and drops that manual enable with it.
+  await seedLeadSources(env, true);
+  assert.equal(utOn(), 0, 'reseed returns every row to what the code ships');
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c), first,
+    'replaced, not appended — a reseed must not double the grid');
+});
+
+/* PLACE(n) is the middle of the band on purpose, so the triage passes it.
+   These two build the edges. */
+const DEAD = n => Object.assign(PLACE(n), { userRatingCount: 1 });
+const HUGE = n => Object.assign(PLACE(n), { userRatingCount: 900 });
+const TENDED = n => Object.assign(PLACE(n), {
+  websiteUri: 'https://biz' + n + '.com',
+  photos: new Array(60).fill({ name: 'p' })
+});
+
+test('hopeless candidates are vetoed at sourcing, before any paid call', async () => {
+  const { env, db } = await seededEnv();
+  const calls = stubFetch({
+    places: () => ok({ places: [DEAD(1), HUGE(2), PLACE(3)] }),
+    xai: () => { throw new Error('a vetoed candidate must never reach xAI'); },
+    anthropic: () => { throw new Error('a vetoed candidate must never reach Anthropic'); }
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(out.sourced, 3);
+  assert.equal(out.screened, 2, 'the dead one and the huge one are vetoed for free');
+  assert.equal(out.rejected, 0, 'nothing was researched, so nothing was rejected on merit');
+  assert.equal(calls.xai + calls.anthropic, 0);
+
+  const staged = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status='new'").get();
+  assert.equal(Number(staged.c), 1, 'only the one worth researching is staged');
+
+  /* The tombstone keeps place_id and the reason and no Places content — that
+     is what stops us paying to look at this business a second time. */
+  const tomb = db.prepare("SELECT * FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(tomb.status, 'rejected');
+  assert.equal(tomb.places_json, null);
+  assert.match(tomb.reason, /reviews/);
+});
+
+test('a vetoed business is not re-sourced on the next run', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({ places: () => ok({ places: [DEAD(1)] }), xai: () => { throw new Error('no'); },
+              anthropic: () => { throw new Error('no'); } });
+  await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  const second = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(second.screened, 0, 'the second sighting dedupes, it does not re-veto');
+  assert.equal(second.deduped, 1);
+  const n = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates").get();
+  assert.equal(Number(n.c), 1);
+});
+
+test('the run spends its budget on the most promising candidates first', async () => {
+  const { env, db } = await seededEnv();
+  /* TENDED(1) is sourced first and is the weaker lead: it has a website and a
+     tended listing. PLACE(2) has neither. With one slot in the run, the money
+     must go to PLACE(2) even though it was staged second. */
+  const seen = [];
+  stubFetch({
+    places: () => ok({ places: [TENDED(1), PLACE(2)] }),
+    xai: (body) => {
+      seen.push(JSON.stringify(body).includes('Biz 2') ? 'P2' : 'P1');
+      return ok({ output_text: JSON.stringify({
+        has_website: false, website_quality: 'none', mobile_friendly: null,
+        google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+        contact_phone: null, contact_website: null, web_presence: 'none'
+      }) });
+    },
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 10, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(out.enriched, 1, 'exactly one candidate was paid for');
+  assert.deepEqual(seen, ['P2'], 'the money went to the better lead, not the older row');
+
+  const left = db.prepare("SELECT place_id FROM lead_candidates WHERE status='new'").all();
+  assert.deepEqual(left.map(r => r.place_id), ['P1'], 'the weaker one waits for the next run');
+});
+
+test('a run reports each stage as it happens, not only at the end', async () => {
+  const { env } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 90, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  const seen = [];
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1, onProgress: e => seen.push(e) });
+  const kinds = seen.map(e => e.event);
+
+  /* The point of these is that they arrive DURING the run. Without them the
+     request sends nothing for minutes and Cloudflare cuts it off at 100s. */
+  assert.deepEqual(kinds, ['sourcing', 'sourced', 'batch', 'researching', 'scoring', 'judged']);
+  const judged = seen[seen.length - 1];
+  assert.equal(judged.name, 'Biz 1', 'a person watching sees a business, not a row id');
+  assert.equal(judged.kept, true);
+  assert.equal(judged.score, 90);
+});
+
+test('a client that hangs up mid-run does not stop the run', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 90, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  // Throws from the first event onward, the way a closed socket does.
+  const out = await runLeadPipeline(env, {
+    trigger: 'manual', limit: 1,
+    onProgress: () => { throw new Error('socket closed'); }
+  });
+  assert.equal(out.pushed, 1, 'the candidate was already paid for; it must still land');
+  const n = db.prepare("SELECT COUNT(*) AS c FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(Number(n.c), 1);
+});
+
+test('spend is written to the run row as it goes, not only at the end', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1), PLACE(2)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 10, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  /* Read the run row at the moment the FIRST candidate is judged. A run that
+     is killed right here has still spent that money, and the daily ceiling
+     only knows about it if the row was written on the way through. */
+  let midRun = null;
+  await runLeadPipeline(env, {
+    trigger: 'manual', limit: 2,
+    onProgress: (e) => {
+      if (e.event === 'judged' && e.position === 1 && midRun === null) {
+        midRun = db.prepare('SELECT est_cost_usd, scored FROM enrichment_runs ORDER BY id DESC LIMIT 1').get();
+      }
+    }
+  });
+  assert.ok(midRun, 'the first candidate was judged');
+  assert.ok(Number(midRun.est_cost_usd) > 0, 'spend so far is already on the row');
+  assert.equal(Number(midRun.scored), 1, 'and so is the progress');
+});
+
+test('candidates stranded by a killed run are picked back up', async () => {
+  const { env, db } = await seededEnv();
+  const old = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const now = new Date().toISOString();
+  const places = JSON.stringify({ place_id: 'PX', name: 'Stranded Co', review_count: 20 });
+
+  // One left mid-flight an hour ago, one that a run is working on right now.
+  db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
+              VALUES ('PX','handyman','enriching',1,?,80,?,?)`).run(places, old, old);
+  db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
+              VALUES ('PY','handyman','enriching',1,?,80,?,?)`).run(places, now, now);
+
+  stubFetch({
+    places: () => ok({ places: [] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 20, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 90, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+  assert.equal(out.enriched, 1, 'the stranded one is researched');
+  assert.equal(out.pushed, 1);
+
+  const live = db.prepare("SELECT status FROM lead_candidates WHERE place_id='PY'").get();
+  assert.equal(live.status, 'enriching', 'a row a live run is holding is left alone');
+});
+
+test('a key pasted with stray whitespace still works', () => {
+  assert.equal(apiKey('  sk-ant-abc123\n'), 'sk-ant-abc123');
+  assert.equal(apiKey(undefined), '');
+  assert.equal(apiKey(null), '');
+});
+
+test('only 401 and 403 are marked unretryable', () => {
+  assert.equal(providerError('Anthropic', 401, 'bad key').authFailure, true);
+  assert.equal(providerError('Anthropic', 403, 'forbidden').authFailure, true);
+  assert.equal(providerError('xAI', 429, 'slow down').authFailure, undefined);
+  assert.equal(providerError('xAI', 500, 'oops').authFailure, undefined);
+  assert.match(providerError('Anthropic', 401, 'bad key').message, /^Anthropic 401: bad key/);
+});
+
+test('withRetry gives up on a rejected key instead of hammering it', async () => {
+  let calls = 0;
+  await assert.rejects(() => withRetry(() => {
+    calls++;
+    throw providerError('Anthropic', 401, 'API key is invalid.');
+  }, async () => {}), /401/);
+  assert.equal(calls, 1, 'a wrong key is still wrong six seconds later');
+});
+
+test('a rejected key stops the run instead of repricing the same answer', async () => {
+  const { env, db } = await seededEnv();
+  const calls = stubFetch({
+    places: () => ok({ places: [PLACE(1), PLACE(2), PLACE(3), PLACE(4), PLACE(5)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => new Response(JSON.stringify({
+      type: 'error', error: { type: 'authentication_error', message: 'API key is invalid.' }
+    }), { status: 401 })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+
+  /* The old behaviour: five candidates, five Grok calls at five cents each,
+     fifteen Anthropic calls, to be told one thing five times. */
+  assert.equal(calls.anthropic, 1, 'asked once, believed it');
+  assert.equal(calls.xai, 1, 'stopped before buying research for the other four');
+  assert.equal(out.enriched, 1);
+  assert.match(out.errors.join(' '), /stopped: Anthropic 401/);
+
+  const left = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status != 'rejected'").get();
+  assert.equal(Number(left.c), 5, 'the other four are untouched, waiting for a good key');
+});
+
+test('research survives a scoring failure and is never bought twice', async () => {
+  const { env, db } = await seededEnv();
+  let anthropicOk = false;
+  const calls = stubFetch({
+    places: () => ok({ places: [PLACE(1)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'researched once', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => anthropicOk
+      ? ok({ content: [{ type: 'text', text: JSON.stringify({
+          score: 90, best_offer: 1, reason: 'r', opener: 'o' }) }] })
+      : new Response('{"error":"boom"}', { status: 500 })
+  });
+
+  // Run one: research succeeds, scoring is broken.
+  const first = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(first.enriched, 1);
+  assert.equal(first.pushed, 0);
+  const banked = db.prepare("SELECT enrichment_json FROM lead_candidates WHERE place_id='P1'").get();
+  assert.match(banked.enrichment_json, /researched once/, 'the paid research was banked');
+
+  // Run two: scoring works now. The research must NOT be bought again.
+  anthropicOk = true;
+  const xaiBefore = calls.xai;
+  const second = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(calls.xai, xaiBefore, 'no second Grok call for the same business');
+  assert.equal(second.enriched, 0, 'nothing new was researched');
+  assert.equal(second.pushed, 1, 'and it still made it into the CRM');
+});
+
+test('screened-for-free is counted apart from researched-and-rejected', async () => {
+  const { env } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [Object.assign(PLACE(1), { userRatingCount: 1 }), PLACE(2)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 10, best_offer: 1, reason: 'r', opener: 'o' }) }] })
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+  assert.equal(out.screened, 1, 'one was vetoed before a cent was spent');
+  assert.equal(out.rejected, 1, 'one was researched, scored and turned down');
 });
