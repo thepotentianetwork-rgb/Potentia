@@ -19,7 +19,7 @@
 // other module-level const here.
 
 import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget } from "./pricing.js";
-import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources } from "./leadpipeline.js";
+import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels } from "./leadpipeline.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -2955,7 +2955,10 @@ export default {
         await ensureLeadPipelineTables(env);
         // Seed on first read so the toggles are never an empty list.
         await seedLeadSources(env, false);
-        return json({ segments: await listSegments(env) }, 200, origin);
+        /* trades maps every search term the grid can produce to the name the
+           CRM shows for it, so the sub-categories on offer are the ones the
+           pipeline can actually generate. */
+        return json({ segments: await listSegments(env), trades: tradeLabels() }, 200, origin);
       }
       if (path === "/crm/leads/segments" && request.method === "POST") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
@@ -2963,7 +2966,8 @@ export default {
         const body = await request.json().catch(() => ({}));
         try {
           const changed = await setSegmentEnabled(env, body.segment, !!body.enabled);
-          return json({ ok: true, changed, segments: await listSegments(env) }, 200, origin);
+          return json({ ok: true, changed, segments: await listSegments(env),
+                        trades: tradeLabels() }, 200, origin);
         } catch (e) {
           return json({ error: String(e.message || e) }, 400, origin);
         }

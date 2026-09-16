@@ -103,7 +103,11 @@
     if (c.lead_segment || c.lead_trade) {
       var what = (labels || {})[c.lead_segment] || c.lead_segment || '';
       // The trade is the useful half: "roofing contractor", not "subcontractor".
-      line('Trade', text(c.lead_trade ? (what ? c.lead_trade + '  ·  ' + what : c.lead_trade) : what));
+      /* The tidy name where the page has the map, the raw search term where it
+         does not — either is readable, and neither waits on a fetch. */
+      var trade = c.lead_trade
+        ? ((global.TRADE_LABELS || {})[c.lead_trade] || c.lead_trade) : '';
+      line('Trade', text(trade ? (what ? trade + '  ·  ' + what : trade) : what));
     }
 
     /* Straight to the live listing — reviews, photos, hours, how long they have
