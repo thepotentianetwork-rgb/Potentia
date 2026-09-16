@@ -453,3 +453,105 @@ It exits non-zero if anything fails. Worth running after any change to the
 That fourth one is the guard rail worth keeping: if a query in the CRM half
 of the file ever reaches for `env.DB` instead of `env.CRM_DB`, these checks
 fail loudly.
+
+---
+
+## Lead enrichment pipeline
+
+Sources local businesses from Google Places, researches each with Grok, scores
+it against the three offers with Claude, and inserts the good ones into the CRM
+`clients` table as leads ranked by `lead_score`.
+
+### Environment variables
+
+All server-side, set as Worker secrets — none of these reach the browser.
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `GOOGLE_PLACES_API_KEY` | yes | Places API (New) Text Search |
+| `XAI_API_KEY` | yes | enrichment, `grok-4.6` + `web_search` |
+| `ANTHROPIC_API_KEY` | yes | scoring, `claude-sonnet-5` |
+| `LEADS_DAILY_USD_CAP` | no | rolling 24h ceiling, default `5.00` |
+| `LEADS_QUALIFY_AT` | no | score needed to reach the CRM, default `55` |
+
+Set them with `wrangler secret put NAME`, or in the dashboard under
+Settings → Variables and Secrets. The pipeline is inert without the first
+three: `scheduled()` returns immediately if `GOOGLE_PLACES_API_KEY` is unset.
+
+### Running it
+
+```
+# dry run — sources and dedupes, makes NO paid AI calls. Start here.
+curl -X POST "$WORKER/crm/leads/run-now?dry=1" -H "Authorization: Bearer $CRM_TOKEN"
+
+# real run, 5 leads
+curl -X POST "$WORKER/crm/leads/run-now?limit=5" -H "Authorization: Bearer $CRM_TOKEN"
+
+# what the last 30 runs did, and what they cost
+curl "$WORKER/crm/leads/runs" -H "Authorization: Bearer $CRM_TOKEN"
+```
+
+The cron trigger runs the same code hourly. **Keep the interval at an hour or
+more** — see the comment in `wrangler.toml` for why.
+
+### Adding or changing search queries
+
+Everything the pipeline searches for lives in `lead_sources`. Nothing is
+hardcoded.
+
+```sql
+-- add one
+INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
+VALUES ('gutter installer', 'Boise', 'ID', 'contractor', 2, 1, datetime('now'));
+
+-- turn a whole state on or off
+UPDATE lead_sources SET enabled = 1 WHERE state = 'UT';
+
+-- stop one query without deleting its history
+UPDATE lead_sources SET enabled = 0 WHERE query_template = 'landscaping contractor';
+```
+
+`segment` is one of `contractor` / `handyman` / `dealer` and decides which
+research questions get asked. `offer_hint` is a starting guess (1 = $99 site,
+2 = credibility site, 3 = dealership CRM); the scorer can overrule it.
+
+**Utah ships disabled.** Every UT row has `enabled = 0`, because "businesses
+that aren't local" needs a home town to be meaningful. Enable whichever you
+want with the UPDATE above.
+
+### What it stores, and what it deliberately doesn't
+
+Google's Places terms allow `place_id` to be stored indefinitely and little
+else. So Places fields live in `lead_candidates` only while a candidate is being
+judged. On judgement — pushed or rejected — the row is stripped to
+`place_id` + status + score + a one-line reason, and the Places and research
+blobs are nulled.
+
+That tombstone stops the pipeline paying to re-source the same dead end every
+hour, and holds no Places content. A lead that reaches the CRM carries the
+phone and website the **business itself publishes**, taken from the enrichment
+step's `source_urls`, not a copy of the Places record.
+
+One consequence worth knowing: once a lead is rejected you cannot see the
+detail behind it. The score and reason survive; nothing else does. To
+re-examine a rejected business you have to re-source it, and pay for it again.
+
+### Safety rails
+
+- **Never overwrites.** The only write to `clients` is an INSERT. A business
+  already in the CRM — matched on `place_id`, phone digits, or website domain —
+  is skipped entirely, so a caller's hand-typed notes are never touched.
+- **`do_not_contact`** on a `clients` row keeps that business out of any future
+  run, because dedupe finds it before anything is spent on it.
+- **Per-run cap** (`?limit=`, default 5) and a **rolling 24-hour cost ceiling**
+  checked before every paid call, so a run that crosses the line mid-batch
+  stops cleanly instead of finishing.
+- **Three attempts** per candidate, then `status='failed'` and it is left alone.
+
+### Costs
+
+`enrichment_runs.est_cost_usd` is an estimate from `LEAD_COST` in
+`leadpipeline.js`. Only the Claude figure is derived from published per-token
+rates; the Places and xAI numbers are **placeholders set deliberately high**.
+Compare them against a real bill after the first week and correct them —
+the daily ceiling is only as good as those constants.
