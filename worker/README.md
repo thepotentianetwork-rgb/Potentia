@@ -459,8 +459,15 @@ fail loudly.
 ## Lead enrichment pipeline
 
 Sources local businesses from Google Places, researches each with Grok, scores
-it against the three offers with Claude, and inserts the good ones into the CRM
-`clients` table as leads ranked by `lead_score`.
+it, and inserts the good ones into the CRM `clients` table as leads ranked by
+`lead_score`.
+
+Qualification is one question: do they have a usable website? A business with
+no site, with nothing but a Facebook page, with a dead `business.site` page,
+with a site still on plain http, or with one that fails Google's own mobile
+speed test, is a lead. Everything else is not. The first four are answered by
+the Places row the search already paid for; the last is answered by PageSpeed
+Insights, which is free and which has Google fetch the page rather than us.
 
 ### Environment variables
 
@@ -468,15 +475,19 @@ All server-side, set as Worker secrets — none of these reach the browser.
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `GOOGLE_PLACES_API_KEY` | yes | Places API (New) Text Search |
-| `XAI_API_KEY` | yes | enrichment, `grok-4.6` + `web_search` |
-| `ANTHROPIC_API_KEY` | yes | scoring, `claude-sonnet-5` |
+| `GOOGLE_PLACES_API_KEY` | yes | Places API (New) Text Search, and PageSpeed Insights |
 | `LEADS_DAILY_USD_CAP` | no | rolling 24h ceiling, default `5.00` |
-| `LEADS_QUALIFY_AT` | no | score needed to reach the CRM, default `55` |
 
-Set them with `wrangler secret put NAME`, or in the dashboard under
-Settings → Variables and Secrets. The pipeline is inert without the first
-three: `scheduled()` returns immediately if `GOOGLE_PLACES_API_KEY` is unset.
+One key, two APIs: both must be enabled on the Cloud project, and if the key
+carries an API restriction both must be listed on it. PageSpeed is free and
+needs no key at all — the key is passed only because Google asks for one on
+automated traffic. A run with the key restricted to Places alone still works;
+the businesses with no website still qualify, and the run stops cleanly at the
+first one that needs a speed test and says so.
+
+Set the key with `wrangler secret put NAME`, or in the dashboard under
+Settings → Variables and Secrets. `scheduled()` returns immediately if
+`GOOGLE_PLACES_API_KEY` is unset.
 
 ### Running it
 

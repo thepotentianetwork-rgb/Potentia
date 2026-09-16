@@ -162,14 +162,14 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
     <h2>Find new leads</h2>
     <div class="lp-row">
       <button class="lp-btn lp-dry" id="lp-dry">Dry run &mdash; find &amp; dedupe only</button>
-      <button class="lp-btn lp-live" id="lp-live">Real run &mdash; research &amp; score 5</button>
+      <button class="lp-btn lp-live" id="lp-live">Real run &mdash; check 5 websites</button>
     </div>
     <p class="lp-note">
-      A dry run searches your configured cities and stages what it finds. It makes no AI
-      calls and costs a few cents. A real run researches and scores 5 of those, and adds
-      anything scoring 55+ to the list below &mdash; that means five rounds of web research
-      one after another, so give it several minutes. It reports each business as it finishes,
-      and everything it finishes is saved even if you close the page.
+      A dry run searches your configured cities and stages what it finds. A real run then
+      checks 5 of those for a website: no site, a dead or Facebook-only one, plain http, or
+      one that fails Google's mobile speed test means they go straight into the list below.
+      Google runs the speed test, which takes a few seconds per site, so give it a couple of
+      minutes. Everything it finishes is saved even if you close the page.
     </p>
     <div class="lp-out" id="lp-out" hidden></div>
   </section>
@@ -321,8 +321,8 @@ function authFetch(path, options) {
       var html = 'Found ' + n(d.sourced) + ' businesses, ' + n(d.deduped) + ' already known, ' +
                  n(d.screened) + ' screened out before spending anything.';
       if (!d.dry_run) {
-        html += '<br>Researched ' + n(d.enriched) + ', scored ' + n(d.scored) +
-                ' &rarr; ' + n(d.pushed) + ' added as leads, ' + n(d.rejected) + ' not worth a call.';
+        html += '<br>Checked ' + n(d.scored) + ' websites &rarr; ' + n(d.pushed) +
+                ' added as leads, ' + n(d.rejected) + ' already have a decent site.';
         if (d.failed) html += '<br>' + n(d.failed) + ' could not be researched.';
         html += '<br>Cost this run: <b>$' + Number(d.est_cost_usd || 0).toFixed(2) + '</b>';
       } else {
@@ -348,19 +348,22 @@ function authFetch(path, options) {
                        : 'Nothing new to research.');
         return;
       }
-      if (evt.event === 'researching') {
-        note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' researching ' +
-             esc(evt.name || 'a business') + '&hellip;');
+      if (evt.event === 'checking') {
+        note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' checking ' +
+             esc(evt.name || 'a business') +
+             (evt.website ? ' &mdash; ' + esc(evt.website) : ' &mdash; no website') + '&hellip;');
         return;
       }
       if (evt.event === 'judged') {
         note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' + esc(evt.name || '') +
-             ' &rarr; ' + n(evt.score) + (evt.kept ? ' &mdash; added as a lead' : ' &mdash; not worth a call'));
+             (evt.kept ? ' &mdash; <b>added as a lead</b>' : ' &mdash; skipped') +
+             (evt.reason ? '<br>&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--dim)">' +
+                           esc(evt.reason) + '</span>' : ''));
         return;
       }
       if (evt.event === 'candidate_failed') {
         note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' +
-             esc(evt.name || 'a business') + ' &mdash; could not be researched.');
+             esc(evt.name || 'a business') + ' &mdash; could not be checked.');
         if (evt.account) {
           note('<span class="lp-err">The AI account was refused &mdash; usually a rejected ' +
                'key or an empty credit balance. The run stopped here rather than spending ' +
@@ -390,7 +393,7 @@ function authFetch(path, options) {
 
   dry.addEventListener('click', function () { run(true); });
   live.addEventListener('click', function () {
-    if (confirm('Research and score 5 new businesses? This spends a small amount on AI.')) run(false);
+    run(false);
   });
 })();
 

@@ -1521,26 +1521,22 @@ function mergedPricingConfig(saved){
 
 const LEAD_SEGMENTS = ["subcontractor", "general", "handyman", "dealer"];
 
-/* Estimated unit costs, in USD, used for the daily ceiling and the per-run
-   log. Only the Claude figure is derived from published per-token rates
-   ($2/$10 per MTok for claude-sonnet-5) — the other two are PLACEHOLDERS
-   pending a real bill, deliberately set high so the ceiling errs toward
-   stopping early. Recalibrate from enrichment_runs after the first week. */
+/* Unit costs in USD, for the daily ceiling and the per-run log. Google Places
+   text search is the only paid call left in the pipeline — the AI stages are
+   gone and PageSpeed is free — so a run now costs single-digit cents however
+   many businesses it judges. */
 // Named LEAD_COST / LEAD_DEFAULTS, not COST / DEFAULTS: pricing.js already
 // owns those at top level, and the bundler flattens both modules into one
 // file where a duplicate const is a hard SyntaxError.
 const LEAD_COST = {
-  placesSearchUsd: 0.035,     // Text Search Enterprise, $35/1000 — VERIFIED
-  grokEnrichUsd: 0.05,        // per candidate, incl. web_search — CALIBRATE
-  claudeScoreUsd: 0.01        // per candidate — from published token rates
-};
+  placesSearchUsd: 0.035      // Text Search Enterprise, $35/1000 — VERIFIED
+};                            // PageSpeed is free; there is nothing else to pay for.
 
 const LEAD_DEFAULTS = {
-  perRun: 5,                  // candidates enriched+scored per run
+  perRun: 5,                  // websites checked per run
   dailyUsdCap: 5.0,
   maxAttempts: 3,
   sourceBatch: 2,             // Places queries per run
-  qualifyAt: 55               // score at or above this goes to the CRM
 };
 
 // ── table setup ───────────────────────────────────────────────────────────
@@ -1908,104 +1904,17 @@ async function sourceCandidates(env, counts, opts) {
   }
 }
 
-// ── stage 2: enrichment (Grok) ────────────────────────────────────────────
-/* Fields split by segment, because the two segments are bought for different
-   reasons. A contractor's pain is "I have no site / my site is embarrassing";
-   a dealer's is "I post cars to Facebook daily and my website still lists a
-   truck I sold in spring".
+// ── stage 2: judge the website (free) ─────────────────────────────────────
+/* This used to be two AI calls per business: Grok researched it from search
+   results, then Claude scored the research. Both are gone.
 
-   mobile_friendly is nullable ON PURPOSE. We research through search results
-   only — we do not fetch the site — and from search results that judgement is
-   a guess. A null means unknown and the scorer is told to ignore it; asking
-   for a boolean would get a confident one the caller would then repeat down
-   the phone. */
-const SHARED_PROPS = {
-  has_website: { type: "boolean" },
-  website_quality: { type: "string", enum: ["none", "poor", "ok", "good"] },
-  mobile_friendly: { type: ["boolean", "null"] },
-  google_rating: { type: ["number", "null"] },
-  review_count: { type: ["integer", "null"] },
-  notes: { type: "string" },
-  source_urls: { type: "array", items: { type: "string" } },
-  contact_phone: { type: ["string", "null"] },
-  contact_website: { type: ["string", "null"] }
-};
-
-const TRADE_PROPS = {
-  web_presence: { type: "string", enum: ["none", "facebook_only", "own_site"] },
-  site_is_http_only: { type: ["boolean", "null"] },
-  shows_license_or_insured: { type: ["boolean", "null"] },
-  does_subcontract_work: { type: ["boolean", "null"] },
-  /* How established they look. This is the field that keeps the caller off
-     the phone with a 40-truck outfit that has had a real website since 2011 —
-     those are not buying a $99 site, and a pitch to one wastes the call and
-     the reputation. Judged from what is visible: review volume, crew and fleet
-     size, multiple locations, years trading, the polish of what they already
-     have. Null where none of that is establishable. */
-  establishment: { type: ["string", "null"],
-                   enum: ["just_starting", "small", "growing", "established", null] },
-  establishment_evidence: { type: ["string", "null"] },
-  /* "No website OR one that is clearly old" is the buying trigger, so how
-     dated the existing site looks matters as much as whether one exists. A
-     copyright year several years stale, a Flash-era or early-responsive
-     layout, a phone number in an image, a blog that stops in 2019 — these are
-     things search results actually show, unlike a mobile-friendliness verdict. */
-  site_looks_dated: { type: ["boolean", "null"] },
-  site_dated_evidence: { type: ["string", "null"] }
-};
-
-const DEALER_PROPS = {
-  facebook_active: { type: ["boolean", "null"] },
-  fb_last_post_days_ago: { type: ["integer", "null"] },
-  site_lists_inventory: { type: ["boolean", "null"] },
-  site_inventory_stale: { type: ["boolean", "null"] },
-  inventory_gap: { type: ["string", "null"] }
-};
-
-function enrichmentSchemaFor(segment) {
-  const props = segment === "dealer"
-    ? { ...SHARED_PROPS, ...DEALER_PROPS }
-    : { ...SHARED_PROPS, ...TRADE_PROPS };
-  return {
-    type: "object",
-    properties: props,
-    required: Object.keys(props),
-    additionalProperties: false
-  };
-}
-
-function enrichPrompt(segment, p) {
-  const who = `${p.name} — ${p.address}` + (p.phone ? ` — ${p.phone}` : "");
-  const common =
-    `Research this local business and report only what you can actually verify from ` +
-    `search results. Where you cannot verify something, return null rather than a guess. ` +
-    `Put the URLs you relied on in source_urls. In contact_phone and contact_website, ` +
-    `give the phone and site the BUSINESS ITSELF publishes (its own website, its own ` +
-    `Facebook page), not a directory listing.\n\nBusiness: ${who}\n`;
-  if (segment === "dealer") {
-    return common +
-      `This is a used-car dealer. The thing worth establishing: are they active on ` +
-      `Facebook while their own website's inventory is stale or missing? Check when ` +
-      `they last posted on Facebook, whether their website lists inventory at all, and ` +
-      `whether that inventory looks current. Describe any mismatch in inventory_gap.`;
-  }
-  const kind = segment === "handyman" ? "handyman / home repair"
-             : segment === "general" ? "general contracting / home building"
-             : "specialty trade (subcontracting)";
-  return common +
-    `This is a ${kind} business. Establish whether they have a real website, only a ` +
-    `Facebook page, or no web presence at all; whether the site is http-only (no padlock); ` +
-    `whether they show a license or proof of insurance anywhere; and whether they take ` +
-    `subcontract work for general contractors.\n\n` +
-    `If they do have a site, judge whether it looks OLD and say what gave it away — a ` +
-    `stale copyright year, a dated layout, contact details only in an image, content or ` +
-    `a blog that stops years ago. Null if there is no site or you cannot tell.\n\n` +
-    `Also judge HOW ESTABLISHED they are, and say what you based it on. Look for review ` +
-    `volume, how long they have been trading, crew or fleet size, more than one location, ` +
-    `and how polished whatever they already have looks. A one-person outfit with 6 reviews ` +
-    `is "just_starting"; a 40-truck company with a professional site since 2011 is ` +
-    `"established". Use null if you genuinely cannot tell.`;
-}
+   The reason is not that they worked badly — it is that they were being asked
+   a question we can already answer. What qualifies a lead here is exactly one
+   thing: no website, or a website that is old or performing badly. Whether a
+   website exists is in the Places row we have already paid for. How old and
+   how slow it is, Google will tell us for free. Paying an AI five cents to
+   read search results and guess at both was spending money to be told
+   something we could look up. */
 
 /* Pasting a key into a dashboard field catches a trailing newline or a
    leading space more often than anyone admits, and the provider answers with
@@ -2015,8 +1924,8 @@ function apiKey(v) { return String(v == null ? "" : v).trim(); }
 /* Some failures are about the ACCOUNT, not the request: a rejected key, an
    empty credit balance, a suspended org. None of them will come right by
    trying again — the answer is identical six seconds later, on the next
-   candidate, and on the one after that. Marking them lets withRetry give up
-   at once and lets the run stop instead of buying the same answer five times.
+   candidate, and on the one after that. Marking one lets the run stop instead
+   of asking the same question of every business in the queue.
    Everything else — a timeout, a 429, a 500 — retries as before.
 
    A 401/403 is the obvious shape. The expensive one to miss is billing: both
@@ -2035,177 +1944,126 @@ function providerError(who, status, body) {
   return e;
 }
 
-/* xAI Responses API. Verified against docs.x.ai (Sept 2026):
-     - endpoint POST /v1/responses, model grok-4.6
-     - server-side search is tools: [{type:"web_search"}]
-     - the old search_parameters field is gone
-     - strict JSON nests under text.format and DOES compose with web_search
-   Long timeout: a web_search turn routinely runs past a minute. */
-async function enrichWithGrok(env, segment, places) {
-  const schema = enrichmentSchemaFor(segment);
-  const res = await fetch("https://api.x.ai/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: "Bearer " + apiKey(env.XAI_API_KEY)
-    },
-    body: JSON.stringify({
-      model: "grok-4.6",
-      input: [{ role: "user", content: enrichPrompt(segment, places) }],
-      tools: [{ type: "web_search" }],
-      text: { format: { type: "json_schema", name: "lead_enrichment", strict: true, schema } }
-    }),
-    signal: AbortSignal.timeout(180000)
-  });
+
+/* "Websites" that are not websites. A listing pointing at a Facebook page, a
+   Linktree or a marketplace profile means the business has no site of its own
+   — which is the pitch, not a disqualification.
+
+   business.site deserves its own mention: that was Google's free website
+   builder, and Google shut it down in 2024. A business still listing one has
+   a website that does not load at all and may well not know. */
+const NOT_A_WEBSITE = [
+  "facebook.com", "m.facebook.com", "instagram.com", "linktr.ee", "yelp.com",
+  "business.site", "sites.google.com", "nextdoor.com", "angi.com", "thumbtack.com",
+  "houzz.com", "bbb.org", "google.com", "linkedin.com", "x.com", "twitter.com"
+];
+
+function notARealWebsite(url) {
+  const d = registrableDomain(url);
+  if (!d) return null;
+  for (const bad of NOT_A_WEBSITE) {
+    if (d === bad || d.endsWith("." + bad)) return bad;
+  }
+  return null;
+}
+
+/* Google PageSpeed Insights, v5. Free, and it is Google fetching the page
+   rather than us — we never request the site ourselves.
+
+   Two things are read from it. The performance score is the "bad performing"
+   half of the brief. The `viewport` audit is the "old" half: a page with no
+   viewport meta tag was built before responsive design and has never been
+   touched since, which on a phone is the difference between a website and a
+   photograph of one.
+
+   A real run takes ten to thirty seconds per site, which is why the run
+   streams its progress. */
+async function pageSpeed(env, url, fetchImpl) {
+  const key = apiKey(env.GOOGLE_PLACES_API_KEY);
+  const q = new URLSearchParams({ url: url, strategy: "mobile", category: "performance" });
+  if (key) q.set("key", key);
+
+  const res = await (fetchImpl || fetch)(
+    "https://www.googleapis.com/pagespeedonline/v5/runPagespeed?" + q.toString(),
+    { signal: AbortSignal.timeout(120000) }
+  );
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw providerError("xAI", res.status, body);
+    throw providerError("PageSpeed", res.status, body);
   }
   const data = await res.json();
-  return parseGrokJson(data);
+  const lh = (data && data.lighthouseResult) || {};
+
+  /* A site Google cannot fetch at all is not a healthy site. It is reported
+     in-band as a runtimeError with HTTP 200, not as an error status. */
+  if (lh.runtimeError && lh.runtimeError.code) {
+    return { unreachable: true, code: lh.runtimeError.code, performance: null, hasViewport: null };
+  }
+
+  const perf = lh.categories && lh.categories.performance;
+  const viewport = lh.audits && lh.audits.viewport;
+  return {
+    unreachable: false,
+    code: null,
+    // Lighthouse scores 0-1; a percentage is what everyone actually talks in.
+    performance: perf && typeof perf.score === "number" ? Math.round(perf.score * 100) : null,
+    hasViewport: viewport && typeof viewport.score === "number" ? viewport.score === 1 : null
+  };
 }
 
-/* The Responses API returns a list of output items; the assistant's text can
-   arrive alongside tool-call items, so pull the text out rather than assuming
-   a position. Exported to be testable without a network call. */
-function parseGrokJson(data) {
-  if (data && typeof data.output_text === "string" && data.output_text.trim()) {
-    return JSON.parse(data.output_text);
+/* How bad a site has to be to be worth a call. 50 is Lighthouse's own
+   boundary between "needs improvement" and "poor" on mobile. */
+const SLOW_AT = 50;
+
+/* The whole qualification, in one place. Returns a verdict with a score so
+   the CRM can still rank, and a reason a caller can read down the phone
+   without being briefed.
+
+   The cheap checks come first and most businesses never reach PageSpeed. */
+async function websiteVerdict(env, places, deps) {
+  const reviews = places.review_count == null ? null : Number(places.review_count);
+  const trading = reviews == null ? "" : ", " + reviews + " Google reviews";
+
+  if (!places.website) {
+    return { qualified: true, score: 95, checked: "places",
+             reason: "No website at all" + trading + "." };
   }
-  const items = (data && data.output) || [];
-  for (const item of items) {
-    for (const c of (item && item.content) || []) {
-      const t = c && (c.text != null ? c.text : c.output_text);
-      if (typeof t === "string" && t.trim()) return JSON.parse(t);
-    }
+
+  const impostor = notARealWebsite(places.website);
+  if (impostor) {
+    const dead = impostor === "business.site";
+    return { qualified: true, score: dead ? 95 : 90, checked: "places",
+             reason: dead
+               ? "Their only site is a Google business.site page, which Google shut down — it does not load" + trading + "."
+               : "No site of their own, just a " + impostor + " page" + trading + "." };
   }
-  throw new Error("xAI: no JSON in response");
-}
 
-// ── stage 3: score + opener (Claude) ──────────────────────────────────────
-/* Structured outputs on the Messages API. Note what is NOT in this schema:
-   minimum/maximum on score. Anthropic's structured outputs reject numerical
-   constraints, so the range is stated in the prompt and clamped in code. */
-const SCORING_SCHEMA = {
-  type: "object",
-  properties: {
-    best_offer: { type: "integer", enum: [1, 2, 3] },
-    score: { type: "integer" },
-    reason: { type: "string" },
-    opener: { type: "string" }
-  },
-  required: ["best_offer", "score", "reason", "opener"],
-  additionalProperties: false
-};
-
-const OFFERS = `
-1. A $99 website — for a business with no website at all, or one so poor it is
-   costing them work.
-2. A credibility website for a subcontractor — the pitch is looking legitimate
-   to the general contractors who hire them: licence, insurance, real photos of
-   finished work. This is the main offer: specialty trades who want on a GC's
-   bid list. For a handyman the same product sells to HOMEOWNERS instead, on
-   trust rather than bid-list credibility. For a small general contractor it
-   sells to HOMEOWNERS choosing who to hire for a remodel.
-3. Dealership CRM / inventory software — for an independent used-car dealer who
-   is active on Facebook while their own website's inventory sits stale. The
-   gap between the two IS the pitch.`;
-
-function scorePrompt(segment, places, enrichment) {
-  return `You score inbound cold-call leads for a small web studio. Pick the ONE offer that fits best, score it, and write the caller an opener.
-
-THE OFFERS${OFFERS}
-
-SCORING. 0-100, and score WITHIN this business's segment ("${segment}") — do not
-discount a dealer because a handyman has a worse website. 100 means the pain is
-obvious and the offer lands squarely. Below 55 means do not spend a call on it.
-A business with a good, current website scores low: there is nothing to sell them.
-
-THE PROFILE WE ARE ACTUALLY LOOKING FOR — a real, working business that has
-never invested in being found online:
-
-  Reviews: a decent number, nothing huge. Enough to prove they have real,
-  paying customers — roughly 8 to 80 is the sweet spot. Under about 5 may be a
-  dead or barely-trading listing and is worth little; over about 150 is a big
-  operation that already has an agency and will not take the call.
-
-  Web presence: none at all, or a site that is clearly old. "Clearly old" is as
-  good a signal as "none" — arguably better, because they have already shown
-  they will pay for a website; theirs has just aged out.
-
-  Google photos: FEW is good. A working trade business with a handful of photos
-  on its listing is one that nobody is managing. Thirty or more means somebody
-  already tends their presence, and the pitch lands badly.
-
-Score that profile high. A business missing one leg of it — plenty of reviews
-but a slick current site, or no site but two reviews and no evidence of trading
-— is a weaker lead, not an equal one.
-
-HOW ESTABLISHED THEY ARE IS A HARD GATE, not a tiebreaker. A big, settled firm
-does not buy a cheap website no matter how ordinary its current one is, and
-calling one wastes the call and looks amateur:
-  just_starting / small  -> no penalty; these are the target
-  growing                -> cap the score at 70
-  established            -> cap the score at 30, i.e. do not call
-For a GENERAL CONTRACTOR specifically, be stricter still: only score above 55 if
-they look genuinely small or new. An established GC is not a lead.
-If establishment is null, do not guess — judge on the web presence alone and say
-in the reason that you could not tell how established they are.
-
-Ignore any field that is null — null means the researcher could not verify it,
-not that the answer is no. Do not infer anything the research does not support.
-
-THE OPENER. One or two sentences a real person would say on the phone, naming
-something specific and verifiable about this business. No "Hi, I hope you're
-doing well", no invented facts, no claims about their site you were not told.
-
-BUSINESS: ${places.name} — ${places.address}
-GOOGLE LISTING: ${places.review_count == null ? "reviews unknown" : places.review_count + " reviews"}${places.rating ? " at " + places.rating : ""}, ${places.photo_count == null ? "photo count unknown" : places.photo_count + " photos"}
-RESEARCH: ${JSON.stringify(enrichment)}`;
-}
-
-async function scoreWithClaude(env, segment, places, enrichment) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey(env.ANTHROPIC_API_KEY),
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 2000,
-      thinking: { type: "adaptive" },
-      output_config: { effort: "low", format: { type: "json_schema", schema: SCORING_SCHEMA } },
-      messages: [{ role: "user", content: scorePrompt(segment, places, enrichment) }]
-    }),
-    signal: AbortSignal.timeout(180000)
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw providerError("Anthropic", res.status, body);
+  // Plain HTTP in 2026 means nobody has touched it in a decade, and every
+  // browser tells their customers it is not secure.
+  if (/^http:\/\//i.test(String(places.website).trim())) {
+    return { qualified: true, score: 85, checked: "places",
+             reason: "Site is still on plain http — browsers mark it not secure" + trading + "." };
   }
-  const data = await res.json();
-  return parseClaudeJson(data);
-}
 
-/* A structured-output response is still a normal Messages response: thinking
-   blocks can precede the text, so find the text block rather than index into
-   content[0]. A refusal never matches the schema — check stop_reason first. */
-function parseClaudeJson(data) {
-  if (data && data.stop_reason === "refusal") {
-    throw new Error("Anthropic declined to score this lead");
+  const ps = await (deps && deps.pageSpeed ? deps.pageSpeed : pageSpeed)(env, places.website);
+
+  if (ps.unreachable) {
+    return { qualified: true, score: 90, checked: "pagespeed",
+             reason: "Google cannot load their website (" + ps.code + ")" + trading + "." };
   }
-  const blocks = (data && data.content) || [];
-  for (const b of blocks) {
-    if (b && b.type === "text" && typeof b.text === "string" && b.text.trim()) {
-      const out = JSON.parse(b.text);
-      // The schema cannot express 0-100, so enforce it here.
-      out.score = Math.max(0, Math.min(100, Math.round(Number(out.score) || 0)));
-      return out;
-    }
+  if (ps.hasViewport === false) {
+    return { qualified: true, score: 88, checked: "pagespeed",
+             reason: "Site has no mobile viewport — it was built before phones mattered and is unusable on one" + trading + "." };
   }
-  throw new Error("Anthropic: no JSON in response");
+  if (ps.performance != null && ps.performance < SLOW_AT) {
+    return { qualified: true, score: 75, checked: "pagespeed",
+             reason: "Website scores " + ps.performance + "/100 on Google's mobile speed test" + trading + "." };
+  }
+
+  return { qualified: false, score: ps.performance == null ? 20 : ps.performance, checked: "pagespeed",
+           reason: ps.performance == null
+             ? "Has a working site; Google returned no score for it."
+             : "Website is fine — " + ps.performance + "/100 on mobile. Nothing to sell them." };
 }
 
 // ── stage 4: push to the CRM ──────────────────────────────────────────────
@@ -2217,13 +2075,12 @@ function parseClaudeJson(data) {
    the Worker and crm.html, and "ready to call" is not in it — a row with that
    status would fail validation and not render. Ranking is lead_score, which
    is what a caller actually sorts by. */
-async function pushLeadToCrm(env, cand, places, enrichment, scored) {
+async function pushLeadToCrm(env, cand, places, verdict) {
   const now = new Date().toISOString();
-  /* Contact details come from what the business publishes about itself, with
-     the Places values used only as a fallback for a lead we are about to call
-     anyway — never written as a durable copy of a Places record. */
-  const phone = (enrichment && enrichment.contact_phone) || places.phone || null;
-  const website = (enrichment && enrichment.contact_website) || places.website || null;
+  /* Contact details are what the caller needs in front of them for a business
+     we are about to ring — not a durable copy of a Places record. */
+  const phone = places.phone || null;
+  const website = places.website || null;
 
   const res = await env.CRM_DB.prepare(
     `INSERT INTO clients
@@ -2235,14 +2092,14 @@ async function pushLeadToCrm(env, cand, places, enrichment, scored) {
     places.name || "",
     phone,
     website,
-    offerName(scored.best_offer),
-    (enrichment && enrichment.notes) || "",
+    offerName(cand.offer_hint),
+    places.address || "",
     cand.place_id,
-    scored.score,
+    verdict.score,
     cand.segment,
-    scored.best_offer,
-    scored.reason || "",
-    scored.opener || "",
+    cand.offer_hint,
+    verdict.reason || "",
+    "",
     now,
     now
   ).run();
@@ -2293,7 +2150,6 @@ async function runLeadPipeline(env, opts) {
   const o = opts || {};
   const perRun = Math.max(1, Math.min(25, Number(o.limit) || LEAD_DEFAULTS.perRun));
   const cap = Number(env.LEADS_DAILY_USD_CAP || LEAD_DEFAULTS.dailyUsdCap);
-  const qualifyAt = Number(env.LEADS_QUALIFY_AT || LEAD_DEFAULTS.qualifyAt);
   const db = env.CRM_DB;
 
   await ensureLeadPipelineTables(env);
@@ -2390,42 +2246,22 @@ async function runLeadPipeline(env, opts) {
           await db.prepare("UPDATE lead_candidates SET attempts = attempts + 1, status = 'enriching', updated_at = ? WHERE id = ?")
             .bind(new Date().toISOString(), cand.id).run();
 
-          /* Research an earlier run already paid for is reused, never bought
-             twice. This used to be thrown away whenever scoring failed after
-             it — so a single bad Anthropic key had every run re-buying the
-             same web research at five cents a business. */
-          let enrichment = safeParse(cand.enrichment_json);
-          if (enrichment) {
-            await emit({ event: "researching", position: position, total: queue.length,
-                         name: places.name || null, cached: true });
-          } else {
-            await emit({ event: "researching", position: position, total: queue.length,
-                         name: places.name || null });
-            enrichment = await withRetry(() => enrichWithGrok(env, cand.segment, places));
-            counts.enriched++; counts.est_cost_usd += LEAD_COST.grokEnrichUsd;
-            // Banked before anything else can go wrong. It is bought and paid for.
-            await db.prepare("UPDATE lead_candidates SET status = 'enriched', enrichment_json = ?, updated_at = ? WHERE id = ?")
-              .bind(JSON.stringify(enrichment), new Date().toISOString(), cand.id).run();
-            await checkpoint();
-          }
+          await emit({ event: "checking", position: position, total: queue.length,
+                       name: places.name || null, website: places.website || null });
 
-          if (overBudget()) {
-            counts.errors.push("ceiling reached after enrichment; scoring deferred");
-            break;
-          }
+          /* No retry wrapper. The expensive, flaky, worth-retrying step was
+             the AI research; a PageSpeed run that fails is either a site that
+             will not load — which is itself a qualification — or an account
+             problem, which stops the run. */
+          const verdict = await websiteVerdict(env, places, o.deps);
+          counts.scored++;
 
-          await emit({ event: "scoring", position: position, total: queue.length,
-                       name: places.name || null });
-          const scored = await withRetry(() => scoreWithClaude(env, cand.segment, places, enrichment));
-          counts.scored++; counts.est_cost_usd += LEAD_COST.claudeScoreUsd;
-
-          const kept = scored.score >= qualifyAt;
-          if (kept) {
-            const crmId = await pushLeadToCrm(env, cand, places, enrichment, scored);
-            await stripCandidate(env, cand.id, "pushed", scored.score, scored.reason, crmId);
+          if (verdict.qualified) {
+            const crmId = await pushLeadToCrm(env, cand, places, verdict);
+            await stripCandidate(env, cand.id, "pushed", verdict.score, verdict.reason, crmId);
             counts.pushed++;
           } else {
-            await stripCandidate(env, cand.id, "rejected", scored.score, scored.reason, null);
+            await stripCandidate(env, cand.id, "rejected", verdict.score, verdict.reason, null);
             counts.rejected++;
           }
           await checkpoint();
@@ -2433,8 +2269,9 @@ async function runLeadPipeline(env, opts) {
              line later -- the candidate was just stripped. It is here so the
              person watching sees a business, not a row id. */
           await emit({ event: "judged", position: position, total: queue.length,
-                       name: places.name || null, score: scored.score,
-                       kept: kept, reason: scored.reason || null,
+                       name: places.name || null, score: verdict.score,
+                       kept: verdict.qualified, reason: verdict.reason || null,
+                       checked: verdict.checked,
                        spent: Number(counts.est_cost_usd.toFixed(4)) });
         } catch (e) {
           const account = !!(e && e.accountFailure);
@@ -2494,22 +2331,6 @@ async function failCandidate(env, cand, msg, counts, account) {
          new Date().toISOString(), cand.id).run();
 }
 
-/* Two retries, 2s then 6s. Deliberately small: the run is on a schedule, so a
-   candidate that fails now is picked up next hour with its attempt counter
-   intact rather than being hammered inside one invocation. */
-async function withRetry(fn, sleep) {
-  const waits = [2000, 6000];
-  let last;
-  for (let i = 0; i <= waits.length; i++) {
-    try { return await fn(); } catch (e) {
-      last = e;
-      if (e && e.accountFailure) throw e;   // the account will not fix itself
-      if (i < waits.length) await (sleep || defaultSleep)(waits[i]);
-    }
-  }
-  throw last;
-}
-function defaultSleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 function safeParse(s) { try { return JSON.parse(s); } catch (e) { return null; } }
 
