@@ -34,6 +34,14 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
 
 /* headline numbers */
 /* Lead pipeline controls */
+.lp-locked{border:1px solid var(--dim);padding:22px 24px;margin-bottom:30px;max-width:640px}
+.lp-locked-text{font-size:14px;color:var(--silver);line-height:1.6;margin-bottom:16px}
+.lp-unlock-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.lp-unlock-row input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:13px;padding:11px 13px;outline:none;width:200px}
+.lp-unlock-row input:focus{border-color:var(--silver)}
+.lp-unlock-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--danger)}
+.lp-relock{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;padding:7px 13px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--dim);margin-bottom:34px}
+.lp-relock:hover{border-color:var(--silver);color:var(--silver)}
 .lp-cat-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:10px}
 .lp-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
 .lp-cat{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:9px 14px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.2s;display:inline-flex;align-items:center;gap:8px}
@@ -131,6 +139,7 @@ select.status-sel:focus{border-color:var(--silver)}
 tr.is-lead{background:linear-gradient(90deg,rgba(216,161,95,0.09),rgba(216,161,95,0.01) 55%)}
 tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 .name-area{color:var(--silver)}
+.owner-chip{display:inline-flex;align-self:flex-start;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid rgba(216,161,95,0.45);background:rgba(216,161,95,0.1);color:var(--warm);margin-top:5px}
 .why-badge{display:inline-flex;align-self:flex-start;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid;margin-top:5px}
 .why-bad{color:#e0725f;border-color:rgba(224,114,95,0.45);background:rgba(224,114,95,0.1)}
 .why-mid{color:#d8a15f;border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
@@ -194,6 +203,19 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
   <section id="lp-section">
     <p class="sec-label">Lead Pipeline</p>
     <h2>Find new leads</h2>
+    <div class="lp-locked" id="lp-locked">
+      <p class="lp-locked-text">
+        The lead generator is locked. It spends money and rewrites the search grid,
+        so it stays shut for everyone working the phones.
+      </p>
+      <form class="lp-unlock-row" id="lp-unlock-form">
+        <input id="lp-pw" type="password" placeholder="Password" autocomplete="current-password">
+        <button class="btn" type="submit">Unlock</button>
+        <span class="lp-unlock-msg" id="lp-unlock-msg"></span>
+      </form>
+    </div>
+
+    <div id="lp-body" hidden>
     <p class="lp-cat-label">Categories to look for</p>
     <div class="lp-cats" id="lp-cats"><span class="lp-cat-loading">Loading&hellip;</span></div>
 
@@ -218,6 +240,8 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
       back to their defaults.
       <button class="lp-reseed" id="lp-reseed" type="button">Rebuild search grid</button>
     </p>
+    <button class="lp-relock" id="lp-relock" type="button">Lock again</button>
+    </div>
   </section>
 
   <section>
@@ -312,6 +336,64 @@ function authFetch(path, options) {
    two. Both buttons are disabled while one is in flight — double-tapping would
    start a second run that races the first for the same candidate rows. */
 (function () {
+  /* The unlock token rides in its own header rather than replacing the CRM
+     token, so unlocking never changes who you are — only what you may do.
+     Kept per browser; it expires server-side regardless. */
+  var unlockToken = null;
+  try { unlockToken = localStorage.getItem('potentia_leads_unlock') || null; } catch (e) {}
+
+  function leadFetch(path, options) {
+    options = options || {};
+    options.headers = Object.assign({}, options.headers, { 'X-Leads-Unlock': unlockToken || '' });
+    return authFetch(path, options).then(function (r) {
+      // The server is the lock; if it says no, the UI closes to match.
+      if (!r.ok && r.data && r.data.error === 'Locked') { setLocked(); }
+      return r;
+    });
+  }
+
+  var lockedBox = document.getElementById('lp-locked');
+  var lpBody = document.getElementById('lp-body');
+  var unlockForm = document.getElementById('lp-unlock-form');
+  var unlockMsg = document.getElementById('lp-unlock-msg');
+
+  function setUnlocked() {
+    lockedBox.hidden = true;
+    lpBody.hidden = false;
+    loadCats();
+  }
+  function setLocked() {
+    unlockToken = null;
+    try { localStorage.removeItem('potentia_leads_unlock'); } catch (e) {}
+    lockedBox.hidden = false;
+    lpBody.hidden = true;
+  }
+
+  if (unlockForm) unlockForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var pw = document.getElementById('lp-pw');
+    unlockMsg.textContent = '';
+    authFetch('/crm/leads/unlock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw.value })
+    }).then(function (r) {
+      if (!r.ok || !r.data || !r.data.unlock) {
+        unlockMsg.textContent = (r.data && r.data.error) || 'Could not unlock.';
+        return;
+      }
+      unlockToken = r.data.unlock;
+      try { localStorage.setItem('potentia_leads_unlock', unlockToken); } catch (e) {}
+      pw.value = '';
+      setUnlocked();
+    }).catch(function () { unlockMsg.textContent = 'Could not reach the server.'; });
+  });
+
+  var relock = document.getElementById('lp-relock');
+  if (relock) relock.addEventListener('click', setLocked);
+
+  if (unlockToken) setUnlocked(); else setLocked();
+
   var dry = document.getElementById('lp-dry');
   var live = document.getElementById('lp-live');
   var out = document.getElementById('lp-out');
@@ -356,8 +438,10 @@ function authFetch(path, options) {
      for the whole response and parses it as one JSON object. */
   function streamRun(isDry, onLine) {
     return fetch(API_BASE + '/crm/leads/run-now' + (isDry ? '?dry=1' : ''), {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + token }
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'X-Leads-Unlock': unlockToken || '' }
     }).then(function (res) {
+      if (res.status === 403) { setLocked(); throw new Error('The lead generator is locked.'); }
       if (res.status === 401) {
         localStorage.removeItem('potentia_crm_token');
         window.location.href = 'crm-login.html';
@@ -434,7 +518,7 @@ function authFetch(path, options) {
   function toggleCat(seg, btn) {
     var buttons = cats.querySelectorAll('.lp-cat');
     for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
-    authFetch('/crm/leads/segments', {
+    leadFetch('/crm/leads/segments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ segment: seg.key, enabled: !seg.enabled })
@@ -451,7 +535,7 @@ function authFetch(path, options) {
   }
 
   function loadCats() {
-    authFetch('/crm/leads/segments').then(function (r) {
+    leadFetch('/crm/leads/segments').then(function (r) {
       if (r.ok && r.data) { rememberLabels(r.data.segments, r.data.trades); paintCats(r.data.segments); }
     }).catch(function () { /* the run buttons still work without these */ });
   }
@@ -565,8 +649,10 @@ function authFetch(path, options) {
     show('Rebuilding the search grid&hellip;');
 
     fetch(API_BASE + '/crm/leads/run-now?dry=1&reseed=1', {
-      method: 'POST', headers: { 'Authorization': 'Bearer ' + token }
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'X-Leads-Unlock': unlockToken || '' }
     }).then(function (res) {
+      if (res.status === 403) { setLocked(); throw new Error('The lead generator is locked.'); }
       // The run-now endpoint streams; the last line carries the result.
       return res.text();
     }).then(function (text) {
@@ -795,7 +881,7 @@ function matches(c) {
   if (activeTrade !== 'all' && tradeOf(c) !== activeTrade) return false;
   if (!searchTerm) return true;
   var hay = [c.business_name, c.contact_name, c.email, c.phone, c.domain, c.website_url,
-             c.lead_area, c.lead_trade]
+             c.lead_area, c.lead_trade, c.owner]
     .filter(Boolean).join(' ').toLowerCase();
   return hay.indexOf(searchTerm) !== -1;
 }
@@ -901,6 +987,12 @@ function render() {
     /* The town, right under the name, because that is what you scan by when
        you are deciding which five to ring this morning. Leads found before
        lead_area existed fall back to the full address. */
+    if (c.owner) {
+      var ow = document.createElement('span');
+      ow.className = 'owner-chip';
+      ow.textContent = c.owner;
+      wrap.appendChild(ow);
+    }
     var area = c.lead_area || c.lead_address;
     if (area) {
       var where = document.createElement('span');
