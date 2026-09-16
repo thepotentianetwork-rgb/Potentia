@@ -12,7 +12,8 @@ import {
   normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
   pushLeadToCrm, stripCandidate, spentToday, defaultSources, seedLeadSources,
   offerName, LEAD_DEFAULTS, placesReject, placesPromise,
-  apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT
+  apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT,
+  placeArea
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -199,6 +200,33 @@ test('Utah ships disabled in every segment', () => {
   const ut = defaultSources().filter(r => r.state === 'UT');
   assert.ok(ut.length > 0);
   assert.ok(ut.every(r => r.enabled === 0), 'nothing local is called until it is switched on');
+});
+
+test('the grid searches the three target metros, at suburb level', () => {
+  const on = defaultSources().filter(r => r.enabled);
+  const states = [...new Set(on.map(r => r.state))].sort();
+  assert.deepEqual(states, ['AZ', 'CA'], 'LA, Orange County and Phoenix');
+
+  const cities = new Set(on.map(r => r.city));
+  for (const c of ['Pasadena', 'Torrance', 'Newport Beach', 'Irvine', 'Scottsdale', 'Gilbert'])
+    assert.ok(cities.has(c), c + ' is in the grid');
+
+  /* Places returns 20 results per query, ranked on prominence, and a business
+     with no website has none. Searching the metro by name would reach the same
+     twenty well-known firms forever; the suburbs are how the grid reaches the
+     businesses we are actually after. */
+  for (const metro of ['Los Angeles', 'Phoenix'])
+    assert.ok(!cities.has(metro), metro + ' by name would return the same twenty every time');
+
+  assert.ok(cities.size >= 30, 'enough suburbs that the rotation keeps finding new ground');
+});
+
+test('two cities with the same name stay separate', () => {
+  // Glendale CA and Glendale AZ are different places in different metros.
+  const glendale = defaultSources().filter(r => r.city === 'Glendale');
+  assert.deepEqual([...new Set(glendale.map(r => r.state))].sort(), ['AZ', 'CA']);
+  const q = defaultSources().filter(r => r.city === 'Glendale' && r.segment === 'subcontractor');
+  assert.ok(q.length > 2, 'each state gets its own full set of queries');
 });
 
 test('the enabled grid is mostly subcontractors', () => {
@@ -511,7 +539,8 @@ test('hopeless candidates are vetoed at sourcing, before any check', async () =>
   assert.equal(out.screened, 2);
   assert.equal(calls.pagespeed, 0);
   const tomb = db.prepare("SELECT * FROM lead_candidates WHERE place_id='P1'").get();
-  assert.equal(tomb.status, 'rejected');
+  assert.equal(tomb.status, 'screened',
+    'screened-on-sight is its own status, not the same as checked and turned down');
   assert.equal(tomb.places_json, null, 'a tombstone holds no Places content');
 });
 
@@ -664,4 +693,118 @@ test('the batch size is clamped, however it is asked for', async () => {
   // A run cannot be talked into an unbounded batch by the query string.
   const out = await runLeadPipeline(env, { trigger: 'manual', limit: 500 });
   assert.equal(out.pushed, 25, 'the hard ceiling holds');
+});
+
+// ── the rating floor ──────────────────────────────────────────────────────
+
+test('a badly reviewed business is screened out before anything else happens', () => {
+  const ok4 = { review_count: 40, rating: 4.4 };
+  assert.equal(placesReject(ok4), null);
+
+  const bad = placesReject({ review_count: 40, rating: 3.1 });
+  assert.match(bad, /3\.1 stars from 40 reviews/);
+  assert.match(bad, /below the 4 cut-off/);
+
+  // The boundary, both sides.
+  assert.equal(placesReject({ review_count: 40, rating: 4.0 }), null);
+  assert.ok(placesReject({ review_count: 40, rating: 3.9 }));
+
+  // Google not having a rating is not the same as a bad one.
+  assert.equal(placesReject({ review_count: 40, rating: null }), null);
+
+  // The review floor still runs first — too few reviews is the better reason.
+  assert.match(placesReject({ review_count: 2, rating: 2.0 }), /only 2 reviews/);
+});
+
+test('the cut-off can be moved without a deploy', () => {
+  assert.equal(placesReject({ review_count: 40, rating: 4.2 }, 4.5).includes('4.5 cut-off'), true);
+  assert.equal(placesReject({ review_count: 40, rating: 3.6 }, 3.5), null,
+    'a lower bar lets more through');
+});
+
+test('the rating floor is read from the environment', async () => {
+  const { env } = await seededEnv({ LEADS_MIN_RATING: '4.6' });
+  stubFetch({
+    places: () => ok({ places: [
+      Object.assign(PLACE(1), { rating: 4.9 }),
+      Object.assign(PLACE(2), { rating: 4.5 })
+    ] }),
+    pagespeed: PS(10)
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(out.screened, 1, 'the 4.5 is below a 4.6 bar');
+  assert.equal(out.sourced, 2);
+});
+
+test('rescreening reopens businesses screened under an old cut-off', async () => {
+  const { env, db } = await seededEnv({ LEADS_MIN_RATING: '4.8' });
+  const harsh = () => ok({ places: [Object.assign(PLACE(1), { rating: 4.4 })] });
+
+  stubFetch({ places: harsh, pagespeed: PS(10) });
+  const first = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(first.screened, 1);
+
+  /* Without rescreen the tombstone dedupes it away for good, and the new,
+     lower bar would never be applied to it. */
+  env.LEADS_MIN_RATING = '4.0';
+  const again = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(again.deduped, 1, 'the old verdict still stands in the way');
+  assert.equal(again.sourced, 1);
+
+  const relaxed = await runLeadPipeline(env, { trigger: 'manual', dryRun: true, rescreen: true });
+  assert.equal(relaxed.rescreened, 1, 'the tombstone was cleared');
+  const row = db.prepare("SELECT status FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(row.status, 'new', 'and the business is back in the queue');
+});
+
+test('rescreening never touches a business that was actually checked', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [Object.assign(WITH_SITE(1), { rating: 4.7 })] }),
+    pagespeed: PS(96)     // a good site — checked, and turned down on merit
+  });
+  await runLeadPipeline(env, { trigger: 'manual' });
+  assert.equal(db.prepare("SELECT status FROM lead_candidates WHERE place_id='P1'").get().status,
+    'rejected');
+
+  stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(96) });
+  const out = await runLeadPipeline(env, { trigger: 'manual', rescreen: true });
+  assert.equal(out.rescreened, 0);
+  assert.equal(db.prepare("SELECT status FROM lead_candidates WHERE place_id='P1'").get().status,
+    'rejected', 'a real verdict survives a rescreen');
+});
+
+test('the town is pulled out of whatever shape Google sends', () => {
+  // The ordinary case.
+  assert.equal(placeArea('1401 Dove St, Newport Beach, CA 92660, USA'), 'Newport Beach, CA');
+  // A suite line adds a comma, so counting from the front would be off by one.
+  assert.equal(placeArea('1401 Dove St Ste 220, Newport Beach, CA 92660, USA'), 'Newport Beach, CA');
+  // A rural address drops the street line, so it would be off the other way.
+  assert.equal(placeArea('Queen Creek, AZ 85142, USA'), 'Queen Creek, AZ');
+  // Zip+4.
+  assert.equal(placeArea('55 W Main St, Mesa, AZ 85201-1234, USA'), 'Mesa, AZ');
+  // Two-word state-side towns and saints keep their spaces.
+  assert.equal(placeArea('9 Camino Real, Paradise Valley, AZ 85253, USA'), 'Paradise Valley, AZ');
+
+  // No zip to anchor on: fall back to the last two parts, country dropped.
+  assert.equal(placeArea('100 Main St, Torrance, California, USA'), 'Torrance, California');
+  assert.equal(placeArea('Torrance'), 'Torrance');
+  assert.equal(placeArea(''), '');
+  assert.equal(placeArea(null), '');
+  assert.equal(placeArea(undefined), '');
+});
+
+test('a lead carries its town for the list, and its street address for the call', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [Object.assign(PLACE(1), {
+      formattedAddress: '1401 Dove St Ste 220, Newport Beach, CA 92660, USA'
+    })] }),
+    pagespeed: PS(10)
+  });
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  const row = db.prepare("SELECT * FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(row.lead_area, 'Newport Beach, CA', 'scannable in the list');
+  assert.equal(row.lead_address, '1401 Dove St Ste 220, Newport Beach, CA 92660, USA',
+    'and the full thing is still there');
 });

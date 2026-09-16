@@ -45,6 +45,10 @@ export const LEAD_DEFAULTS = {
   dailyUsdCap: 5.0,
   maxAttempts: 3,
   sourceBatch: 2,             // Places queries per run
+  /* Star rating a business has to clear to be worth calling. Tunable without
+     a deploy via LEADS_MIN_RATING, because where exactly the line sits is a
+     judgement about who you want as a customer, not a fact about the code. */
+  minRating: 4.0,
 };
 
 // ── table setup ───────────────────────────────────────────────────────────
@@ -61,6 +65,9 @@ export async function ensureLeadPipelineTables(env) {
   await db.prepare(
     `CREATE TABLE IF NOT EXISTS lead_candidates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      /* status: new -> enriching -> pushed | rejected | failed, or 'screened'
+         for a business vetoed on the free Places fields without ever being
+         checked. 'screened' is the only one ?rescreen=1 will clear. */
       place_id TEXT NOT NULL UNIQUE, segment TEXT NOT NULL, offer_hint INTEGER,
       source_id INTEGER, status TEXT NOT NULL DEFAULT 'new',
       attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
@@ -108,6 +115,7 @@ export async function ensureLeadPipelineTables(env) {
     ["lead_reason", "TEXT"],
     ["lead_opener", "TEXT"],
     ["lead_address", "TEXT"],
+    ["lead_area", "TEXT"],
     ["lead_speed", "INTEGER"],
     ["lead_mobile_ready", "INTEGER"],
     ["lead_check", "TEXT"],
@@ -248,13 +256,27 @@ export async function findExisting(env, cand) {
 
    Both read only free fields. Nothing here is a final verdict — the scorer
    still decides, having actually read the business. */
-export function placesReject(p) {
+export function placesReject(p, minRating) {
   const rc = p.review_count;
   if (rc == null || rc < 5) {
     return "only " + (rc == null ? "no" : rc) + " reviews — no evidence of real trading";
   }
   if (rc > 150) {
     return rc + " reviews — too established to buy a cheap site";
+  }
+
+  /* A badly-reviewed business is the wrong customer, not a keener one. A
+     website does not fix whatever the reviews are about, the job is more
+     likely to end in an argument over the invoice, and it goes in the
+     portfolio either way.
+
+     Only applied when Google has a rating to give. The review floor above
+     already means anything reaching this line has enough reviews for the
+     average to mean something. */
+  const floor = minRating == null ? LEAD_DEFAULTS.minRating : Number(minRating);
+  const r = p.rating == null ? null : Number(p.rating);
+  if (r != null && isFinite(r) && isFinite(floor) && r < floor) {
+    return r + " stars from " + rc + " reviews — below the " + floor + " cut-off";
   }
   return null;
 }
@@ -305,21 +327,50 @@ const GENERAL_QUERIES = ["general contractor", "home builder", "remodeling contr
 const HANDYMAN_QUERIES = ["handyman", "handyman services", "home repair service"];
 const DEALER_QUERIES = ["used car dealer", "auto sales", "pre-owned vehicles"];
 
+/* Wealthy metros, searched at suburb level rather than by metro name.
+
+   "Los Angeles" as a query returns the same few hundred businesses however
+   many times you ask, because Places ranks on prominence — and prominence is
+   exactly what our target does not have. A business with no website is not
+   winning "drywall contractor Los Angeles". It IS findable under the town it
+   actually works in, which is why this list is suburbs: Torrance, Whittier,
+   Anaheim, Mesa. Twenty-odd searches across a metro reach twenty different
+   sets of businesses; one search on the metro reaches one.
+
+   Money is the point of the list. A subcontractor in Newport Beach or
+   Scottsdale is bidding on work where looking legitimate to a GC is worth
+   real money, which is the whole pitch of offer 2.
+
+   Utah rows are the home state and stay off. */
 const CITIES = [
-  ["Bakersfield", "CA", 1], ["Fresno", "CA", 1], ["Visalia", "CA", 1],
-  ["Modesto", "CA", 1], ["Stockton", "CA", 1], ["Chico", "CA", 1],
-  ["Redding", "CA", 1], ["Merced", "CA", 1],
-  ["Tucson", "AZ", 1], ["Yuma", "AZ", 1], ["Prescott", "AZ", 1],
-  ["Kingman", "AZ", 1], ["Flagstaff", "AZ", 1], ["Casa Grande", "AZ", 1],
+  // Greater Los Angeles
+  ["Pasadena", "CA", 1], ["Glendale", "CA", 1], ["Burbank", "CA", 1],
+  ["Santa Monica", "CA", 1], ["Torrance", "CA", 1], ["Long Beach", "CA", 1],
+  ["Whittier", "CA", 1], ["Pomona", "CA", 1], ["Santa Clarita", "CA", 1],
+  ["Thousand Oaks", "CA", 1], ["Woodland Hills", "CA", 1], ["Downey", "CA", 1],
+  ["West Covina", "CA", 1], ["Redondo Beach", "CA", 1], ["Calabasas", "CA", 1],
+
+  // Orange County
+  ["Anaheim", "CA", 1], ["Irvine", "CA", 1], ["Santa Ana", "CA", 1],
+  ["Huntington Beach", "CA", 1], ["Newport Beach", "CA", 1],
+  ["Costa Mesa", "CA", 1], ["Fullerton", "CA", 1], ["Mission Viejo", "CA", 1],
+  ["Laguna Niguel", "CA", 1], ["Yorba Linda", "CA", 1], ["Orange", "CA", 1],
+
+  // Greater Phoenix
+  ["Scottsdale", "AZ", 1], ["Mesa", "AZ", 1], ["Chandler", "AZ", 1],
+  ["Gilbert", "AZ", 1], ["Tempe", "AZ", 1], ["Glendale", "AZ", 1],
+  ["Peoria", "AZ", 1], ["Surprise", "AZ", 1], ["Goodyear", "AZ", 1],
+  ["Paradise Valley", "AZ", 1], ["Queen Creek", "AZ", 1], ["Avondale", "AZ", 1],
+
+  // Home state. Off.
   ["Logan", "UT", 0], ["Ogden", "UT", 0], ["Provo", "UT", 0],
   ["St George", "UT", 0], ["Cedar City", "UT", 0], ["Vernal", "UT", 0]
 ];
-
 export function defaultSources() {
   /* Subcontractors are the target. General contractors ride along but only
      convert when they are small; handymen and dealers are seeded so the grid
      is there to switch on, but ship DISABLED — one UPDATE turns either back on
-     without re-deriving the whole city list. Utah likewise. */
+     without re-deriving the whole city list. Utah likewise, being home. */
   const out = [];
   for (const [city, state, on] of CITIES) {
     for (const q of SUBCONTRACTOR_QUERIES)
@@ -361,6 +412,8 @@ export async function seedLeadSources(env, force) {
 export async function sourceCandidates(env, counts, opts) {
   const db = env.CRM_DB;
   const batch = (opts && opts.sourceBatch) || LEAD_DEFAULTS.sourceBatch;
+  const minRating = env.LEADS_MIN_RATING == null || env.LEADS_MIN_RATING === ""
+    ? LEAD_DEFAULTS.minRating : Number(env.LEADS_MIN_RATING);
   const now = new Date().toISOString();
 
   /* Oldest-run-first so the grid rotates evenly instead of hammering whatever
@@ -390,17 +443,20 @@ export async function sourceCandidates(env, counts, opts) {
       const existing = await findExisting(env, p);
       if (existing) { counts.deduped++; continue; }
 
-      /* Free triage, before a single paid call. A hopeless candidate is still
-         written down — as a tombstone carrying place_id, the verdict and the
-         reason, and none of the Places content — so the next run that meets
-         this business again dedupes it away instead of paying to look at it
-         a second time. */
-      const veto = placesReject(p);
+      /* Triage on the free fields. A business that fails is still written
+         down — a tombstone carrying place_id, the verdict and the reason, and
+         none of the Places content — so the next run that meets it dedupes it
+         away instead of queueing it up to be checked all over again.
+
+         That tombstone is also how a cut-off gets baked in, which is why
+         ?rescreen=1 exists: it clears them so a changed threshold is applied
+         to everything, not just to businesses found after the change. */
+      const veto = placesReject(p, minRating);
       if (veto) {
         await db.prepare(
           `INSERT INTO lead_candidates
              (place_id, segment, offer_hint, source_id, status, promise, score, reason, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'rejected', 0, 0, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, 'screened', 0, 0, ?, ?, ?)`
         ).bind(p.place_id, s.segment, s.offer_hint, s.id, veto.slice(0, 300), now, now).run();
         counts.screened++;
         continue;
@@ -456,6 +512,36 @@ export function providerError(who, status, body) {
   return e;
 }
 
+
+/* "Newport Beach, CA" out of "1401 Dove St Ste 220, Newport Beach, CA 92660,
+   USA". The full address belongs on the lead, but what someone scanning a
+   list wants is the town — it is how you decide which five to ring this
+   morning.
+
+   Worked backwards from the state-and-zip part rather than by counting
+   commas from the front, because a suite line adds a comma and a rural
+   address drops the street one, so no fixed index is right for both. */
+export function placeArea(address) {
+  const parts = String(address == null ? "" : address)
+    .split(",").map((x) => x.trim()).filter(Boolean);
+  if (!parts.length) return "";
+
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const m = /^([A-Z]{2})\s+\d{5}(-\d{4})?$/.exec(parts[i]);
+    if (m) {
+      const city = i > 0 ? parts[i - 1] : "";
+      return city ? city + ", " + m[1] : m[1];
+    }
+  }
+
+  // No zip to anchor on — drop a trailing country and take what is left.
+  const trimmed = /^(USA|United States)$/i.test(parts[parts.length - 1])
+    ? parts.slice(0, -1) : parts;
+  if (!trimmed.length) return "";
+  return trimmed.length >= 2
+    ? trimmed[trimmed.length - 2] + ", " + trimmed[trimmed.length - 1]
+    : trimmed[0];
+}
 
 /* "Websites" that are not websites. A listing pointing at a Facebook page, a
    Linktree or a marketplace profile means the business has no site of its own
@@ -602,9 +688,9 @@ export async function pushLeadToCrm(env, cand, places, verdict) {
     `INSERT INTO clients
        (business_name, phone, website_url, status, source, service,
         place_id, lead_score, lead_segment, lead_offer, lead_reason,
-        lead_address, lead_speed, lead_mobile_ready, lead_check,
+        lead_address, lead_area, lead_speed, lead_mobile_ready, lead_check,
         created_by_pipeline, do_not_contact, created_at, updated_at)
-     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
+     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
   ).bind(
     places.name || "",
     phone,
@@ -621,6 +707,7 @@ export async function pushLeadToCrm(env, cand, places, verdict) {
        wants — reviews, photos, hours — is one click away on the live Google
        listing via place_id, which is better than a stale copy anyway. */
     places.address || "",
+    placeArea(places.address),
     verdict.speed == null ? null : verdict.speed,
     verdict.mobileReady == null ? null : (verdict.mobileReady ? 1 : 0),
     verdict.checked || null,
@@ -685,6 +772,18 @@ export async function runLeadPipeline(env, opts) {
     sourced: 0, deduped: 0, enriched: 0, scored: 0,
     pushed: 0, screened: 0, rejected: 0, failed: 0, est_cost_usd: 0, errors: []
   };
+  /* A screening tombstone records a cut-off as much as a business, so moving
+     the cut-off has to be able to reach back. Only rows screened at sourcing
+     are cleared — status 'screened', holding no Places content and never
+     checked, so there is nothing to lose. A candidate actually checked and
+     turned down is status 'rejected' and keeps its verdict. */
+  if (o.rescreen) {
+    const gone = await db.prepare(
+      "DELETE FROM lead_candidates WHERE status = 'screened'"
+    ).run();
+    counts.rescreened = (gone && gone.meta && gone.meta.changes) || 0;
+  }
+
   const started = new Date().toISOString();
   const run = await db.prepare(
     "INSERT INTO enrichment_runs (trigger, started_at) VALUES (?, ?)"

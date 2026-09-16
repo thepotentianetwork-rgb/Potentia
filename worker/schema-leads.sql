@@ -108,7 +108,8 @@ CREATE INDEX IF NOT EXISTS idx_enrichment_runs_started ON enrichment_runs (start
 -- What the check actually found, so a caller has the evidence in front of them
 -- rather than a verdict. Reviews, photos and hours are deliberately NOT here:
 -- place_id links to the live Google listing, which never goes stale.
--- lead_address  TEXT     trading address, for knowing which town you are ringing
+-- lead_address  TEXT     full trading address
+-- lead_area     TEXT     just the town, e.g. "Newport Beach, CA" — what the list shows
 -- lead_speed    INTEGER  Google mobile performance, 0-100, null when not measured
 -- lead_mobile_ready INTEGER 1/0/null — has a viewport meta tag
 -- lead_check    TEXT     'places' or 'pagespeed' — which check decided it
