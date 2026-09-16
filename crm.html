@@ -323,7 +323,16 @@ function authFetch(path, options) {
       window.location.href = 'crm-login.html';
       throw new Error('Session expired');
     }
-    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+    /* text() then parse, not json(): a Cloudflare error page or an empty body
+       makes json() reject, and every caller here treats a rejection as "could
+       not reach the server" — so a real answer from the server would be
+       reported as a network problem, or swallowed entirely. */
+    return res.text().then(function (t) {
+      var data = null;
+      try { data = t ? JSON.parse(t) : null; }
+      catch (e) { data = { error: String(t).slice(0, 200) }; }
+      return { ok: res.ok, status: res.status, data: data };
+    });
   });
 }
 
@@ -538,12 +547,32 @@ function authFetch(path, options) {
     });
   }
 
-  function loadCats() {
-    leadFetch('/crm/leads/segments').then(function (r) {
-      if (r.ok && r.data) { rememberLabels(r.data.segments, r.data.trades); paintCats(r.data.segments); }
-    }).catch(function () { /* the run buttons still work without these */ });
+  function catsMessage(text) {
+    cats.innerHTML = '';
+    var e = document.createElement('span');
+    e.className = 'lp-cat-warn';
+    e.textContent = text;
+    cats.appendChild(e);
+    dry.disabled = true;
+    live.disabled = true;
   }
-  loadCats();
+
+  function loadCats() {
+    catsMessage('Loading\u2026');
+    leadFetch('/crm/leads/segments').then(function (r) {
+      if (r.ok && r.data && r.data.segments) {
+        rememberLabels(r.data.segments, r.data.trades);
+        paintCats(r.data.segments);
+        return;
+      }
+      /* Anything other than a list of categories used to leave "Loading…" on
+         screen for good, which says nothing about what went wrong and makes
+         the next question unanswerable. */
+      catsMessage(readable((r.data && r.data.error) || ('The server answered ' + r.status + '.')));
+    }).catch(function (e) {
+      catsMessage('Could not reach the server (' + (e && e.message ? e.message : 'network error') + ').');
+    });
+  }
 
   function run(isDry) {
     dry.disabled = true; live.disabled = true;

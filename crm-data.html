@@ -147,7 +147,16 @@ function authFetch(path, options) {
       window.location.href = 'crm-login.html';
       throw new Error('Session expired');
     }
-    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+    /* text() then parse, not json(): a Cloudflare error page or an empty body
+       makes json() reject, and every caller here treats a rejection as "could
+       not reach the server" — so a real answer from the server would be
+       reported as a network problem, or swallowed entirely. */
+    return res.text().then(function (t) {
+      var data = null;
+      try { data = t ? JSON.parse(t) : null; }
+      catch (e) { data = { error: String(t).slice(0, 200) }; }
+      return { ok: res.ok, status: res.status, data: data };
+    });
   });
 }
 
