@@ -90,7 +90,7 @@ test('a candidate already judged is not re-sourced', async () => {
   const now = new Date().toISOString();
   // A rejected tombstone: place_id and a score, no Places content at all.
   db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, score, created_at, updated_at)
-              VALUES ('PLACE_R','handyman','rejected',18,?,?)`).run(now, now);
+              VALUES ('PLACE_R','home_service','rejected',18,?,?)`).run(now, now);
   const hit = await findExisting(env, { place_id: 'PLACE_R' });
   assert.equal(hit && hit.where, 'lead_candidates');
 });
@@ -149,7 +149,7 @@ test('judging a candidate strips every byte of Places and research content', asy
                    phone: '4355551111', website: '', rating: 4.8, review_count: 31 };
   db.prepare(`INSERT INTO lead_candidates
       (place_id, segment, status, places_json, places_fetched_at, enrichment_json, opener, created_at, updated_at)
-      VALUES ('PLACE_D','handyman','scored',?,?,?,'Hi Bob —',?,?)`)
+      VALUES ('PLACE_D','home_service','scored',?,?,?,'Hi Bob —',?,?)`)
     .run(JSON.stringify(places), now, JSON.stringify({ notes: 'no site' }), now, now);
 
   await stripCandidate(env, 1, 'rejected', 22, 'has a decent site already', null);
@@ -194,7 +194,7 @@ test('only home services ships switched on', () => {
   /* Every other category is seeded for every city anyway, so switching one on
      is an UPDATE. A reseed would work too but would throw away which cities
      have already been searched. */
-  for (const seg of ['handyman', 'detailer', 'dealer'])
+  for (const seg of ['detailer', 'dealer'])
     assert.ok(rows.some(r => r.segment === seg), seg + ' is seeded, ready to switch on');
 });
 
@@ -404,7 +404,7 @@ const PS = (score, viewport) => () => ok({ lighthouseResult: {
 async function seededEnv(extra) {
   const { env, db } = await freshEnv();
   db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
-              VALUES ('handyman','Fresno','CA','handyman',1,1,?)`).run(new Date().toISOString());
+              VALUES ('handyman','Fresno','CA','home_service',2,1,?)`).run(new Date().toISOString());
   Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' }, extra || {});
   return { env, db };
 }
@@ -586,9 +586,9 @@ test('candidates stranded by a killed run are picked back up', async () => {
   const now = new Date().toISOString();
   const places = JSON.stringify({ place_id: 'PX', name: 'Stranded Co', website: '', review_count: 20 });
   db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
-              VALUES ('PX','handyman','enriching',1,?,80,?,?)`).run(places, old, old);
+              VALUES ('PX','home_service','enriching',1,?,80,?,?)`).run(places, old, old);
   db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
-              VALUES ('PY','handyman','enriching',1,?,80,?,?)`).run(places, now, now);
+              VALUES ('PY','home_service','enriching',1,?,80,?,?)`).run(places, now, now);
 
   stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
   const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
@@ -603,7 +603,7 @@ test('candidates retired during an earlier lapse come back', async () => {
   const places = JSON.stringify({ place_id: 'PZ', name: 'Revived Co', website: '', review_count: 20 });
   db.prepare(`INSERT INTO lead_candidates
     (place_id, segment, status, attempts, last_error, places_json, promise, created_at, updated_at)
-    VALUES ('PZ','handyman','failed',3,'[account] PageSpeed 403: disabled',?,80,?,?)`)
+    VALUES ('PZ','home_service','failed',3,'[account] PageSpeed 403: disabled',?,80,?,?)`)
     .run(places, now, now);
 
   stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
@@ -679,7 +679,7 @@ test('a run with no limit named checks the default batch, not five', async () =>
   // Twelve staged candidates, none with a website, so nothing is slow.
   for (let i = 1; i <= 12; i++) {
     db.prepare(`INSERT INTO lead_candidates (place_id, segment, offer_hint, status, places_json, promise, created_at, updated_at)
-                VALUES (?, 'handyman', 1, 'new', ?, 50, ?, ?)`)
+                VALUES (?, 'home_service', 2, 'new', ?, 50, ?, ?)`)
       .run('Q' + i, JSON.stringify({ place_id: 'Q' + i, name: 'Q Co ' + i, website: '', review_count: 20 }), now, now);
   }
   stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
@@ -694,7 +694,7 @@ test('the batch size is clamped, however it is asked for', async () => {
   const now = new Date().toISOString();
   for (let i = 1; i <= 30; i++) {
     db.prepare(`INSERT INTO lead_candidates (place_id, segment, offer_hint, status, places_json, promise, created_at, updated_at)
-                VALUES (?, 'handyman', 1, 'new', ?, 50, ?, ?)`)
+                VALUES (?, 'home_service', 2, 'new', ?, 50, ?, ?)`)
       .run('R' + i, JSON.stringify({ place_id: 'R' + i, name: 'R Co ' + i, website: '', review_count: 20 }), now, now);
   }
   stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
@@ -1078,7 +1078,7 @@ test('a rebuilt grid replaces the old one wholesale', async () => {
   const now = new Date().toISOString();
   // Stand in for the old 20-city grid that is still out there.
   db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
-              VALUES ('handyman','Bakersfield','CA','handyman',1,1,?)`).run(now);
+              VALUES ('handyman','Bakersfield','CA','home_service',2,1,?)`).run(now);
 
   // A normal run leaves it alone — that is the whole point of seeding once.
   assert.equal(await seedLeadSources(env, false), 0);
@@ -1093,15 +1093,14 @@ test('a rebuilt grid replaces the old one wholesale', async () => {
   /* The symptom that started this: handymen stuck at 42 searches, which is
      14 cities x 3 queries from the grid before SoCal. After a rebuild the
      count has to reflect the grid in the code. */
-  const handy = SEGMENTS.find(s => s.key === 'handyman');
+  const hs = SEGMENTS.find(s => s.key === 'home_service');
   const cities = new Set(defaultSources().map(r => r.city + ',' + r.state)).size;
   assert.equal(
-    Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources WHERE segment='handyman'").get().c),
-    cities * handy.queries.length);
+    Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources WHERE segment='home_service'").get().c),
+    cities * hs.queries.length);
 
-  await setSegmentEnabled(env, 'handyman', true);
-  const on = (await listSegments(env)).find(s => s.key === 'handyman');
-  assert.ok(on.searches > 200, 'and switching it on offers the whole region, not 42 searches');
+  const on = (await listSegments(env)).find(s => s.key === 'home_service');
+  assert.ok(on.searches > 1000, 'and it offers the whole region, not 42 searches');
 });
 
 test('a run only checks the categories that are switched on', async () => {
@@ -1120,7 +1119,7 @@ test('a run only checks the categories that are switched on', async () => {
         JSON.stringify({ place_id: id, name: trade + ' Co', website: '', review_count: 20 }), now, now);
 
   stage('S1', 'home_service', 'roofing contractor');
-  stage('H1', 'handyman', 'handyman');
+  stage('H1', 'dealer', 'used car dealer');
   stage('D1', 'detailer', 'mobile detailing');
   stage('D2', 'detailer', 'ceramic coating');
 
@@ -1146,7 +1145,7 @@ test('a run only checks the categories that are switched on', async () => {
   assert.equal(after.pushed, 1, 'the roofer lands once its category is back on');
 });
 
-test('the old two categories are renamed in place, not rebuilt away', async () => {
+test('the old three categories are renamed in place, not rebuilt away', async () => {
   const { env, db } = await freshEnv();
   const now = new Date().toISOString();
 
@@ -1160,6 +1159,10 @@ test('the old two categories are renamed in place, not rebuilt away', async () =
               VALUES ('general contractor','Mesa','AZ','general',2,1,?,?)`).run(now, now);
   db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, created_at, updated_at)
               VALUES ('PQ','subcontractor','new',?,?)`).run(now, now);
+  db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, created_at, updated_at)
+              VALUES ('PH','handyman','new',?,?)`).run(now, now);
+  db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, last_run_at, created_at)
+              VALUES ('handyman','Poway','CA','handyman',1,1,?,?)`).run(now, now);
   db.prepare(`INSERT INTO clients (business_name, status, created_at, updated_at)
               VALUES ('Old Lead','lead',?,?)`).run(now, now);
   await ensureLeadPipelineTables(env);
@@ -1168,9 +1171,12 @@ test('the old two categories are renamed in place, not rebuilt away', async () =
   await ensureLeadPipelineTables(env);
 
   assert.equal(Number(db.prepare(
-    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment IN ('subcontractor','general')").get().c), 0);
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment IN ('subcontractor','general','handyman')").get().c), 0);
   assert.equal(Number(db.prepare(
-    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment = 'home_service'").get().c), 2);
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment = 'home_service'").get().c), 3);
+
+  assert.equal(db.prepare("SELECT segment FROM lead_candidates WHERE place_id='PH'").get().segment,
+    'home_service', 'handymen come across with them');
 
   const src = db.prepare("SELECT * FROM lead_sources WHERE city = 'Irvine'").get();
   assert.equal(src.last_run_at, now, 'it still knows Irvine has been searched');
@@ -1184,5 +1190,20 @@ test('the old two categories are renamed in place, not rebuilt away', async () =
   // Safe to run forever, which it will be — it is in the lazy migration path.
   await ensureLeadPipelineTables(env);
   assert.equal(Number(db.prepare(
-    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment = 'home_service'").get().c), 2);
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE segment = 'home_service'").get().c), 3);
+});
+
+test('home services covers trades, GCs and handymen in one search list', () => {
+  const hs = SEGMENTS.find(s => s.key === 'home_service');
+  const has = (re) => hs.queries.some(q => re.test(q));
+  assert.ok(has(/drywall|roofing|plumber/), 'the specialty trades');
+  assert.ok(has(/general contractor|remodeling/), 'the small GCs who hire them');
+  assert.ok(has(/handyman|home repair/), 'and the handyman end of the same market');
+
+  /* One sales conversation, one offer: looking legitimate to whoever decides
+     who gets the job — a GC picking a bid list, or a homeowner deciding who
+     to let through the door. */
+  assert.equal(hs.offer, 2);
+  assert.equal(LEAD_SEGMENTS.indexOf('handyman'), -1, 'no longer its own category');
+  assert.equal(new Set(hs.queries).size, hs.queries.length, 'no duplicated searches');
 });
