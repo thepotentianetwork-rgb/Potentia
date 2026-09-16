@@ -43,6 +43,20 @@ section{margin-bottom:52px}
 .status-paused{background:var(--silver)}
 .status-lost{background:var(--dim)}
 .status-tag{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
+.lead-detail{display:flex;flex-direction:column;gap:7px;padding-left:12px;border-left:1px solid rgba(216,161,95,0.3)}
+.lead-detail .ld-line{font-size:14px;color:var(--silver);line-height:1.6}
+.lead-detail .ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:9px}
+.lead-detail a{color:var(--warm);text-decoration:none;border-bottom:1px solid rgba(216,161,95,0.35);word-break:break-all}
+.lead-detail a:hover{color:#f0c48a}
+.lead-detail .ld-none{color:#d89b6a;font-weight:500}
+.lead-detail .ld-why{color:var(--silver)}
+.speed-pill{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;padding:2px 8px;border-radius:20px;border:1px solid}
+.speed-bad{color:#e0725f;border-color:rgba(224,114,95,0.5);background:rgba(224,114,95,0.1)}
+.speed-mid{color:#d8a15f;border-color:rgba(216,161,95,0.5);background:rgba(216,161,95,0.1)}
+.speed-ok{color:#7fb37a;border-color:rgba(127,179,122,0.45);background:rgba(127,179,122,0.1)}
+.why-badge{display:inline-flex;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 10px;border-radius:20px;border:1px solid;margin-left:12px;vertical-align:middle}
+.why-bad{color:#e0725f;border-color:rgba(224,114,95,0.45);background:rgba(224,114,95,0.1)}
+.why-mid{color:#d8a15f;border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
 .summary-line{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:30px}
 
 /* details form */
@@ -183,6 +197,11 @@ section{margin-bottom:52px}
     </div>
   </section>
 
+  <section id="lead-section" style="display:none">
+    <h3>Why this is a lead</h3>
+    <div class="lead-detail" id="lead-detail"></div>
+  </section>
+
   <section id="inquiry-section" style="display:none">
     <h3>Original Inquiry</h3>
     <div class="inquiry">
@@ -264,6 +283,7 @@ section{margin-bottom:52px}
   </section>
 </main>
 
+<script src="crm-lead.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_crm_token');
@@ -396,6 +416,16 @@ function renderPhoneActions() {
   });
 }
 
+/* Filled from the same endpoint the list uses, so a category reads the same
+   on both pages. The raw key is a readable fallback if the call has not
+   landed, and nothing waits on it. */
+var SEGMENT_LABELS = {};
+authFetch('/crm/leads/segments').then(function (r) {
+  if (r.ok && r.data && r.data.segments) {
+    r.data.segments.forEach(function (seg) { SEGMENT_LABELS[seg.key] = seg.label; });
+  }
+}).catch(function () {});
+
 function fillDetails(c) {
   el('client-name').textContent = c.business_name || c.contact_name || 'Unnamed client';
   document.title = (c.business_name || c.contact_name || 'Client') + ' — Potentia CRM';
@@ -433,6 +463,24 @@ function fillDetails(c) {
     visit.style.display = 'inline-block';
   } else {
     visit.style.display = 'none';
+  }
+
+  /* A pipeline lead gets the same block as the list, from the same code, so
+     the two pages can never tell you different things about a business. */
+  if (Number(c.created_by_pipeline) === 1) {
+    el('lead-section').style.display = '';
+    var box = el('lead-detail');
+    box.innerHTML = '';
+    box.appendChild(LeadDetail.block(c, SEGMENT_LABELS));
+
+    // The headline sits next to the name, as it does in the list.
+    var why = LeadDetail.badge(c);
+    if (why) {
+      var wb = document.createElement('span');
+      wb.className = 'why-badge why-' + why.tone;
+      wb.textContent = why.text;
+      el('title-status').insertAdjacentElement('afterend', wb);
+    }
   }
 
   if (c.service || c.message) {
