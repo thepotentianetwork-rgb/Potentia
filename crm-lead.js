@@ -77,7 +77,11 @@
       return a;
     }
 
-    // The headline: is there a site, and can I look at it right now?
+    /* The reason first. In a list it is the thing being scanned for, and
+       putting it last meant reading past four fields to reach it. */
+    if (c.lead_reason) line('Why', text(c.lead_reason, 'ld-why'), true);
+
+    // Then: is there a site, and can I look at it right now?
     if (c.website_url) {
       var href = /^https?:\/\//i.test(c.website_url) ? c.website_url : 'https://' + c.website_url;
       line('Site', link(href, c.website_url));
@@ -124,8 +128,6 @@
         'Open their listing'));
     }
 
-    // The sentence gets a row of its own; everything else sits side by side.
-    if (c.lead_reason) line('Why', text(c.lead_reason, 'ld-why'), true);
     return box;
   }
 
