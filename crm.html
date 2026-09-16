@@ -304,6 +304,21 @@ var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_crm_token');
 if (!token) window.location.href = 'crm-login.html';
 
+/* Bound before anything else can fail. It used to be registered near the
+   bottom, so any error earlier in the script left the button inert and
+   whoever was signed in with no way out of a page that was not working. */
+(function () {
+  var b = document.getElementById('logout-btn');
+  if (!b) return;
+  b.addEventListener('click', function () {
+    try {
+      localStorage.removeItem('potentia_crm_token');
+      localStorage.removeItem('potentia_leads_unlock');
+    } catch (e) { /* signing out must work in a private window too */ }
+    window.location.href = 'crm-login.html';
+  });
+})();
+
 var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
 /* Filled in from /crm/leads/segments so the wording matches the toggles above.
    The raw key is a perfectly readable fallback if that call has not landed. */
@@ -341,6 +356,17 @@ function authFetch(path, options) {
    two. Both buttons are disabled while one is in flight — double-tapping would
    start a second run that races the first for the same candidate rows. */
 (function () {
+  /* Looked up first, before any of the code below can run. setUnlocked() is
+     called during this function when the browser has an unlock saved, and it
+     paints into these — so a lookup further down meant touching `dry` while it
+     was still undefined, which threw, which stopped the whole script: no
+     client list, and a Log Out button with nothing bound to it. */
+  var dry = document.getElementById('lp-dry');
+  var live = document.getElementById('lp-live');
+  var out = document.getElementById('lp-out');
+  var cats = document.getElementById('lp-cats');
+  if (!dry || !live || !out || !cats) return;
+
   /* The unlock token rides in its own header rather than replacing the CRM
      token, so unlocking never changes who you are — only what you may do.
      Kept per browser; it expires server-side regardless. */
@@ -406,11 +432,6 @@ function authFetch(path, options) {
   });
 
   if (unlockToken) setUnlocked(); else setLocked();
-
-  var dry = document.getElementById('lp-dry');
-  var live = document.getElementById('lp-live');
-  var out = document.getElementById('lp-out');
-  if (!dry || !live || !out) return;
 
   function show(html) { out.hidden = false; out.innerHTML = html; }
   function n(v) { return '<b>' + (v == null ? 0 : v) + '</b>'; }
@@ -488,8 +509,6 @@ function authFetch(path, options) {
   /* Which categories the pipeline looks for. There is no separate setting to
      keep in step — a category is on when its searches are on, so the chips
      read and write lead_sources directly. */
-  var cats = document.getElementById('lp-cats');
-
   function rememberLabels(list, trades) {
     (list || []).forEach(function (seg) { SEGMENT_LABELS[seg.key] = seg.label; });
     if (trades) Object.keys(trades).forEach(function (k) { TRADE_LABELS[k] = trades[k]; });
@@ -715,10 +734,7 @@ function authFetch(path, options) {
   });
 })();
 
-document.getElementById('logout-btn').addEventListener('click', function () {
-  localStorage.removeItem('potentia_crm_token');
-  window.location.href = 'crm-login.html';
-});
+
 
 function money(n) {
   if (n == null || n === '') return null;
