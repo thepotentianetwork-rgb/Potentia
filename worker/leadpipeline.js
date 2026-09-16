@@ -132,7 +132,8 @@ export async function ensureLeadPipelineTables(env) {
     }
   }
 
-  /* Subcontractors and general contractors used to be two categories. Renaming
+  /* Subcontractors, general contractors and handymen used to be three
+     categories. Renaming
      them in place keeps every row's last_run_at and enabled flag, which a
      rebuild would throw away — and rebuilds are the thing that loses track of
      which cities have already been searched. Idempotent: once nothing matches
@@ -145,7 +146,7 @@ export async function ensureLeadPipelineTables(env) {
                               ["clients", "lead_segment"]]) {
     await db.prepare(
       `UPDATE ${table} SET ${col} = 'home_service'
-        WHERE ${col} IN ('subcontractor', 'general')`
+        WHERE ${col} IN ('subcontractor', 'general', 'handyman')`
     ).run();
   }
 }
@@ -344,9 +345,11 @@ export function placesPromise(p) {
 export const SEGMENTS = [
   {
     /* Everyone who turns up at a house in a van. Specialty trades who sub to
-       general contractors, and the small GCs who hire them — one category
-       because they are the same sales conversation: looking legitimate to
-       whoever is deciding who gets the job.
+       general contractors, the small GCs who hire them, and handymen — one
+       category because they are the same sales conversation: looking
+       legitimate to whoever is deciding who gets the job. For a trade that is
+       a general contractor picking a bid list; for a handyman it is a
+       homeowner choosing who to let through the door. Same product.
 
        Established general contractors are not the target and never were, but
        nothing here has to know that: the review ceiling in placesReject sends
@@ -358,12 +361,9 @@ export const SEGMENTS = [
       "painting contractor", "flooring installer", "fencing contractor",
       "excavation contractor", "siding contractor", "masonry contractor",
       "stucco contractor", "insulation contractor", "gutter installer",
-      "general contractor", "home builder", "remodeling contractor"
+      "general contractor", "home builder", "remodeling contractor",
+      "handyman", "handyman services", "home repair service"
     ]
-  },
-  {
-    key: "handyman", label: "Handymen", offer: 1, on: false,
-    queries: ["handyman", "handyman services", "home repair service"]
   },
   {
     /* Detailers live or die on being findable and looking the part, and a
