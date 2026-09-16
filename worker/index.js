@@ -19,7 +19,7 @@
 // other module-level const here.
 
 import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget } from "./pricing.js";
-import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads } from "./leadpipeline.js";
+import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -3109,6 +3109,19 @@ export default {
           "SELECT * FROM enrichment_runs ORDER BY id DESC LIMIT 30"
         ).all();
         return json({ runs: rows.results || [] }, 200, origin);
+      }
+      if (path === "/crm/segment-names" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        /* Names only, and deliberately not behind the generator's lock: what a
+           category is CALLED is how leads read in the list, and a caller never
+           unlocks the generator. The counts and the toggles stay locked.
+
+           Served rather than duplicated in the page, so "Home Services" is
+           written once. */
+        return json({
+          segments: SEGMENTS.map((s) => ({ key: s.key, label: s.label })),
+          trades: tradeLabels()
+        }, 200, origin);
       }
       if (path === "/crm/leads/unlock" && request.method === "POST") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

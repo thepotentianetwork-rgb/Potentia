@@ -103,7 +103,20 @@ tr.group-head td{background:rgba(216,161,95,0.07);border-top:1px solid rgba(216,
 .panel-actions{display:flex;gap:10px;align-items:center}
 .panel-msg{font-family:'DM Mono',monospace;font-size:11px;color:var(--danger)}
 
-table{width:100%;border-collapse:collapse}
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+.c-client{width:19%}
+.c-contact{width:15%}
+.c-pkg{width:7%}
+.c-status{width:11%}
+/* Value + Open Work + Latest Note — the three a pipeline lead leaves empty,
+   and the three its detail spans. */
+.c-value{width:8%}
+.c-work{width:8%}
+.c-note{width:24%}
+.c-open{width:8%}
+/* Fixed columns mean anything unbreakable now overflows instead of stretching
+   the table, so long URLs and addresses have to be allowed to wrap. */
+td{overflow-wrap:anywhere}
 th{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:left;padding:10px 12px;border-bottom:1px solid var(--dim)}
 td{padding:13px 12px;border-bottom:1px solid var(--dim);font-size:15px;font-weight:300;vertical-align:top}
 tr:hover td{background:rgba(255,255,255,0.02)}
@@ -131,7 +144,7 @@ select.status-sel:focus{border-color:var(--silver)}
 .task-pill.none{color:var(--dim);border-color:var(--dim);background:none}
 .task-due{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:4px}
 .task-due.over{color:var(--danger)}
-.note-cell{font-size:13px;color:var(--silver);max-width:220px}
+.note-cell{font-size:13px;color:var(--silver)}
 .note-cell .note-time{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:2px}
 .view-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--bright);text-decoration:none;text-transform:uppercase;white-space:nowrap}
 .view-link:hover{color:var(--silver)}
@@ -146,7 +159,7 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 .lead-detail{display:flex;flex-wrap:wrap;gap:8px 30px;padding-left:12px;border-left:1px solid rgba(216,161,95,0.3)}
 .lead-detail .ld-line{font-size:13px;color:var(--silver);line-height:1.5}
 .lead-detail a{word-break:normal;overflow-wrap:anywhere}
-.why-cell{min-width:340px}
+.why-cell{min-width:0}
 .why-note{font-size:13px;color:var(--silver);margin-top:8px;padding-left:12px;border-left:1px solid var(--dim)}
 .lead-detail .ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:7px}
 .lead-detail a{color:var(--warm);text-decoration:none;border-bottom:1px solid rgba(216,161,95,0.35)}
@@ -303,6 +316,13 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 
     <div class="table-wrap">
     <table>
+      <!-- Fixed widths, because left to itself the browser sizes columns by
+           content: one long website URL dragged Contact out to nearly half the
+           page while the lead detail was squeezed off the right edge. -->
+      <colgroup>
+        <col class="c-client"><col class="c-contact"><col class="c-pkg"><col class="c-status">
+        <col class="c-value"><col class="c-work"><col class="c-note"><col class="c-open">
+      </colgroup>
       <thead>
         <tr><th>Client</th><th>Contact</th><th>Package</th><th>Status</th><th>Value</th><th>Open Work</th><th>Latest Note</th><th></th></tr>
       </thead>
@@ -337,8 +357,26 @@ if (!token) window.location.href = 'crm-login.html';
 
 var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
 /* Filled in from /crm/leads/segments so the wording matches the toggles above.
-   The raw key is a perfectly readable fallback if that call has not landed. */
+   That endpoint is behind the generator's lock, though, and someone working
+   the phones never unlocks it — so the fallback has to be readable on its own
+   rather than showing "home_service". */
 var SEGMENT_LABELS = {};
+function segmentName(key) {
+  if (!key) return '';
+  if (SEGMENT_LABELS[key]) return SEGMENT_LABELS[key];
+  // Until the names land — or if that call fails — a tidied key beats a raw one.
+  return String(key).replace(/_/g, ' ').replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
+}
+
+/* The names, without the generator's lock. Everyone reading the list needs
+   them; only the counts and toggles are privileged. */
+authFetch('/crm/segment-names').then(function (r) {
+  if (!r.ok || !r.data) return;
+  (r.data.segments || []).forEach(function (s) { SEGMENT_LABELS[s.key] = s.label; });
+  if (r.data.trades) Object.keys(r.data.trades).forEach(function (k) { TRADE_LABELS[k] = r.data.trades[k]; });
+  // Guarded: this fires before the list has loaded as often as after it.
+  if (allClients && allClients.length) { paintCategoryFilters(); paintTradeFilters(); render(); }
+}).catch(function () { /* the tidied key still reads fine */ });
 /* Search term -> the name shown for it, from the same endpoint. A lead stores
    the raw term it was found by; this is only ever for display and grouping. */
 var TRADE_LABELS = {};
@@ -959,7 +997,7 @@ function paintCategoryFilters() {
   wrap.hidden = false;
   bar.innerHTML = '';
   [['all', 'All', allClients.length]]
-    .concat(keys.map(function (k) { return [k, SEGMENT_LABELS[k] || k, counts[k]]; }))
+    .concat(keys.map(function (k) { return [k, segmentName(k), counts[k]]; }))
     .forEach(function (f) {
       var b = document.createElement('button');
       b.className = 'chip' + (f[0] === activeSegment ? ' on' : '');
@@ -1048,7 +1086,7 @@ function render() {
       else if (byTrade && tradeOf(c)) { k = 't:' + tradeOf(c); title = tradeOf(c); }
       else {
         k = 's:' + (c.lead_segment || 'uncategorised');
-        title = SEGMENT_LABELS[c.lead_segment] || c.lead_segment || 'Uncategorised';
+        title = segmentName(c.lead_segment) || 'Uncategorised';
       }
       titles[k] = title;
       (groups[k] = groups[k] || []).push(c);

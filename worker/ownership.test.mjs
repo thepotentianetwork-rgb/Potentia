@@ -223,3 +223,25 @@ test("the preflight allows every custom header the pages actually send", async (
     assert.ok(allowed.includes(h), h + " is sent by the CRM but blocked at the preflight");
   }
 });
+
+test("category names are readable without unlocking the generator", async () => {
+  const { call, crmTok } = await setup();
+
+  /* Someone working the phones never unlocks the generator, and the list is
+     unreadable if a category shows as "home_service". Names are not the
+     privileged part — the counts and the toggles are. */
+  const r = await call("GET", "/crm/segment-names", null, crmTok);
+  assert.equal(r.status, 200);
+
+  const byKey = {};
+  r.data.segments.forEach((s) => { byKey[s.key] = s.label; });
+  assert.equal(byKey.home_service, "Home Services",
+    "the exact wording, served rather than guessed at in the page");
+  assert.ok(r.data.trades["roofing contractor"], "trade names come with them");
+
+  // Still a CRM login, just not the generator's password.
+  assert.equal((await call("GET", "/crm/segment-names")).status, 401);
+  // And it hands out nothing privileged.
+  assert.equal(r.data.segments[0].searches, undefined, "no counts");
+  assert.equal(r.data.segments[0].enabled, undefined, "and nothing about what is switched on");
+});

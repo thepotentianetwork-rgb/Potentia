@@ -5991,6 +5991,19 @@ export default {
         ).all();
         return json({ runs: rows.results || [] }, 200, origin);
       }
+      if (path === "/crm/segment-names" && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        /* Names only, and deliberately not behind the generator's lock: what a
+           category is CALLED is how leads read in the list, and a caller never
+           unlocks the generator. The counts and the toggles stay locked.
+
+           Served rather than duplicated in the page, so "Home Services" is
+           written once. */
+        return json({
+          segments: SEGMENTS.map((s) => ({ key: s.key, label: s.label })),
+          trades: tradeLabels()
+        }, 200, origin);
+      }
       if (path === "/crm/leads/unlock" && request.method === "POST") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const secret = leadsPassword(env);
