@@ -1542,6 +1542,10 @@ const LEAD_DEFAULTS = {
   dailyUsdCap: 5.0,
   maxAttempts: 3,
   sourceBatch: 2,             // Places queries per run
+  /* Star rating a business has to clear to be worth calling. Tunable without
+     a deploy via LEADS_MIN_RATING, because where exactly the line sits is a
+     judgement about who you want as a customer, not a fact about the code. */
+  minRating: 4.0,
 };
 
 // ── table setup ───────────────────────────────────────────────────────────
@@ -1558,6 +1562,9 @@ async function ensureLeadPipelineTables(env) {
   await db.prepare(
     `CREATE TABLE IF NOT EXISTS lead_candidates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      /* status: new -> enriching -> pushed | rejected | failed, or 'screened'
+         for a business vetoed on the free Places fields without ever being
+         checked. 'screened' is the only one ?rescreen=1 will clear. */
       place_id TEXT NOT NULL UNIQUE, segment TEXT NOT NULL, offer_hint INTEGER,
       source_id INTEGER, status TEXT NOT NULL DEFAULT 'new',
       attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
@@ -1745,13 +1752,27 @@ async function findExisting(env, cand) {
 
    Both read only free fields. Nothing here is a final verdict — the scorer
    still decides, having actually read the business. */
-function placesReject(p) {
+function placesReject(p, minRating) {
   const rc = p.review_count;
   if (rc == null || rc < 5) {
     return "only " + (rc == null ? "no" : rc) + " reviews — no evidence of real trading";
   }
   if (rc > 150) {
     return rc + " reviews — too established to buy a cheap site";
+  }
+
+  /* A badly-reviewed business is the wrong customer, not a keener one. A
+     website does not fix whatever the reviews are about, the job is more
+     likely to end in an argument over the invoice, and it goes in the
+     portfolio either way.
+
+     Only applied when Google has a rating to give. The review floor above
+     already means anything reaching this line has enough reviews for the
+     average to mean something. */
+  const floor = minRating == null ? LEAD_DEFAULTS.minRating : Number(minRating);
+  const r = p.rating == null ? null : Number(p.rating);
+  if (r != null && isFinite(r) && isFinite(floor) && r < floor) {
+    return r + " stars from " + rc + " reviews — below the " + floor + " cut-off";
   }
   return null;
 }
@@ -1858,6 +1879,8 @@ async function seedLeadSources(env, force) {
 async function sourceCandidates(env, counts, opts) {
   const db = env.CRM_DB;
   const batch = (opts && opts.sourceBatch) || LEAD_DEFAULTS.sourceBatch;
+  const minRating = env.LEADS_MIN_RATING == null || env.LEADS_MIN_RATING === ""
+    ? LEAD_DEFAULTS.minRating : Number(env.LEADS_MIN_RATING);
   const now = new Date().toISOString();
 
   /* Oldest-run-first so the grid rotates evenly instead of hammering whatever
@@ -1887,17 +1910,20 @@ async function sourceCandidates(env, counts, opts) {
       const existing = await findExisting(env, p);
       if (existing) { counts.deduped++; continue; }
 
-      /* Free triage, before a single paid call. A hopeless candidate is still
-         written down — as a tombstone carrying place_id, the verdict and the
-         reason, and none of the Places content — so the next run that meets
-         this business again dedupes it away instead of paying to look at it
-         a second time. */
-      const veto = placesReject(p);
+      /* Triage on the free fields. A business that fails is still written
+         down — a tombstone carrying place_id, the verdict and the reason, and
+         none of the Places content — so the next run that meets it dedupes it
+         away instead of queueing it up to be checked all over again.
+
+         That tombstone is also how a cut-off gets baked in, which is why
+         ?rescreen=1 exists: it clears them so a changed threshold is applied
+         to everything, not just to businesses found after the change. */
+      const veto = placesReject(p, minRating);
       if (veto) {
         await db.prepare(
           `INSERT INTO lead_candidates
              (place_id, segment, offer_hint, source_id, status, promise, score, reason, created_at, updated_at)
-           VALUES (?, ?, ?, ?, 'rejected', 0, 0, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, 'screened', 0, 0, ?, ?, ?)`
         ).bind(p.place_id, s.segment, s.offer_hint, s.id, veto.slice(0, 300), now, now).run();
         counts.screened++;
         continue;
@@ -2182,6 +2208,18 @@ async function runLeadPipeline(env, opts) {
     sourced: 0, deduped: 0, enriched: 0, scored: 0,
     pushed: 0, screened: 0, rejected: 0, failed: 0, est_cost_usd: 0, errors: []
   };
+  /* A screening tombstone records a cut-off as much as a business, so moving
+     the cut-off has to be able to reach back. Only rows screened at sourcing
+     are cleared — status 'screened', holding no Places content and never
+     checked, so there is nothing to lose. A candidate actually checked and
+     turned down is status 'rejected' and keeps its verdict. */
+  if (o.rescreen) {
+    const gone = await db.prepare(
+      "DELETE FROM lead_candidates WHERE status = 'screened'"
+    ).run();
+    counts.rescreened = (gone && gone.meta && gone.meta.changes) || 0;
+  }
+
   const started = new Date().toISOString();
   const run = await db.prepare(
     "INSERT INTO enrichment_runs (trigger, started_at) VALUES (?, ?)"
@@ -5260,6 +5298,10 @@ export default {
         // needed after changing which segments or cities ship, since the grid
         // is otherwise only ever written once. Drops manual enables with it.
         const reseed = url.searchParams.get("reseed") === "1";
+        /* ?rescreen=1 clears the businesses screened out on the free fields,
+           so a changed rating or review cut-off is applied to everything
+           already seen rather than only to what turns up next. */
+        const rescreen = url.searchParams.get("rescreen") === "1";
 
         /* Streamed, not awaited. A real run researches five businesses one
            after another and routinely takes several minutes; Cloudflare cuts
@@ -5286,7 +5328,7 @@ export default {
         (async () => {
           try {
             const out = await runLeadPipeline(env, {
-              trigger: "manual", limit, dryRun, reseed, onProgress: emit
+              trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit
             });
             await emit({ event: "done", result: out });
           } catch (e) {

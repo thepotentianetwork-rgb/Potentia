@@ -477,6 +477,13 @@ All server-side, set as Worker secrets — none of these reach the browser.
 |---|---|---|
 | `GOOGLE_PLACES_API_KEY` | yes | Places API (New) Text Search, and PageSpeed Insights |
 | `LEADS_DAILY_USD_CAP` | no | rolling 24h ceiling, default `5.00` |
+| `LEADS_MIN_RATING` | no | star rating a business must clear, default `4.0` |
+
+Moving `LEADS_MIN_RATING` only affects businesses found after the change: one
+already screened out carries a tombstone that dedupes it away. To apply a new
+cut-off to everything already seen, run once with `?rescreen=1`, which clears
+the screening tombstones and puts those businesses back in the queue. It never
+touches a business that was actually checked and turned down on its website.
 
 One key, two APIs: both must be enabled on the Cloud project, and if the key
 carries an API restriction both must be listed on it. PageSpeed is free and

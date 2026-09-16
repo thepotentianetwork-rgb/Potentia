@@ -2901,6 +2901,10 @@ export default {
         // needed after changing which segments or cities ship, since the grid
         // is otherwise only ever written once. Drops manual enables with it.
         const reseed = url.searchParams.get("reseed") === "1";
+        /* ?rescreen=1 clears the businesses screened out on the free fields,
+           so a changed rating or review cut-off is applied to everything
+           already seen rather than only to what turns up next. */
+        const rescreen = url.searchParams.get("rescreen") === "1";
 
         /* Streamed, not awaited. A real run researches five businesses one
            after another and routinely takes several minutes; Cloudflare cuts
@@ -2927,7 +2931,7 @@ export default {
         (async () => {
           try {
             const out = await runLeadPipeline(env, {
-              trigger: "manual", limit, dryRun, reseed, onProgress: emit
+              trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit
             });
             await emit({ event: "done", result: out });
           } catch (e) {
