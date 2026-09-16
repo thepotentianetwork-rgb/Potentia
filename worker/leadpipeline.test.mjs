@@ -13,7 +13,8 @@ import {
   pushLeadToCrm, stripCandidate, spentToday, defaultSources, seedLeadSources,
   offerName, LEAD_DEFAULTS, placesReject, placesPromise,
   apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT,
-  placeArea, coprimeStride
+  placeArea, coprimeStride, SEGMENTS, LEAD_SEGMENTS, HOME_STATE,
+  listSegments, setSegmentEnabled
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -185,15 +186,16 @@ test('spend is summed over a rolling 24 hours, not all time', async () => {
 
 
 // ── the search grid ───────────────────────────────────────────────────────
-test('only subcontractors and general contractors are switched on', () => {
+test('only subcontractors and general contractors ship switched on', () => {
   const rows = defaultSources();
   const on = rows.filter(r => r.enabled);
   const segs = [...new Set(on.map(r => r.segment))].sort();
-  assert.deepEqual(segs, ['general', 'subcontractor'],
-    'handymen and dealers are seeded but off until asked for');
-  // Still present, so switching either back on is one UPDATE, not a reseed.
-  for (const seg of ['handyman', 'dealer'])
-    assert.ok(rows.some(r => r.segment === seg), seg + ' is still in the grid');
+  assert.deepEqual(segs, ['general', 'subcontractor']);
+  /* Every other category is seeded for every city anyway, so switching one on
+     is an UPDATE. A reseed would work too but would throw away which cities
+     have already been searched. */
+  for (const seg of ['handyman', 'detailer', 'dealer'])
+    assert.ok(rows.some(r => r.segment === seg), seg + ' is seeded, ready to switch on');
 });
 
 test('Utah ships disabled in every segment', () => {
@@ -854,4 +856,107 @@ test('the stride can never silently skip cities', () => {
     for (let i = 0; i < n; i++) seen.add((i * s) % n);
     assert.equal(seen.size, n, 'stride ' + s + ' misses cities when there are ' + n);
   }
+});
+
+// ── categories ────────────────────────────────────────────────────────────
+
+test('a category is defined once, not in four places that must agree', () => {
+  assert.deepEqual(LEAD_SEGMENTS, SEGMENTS.map(s => s.key),
+    'the key list is derived, so it cannot drift from the definitions');
+  for (const s of SEGMENTS) {
+    assert.ok(s.label && s.label !== s.key, s.key + ' has a human label');
+    assert.ok([1, 2, 3].includes(s.offer), s.key + ' maps to a real offer');
+    assert.ok(s.queries.length > 0, s.key + ' has searches');
+  }
+  const keys = SEGMENTS.map(s => s.key);
+  assert.equal(new Set(keys).size, keys.length, 'no duplicate keys');
+
+  // Both new categories, and the offers they sell.
+  const det = SEGMENTS.find(s => s.key === 'detailer');
+  assert.equal(det.offer, 1, 'a detailer buys the $99 site, not the dealer CRM');
+  assert.equal(SEGMENTS.find(s => s.key === 'dealer').offer, 3);
+  assert.ok(det.queries.some(q => /detail/.test(q)));
+});
+
+test('every category is seeded for every city, so switching one on is an UPDATE', () => {
+  const rows = defaultSources();
+  const cities = new Set(rows.map(r => r.city + ',' + r.state)).size;
+  for (const seg of SEGMENTS) {
+    const n = rows.filter(r => r.segment === seg.key).length;
+    assert.equal(n, cities * seg.queries.length,
+      seg.key + ' is seeded everywhere, on or off');
+  }
+});
+
+test('the toggles report what lead_sources actually says', async () => {
+  const { env } = await freshEnv();
+  await seedLeadSources(env);
+  const segs = await listSegments(env);
+
+  const byKey = {};
+  segs.forEach(s => { byKey[s.key] = s; });
+  assert.equal(byKey.subcontractor.enabled, true);
+  assert.equal(byKey.detailer.enabled, false);
+  assert.equal(byKey.detailer.searches, 0);
+  assert.ok(byKey.detailer.total > 0, 'off, but seeded and ready');
+  assert.equal(byKey.dealer.label, 'Car dealerships', 'the CRM shows this wording');
+});
+
+test('turning a category on switches its searches on, and off again', async () => {
+  const { env, db } = await freshEnv();
+  await seedLeadSources(env);
+
+  await setSegmentEnabled(env, 'detailer', true);
+  let byKey = {};
+  (await listSegments(env)).forEach(s => { byKey[s.key] = s; });
+  assert.equal(byKey.detailer.enabled, true);
+  assert.ok(byKey.detailer.searches > 0);
+  assert.equal(byKey.subcontractor.enabled, true, 'other categories are untouched');
+
+  await setSegmentEnabled(env, 'detailer', false);
+  byKey = {};
+  (await listSegments(env)).forEach(s => { byKey[s.key] = s; });
+  assert.equal(byKey.detailer.enabled, false);
+  assert.equal(byKey.detailer.searches, 0);
+});
+
+test('switching a category on never switches on the home state', async () => {
+  const { env, db } = await freshEnv();
+  await seedLeadSources(env);
+  await setSegmentEnabled(env, 'detailer', true);
+
+  /* Turning on "Auto detailers" should not start ringing the shop down the
+     road. The home state is off because it is home, not because that category
+     happened to be off. */
+  const home = db.prepare(
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE state = ? AND enabled = 1"
+  ).get(HOME_STATE);
+  assert.equal(Number(home.c), 0);
+});
+
+test('an unknown category is refused rather than silently doing nothing', async () => {
+  const { env } = await freshEnv();
+  await seedLeadSources(env);
+  await assert.rejects(() => setSegmentEnabled(env, 'plumbers-but-cooler', true),
+    /unknown category/);
+});
+
+test('a switched-on category actually gets searched', async () => {
+  /* freshEnv + seed, not seededEnv: seededEnv hand-adds one source row, and a
+     non-empty lead_sources means the real grid is never seeded — so there
+     would be no detailer rows to switch on. */
+  const { env } = await freshEnv();
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
+  await seedLeadSources(env);
+  for (const k of LEAD_SEGMENTS) await setSegmentEnabled(env, k, k === 'detailer');
+
+  const queries = [];
+  stubFetch({
+    places: (body) => { queries.push(body.textQuery); return ok({ places: [] }); },
+    pagespeed: PS(10)
+  });
+  await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.ok(queries.length > 0, 'it searched something');
+  for (const q of queries)
+    assert.match(q, /detail|ceramic coating/, 'and only the category that is on: ' + q);
 });

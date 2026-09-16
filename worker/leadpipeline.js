@@ -22,7 +22,6 @@
       estimated cost, and a daily ceiling is checked before each paid call.
    ══════════════════════════════════════════════════════════════════════════ */
 
-export const LEAD_SEGMENTS = ["subcontractor", "general", "handyman", "dealer"];
 
 /* Unit costs in USD, for the daily ceiling and the per-run log. Google Places
    text search is the only paid call left in the pipeline — the AI stages are
@@ -312,20 +311,55 @@ export function placesPromise(p) {
    could not resolve without knowing which town is home — enable the ones you
    want with a single UPDATE (see the README). Nothing in Utah is called until
    you do. */
-const SUBCONTRACTOR_QUERIES = [
-  "concrete contractor", "framing contractor", "drywall contractor",
-  "electrician", "plumber", "HVAC contractor", "roofing contractor",
-  "painting contractor", "flooring installer", "fencing contractor",
-  "excavation contractor", "siding contractor", "masonry contractor",
-  "stucco contractor", "insulation contractor", "gutter installer"
+/* One entry per category. Everything about a segment lives here — the
+   searches, the offer it maps to, whether it ships on, and the name the CRM
+   shows — so adding a category is one entry rather than four edits in four
+   places that have to agree with each other.
+
+   `on` is only the shipped default. Which categories are actually being
+   worked is whatever lead_sources says, and that is what the CRM toggles. */
+export const SEGMENTS = [
+  {
+    key: "subcontractor", label: "Subcontractors", offer: 2, on: true,
+    queries: [
+      "concrete contractor", "framing contractor", "drywall contractor",
+      "electrician", "plumber", "HVAC contractor", "roofing contractor",
+      "painting contractor", "flooring installer", "fencing contractor",
+      "excavation contractor", "siding contractor", "masonry contractor",
+      "stucco contractor", "insulation contractor", "gutter installer"
+    ]
+  },
+  {
+    /* A different animal: an established GC has a real site, a real crew and
+       no interest in a $99 anything. Searched anyway, because the small and
+       new ones are exactly the target — the review ceiling does the filtering. */
+    key: "general", label: "General contractors", offer: 2, on: true,
+    queries: ["general contractor", "home builder", "remodeling contractor"]
+  },
+  {
+    key: "handyman", label: "Handymen", offer: 1, on: false,
+    queries: ["handyman", "handyman services", "home repair service"]
+  },
+  {
+    /* Detailers live or die on being findable and looking the part, and a
+       striking number run the whole business off an Instagram account. */
+    key: "detailer", label: "Auto detailers", offer: 1, on: false,
+    queries: [
+      "auto detailing", "mobile detailing", "car detailing",
+      "ceramic coating", "auto detailing service"
+    ]
+  },
+  {
+    key: "dealer", label: "Car dealerships", offer: 3, on: false,
+    queries: ["used car dealer", "auto sales", "pre-owned vehicles", "car dealership"]
+  }
 ];
-/* General contractors are a different animal: an established GC has a real
-   site, a real crew and no interest in a $99 anything. They are searched, but
-   the scorer is told to reject any that look established — so this list earns
-   its place only through the small and new ones. */
-const GENERAL_QUERIES = ["general contractor", "home builder", "remodeling contractor"];
-const HANDYMAN_QUERIES = ["handyman", "handyman services", "home repair service"];
-const DEALER_QUERIES = ["used car dealer", "auto sales", "pre-owned vehicles"];
+
+export const LEAD_SEGMENTS = SEGMENTS.map((s) => s.key);
+
+/* Home. Never called, and never switched on by a category toggle either —
+   turning on "Auto detailers" should not start ringing the shop down the road. */
+export const HOME_STATE = "UT";
 
 /* Wealthy metros, searched at suburb level rather than by metro name.
 
@@ -387,10 +421,9 @@ const CITIES = [
   ["St George", "UT", 0], ["Cedar City", "UT", 0], ["Vernal", "UT", 0]
 ];
 export function defaultSources() {
-  /* Subcontractors are the target. General contractors ride along but only
-     convert when they are small; handymen and dealers are seeded so the grid
-     is there to switch on, but ship DISABLED — one UPDATE turns either back on
-     without re-deriving the whole city list. Utah likewise, being home.
+  /* Every segment is seeded for every city whether or not it ships on, so
+     switching a category on later is one UPDATE rather than a reseed — and a
+     reseed would throw away which cities have already been searched.
 
      ROW ORDER IS LOAD-BEARING. A run takes the two least-recently-searched
      sources, and on a freshly seeded grid nothing has been searched, so they
@@ -403,10 +436,8 @@ export function defaultSources() {
      round: consecutive rows are different towns AND different trades, and a
      single run's two searches never land in the same place. */
   const plan = [];
-  for (const q of SUBCONTRACTOR_QUERIES) plan.push([q, "subcontractor", 2, true]);
-  for (const q of GENERAL_QUERIES) plan.push([q, "general", 2, true]);
-  for (const q of HANDYMAN_QUERIES) plan.push([q, "handyman", 1, false]);
-  for (const q of DEALER_QUERIES) plan.push([q, "dealer", 3, false]);
+  for (const seg of SEGMENTS)
+    for (const q of seg.queries) plan.push([q, seg.key, seg.offer, seg.on]);
 
   /* Stepping through CITIES one at a time would still walk the regions in
      blocks — fifteen LA runs, then the Inland Empire, then San Diego. A stride
@@ -780,6 +811,43 @@ export function offerName(n) {
   if (n === 2) return "Credibility Website";
   if (n === 3) return "Dealership CRM";
   return "Unknown";
+}
+
+export function segmentLabel(key) {
+  const s = SEGMENTS.find((x) => x.key === key);
+  return s ? s.label : key;
+}
+
+/* What the CRM's category toggles read and write. Counting rows rather than
+   storing a flag keeps one source of truth: lead_sources IS the setting. */
+export async function listSegments(env) {
+  const rows = await env.CRM_DB.prepare(
+    `SELECT segment,
+            SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS on_count,
+            COUNT(*) AS total
+       FROM lead_sources GROUP BY segment`
+  ).all();
+  const bySeg = {};
+  for (const r of rows.results || []) bySeg[r.segment] = r;
+
+  return SEGMENTS.map((s) => {
+    const r = bySeg[s.key];
+    return {
+      key: s.key,
+      label: s.label,
+      searches: Number((r && r.on_count) || 0),
+      total: Number((r && r.total) || 0),
+      enabled: Number((r && r.on_count) || 0) > 0
+    };
+  });
+}
+
+export async function setSegmentEnabled(env, segment, enabled) {
+  if (LEAD_SEGMENTS.indexOf(segment) === -1) throw new Error("unknown category: " + segment);
+  const res = await env.CRM_DB.prepare(
+    `UPDATE lead_sources SET enabled = ? WHERE segment = ? AND state <> ?`
+  ).bind(enabled ? 1 : 0, segment, HOME_STATE).run();
+  return (res && res.meta && res.meta.changes) || 0;
 }
 
 // ── judgement: strip the candidate row ────────────────────────────────────

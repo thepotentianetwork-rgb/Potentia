@@ -34,6 +34,15 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
 
 /* headline numbers */
 /* Lead pipeline controls */
+.lp-cat-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:10px}
+.lp-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
+.lp-cat{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:9px 14px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.2s;display:inline-flex;align-items:center;gap:8px}
+.lp-cat:hover:not(:disabled){border-color:var(--silver);color:var(--bright)}
+.lp-cat.on{border-color:var(--warm);color:var(--warm);background:rgba(216,161,95,0.1)}
+.lp-cat:disabled{opacity:.5;cursor:progress}
+.lp-cat .lp-n{font-size:9px;color:var(--dim)}
+.lp-cat.on .lp-n{color:rgba(216,161,95,0.75)}
+.lp-cat-loading{font-size:12px;color:var(--dim)}
 .lp-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
 .lp-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;padding:12px 18px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.3s;flex:1 1 220px}
 .lp-btn:hover:not(:disabled){border-color:var(--silver);color:var(--bright)}
@@ -54,6 +63,8 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
 /* toolbar */
 .toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
 .filters{display:flex;gap:6px;flex-wrap:wrap}
+.toolbar-cats{margin-top:-10px}
+.cat-bar-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase}
 .chip{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--silver);background:none;border:1px solid var(--dim);padding:8px 13px;cursor:pointer;text-transform:uppercase;transition:all 0.2s}
 .chip:hover{color:var(--bright)}
 .chip.on{background:var(--chrome);color:var(--black);border-color:var(--chrome)}
@@ -172,6 +183,9 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
   <section id="lp-section">
     <p class="sec-label">Lead Pipeline</p>
     <h2>Find new leads</h2>
+    <p class="lp-cat-label">Categories to look for</p>
+    <div class="lp-cats" id="lp-cats"><span class="lp-cat-loading">Loading&hellip;</span></div>
+
     <div class="lp-row">
       <button class="lp-btn lp-dry" id="lp-dry">Dry run &mdash; find &amp; dedupe only</button>
       <button class="lp-btn lp-live" id="lp-live">Real run &mdash; check websites &amp; add leads</button>
@@ -200,6 +214,10 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 
     <div class="toolbar">
       <div class="filters" id="filters"></div>
+    </div>
+    <div class="toolbar toolbar-cats" id="cat-bar-wrap" hidden>
+      <span class="cat-bar-label">Category</span>
+      <div class="filters" id="cat-filters"></div>
       <input id="search" type="search" placeholder="Search name, email, domain…" autocomplete="off">
       <button class="btn" id="new-btn">+ New Client</button>
     </div>
@@ -242,6 +260,9 @@ var token = localStorage.getItem('potentia_crm_token');
 if (!token) window.location.href = 'crm-login.html';
 
 var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
+/* Filled in from /crm/leads/segments so the wording matches the toggles above.
+   The raw key is a perfectly readable fallback if that call has not landed. */
+var SEGMENT_LABELS = {};
 var PACKAGES = [['', '—'], ['foundation', 'Foundation'], ['booking', 'Booking'], ['gallery', 'Gallery'], ['operator', 'Operator'], ['custom', 'Custom']];
 var SOURCES = [['', '—'], ['website', 'Website'], ['referral', 'Referral'], ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['google', 'Google'], ['outreach', 'Outreach'], ['repeat', 'Repeat'], ['other', 'Other']];
 
@@ -317,6 +338,64 @@ function authFetch(path, options) {
     });
   }
 
+  /* Which categories the pipeline looks for. There is no separate setting to
+     keep in step — a category is on when its searches are on, so the chips
+     read and write lead_sources directly. */
+  var cats = document.getElementById('lp-cats');
+
+  function rememberLabels(list) {
+    (list || []).forEach(function (seg) { SEGMENT_LABELS[seg.key] = seg.label; });
+    if (typeof paintCategoryFilters === 'function') paintCategoryFilters();
+  }
+
+  function paintCats(list) {
+    cats.innerHTML = '';
+    (list || []).forEach(function (seg) {
+      var b = document.createElement('button');
+      b.className = 'lp-cat' + (seg.enabled ? ' on' : '');
+      b.type = 'button';
+      b.appendChild(document.createTextNode(seg.label));
+      var n = document.createElement('span');
+      n.className = 'lp-n';
+      n.textContent = seg.enabled ? seg.searches + ' searches' : 'off';
+      b.appendChild(n);
+      b.addEventListener('click', function () { toggleCat(seg, b); });
+      cats.appendChild(b);
+    });
+    if (!cats.childNodes.length) {
+      var e = document.createElement('span');
+      e.className = 'lp-cat-loading';
+      e.textContent = 'No categories yet — run a dry run once to set them up.';
+      cats.appendChild(e);
+    }
+  }
+
+  function toggleCat(seg, btn) {
+    var buttons = cats.querySelectorAll('.lp-cat');
+    for (var i = 0; i < buttons.length; i++) buttons[i].disabled = true;
+    authFetch('/crm/leads/segments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ segment: seg.key, enabled: !seg.enabled })
+    }).then(function (r) {
+      if (r.ok && r.data && r.data.segments) { rememberLabels(r.data.segments); paintCats(r.data.segments); }
+      else {
+        btn.disabled = false;
+        show('<span class="lp-err">Could not change that: ' +
+             esc((r.data && r.data.error) || 'unknown error') + '</span>');
+      }
+    }).catch(function () {
+      for (var j = 0; j < buttons.length; j++) buttons[j].disabled = false;
+    });
+  }
+
+  function loadCats() {
+    authFetch('/crm/leads/segments').then(function (r) {
+      if (r.ok && r.data) { rememberLabels(r.data.segments); paintCats(r.data.segments); }
+    }).catch(function () { /* the run buttons still work without these */ });
+  }
+  loadCats();
+
   function run(isDry) {
     dry.disabled = true; live.disabled = true;
     show(isDry
@@ -347,6 +426,7 @@ function authFetch(path, options) {
       show(html);
       // A real run may have added leads, so repaint the list underneath.
       if (!d.dry_run && d.pushed) loadClients();
+      loadCats();
     }
 
     streamRun(isDry, function (evt) {
@@ -479,6 +559,41 @@ var allClients = [];
 var activeFilter = 'all';
 var searchTerm = '';
 
+var activeSegment = 'all';
+
+/* Built from the leads that are actually there rather than from a fixed list,
+   so the row only offers categories you have leads in — and disappears
+   entirely before the pipeline has found anything. */
+function paintCategoryFilters() {
+  var wrap = document.getElementById('cat-bar-wrap');
+  var bar = document.getElementById('cat-filters');
+  var counts = {};
+  allClients.forEach(function (c) {
+    if (c.lead_segment) counts[c.lead_segment] = (counts[c.lead_segment] || 0) + 1;
+  });
+  var keys = Object.keys(counts).sort();
+  if (!keys.length) {
+    wrap.hidden = true;
+    if (activeSegment !== 'all') { activeSegment = 'all'; }
+    return;
+  }
+  wrap.hidden = false;
+  bar.innerHTML = '';
+  [['all', 'All', allClients.length]]
+    .concat(keys.map(function (k) { return [k, SEGMENT_LABELS[k] || k, counts[k]]; }))
+    .forEach(function (f) {
+      var b = document.createElement('button');
+      b.className = 'chip' + (f[0] === activeSegment ? ' on' : '');
+      b.textContent = f[1] + ' (' + f[2] + ')';
+      b.addEventListener('click', function () {
+        activeSegment = f[0];
+        paintCategoryFilters();
+        render();
+      });
+      bar.appendChild(b);
+    });
+}
+
 var filterBar = document.getElementById('filters');
 [['all', 'All']].concat(STATUSES.map(function (s) { return [s, s]; })).forEach(function (f) {
   var b = document.createElement('button');
@@ -499,6 +614,7 @@ document.getElementById('search').addEventListener('input', function (e) {
 
 function matches(c) {
   if (activeFilter !== 'all' && (c.status || 'lead') !== activeFilter) return false;
+  if (activeSegment !== 'all' && (c.lead_segment || '') !== activeSegment) return false;
   if (!searchTerm) return true;
   var hay = [c.business_name, c.contact_name, c.email, c.phone, c.domain, c.website_url,
              c.lead_area]
@@ -570,7 +686,7 @@ function leadDetail(c) {
 
   // The town is already under the name; this is the street address.
   if (c.lead_address) line('Address', text(c.lead_address));
-  if (c.lead_segment) line('Trade', text(c.lead_segment));
+  if (c.lead_segment) line('Category', text(SEGMENT_LABELS[c.lead_segment] || c.lead_segment));
 
   /* Straight to the live listing — reviews, photos, hours, how long they have
      been there. place_id is the only thing Google lets us keep, and it is the
@@ -781,6 +897,7 @@ function loadClients() {
     }
     allClients = r.data.clients || [];
     renderStats(r.data.stats || {});
+    paintCategoryFilters();
     render();
   }).catch(function () {
     showLoadError('Could not reach the server.');
