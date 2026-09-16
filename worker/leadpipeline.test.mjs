@@ -10,10 +10,9 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import {
   normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
-  pushLeadToCrm, stripCandidate, spentToday, withRetry, parseClaudeJson,
-  parseGrokJson, enrichmentSchemaFor, defaultSources, seedLeadSources,
-  offerName, LEAD_DEFAULTS, scorePrompt, placesReject, placesPromise,
-  apiKey, providerError, accountFailure
+  pushLeadToCrm, stripCandidate, spentToday, defaultSources, seedLeadSources,
+  offerName, LEAD_DEFAULTS, placesReject, placesPromise,
+  apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -65,22 +64,7 @@ test('domains normalise across scheme, www, path and query', () => {
   assert.equal(registrableDomain(null), null);
 });
 
-test('the enrichment schema is segment-specific and Anthropic-legal', () => {
-  const dealer = enrichmentSchemaFor('dealer');
-  const trade = enrichmentSchemaFor('contractor');
-  assert.ok('inventory_gap' in dealer.properties, 'dealers get the inventory gap');
-  assert.ok(!('inventory_gap' in trade.properties), 'contractors do not');
-  assert.ok('shows_license_or_insured' in trade.properties);
-  for (const s of [dealer, trade]) {
-    assert.equal(s.additionalProperties, false, 'structured outputs require this');
-    assert.deepEqual(s.required.sort(), Object.keys(s.properties).sort());
-  }
-});
 
-test('mobile_friendly is nullable — unknown must not read as false', () => {
-  const t = enrichmentSchemaFor('handyman').properties.mobile_friendly;
-  assert.deepEqual(t.type, ['boolean', 'null']);
-});
 
 // ── dedupe: never pay twice ───────────────────────────────────────────────
 test('a business already in the CRM is caught on place_id, phone OR domain', async () => {
@@ -118,10 +102,9 @@ test('pushing a lead inserts and never touches an existing row', async () => {
   const before = db.prepare("SELECT * FROM clients WHERE id = 1").get();
 
   await pushLeadToCrm(env,
-    { place_id: 'PLACE_B', segment: 'contractor' },
+    { place_id: 'PLACE_B', segment: 'contractor', offer_hint: 1 },
     { name: 'Different Co', address: '1 Main St', phone: '8015551234', website: '' },
-    { notes: 'no website found', contact_phone: '8015551234', contact_website: null },
-    { best_offer: 1, score: 88, reason: 'no site', opener: 'Hi —' });
+    { qualified: true, score: 88, reason: 'No website at all, 12 Google reviews.' });
 
   const after = db.prepare("SELECT * FROM clients WHERE id = 1").get();
   assert.deepEqual(after, before, 'the human-owned row is byte-identical');
@@ -132,10 +115,10 @@ test('pushing a lead inserts and never touches an existing row', async () => {
 test('a pushed lead lands as status lead, flagged as pipeline-made', async () => {
   const { env, db } = await freshEnv();
   const id = await pushLeadToCrm(env,
-    { place_id: 'PLACE_C', segment: 'dealer' },
-    { name: 'Valley Autos', address: '2 Main St', phone: '', website: '' },
-    { notes: '', contact_phone: '9285550000', contact_website: 'valleyautos.com' },
-    { best_offer: 3, score: 71, reason: 'FB daily, site stale', opener: 'Saw your Facebook —' });
+    { place_id: 'PLACE_C', segment: 'dealer', offer_hint: 3 },
+    { name: 'Valley Autos', address: '2 Main St', phone: '9285550000',
+      website: 'https://facebook.com/valleyautos' },
+    { qualified: true, score: 71, reason: 'No site of their own, just a facebook.com page.' });
   const row = db.prepare("SELECT * FROM clients WHERE id = ?").get(id);
 
   // 'ready to call' would fail the CRM's own status validation, so leads land
@@ -146,11 +129,10 @@ test('a pushed lead lands as status lead, flagged as pipeline-made', async () =>
   assert.equal(row.lead_score, 71);
   assert.equal(row.lead_offer, 3);
   assert.equal(row.place_id, 'PLACE_C');
-  assert.equal(row.service, offerName(3));
-  assert.match(row.lead_opener, /Facebook/);
-  // Contact details came from what the business publishes, not from Places.
+  assert.equal(row.service, offerName(3), 'the offer comes from the segment, not a guess');
+  assert.match(row.lead_reason, /facebook/, 'the caller can read why without being briefed');
   assert.equal(row.phone, '9285550000');
-  assert.equal(row.website_url, 'valleyautos.com');
+  assert.equal(row.website_url, 'https://facebook.com/valleyautos');
 });
 
 // ── rule 1: Places content does not outlive the judgement ─────────────────
@@ -192,50 +174,10 @@ test('spend is summed over a rolling 24 hours, not all time', async () => {
 });
 
 // ── retries ───────────────────────────────────────────────────────────────
-test('withRetry gives up after three attempts and rethrows the last error', async () => {
-  let calls = 0;
-  const nap = async () => {};
-  await assert.rejects(
-    withRetry(async () => { calls++; throw new Error('xAI 503'); }, nap),
-    /xAI 503/);
-  assert.equal(calls, 3, 'one try plus two retries');
-
-  calls = 0;
-  const ok = await withRetry(async () => { calls++; if (calls < 2) throw new Error('flaky'); return 'fine'; }, nap);
-  assert.equal(ok, 'fine');
-  assert.equal(calls, 2, 'stops as soon as it succeeds');
-});
 
 // ── response parsing ──────────────────────────────────────────────────────
-test('Claude JSON is found past thinking blocks, and the score is clamped', () => {
-  const out = parseClaudeJson({
-    stop_reason: 'end_turn',
-    content: [
-      { type: 'thinking', thinking: '' },
-      { type: 'text', text: '{"best_offer":2,"score":140,"reason":"r","opener":"o"}' }
-    ]
-  });
-  // The schema cannot express 0-100 (Anthropic rejects numeric constraints),
-  // so the clamp is the only thing standing between 140 and the CRM.
-  assert.equal(out.score, 100);
-  assert.equal(out.best_offer, 2);
-});
 
-test('a Claude refusal is an error, not a silent zero', () => {
-  assert.throws(() => parseClaudeJson({ stop_reason: 'refusal', content: [] }), /declined/);
-});
 
-test('Grok JSON is found whether it arrives flat or nested past tool calls', () => {
-  assert.equal(parseGrokJson({ output_text: '{"has_website":false}' }).has_website, false);
-  const nested = parseGrokJson({
-    output: [
-      { type: 'web_search_call', content: [] },
-      { type: 'message', content: [{ type: 'output_text', text: '{"has_website":true}' }] }
-    ]
-  });
-  assert.equal(nested.has_website, true);
-  assert.throws(() => parseGrokJson({ output: [] }), /no JSON/);
-});
 
 // ── the search grid ───────────────────────────────────────────────────────
 test('only subcontractors and general contractors are switched on', () => {
@@ -261,25 +203,7 @@ test('the enabled grid is mostly subcontractors', () => {
   assert.ok(subs / on.length > 0.7, 'subs are the target, GCs ride along');
 });
 
-test('establishment is a first-class enrichment field for trades, not dealers', () => {
-  const trade = enrichmentSchemaFor('subcontractor');
-  assert.ok('establishment' in trade.properties);
-  assert.ok('establishment_evidence' in trade.properties,
-    'the caller needs to know what the judgement was based on');
-  assert.ok(trade.properties.establishment.type.includes('null'),
-    'unknown must stay expressible — a guess here keeps the caller off good leads');
-  assert.ok(!('establishment' in enrichmentSchemaFor('dealer').properties));
-});
 
-test('the scoring prompt gates on establishment, hardest for general contractors', () => {
-  const prompt = scorePrompt('general',
-    { name: 'Big Build Co', address: '1 Main St' },
-    { establishment: 'established' });
-  assert.match(prompt, /established\s+-> cap the score at 30/,
-    'an established firm must be capped out of calling range');
-  assert.match(prompt, /GENERAL CONTRACTOR/, 'GCs are held to a stricter bar');
-  assert.match(prompt, /do not guess/, 'null establishment must not be invented');
-});
 
 test('the free triage vetoes the dead and the too-big, and nothing between', () => {
   // Under 5 reviews: no evidence the business actually trades.
@@ -317,530 +241,360 @@ test('seeding is idempotent — a second call adds nothing', async () => {
   assert.equal(Number(n.c), first);
 });
 
-// ── the whole run, with the three APIs stubbed ────────────────────────────
-import { runLeadPipeline } from './leadpipeline.js';
+
+// ── the website verdict, on its own ───────────────────────────────────────
+
+test('social pages and dead builders are not websites', () => {
+  assert.equal(notARealWebsite('https://www.facebook.com/valleydrywall'), 'facebook.com');
+  assert.equal(notARealWebsite('https://linktr.ee/abc'), 'linktr.ee');
+  // Google shut business.site down; anything still pointing there is dead.
+  assert.equal(notARealWebsite('https://valleydrywall.business.site'), 'business.site');
+  assert.equal(notARealWebsite('https://valleydrywall.com'), null);
+  assert.equal(notARealWebsite(''), null);
+});
+
+test('no website qualifies without asking Google anything', async () => {
+  let called = false;
+  const v = await websiteVerdict({}, { name: 'A', website: '', review_count: 24 },
+    { pageSpeed: async () => { called = true; } });
+  assert.equal(v.qualified, true);
+  assert.equal(v.checked, 'places');
+  assert.match(v.reason, /No website at all, 24 Google reviews/);
+  assert.equal(called, false, 'the cheap check comes first');
+});
+
+test('a facebook page, a dead builder page and plain http all qualify for free', async () => {
+  const boom = { pageSpeed: async () => { throw new Error('must not be reached'); } };
+
+  const fb = await websiteVerdict({}, { website: 'https://facebook.com/x', review_count: 30 }, boom);
+  assert.equal(fb.qualified, true);
+  assert.match(fb.reason, /just a facebook\.com page/);
+
+  const dead = await websiteVerdict({}, { website: 'https://x.business.site' }, boom);
+  assert.equal(dead.qualified, true);
+  assert.match(dead.reason, /Google shut down/);
+
+  const http = await websiteVerdict({}, { website: 'http://valleydrywall.com' }, boom);
+  assert.equal(http.qualified, true);
+  assert.match(http.reason, /plain http/);
+});
+
+test('a real site is judged on Google’s own mobile test', async () => {
+  const site = { website: 'https://valleydrywall.com', review_count: 40 };
+  const ps = r => ({ pageSpeed: async () => r });
+
+  const slow = await websiteVerdict({}, site, ps({ performance: 22, hasViewport: true }));
+  assert.equal(slow.qualified, true);
+  assert.match(slow.reason, /22\/100/);
+
+  const old = await websiteVerdict({}, site, ps({ performance: 80, hasViewport: false }));
+  assert.equal(old.qualified, true);
+  assert.match(old.reason, /no mobile viewport/,
+    'a fast site built before phones is still an old site');
+
+  const broken = await websiteVerdict({}, site, ps({ unreachable: true, code: 'FAILED_DOCUMENT_REQUEST' }));
+  assert.equal(broken.qualified, true);
+  assert.match(broken.reason, /cannot load/);
+
+  const fine = await websiteVerdict({}, site, ps({ performance: 91, hasViewport: true }));
+  assert.equal(fine.qualified, false, 'a business with a good site is not a lead');
+  assert.match(fine.reason, /Nothing to sell them/);
+
+  // The boundary itself, both sides.
+  assert.equal((await websiteVerdict({}, site, ps({ performance: SLOW_AT - 1, hasViewport: true }))).qualified, true);
+  assert.equal((await websiteVerdict({}, site, ps({ performance: SLOW_AT, hasViewport: true }))).qualified, false);
+});
+
+test('pageSpeed reads Google’s shape, including an in-band failure', async () => {
+  const reply = body => async () => new Response(JSON.stringify(body), { status: 200 });
+
+  const good = await pageSpeed({ GOOGLE_PLACES_API_KEY: 'k' }, 'https://x.com', reply({
+    lighthouseResult: {
+      categories: { performance: { score: 0.47 } },
+      audits: { viewport: { score: 1 } }
+    }
+  }));
+  assert.equal(good.performance, 47, 'Lighthouse 0-1 becomes a percentage');
+  assert.equal(good.hasViewport, true);
+
+  /* A site Google cannot fetch comes back as HTTP 200 with a runtimeError,
+     not as an error status — reading res.ok alone would call it healthy. */
+  const dead = await pageSpeed({}, 'https://x.com', reply({
+    lighthouseResult: { runtimeError: { code: 'FAILED_DOCUMENT_REQUEST', message: 'nope' } }
+  }));
+  assert.equal(dead.unreachable, true);
+  assert.equal(dead.code, 'FAILED_DOCUMENT_REQUEST');
+});
+
+test('the mobile strategy is what gets asked for', async () => {
+  let asked = '';
+  await pageSpeed({ GOOGLE_PLACES_API_KEY: 'k ' }, 'https://x.com', async (u) => {
+    asked = String(u);
+    return new Response(JSON.stringify({ lighthouseResult: {} }), { status: 200 });
+  });
+  assert.match(asked, /strategy=mobile/, 'desktop is the API default and the wrong question');
+  assert.match(asked, /key=k(&|$)/, 'the key is trimmed before it goes out');
+});
+
+// ── the whole run ─────────────────────────────────────────────────────────
+import { runLeadPipeline, pageSpeed } from './leadpipeline.js';
 
 function stubFetch(handlers) {
-  const calls = { places: 0, xai: 0, anthropic: 0 };
+  const calls = { places: 0, pagespeed: 0 };
   globalThis.fetch = async (url, init) => {
     const u = String(url);
     const body = init && init.body ? JSON.parse(init.body) : {};
     if (u.includes('places.googleapis.com')) { calls.places++; return handlers.places(body); }
-    if (u.includes('api.x.ai')) { calls.xai++; return handlers.xai(body); }
-    if (u.includes('api.anthropic.com')) { calls.anthropic++; return handlers.anthropic(body); }
+    if (u.includes('pagespeedonline')) { calls.pagespeed++; return handlers.pagespeed(u); }
     throw new Error('unexpected fetch: ' + u);
   };
   return calls;
 }
 const ok = obj => new Response(JSON.stringify(obj), { status: 200 });
 
+// No website by default — the common case, and free to judge.
 const PLACE = n => ({
   id: 'P' + n, displayName: { text: 'Biz ' + n }, formattedAddress: n + ' Main St',
   nationalPhoneNumber: '801555000' + n, websiteUri: '', rating: 4.5,
   userRatingCount: 10, businessStatus: 'OPERATIONAL'
 });
+const WITH_SITE = (n, url) => Object.assign(PLACE(n), { websiteUri: url || ('https://biz' + n + '.com') });
+const PS = (score, viewport) => () => ok({ lighthouseResult: {
+  categories: { performance: { score: score / 100 } },
+  audits: { viewport: { score: viewport === false ? 0 : 1 } }
+} });
 
 async function seededEnv(extra) {
   const { env, db } = await freshEnv();
-  // One enabled source so the grid is deterministic.
   db.prepare(`INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at)
               VALUES ('handyman','Fresno','CA','handyman',1,1,?)`).run(new Date().toISOString());
-  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k', XAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'k' }, extra || {});
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' }, extra || {});
   return { env, db };
 }
 
-test('dry run sources and dedupes without spending a cent on AI', async () => {
+test('a dry run stages candidates and checks nothing', async () => {
   const { env, db } = await seededEnv();
   const calls = stubFetch({
     places: () => ok({ places: [PLACE(1), PLACE(2), PLACE(3)] }),
-    xai: () => { throw new Error('dry run must not call xAI'); },
-    anthropic: () => { throw new Error('dry run must not call Anthropic'); }
+    pagespeed: () => { throw new Error('a dry run must not check websites'); }
   });
   const out = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
   assert.equal(out.sourced, 3);
-  assert.equal(calls.xai, 0);
-  assert.equal(calls.anthropic, 0);
+  assert.equal(calls.pagespeed, 0);
   assert.equal(out.pushed, 0);
   const n = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status='new'").get();
-  assert.equal(Number(n.c), 3, 'candidates are staged, ready for a real run');
+  assert.equal(Number(n.c), 3);
 });
 
-test('a full run scores, pushes the good one and rejects the rest', async () => {
+test('a full run adds the businesses without a usable site and skips the rest', async () => {
   const { env, db } = await seededEnv();
-  let score = 90;
-  stubFetch({
-    places: () => ok({ places: [PLACE(1), PLACE(2)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'no site anywhere',
-      source_urls: ['https://example.com'], contact_phone: '8015550001',
-      contact_website: null, web_presence: 'none', site_is_http_only: null,
-      shows_license_or_insured: null, does_subcontract_work: false }) }),
-    anthropic: () => {
-      const s = score; score = 20;   // first qualifies, second does not
-      return ok({ stop_reason: 'end_turn', content: [{ type: 'text',
-        text: JSON.stringify({ best_offer: 1, score: s, reason: 'r', opener: 'o' }) }] });
-    }
+  const calls = stubFetch({
+    places: () => ok({ places: [
+      PLACE(1),                                        // no website
+      WITH_SITE(2, 'https://facebook.com/biz2'),       // facebook only
+      WITH_SITE(3),                                    // real site, checked
+      WITH_SITE(4)                                     // real site, checked
+    ] }),
+    pagespeed: (u) => (u.includes('biz3') ? PS(18)() : PS(94)())
   });
 
-  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
-  assert.equal(out.enriched, 2);
-  assert.equal(out.scored, 2);
-  assert.equal(out.pushed, 1);
-  assert.equal(out.rejected, 1);
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 4 });
+  assert.equal(out.pushed, 3, 'no site, facebook-only and the slow one');
+  assert.equal(out.rejected, 1, 'the one with a good site');
+  assert.equal(calls.pagespeed, 2, 'only the two real sites cost a check');
 
-  const leads = db.prepare("SELECT * FROM clients WHERE created_by_pipeline = 1").all();
-  assert.equal(leads.length, 1);
-  assert.equal(leads[0].lead_score, 90);
+  const leads = db.prepare("SELECT business_name, lead_reason FROM clients WHERE created_by_pipeline = 1 ORDER BY business_name").all();
+  assert.deepEqual(leads.map(r => r.business_name), ['Biz 1', 'Biz 2', 'Biz 3']);
+  assert.match(leads[0].lead_reason, /No website at all/);
+  assert.match(leads[1].lead_reason, /facebook\.com/);
+  assert.match(leads[2].lead_reason, /18\/100/);
+});
 
-  // Both candidates judged, both stripped.
-  const left = db.prepare("SELECT places_json, enrichment_json FROM lead_candidates").all();
-  assert.ok(left.every(r => r.places_json === null && r.enrichment_json === null));
+test('a run costs only what Google Places charges', async () => {
+  const { env } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [WITH_SITE(1), WITH_SITE(2), WITH_SITE(3)] }),
+    pagespeed: PS(10)
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 3 });
+  assert.equal(out.pushed, 3);
+  // One text search. PageSpeed is free, and there is nothing else left to pay.
+  assert.equal(Number(out.est_cost_usd.toFixed(4)), 0.035);
+});
 
-  const run = db.prepare("SELECT * FROM enrichment_runs ORDER BY id DESC LIMIT 1").get();
-  assert.ok(run.est_cost_usd > 0, 'the run logged what it spent');
-  assert.ok(run.finished_at, 'and closed itself out');
+test('a run reports each business as it is checked', async () => {
+  const { env } = await seededEnv();
+  stubFetch({ places: () => ok({ places: [PLACE(1)] }), pagespeed: PS(10) });
+  const seen = [];
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1, onProgress: e => seen.push(e) });
+  assert.deepEqual(seen.map(e => e.event),
+    ['sourcing', 'sourced', 'batch', 'checking', 'judged']);
+  const judged = seen[seen.length - 1];
+  assert.equal(judged.name, 'Biz 1');
+  assert.equal(judged.kept, true);
+  assert.match(judged.reason, /No website/);
+});
+
+test('a PageSpeed account failure stops the run and spares the candidates', async () => {
+  const { env, db } = await seededEnv();
+  const calls = stubFetch({
+    places: () => ok({ places: [WITH_SITE(1), WITH_SITE(2), WITH_SITE(3)] }),
+    pagespeed: () => new Response(JSON.stringify({
+      error: { code: 403, message: 'PageSpeed Insights API has not been used in project 123 before or it is disabled.' }
+    }), { status: 403 })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 3 });
+  assert.equal(calls.pagespeed, 1, 'asked once — the API being off is the same answer every time');
+  assert.match(out.errors.join(' '), /stopped: PageSpeed 403/);
+
+  const row = db.prepare("SELECT attempts, status FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(Number(row.attempts), 0, 'not the business’s fault');
+  assert.equal(out.failed, 0);
+});
+
+test('the businesses with no site at all still land when PageSpeed is off', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1), PLACE(2)] }),   // neither has a website
+    pagespeed: () => { throw new Error('should never be needed'); }
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 2 });
+  assert.equal(out.pushed, 2, 'the best leads need no API beyond Places');
+  const n = db.prepare("SELECT COUNT(*) AS c FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(Number(n.c), 2);
 });
 
 test('the daily ceiling stops a run before it spends', async () => {
   const { env, db } = await seededEnv({ LEADS_DAILY_USD_CAP: '0.01' });
-  db.prepare("INSERT INTO enrichment_runs (trigger, started_at, est_cost_usd) VALUES ('cron',?,5.0)")
+  db.prepare("INSERT INTO enrichment_runs (trigger, started_at, est_cost_usd) VALUES ('manual', ?, 4.99)")
     .run(new Date().toISOString());
   const calls = stubFetch({
-    places: () => { throw new Error('must not source over the ceiling'); },
-    xai: () => { throw new Error('must not enrich over the ceiling'); },
-    anthropic: () => { throw new Error('must not score over the ceiling'); }
+    places: () => { throw new Error('must not search over the ceiling'); },
+    pagespeed: () => { throw new Error('must not check over the ceiling'); }
   });
-  const out = await runLeadPipeline(env, { trigger: 'cron' });
-  assert.equal(calls.places + calls.xai + calls.anthropic, 0, 'no paid call was made');
-  assert.ok(out.errors.join(' ').includes('ceiling'));
+  const out = await runLeadPipeline(env, { trigger: 'manual' });
+  assert.equal(calls.places, 0);
+  assert.match(out.errors.join(' '), /ceiling/);
 });
 
 test('a do_not_contact business is never re-sourced into the CRM', async () => {
   const { env, db } = await seededEnv();
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO clients (business_name, phone, status, created_at, updated_at, place_id, do_not_contact)
-              VALUES ('Biz 1','8015550001','lost',?,?,'P1',1)`).run(now, now);
-  stubFetch({
+  db.prepare(`INSERT INTO clients (business_name, place_id, do_not_contact, status, created_at, updated_at)
+              VALUES ('Asked us to stop','P1',1,'lead',?,?)`).run(now, now);
+  const calls = stubFetch({
     places: () => ok({ places: [PLACE(1)] }),
-    xai: () => { throw new Error('must not enrich a do_not_contact business'); },
-    anthropic: () => { throw new Error('must not score a do_not_contact business'); }
+    pagespeed: () => { throw new Error('must not check a do_not_contact business'); }
   });
-  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
-  assert.equal(out.deduped, 1, 'caught by the existing CRM row');
-  assert.equal(out.pushed, 0);
-  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM clients").get().c), 1, 'no second row');
+  const out = await runLeadPipeline(env, { trigger: 'manual' });
+  assert.equal(out.deduped, 1);
+  assert.equal(calls.pagespeed, 0);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM clients").get().c), 1);
+});
+
+test('hopeless candidates are vetoed at sourcing, before any check', async () => {
+  const { env, db } = await seededEnv();
+  const calls = stubFetch({
+    places: () => ok({ places: [
+      Object.assign(PLACE(1), { userRatingCount: 1 }),
+      Object.assign(PLACE(2), { userRatingCount: 900 }),
+      PLACE(3)
+    ] }),
+    pagespeed: () => { throw new Error('a vetoed candidate must never be checked'); }
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(out.screened, 2);
+  assert.equal(calls.pagespeed, 0);
+  const tomb = db.prepare("SELECT * FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(tomb.status, 'rejected');
+  assert.equal(tomb.places_json, null, 'a tombstone holds no Places content');
+});
+
+test('the run checks the most promising candidates first', async () => {
+  const { env } = await seededEnv();
+  /* Sourced first, but it has a real site and a tended listing. PLACE(2) has
+     neither, so with one slot it must go first. */
+  const tended = Object.assign(WITH_SITE(1), { photos: new Array(60).fill({ name: 'p' }) });
+  const seen = [];
+  stubFetch({
+    places: () => ok({ places: [tended, PLACE(2)] }),
+    pagespeed: () => { seen.push('checked a site'); return PS(95)(); }
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(out.pushed, 1);
+  assert.deepEqual(seen, [], 'it spent its one slot on the no-website business');
 });
 
 test('a candidate that keeps failing is retired after three attempts', async () => {
   const { env, db } = await seededEnv();
   stubFetch({
-    places: () => ok({ places: [PLACE(1)] }),
-    xai: () => new Response('upstream on fire', { status: 503 }),
-    anthropic: () => { throw new Error('never reached'); }
+    places: () => ok({ places: [WITH_SITE(1)] }),
+    pagespeed: () => new Response('upstream on fire', { status: 503 })
   });
-  for (let i = 0; i < 3; i++) await runLeadPipeline(env, { trigger: 'cron', limit: 1 });
-  const row = db.prepare("SELECT * FROM lead_candidates WHERE place_id='P1'").get();
+  for (let i = 0; i < 3; i++) await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  const row = db.prepare("SELECT status, attempts FROM lead_candidates WHERE place_id='P1'").get();
   assert.equal(row.status, 'failed');
-  assert.ok(row.attempts >= LEAD_DEFAULTS.maxAttempts);
-  assert.match(row.last_error, /503/);
-});
-
-test('a reseed replaces the grid; without force it leaves it alone', async () => {
-  const { env, db } = await freshEnv();
-  const first = await seedLeadSources(env);
-  assert.ok(first > 0);
-
-  // Someone switches a Utah row on by hand.
-  db.prepare("UPDATE lead_sources SET enabled = 1 WHERE state = 'UT'").run();
-  const utOn = () => Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources WHERE state='UT' AND enabled=1").get().c);
-  assert.ok(utOn() > 0);
-
-  // A normal run must not touch it.
-  assert.equal(await seedLeadSources(env), 0, 'no force, no change');
-  assert.ok(utOn() > 0, 'the manual enable survives an ordinary run');
-
-  // A forced reseed replaces the grid — and drops that manual enable with it.
-  await seedLeadSources(env, true);
-  assert.equal(utOn(), 0, 'reseed returns every row to what the code ships');
-  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c), first,
-    'replaced, not appended — a reseed must not double the grid');
-});
-
-/* PLACE(n) is the middle of the band on purpose, so the triage passes it.
-   These two build the edges. */
-const DEAD = n => Object.assign(PLACE(n), { userRatingCount: 1 });
-const HUGE = n => Object.assign(PLACE(n), { userRatingCount: 900 });
-const TENDED = n => Object.assign(PLACE(n), {
-  websiteUri: 'https://biz' + n + '.com',
-  photos: new Array(60).fill({ name: 'p' })
-});
-
-test('hopeless candidates are vetoed at sourcing, before any paid call', async () => {
-  const { env, db } = await seededEnv();
-  const calls = stubFetch({
-    places: () => ok({ places: [DEAD(1), HUGE(2), PLACE(3)] }),
-    xai: () => { throw new Error('a vetoed candidate must never reach xAI'); },
-    anthropic: () => { throw new Error('a vetoed candidate must never reach Anthropic'); }
-  });
-  const out = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
-  assert.equal(out.sourced, 3);
-  assert.equal(out.screened, 2, 'the dead one and the huge one are vetoed for free');
-  assert.equal(out.rejected, 0, 'nothing was researched, so nothing was rejected on merit');
-  assert.equal(calls.xai + calls.anthropic, 0);
-
-  const staged = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status='new'").get();
-  assert.equal(Number(staged.c), 1, 'only the one worth researching is staged');
-
-  /* The tombstone keeps place_id and the reason and no Places content — that
-     is what stops us paying to look at this business a second time. */
-  const tomb = db.prepare("SELECT * FROM lead_candidates WHERE place_id='P1'").get();
-  assert.equal(tomb.status, 'rejected');
-  assert.equal(tomb.places_json, null);
-  assert.match(tomb.reason, /reviews/);
-});
-
-test('a vetoed business is not re-sourced on the next run', async () => {
-  const { env, db } = await seededEnv();
-  stubFetch({ places: () => ok({ places: [DEAD(1)] }), xai: () => { throw new Error('no'); },
-              anthropic: () => { throw new Error('no'); } });
-  await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
-  const second = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
-  assert.equal(second.screened, 0, 'the second sighting dedupes, it does not re-veto');
-  assert.equal(second.deduped, 1);
-  const n = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates").get();
-  assert.equal(Number(n.c), 1);
-});
-
-test('the run spends its budget on the most promising candidates first', async () => {
-  const { env, db } = await seededEnv();
-  /* TENDED(1) is sourced first and is the weaker lead: it has a website and a
-     tended listing. PLACE(2) has neither. With one slot in the run, the money
-     must go to PLACE(2) even though it was staged second. */
-  const seen = [];
-  stubFetch({
-    places: () => ok({ places: [TENDED(1), PLACE(2)] }),
-    xai: (body) => {
-      seen.push(JSON.stringify(body).includes('Biz 2') ? 'P2' : 'P1');
-      return ok({ output_text: JSON.stringify({
-        has_website: false, website_quality: 'none', mobile_friendly: null,
-        google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
-        contact_phone: null, contact_website: null, web_presence: 'none'
-      }) });
-    },
-    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
-      score: 10, best_offer: 1, reason: 'r', opener: 'o'
-    }) }] })
-  });
-
-  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
-  assert.equal(out.enriched, 1, 'exactly one candidate was paid for');
-  assert.deepEqual(seen, ['P2'], 'the money went to the better lead, not the older row');
-
-  const left = db.prepare("SELECT place_id FROM lead_candidates WHERE status='new'").all();
-  assert.deepEqual(left.map(r => r.place_id), ['P1'], 'the weaker one waits for the next run');
-});
-
-test('a run reports each stage as it happens, not only at the end', async () => {
-  const { env } = await seededEnv();
-  stubFetch({
-    places: () => ok({ places: [PLACE(1)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
-      score: 90, best_offer: 1, reason: 'r', opener: 'o'
-    }) }] })
-  });
-
-  const seen = [];
-  await runLeadPipeline(env, { trigger: 'manual', limit: 1, onProgress: e => seen.push(e) });
-  const kinds = seen.map(e => e.event);
-
-  /* The point of these is that they arrive DURING the run. Without them the
-     request sends nothing for minutes and Cloudflare cuts it off at 100s. */
-  assert.deepEqual(kinds, ['sourcing', 'sourced', 'batch', 'researching', 'scoring', 'judged']);
-  const judged = seen[seen.length - 1];
-  assert.equal(judged.name, 'Biz 1', 'a person watching sees a business, not a row id');
-  assert.equal(judged.kept, true);
-  assert.equal(judged.score, 90);
-});
-
-test('a client that hangs up mid-run does not stop the run', async () => {
-  const { env, db } = await seededEnv();
-  stubFetch({
-    places: () => ok({ places: [PLACE(1)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
-      score: 90, best_offer: 1, reason: 'r', opener: 'o'
-    }) }] })
-  });
-
-  // Throws from the first event onward, the way a closed socket does.
-  const out = await runLeadPipeline(env, {
-    trigger: 'manual', limit: 1,
-    onProgress: () => { throw new Error('socket closed'); }
-  });
-  assert.equal(out.pushed, 1, 'the candidate was already paid for; it must still land');
-  const n = db.prepare("SELECT COUNT(*) AS c FROM clients WHERE created_by_pipeline = 1").get();
-  assert.equal(Number(n.c), 1);
-});
-
-test('spend is written to the run row as it goes, not only at the end', async () => {
-  const { env, db } = await seededEnv();
-  stubFetch({
-    places: () => ok({ places: [PLACE(1), PLACE(2)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
-      score: 10, best_offer: 1, reason: 'r', opener: 'o'
-    }) }] })
-  });
-
-  /* Read the run row at the moment the FIRST candidate is judged. A run that
-     is killed right here has still spent that money, and the daily ceiling
-     only knows about it if the row was written on the way through. */
-  let midRun = null;
-  await runLeadPipeline(env, {
-    trigger: 'manual', limit: 2,
-    onProgress: (e) => {
-      if (e.event === 'judged' && e.position === 1 && midRun === null) {
-        midRun = db.prepare('SELECT est_cost_usd, scored FROM enrichment_runs ORDER BY id DESC LIMIT 1').get();
-      }
-    }
-  });
-  assert.ok(midRun, 'the first candidate was judged');
-  assert.ok(Number(midRun.est_cost_usd) > 0, 'spend so far is already on the row');
-  assert.equal(Number(midRun.scored), 1, 'and so is the progress');
+  assert.equal(Number(row.attempts), 3);
 });
 
 test('candidates stranded by a killed run are picked back up', async () => {
   const { env, db } = await seededEnv();
   const old = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const now = new Date().toISOString();
-  const places = JSON.stringify({ place_id: 'PX', name: 'Stranded Co', review_count: 20 });
-
-  // One left mid-flight an hour ago, one that a run is working on right now.
+  const places = JSON.stringify({ place_id: 'PX', name: 'Stranded Co', website: '', review_count: 20 });
   db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
               VALUES ('PX','handyman','enriching',1,?,80,?,?)`).run(places, old, old);
   db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
               VALUES ('PY','handyman','enriching',1,?,80,?,?)`).run(places, now, now);
 
-  stubFetch({
-    places: () => ok({ places: [] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 20, notes: 'n', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
-      score: 90, best_offer: 1, reason: 'r', opener: 'o'
-    }) }] })
-  });
-
+  stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
   const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
-  assert.equal(out.enriched, 1, 'the stranded one is researched');
-  assert.equal(out.pushed, 1);
-
-  const live = db.prepare("SELECT status FROM lead_candidates WHERE place_id='PY'").get();
-  assert.equal(live.status, 'enriching', 'a row a live run is holding is left alone');
+  assert.equal(out.pushed, 1, 'the stranded one is judged');
+  assert.equal(db.prepare("SELECT status FROM lead_candidates WHERE place_id='PY'").get().status,
+    'enriching', 'a row a live run is holding is left alone');
 });
 
-test('a key pasted with stray whitespace still works', () => {
-  assert.equal(apiKey('  sk-ant-abc123\n'), 'sk-ant-abc123');
-  assert.equal(apiKey(undefined), '');
-  assert.equal(apiKey(null), '');
-});
-
-test('account failures are marked unretryable, transient ones are not', () => {
-  assert.equal(accountFailure(401, 'bad key'), true);
-  assert.equal(accountFailure(403, 'forbidden'), true);
-  assert.equal(accountFailure(402, 'payment required'), true);
-
-  /* The expensive one to miss. Both providers report an empty balance as a
-     plain 400, which is otherwise indistinguishable from a malformed request. */
-  assert.equal(accountFailure(400, JSON.stringify({
-    type: 'error',
-    error: { type: 'invalid_request_error',
-             message: 'Your credit balance is too low to access the Anthropic API. ' +
-                      'Please go to Plans & Billing to upgrade or purchase credits.' }
-  })), true, 'an empty balance is an account failure, not a bad request');
-
-  // A genuine bad request still retries, and so does everything transient.
-  assert.equal(accountFailure(400, '{"error":"max_tokens must be positive"}'), false);
-  assert.equal(accountFailure(429, 'slow down'), false);
-  assert.equal(accountFailure(500, 'oops'), false);
-
-  assert.equal(providerError('Anthropic', 401, 'bad key').accountFailure, true);
-  assert.equal(providerError('xAI', 500, 'oops').accountFailure, undefined);
-  assert.match(providerError('Anthropic', 401, 'bad key').message, /^Anthropic 401: bad key/);
-});
-
-test('withRetry gives up on an account failure instead of hammering it', async () => {
-  let calls = 0;
-  await assert.rejects(() => withRetry(() => {
-    calls++;
-    throw providerError('Anthropic', 401, 'API key is invalid.');
-  }, async () => {}), /401/);
-  assert.equal(calls, 1, 'a wrong key is still wrong six seconds later');
-});
-
-test('a rejected key stops the run instead of repricing the same answer', async () => {
-  const { env, db } = await seededEnv();
-  const calls = stubFetch({
-    places: () => ok({ places: [PLACE(1), PLACE(2), PLACE(3), PLACE(4), PLACE(5)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: () => new Response(JSON.stringify({
-      type: 'error', error: { type: 'authentication_error', message: 'API key is invalid.' }
-    }), { status: 401 })
-  });
-
-  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
-
-  /* The old behaviour: five candidates, five Grok calls at five cents each,
-     fifteen Anthropic calls, to be told one thing five times. */
-  assert.equal(calls.anthropic, 1, 'asked once, believed it');
-  assert.equal(calls.xai, 1, 'stopped before buying research for the other four');
-  assert.equal(out.enriched, 1);
-  assert.match(out.errors.join(' '), /stopped: Anthropic 401/);
-
-  const left = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status != 'rejected'").get();
-  assert.equal(Number(left.c), 5, 'the other four are untouched, waiting for a good key');
-});
-
-test('research survives a scoring failure and is never bought twice', async () => {
-  const { env, db } = await seededEnv();
-  let anthropicOk = false;
-  const calls = stubFetch({
-    places: () => ok({ places: [PLACE(1)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'researched once', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: () => anthropicOk
-      ? ok({ content: [{ type: 'text', text: JSON.stringify({
-          score: 90, best_offer: 1, reason: 'r', opener: 'o' }) }] })
-      : new Response('{"error":"boom"}', { status: 500 })
-  });
-
-  // Run one: research succeeds, scoring is broken.
-  const first = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
-  assert.equal(first.enriched, 1);
-  assert.equal(first.pushed, 0);
-  const banked = db.prepare("SELECT enrichment_json FROM lead_candidates WHERE place_id='P1'").get();
-  assert.match(banked.enrichment_json, /researched once/, 'the paid research was banked');
-
-  // Run two: scoring works now. The research must NOT be bought again.
-  anthropicOk = true;
-  const xaiBefore = calls.xai;
-  const second = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
-  assert.equal(calls.xai, xaiBefore, 'no second Grok call for the same business');
-  assert.equal(second.enriched, 0, 'nothing new was researched');
-  assert.equal(second.pushed, 1, 'and it still made it into the CRM');
-});
-
-test('screened-for-free is counted apart from researched-and-rejected', async () => {
-  const { env } = await seededEnv();
-  stubFetch({
-    places: () => ok({ places: [Object.assign(PLACE(1), { userRatingCount: 1 }), PLACE(2)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
-      score: 10, best_offer: 1, reason: 'r', opener: 'o' }) }] })
-  });
-  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
-  assert.equal(out.screened, 1, 'one was vetoed before a cent was spent');
-  assert.equal(out.rejected, 1, 'one was researched, scored and turned down');
-});
-
-test('an empty credit balance stops the run and spares the candidates', async () => {
-  const { env, db } = await seededEnv();
-  const BILLING = () => new Response(JSON.stringify({
-    type: 'error',
-    error: { type: 'invalid_request_error',
-             message: 'Your credit balance is too low to access the Anthropic API. ' +
-                      'Please go to Plans & Billing to upgrade or purchase credits.' }
-  }), { status: 400 });
-
-  const calls = stubFetch({
-    places: () => ok({ places: [PLACE(1), PLACE(2), PLACE(3), PLACE(4), PLACE(5)] }),
-    xai: () => ok({ output_text: JSON.stringify({
-      has_website: false, website_quality: 'none', mobile_friendly: null,
-      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
-      contact_phone: null, contact_website: null, web_presence: 'none'
-    }) }),
-    anthropic: BILLING
-  });
-
-  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
-
-  assert.equal(calls.anthropic, 1, 'asked once — a 400 about billing is not retried');
-  assert.equal(calls.xai, 1, 'and it did not buy research for the other four');
-  assert.match(out.errors.join(' '), /stopped: Anthropic 400/);
-
-  /* The account being empty says nothing about the business, so the attempt
-     is given back. Three runs during a billing lapse must not permanently
-     retire five good candidates. */
-  const row = db.prepare("SELECT attempts, status, last_error FROM lead_candidates WHERE place_id='P1'").get();
-  assert.equal(Number(row.attempts), 0, 'the attempt was not the candidate’s to lose');
-  assert.equal(row.status, 'new');
-  assert.match(row.last_error, /^\[account\]/);
-  assert.equal(out.failed, 0, 'nothing was retired');
-});
-
-test('candidates retired during an earlier lapse come back, with their research', async () => {
+test('candidates retired during an earlier lapse come back', async () => {
   const { env, db } = await seededEnv();
   const now = new Date().toISOString();
-  const places = JSON.stringify({ place_id: 'PZ', name: 'Revived Co', review_count: 20 });
-  const research = JSON.stringify({ has_website: false, website_quality: 'none',
-    mobile_friendly: null, google_rating: 4.5, review_count: 20, notes: 'paid for already',
-    source_urls: [], contact_phone: null, contact_website: null, web_presence: 'none' });
-
-  // Retired by a billing lapse, with research already bought and banked.
+  const places = JSON.stringify({ place_id: 'PZ', name: 'Revived Co', website: '', review_count: 20 });
   db.prepare(`INSERT INTO lead_candidates
-    (place_id, segment, status, attempts, last_error, places_json, enrichment_json, promise, created_at, updated_at)
-    VALUES ('PZ','handyman','failed',3,'[account] Anthropic 400: credit balance',?,?,80,?,?)`)
-    .run(places, research, now, now);
+    (place_id, segment, status, attempts, last_error, places_json, promise, created_at, updated_at)
+    VALUES ('PZ','handyman','failed',3,'[account] PageSpeed 403: disabled',?,80,?,?)`)
+    .run(places, now, now);
 
-  const calls = stubFetch({
-    places: () => ok({ places: [] }),
-    xai: () => { throw new Error('must not re-buy research that is already banked'); },
-    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
-      score: 90, best_offer: 1, reason: 'r', opener: 'o' }) }] })
-  });
-
+  stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
   const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
-  assert.equal(out.pushed, 1, 'the revived candidate was scored and added');
-  assert.equal(out.enriched, 0);
-  assert.equal(calls.xai, 0, 'and cost nothing to recover');
+  assert.equal(out.pushed, 1, 'revived and judged');
 });
 
-test('a candidate that genuinely keeps failing is still retired', async () => {
+test('a reseed replaces the grid; without force it leaves it alone', async () => {
   const { env, db } = await seededEnv();
-  stubFetch({
-    places: () => ok({ places: [PLACE(1)] }),
-    xai: () => new Response('{"error":"upstream exploded"}', { status: 500 }),
-    anthropic: () => ok({ content: [{ type: 'text', text: '{}' }] })
+  const before = Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c);
+  const handAdded = db.prepare("SELECT id FROM lead_sources LIMIT 1").get().id;
+  stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
+
+  await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c), before,
+    'a normal run never touches a grid that already exists');
+
+  await runLeadPipeline(env, { trigger: 'manual', dryRun: true, reseed: true });
+  assert.ok(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c) > 1,
+    'a reseed writes the code’s own grid');
+  /* Fresno is in the default grid too, so counting the city proves nothing —
+     the hand-added ROW is what has to be gone. */
+  assert.equal(db.prepare("SELECT id FROM lead_sources WHERE id = ?").get(handAdded), undefined,
+    'and drops what was there, including hand-added rows');
+});
+
+test('a client that hangs up mid-run does not stop the run', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({ places: () => ok({ places: [PLACE(1)] }), pagespeed: PS(10) });
+  const out = await runLeadPipeline(env, {
+    trigger: 'manual', limit: 1,
+    onProgress: () => { throw new Error('socket closed'); }
   });
-  for (let i = 0; i < 3; i++) await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
-  const row = db.prepare("SELECT status, attempts FROM lead_candidates WHERE place_id='P1'").get();
-  assert.equal(row.status, 'failed', 'a real fault still retires after three attempts');
-  assert.equal(Number(row.attempts), 3);
+  assert.equal(out.pushed, 1);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM clients WHERE created_by_pipeline = 1").get().c), 1);
 });
