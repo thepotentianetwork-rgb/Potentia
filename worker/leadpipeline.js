@@ -780,18 +780,66 @@ export async function runLeadPipeline(env, opts) {
   const already = await spentToday(env);
   const overBudget = () => already + counts.est_cost_usd >= cap;
 
+  /* A caller that is streaming the run to a browser passes onProgress. It is
+     never allowed to break the run: the client can hang up at any moment, and
+     a failed write must not cost a candidate that is already paid for. */
+  const emit = async (evt) => {
+    if (!o.onProgress) return;
+    try { await o.onProgress(evt); } catch (e) { /* client gone; keep going */ }
+  };
+
+  /* Write what has been spent so far back to the run row after every paid
+     candidate, instead of only at the end. A run that is cut off halfway --
+     the tab closed, the Worker killed -- has still spent that money, and the
+     daily ceiling has to know about it or it silently under-counts. */
+  const checkpoint = async () => {
+    if (!runId) return;
+    await db.prepare(
+      `UPDATE enrichment_runs SET sourced = ?, deduped = ?, enriched = ?, scored = ?,
+              pushed = ?, rejected = ?, failed = ?, est_cost_usd = ? WHERE id = ?`
+    ).bind(counts.sourced, counts.deduped, counts.enriched, counts.scored,
+           counts.pushed, counts.rejected, counts.failed,
+           Number(counts.est_cost_usd.toFixed(4)), runId).run();
+  };
+
   try {
+    await emit({ event: "sourcing" });
     if (!overBudget()) await sourceCandidates(env, counts, o);
     else counts.errors.push("daily cost ceiling reached before sourcing");
+    await checkpoint();
+    await emit({ event: "sourced", sourced: counts.sourced,
+                 deduped: counts.deduped, rejected: counts.rejected });
 
     if (!o.dryRun) {
+      /* Recover anything a killed run left mid-flight. A candidate is set to
+         'enriching' before the paid call and moved on after it, so a row still
+         sitting in 'enriching' long afterwards belongs to a run that died --
+         the tab closed, the request cut off. Nothing picks those up again,
+         because the batch query only looks at 'new' and 'enriched', so without
+         this they are stranded for good.
+
+         Half an hour is well past the longest a live candidate can take (three
+         attempts at a three-minute ceiling) so this cannot steal a row from a
+         run that is still working. The attempt it burned stays burned: if the
+         call really is what is killing the run, it still retires after three. */
+      const staleBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      await db.prepare(
+        `UPDATE lead_candidates SET status = 'new', updated_at = ?
+          WHERE status = 'enriching' AND updated_at < ?`
+      ).bind(new Date().toISOString(), staleBefore).run();
+
       const batch = await db.prepare(
         `SELECT * FROM lead_candidates
           WHERE status IN ('new','enriched') AND attempts < ?
           ORDER BY COALESCE(promise, -1) DESC, id ASC LIMIT ?`
       ).bind(LEAD_DEFAULTS.maxAttempts, perRun).all();
 
-      for (const cand of batch.results || []) {
+      const queue = batch.results || [];
+      await emit({ event: "batch", total: queue.length });
+
+      let position = 0;
+      for (const cand of queue) {
+        position++;
         if (overBudget()) { counts.errors.push("daily cost ceiling reached"); break; }
         const places = safeParse(cand.places_json);
         if (!places) {
@@ -802,8 +850,11 @@ export async function runLeadPipeline(env, opts) {
           await db.prepare("UPDATE lead_candidates SET attempts = attempts + 1, status = 'enriching', updated_at = ? WHERE id = ?")
             .bind(new Date().toISOString(), cand.id).run();
 
+          await emit({ event: "researching", position: position, total: queue.length,
+                       name: places.name || null });
           const enrichment = await withRetry(() => enrichWithGrok(env, cand.segment, places));
           counts.enriched++; counts.est_cost_usd += LEAD_COST.grokEnrichUsd;
+          await checkpoint();
 
           if (overBudget()) {
             await db.prepare("UPDATE lead_candidates SET status = 'enriched', enrichment_json = ?, updated_at = ? WHERE id = ?")
@@ -812,10 +863,13 @@ export async function runLeadPipeline(env, opts) {
             break;
           }
 
+          await emit({ event: "scoring", position: position, total: queue.length,
+                       name: places.name || null });
           const scored = await withRetry(() => scoreWithClaude(env, cand.segment, places, enrichment));
           counts.scored++; counts.est_cost_usd += LEAD_COST.claudeScoreUsd;
 
-          if (scored.score >= qualifyAt) {
+          const kept = scored.score >= qualifyAt;
+          if (kept) {
             const crmId = await pushLeadToCrm(env, cand, places, enrichment, scored);
             await stripCandidate(env, cand.id, "pushed", scored.score, scored.reason, crmId);
             counts.pushed++;
@@ -823,8 +877,19 @@ export async function runLeadPipeline(env, opts) {
             await stripCandidate(env, cand.id, "rejected", scored.score, scored.reason, null);
             counts.rejected++;
           }
+          await checkpoint();
+          /* The name is safe to send down the wire and gone from the row a
+             line later -- the candidate was just stripped. It is here so the
+             person watching sees a business, not a row id. */
+          await emit({ event: "judged", position: position, total: queue.length,
+                       name: places.name || null, score: scored.score,
+                       kept: kept, reason: scored.reason || null,
+                       spent: Number(counts.est_cost_usd.toFixed(4)) });
         } catch (e) {
           await failCandidate(env, cand, String(e).slice(0, 300), counts);
+          await checkpoint();
+          await emit({ event: "candidate_failed", position: position,
+                       total: queue.length, name: (places && places.name) || null });
         }
       }
     }

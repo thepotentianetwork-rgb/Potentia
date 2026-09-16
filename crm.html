@@ -167,7 +167,9 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
     <p class="lp-note">
       A dry run searches your configured cities and stages what it finds. It makes no AI
       calls and costs a few cents. A real run researches and scores 5 of those, and adds
-      anything scoring 55+ to the list below.
+      anything scoring 55+ to the list below &mdash; that means five rounds of web research
+      one after another, so give it several minutes. It reports each business as it finishes,
+      and everything it finishes is saved even if you close the page.
     </p>
     <div class="lp-out" id="lp-out" hidden></div>
   </section>
@@ -264,41 +266,117 @@ function authFetch(path, options) {
       .replace(/"/g, '&quot;');
   }
 
+  /* The endpoint streams NDJSON -- one line per stage -- because a real run
+     outlives the 100 seconds Cloudflare will hold a silent request open. So
+     this reads the body as it arrives instead of using authFetch, which waits
+     for the whole response and parses it as one JSON object. */
+  function streamRun(isDry, onLine) {
+    return fetch(API_BASE + '/crm/leads/run-now?' + (isDry ? 'dry=1' : 'limit=5'), {
+      method: 'POST', headers: { 'Authorization': 'Bearer ' + token }
+    }).then(function (res) {
+      if (res.status === 401) {
+        localStorage.removeItem('potentia_crm_token');
+        window.location.href = 'crm-login.html';
+        throw new Error('Session expired');
+      }
+      if (!res.ok || !res.body) {
+        return res.text().then(function (t) {
+          var d = null; try { d = JSON.parse(t); } catch (e) {}
+          throw new Error((d && d.error) || ('server said ' + res.status));
+        });
+      }
+      var reader = res.body.getReader();
+      var dec = new TextDecoder();
+      var buf = '';
+      function pump() {
+        return reader.read().then(function (chunk) {
+          buf += dec.decode(chunk.value || new Uint8Array(), { stream: !chunk.done });
+          var lines = buf.split('\n');
+          buf = chunk.done ? '' : lines.pop();   // keep the partial line
+          lines.forEach(function (l) {
+            if (!l.trim()) return;
+            try { onLine(JSON.parse(l)); } catch (e) { /* half a line; skip */ }
+          });
+          return chunk.done ? null : pump();
+        });
+      }
+      return pump();
+    });
+  }
+
   function run(isDry) {
     dry.disabled = true; live.disabled = true;
     show(isDry
-      ? 'Searching&hellip; this takes a few seconds.'
-      : 'Researching and scoring&hellip; this can take a minute or two. Leave the page open.');
+      ? 'Searching&hellip;'
+      : 'Starting&hellip; leave this page open.');
 
-    authFetch('/crm/leads/run-now?' + (isDry ? 'dry=1' : 'limit=5'), { method: 'POST' })
-      .then(function (r) {
-        if (!r.ok) {
-          show('<span class="lp-err">That run failed: ' +
-               esc((r.data && r.data.error) || 'unknown error') + '</span>');
-          return;
-        }
-        var d = r.data || {};
-        var html =
-          'Found ' + n(d.sourced) + ' businesses, ' + n(d.deduped) + ' already known.';
-        if (!d.dry_run) {
-          html += '<br>Researched ' + n(d.enriched) + ', scored ' + n(d.scored) +
-                  ' &rarr; ' + n(d.pushed) + ' added as leads, ' + n(d.rejected) + ' not worth a call.';
-          if (d.failed) html += '<br>' + n(d.failed) + ' could not be researched.';
-          html += '<br>Cost this run: <b>$' + Number(d.est_cost_usd || 0).toFixed(2) + '</b>';
-        } else {
-          html += '<br>Staged and ready. Nothing was researched and nothing was spent on AI.';
-        }
-        if (d.errors && d.errors.length) {
-          html += '<div class="lp-err">' + esc(d.errors.join(' | ')) + '</div>';
-        }
-        show(html);
-        // A real run may have added leads, so repaint the list underneath.
-        if (!d.dry_run && d.pushed) loadClients();
+    var log = [];       // the running commentary, newest last
+    var result = null;
+    function note(line) {
+      log.push(line);
+      show(log.join('<br>'));
+    }
+
+    function render(d) {
+      var html = 'Found ' + n(d.sourced) + ' businesses, ' + n(d.deduped) + ' already known.';
+      if (!d.dry_run) {
+        html += '<br>Researched ' + n(d.enriched) + ', scored ' + n(d.scored) +
+                ' &rarr; ' + n(d.pushed) + ' added as leads, ' + n(d.rejected) + ' not worth a call.';
+        if (d.failed) html += '<br>' + n(d.failed) + ' could not be researched.';
+        html += '<br>Cost this run: <b>$' + Number(d.est_cost_usd || 0).toFixed(2) + '</b>';
+      } else {
+        html += '<br>Staged and ready. Nothing was researched and nothing was spent on AI.';
+      }
+      if (d.errors && d.errors.length) {
+        html += '<div class="lp-err">' + esc(d.errors.join(' | ')) + '</div>';
+      }
+      show(html);
+      // A real run may have added leads, so repaint the list underneath.
+      if (!d.dry_run && d.pushed) loadClients();
+    }
+
+    streamRun(isDry, function (evt) {
+      if (evt.event === 'sourcing') { note('Searching your cities&hellip;'); return; }
+      if (evt.event === 'sourced') {
+        note('Found ' + n(evt.sourced) + ', ' + n(evt.deduped) + ' already known, ' +
+             n(evt.rejected) + ' screened out for free.');
+        return;
+      }
+      if (evt.event === 'batch') {
+        note(evt.total ? 'Researching ' + n(evt.total) + ' of them&hellip;'
+                       : 'Nothing new to research.');
+        return;
+      }
+      if (evt.event === 'researching') {
+        note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' researching ' +
+             esc(evt.name || 'a business') + '&hellip;');
+        return;
+      }
+      if (evt.event === 'judged') {
+        note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' + esc(evt.name || '') +
+             ' &rarr; ' + n(evt.score) + (evt.kept ? ' &mdash; added as a lead' : ' &mdash; not worth a call'));
+        return;
+      }
+      if (evt.event === 'candidate_failed') {
+        note('&nbsp;&nbsp;' + evt.position + '/' + evt.total + ' ' +
+             esc(evt.name || 'a business') + ' &mdash; could not be researched.');
+        return;
+      }
+      if (evt.event === 'done') { result = evt.result; return; }
+      if (evt.event === 'error') {
+        note('<span class="lp-err">' + esc(evt.error) + '</span>');
+      }
+    })
+      .then(function () {
+        if (result) render(result);
+        else note('<span class="lp-err">The run stopped early. Anything it finished was ' +
+                  'saved &mdash; open this page again in a minute and the leads will be there.</span>');
       })
       .catch(function (e) {
         if (e && /Session expired/.test(e.message || '')) return;   // already redirecting
-        show('<span class="lp-err">Could not reach the server (' +
-             esc(e && e.message ? e.message : 'network error') + '). Nothing was charged.</span>');
+        note('<span class="lp-err">Lost the connection (' +
+             esc(e && e.message ? e.message : 'network error') + '). ' +
+             'Whatever it had already finished was saved.</span>');
       })
       .then(function () { dry.disabled = false; live.disabled = false; });
   }

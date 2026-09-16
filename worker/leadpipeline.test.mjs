@@ -538,3 +538,117 @@ test('the run spends its budget on the most promising candidates first', async (
   const left = db.prepare("SELECT place_id FROM lead_candidates WHERE status='new'").all();
   assert.deepEqual(left.map(r => r.place_id), ['P1'], 'the weaker one waits for the next run');
 });
+
+test('a run reports each stage as it happens, not only at the end', async () => {
+  const { env } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 90, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  const seen = [];
+  await runLeadPipeline(env, { trigger: 'manual', limit: 1, onProgress: e => seen.push(e) });
+  const kinds = seen.map(e => e.event);
+
+  /* The point of these is that they arrive DURING the run. Without them the
+     request sends nothing for minutes and Cloudflare cuts it off at 100s. */
+  assert.deepEqual(kinds, ['sourcing', 'sourced', 'batch', 'researching', 'scoring', 'judged']);
+  const judged = seen[seen.length - 1];
+  assert.equal(judged.name, 'Biz 1', 'a person watching sees a business, not a row id');
+  assert.equal(judged.kept, true);
+  assert.equal(judged.score, 90);
+});
+
+test('a client that hangs up mid-run does not stop the run', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 90, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  // Throws from the first event onward, the way a closed socket does.
+  const out = await runLeadPipeline(env, {
+    trigger: 'manual', limit: 1,
+    onProgress: () => { throw new Error('socket closed'); }
+  });
+  assert.equal(out.pushed, 1, 'the candidate was already paid for; it must still land');
+  const n = db.prepare("SELECT COUNT(*) AS c FROM clients WHERE created_by_pipeline = 1").get();
+  assert.equal(Number(n.c), 1);
+});
+
+test('spend is written to the run row as it goes, not only at the end', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1), PLACE(2)] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 10, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  /* Read the run row at the moment the FIRST candidate is judged. A run that
+     is killed right here has still spent that money, and the daily ceiling
+     only knows about it if the row was written on the way through. */
+  let midRun = null;
+  await runLeadPipeline(env, {
+    trigger: 'manual', limit: 2,
+    onProgress: (e) => {
+      if (e.event === 'judged' && e.position === 1 && midRun === null) {
+        midRun = db.prepare('SELECT est_cost_usd, scored FROM enrichment_runs ORDER BY id DESC LIMIT 1').get();
+      }
+    }
+  });
+  assert.ok(midRun, 'the first candidate was judged');
+  assert.ok(Number(midRun.est_cost_usd) > 0, 'spend so far is already on the row');
+  assert.equal(Number(midRun.scored), 1, 'and so is the progress');
+});
+
+test('candidates stranded by a killed run are picked back up', async () => {
+  const { env, db } = await seededEnv();
+  const old = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const now = new Date().toISOString();
+  const places = JSON.stringify({ place_id: 'PX', name: 'Stranded Co', review_count: 20 });
+
+  // One left mid-flight an hour ago, one that a run is working on right now.
+  db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
+              VALUES ('PX','handyman','enriching',1,?,80,?,?)`).run(places, old, old);
+  db.prepare(`INSERT INTO lead_candidates (place_id, segment, status, attempts, places_json, promise, created_at, updated_at)
+              VALUES ('PY','handyman','enriching',1,?,80,?,?)`).run(places, now, now);
+
+  stubFetch({
+    places: () => ok({ places: [] }),
+    xai: () => ok({ output_text: JSON.stringify({
+      has_website: false, website_quality: 'none', mobile_friendly: null,
+      google_rating: 4.5, review_count: 20, notes: 'n', source_urls: [],
+      contact_phone: null, contact_website: null, web_presence: 'none'
+    }) }),
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 90, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 5 });
+  assert.equal(out.enriched, 1, 'the stranded one is researched');
+  assert.equal(out.pushed, 1);
+
+  const live = db.prepare("SELECT status FROM lead_candidates WHERE place_id='PY'").get();
+  assert.equal(live.status, 'enriching', 'a row a live run is holding is left alone');
+});
