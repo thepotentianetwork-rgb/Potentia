@@ -731,13 +731,22 @@ export async function pageSpeed(env, url, fetchImpl) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
+
+    /* A page Lighthouse could not load comes back as a 400, not as a result —
+       and that is a lead, not a failure. A business whose website does not
+       answer is the best call on the list after one with no website at all,
+       and it was being counted as "could not be researched" and retried until
+       the candidate retired. */
+    const broken = brokenSiteCode(body);
+    if (broken) return { unreachable: true, code: broken, performance: null, hasViewport: null };
+
     throw providerError("PageSpeed", res.status, body);
   }
   const data = await res.json();
   const lh = (data && data.lighthouseResult) || {};
 
-  /* A site Google cannot fetch at all is not a healthy site. It is reported
-     in-band as a runtimeError with HTTP 200, not as an error status. */
+  /* The same thing said the other way: sometimes it is HTTP 200 with a
+     runtimeError in the body instead. Both shapes mean the site is broken. */
   if (lh.runtimeError && lh.runtimeError.code) {
     return { unreachable: true, code: lh.runtimeError.code, performance: null, hasViewport: null };
   }
@@ -752,6 +761,37 @@ export async function pageSpeed(env, url, fetchImpl) {
     hasViewport: viewport && typeof viewport.score === "number" ? viewport.score === 1 : null
   };
 }
+
+/* Lighthouse's names for "I could not load this page". Each one is a website
+   that does not work for the business's customers either, which is the thing
+   being sold against — so they qualify rather than error.
+
+   Matched on the body text because the code arrives in different places
+   depending on whether Google answers 200 or 400. */
+const BROKEN_SITE_CODES = [
+  "FAILED_DOCUMENT_REQUEST",     // the page never loaded
+  "ERRORED_DOCUMENT_REQUEST",    // it loaded an error
+  "DNS_FAILURE",                 // the domain does not resolve at all
+  "INSECURE_DOCUMENT_REQUEST",   // https asked for, http given
+  "NO_FCP"                       // nothing ever rendered
+];
+
+export function brokenSiteCode(body) {
+  const text = String(body == null ? "" : body);
+  for (const code of BROKEN_SITE_CODES) {
+    if (text.indexOf(code) !== -1) return code;
+  }
+  return null;
+}
+
+/* Something a caller can read out. "FAILED_DOCUMENT_REQUEST" is not. */
+const BROKEN_SITE_WORDS = {
+  FAILED_DOCUMENT_REQUEST: "their website does not load",
+  ERRORED_DOCUMENT_REQUEST: "their website returns an error",
+  DNS_FAILURE: "their domain does not resolve — the site is gone",
+  INSECURE_DOCUMENT_REQUEST: "their website is not served securely",
+  NO_FCP: "their website never finishes loading"
+};
 
 /* How bad a site has to be to be worth a call. 50 is Lighthouse's own
    boundary between "needs improvement" and "poor" on mobile. */
@@ -797,8 +837,9 @@ export async function websiteVerdict(env, places, deps) {
   const ps = await (deps && deps.pageSpeed ? deps.pageSpeed : pageSpeed)(env, places.website);
 
   if (ps.unreachable) {
-    return { qualified: true, score: 90, checked: "pagespeed", speed: null, mobileReady: null,
-             reason: "Google cannot load their website (" + ps.code + ")" + trading + "." };
+    const words = BROKEN_SITE_WORDS[ps.code] || "their website could not be loaded";
+    return { qualified: true, score: 92, checked: "pagespeed", speed: null, mobileReady: null,
+             reason: "Google could not test it \u2014 " + words + trading + "." };
   }
   if (ps.hasViewport === false) {
     return { qualified: true, score: 88, checked: "pagespeed",
