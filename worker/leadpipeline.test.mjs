@@ -133,6 +133,10 @@ test('a pushed lead lands as status lead, flagged as pipeline-made', async () =>
   assert.match(row.lead_reason, /facebook/, 'the caller can read why without being briefed');
   assert.equal(row.phone, '9285550000');
   assert.equal(row.website_url, 'https://facebook.com/valleyautos');
+  assert.equal(row.lead_address, '2 Main St');
+  /* `message` is the human's note field. A pipeline lead never wrote us an
+     inquiry, so nothing of ours belongs in it. */
+  assert.ok(!row.message, 'the note field is left for the human');
 });
 
 // ── rule 1: Places content does not outlive the judgement ─────────────────
@@ -597,4 +601,36 @@ test('a client that hangs up mid-run does not stop the run', async () => {
   });
   assert.equal(out.pushed, 1);
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM clients WHERE created_by_pipeline = 1").get().c), 1);
+});
+
+test('a lead carries the evidence a caller needs, and the speed test when there was one', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({
+    places: () => ok({ places: [PLACE(1), WITH_SITE(2)] }),
+    pagespeed: PS(31, false)     // slow AND no viewport
+  });
+  await runLeadPipeline(env, { trigger: 'manual', limit: 2 });
+
+  const noSite = db.prepare("SELECT * FROM clients WHERE business_name='Biz 1'").get();
+  assert.ok(!noSite.website_url, 'nothing to open, and the UI says so');
+  assert.equal(noSite.lead_speed, null, 'no site means no speed test to report');
+  assert.equal(noSite.lead_check, 'places');
+  assert.ok(noSite.place_id, 'the Google listing link needs this and nothing else');
+
+  const slow = db.prepare("SELECT * FROM clients WHERE business_name='Biz 2'").get();
+  assert.equal(slow.website_url, 'https://biz2.com', 'the caller can click straight through');
+  assert.equal(Number(slow.lead_speed), 31);
+  assert.equal(Number(slow.lead_mobile_ready), 0);
+  assert.equal(slow.lead_check, 'pagespeed');
+  assert.equal(slow.lead_address, '2 Main St');
+});
+
+test('a measured score is kept even when the verdict turns on something else', async () => {
+  const site = { website: 'https://valleydrywall.com', review_count: 12 };
+  // Fast enough to pass on speed, but built before phones — the viewport
+  // decides it, and the number still has to survive onto the row.
+  const v = await websiteVerdict({}, site, { pageSpeed: async () => ({ performance: 78, hasViewport: false }) });
+  assert.equal(v.qualified, true);
+  assert.equal(v.speed, 78, 'the caller should still see what Google scored it');
+  assert.equal(v.mobileReady, false);
 });

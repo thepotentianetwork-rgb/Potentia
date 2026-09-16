@@ -102,6 +102,10 @@ export async function ensureLeadPipelineTables(env) {
     ["lead_offer", "INTEGER"],
     ["lead_reason", "TEXT"],
     ["lead_opener", "TEXT"],
+    ["lead_address", "TEXT"],
+    ["lead_speed", "INTEGER"],
+    ["lead_mobile_ready", "INTEGER"],
+    ["lead_check", "TEXT"],
     ["created_by_pipeline", "INTEGER NOT NULL DEFAULT 0"]
   ];
   for (const [name, decl] of wanted) {
@@ -528,7 +532,7 @@ export async function websiteVerdict(env, places, deps) {
   const trading = reviews == null ? "" : ", " + reviews + " Google reviews";
 
   if (!places.website) {
-    return { qualified: true, score: 95, checked: "places",
+    return { qualified: true, score: 95, checked: "places", speed: null, mobileReady: null,
              reason: "No website at all" + trading + "." };
   }
 
@@ -536,6 +540,7 @@ export async function websiteVerdict(env, places, deps) {
   if (impostor) {
     const dead = impostor === "business.site";
     return { qualified: true, score: dead ? 95 : 90, checked: "places",
+             speed: null, mobileReady: null,
              reason: dead
                ? "Their only site is a Google business.site page, which Google shut down — it does not load" + trading + "."
                : "No site of their own, just a " + impostor + " page" + trading + "." };
@@ -544,26 +549,29 @@ export async function websiteVerdict(env, places, deps) {
   // Plain HTTP in 2026 means nobody has touched it in a decade, and every
   // browser tells their customers it is not secure.
   if (/^http:\/\//i.test(String(places.website).trim())) {
-    return { qualified: true, score: 85, checked: "places",
+    return { qualified: true, score: 85, checked: "places", speed: null, mobileReady: null,
              reason: "Site is still on plain http — browsers mark it not secure" + trading + "." };
   }
 
   const ps = await (deps && deps.pageSpeed ? deps.pageSpeed : pageSpeed)(env, places.website);
 
   if (ps.unreachable) {
-    return { qualified: true, score: 90, checked: "pagespeed",
+    return { qualified: true, score: 90, checked: "pagespeed", speed: null, mobileReady: null,
              reason: "Google cannot load their website (" + ps.code + ")" + trading + "." };
   }
   if (ps.hasViewport === false) {
     return { qualified: true, score: 88, checked: "pagespeed",
+             speed: ps.performance, mobileReady: false,
              reason: "Site has no mobile viewport — it was built before phones mattered and is unusable on one" + trading + "." };
   }
   if (ps.performance != null && ps.performance < SLOW_AT) {
     return { qualified: true, score: 75, checked: "pagespeed",
+             speed: ps.performance, mobileReady: ps.hasViewport,
              reason: "Website scores " + ps.performance + "/100 on Google's mobile speed test" + trading + "." };
   }
 
-  return { qualified: false, score: ps.performance == null ? 20 : ps.performance, checked: "pagespeed",
+  return { qualified: false, score: ps.performance == null ? 20 : ps.performance,
+           checked: "pagespeed", speed: ps.performance, mobileReady: ps.hasViewport,
            reason: ps.performance == null
              ? "Has a working site; Google returned no score for it."
              : "Website is fine — " + ps.performance + "/100 on mobile. Nothing to sell them." };
@@ -587,25 +595,35 @@ export async function pushLeadToCrm(env, cand, places, verdict) {
 
   const res = await env.CRM_DB.prepare(
     `INSERT INTO clients
-       (business_name, phone, website_url, status, source, service, message,
-        place_id, lead_score, lead_segment, lead_offer, lead_reason, lead_opener,
+       (business_name, phone, website_url, status, source, service,
+        place_id, lead_score, lead_segment, lead_offer, lead_reason,
+        lead_address, lead_speed, lead_mobile_ready, lead_check,
         created_by_pipeline, do_not_contact, created_at, updated_at)
-     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
+     VALUES (?, ?, ?, 'lead', 'pipeline', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`
   ).bind(
     places.name || "",
     phone,
     website,
     offerName(cand.offer_hint),
-    places.address || "",
     cand.place_id,
     verdict.score,
     cand.segment,
     cand.offer_hint,
     verdict.reason || "",
-    "",
+    /* Name, phone, website and address are what it takes to actually ring a
+       business; they live here because we are working the lead, not because
+       we are keeping a copy of a Places record. Everything else a caller
+       wants — reviews, photos, hours — is one click away on the live Google
+       listing via place_id, which is better than a stale copy anyway. */
+    places.address || "",
+    verdict.speed == null ? null : verdict.speed,
+    verdict.mobileReady == null ? null : (verdict.mobileReady ? 1 : 0),
+    verdict.checked || null,
     now,
     now
   ).run();
+  // `message` is left alone on purpose: it is the human's note field, and a
+  // pipeline lead never wrote us an inquiry to put in it.
   return (res && res.meta && res.meta.last_row_id) || null;
 }
 

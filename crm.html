@@ -111,6 +111,17 @@ select.status-sel:focus{border-color:var(--silver)}
 
 tr.is-lead{background:linear-gradient(90deg,rgba(216,161,95,0.09),rgba(216,161,95,0.01) 55%)}
 tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
+.lead-detail{display:flex;flex-direction:column;gap:5px;margin-top:9px;padding-left:10px;border-left:1px solid rgba(216,161,95,0.3)}
+.lead-detail .ld-line{font-size:13px;color:var(--silver);line-height:1.5}
+.lead-detail .ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:7px}
+.lead-detail a{color:var(--warm);text-decoration:none;border-bottom:1px solid rgba(216,161,95,0.35);word-break:break-all}
+.lead-detail a:hover{color:#f0c48a}
+.lead-detail .ld-none{color:#d89b6a;font-weight:500}
+.lead-detail .ld-why{color:var(--dim);font-size:12.5px;line-height:1.55}
+.speed-pill{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;padding:2px 8px;border-radius:20px;border:1px solid}
+.speed-bad{color:#e0725f;border-color:rgba(224,114,95,0.5);background:rgba(224,114,95,0.1)}
+.speed-mid{color:#d8a15f;border-color:rgba(216,161,95,0.5);background:rgba(216,161,95,0.1)}
+.speed-ok{color:#7fb37a;border-color:rgba(127,179,122,0.45);background:rgba(127,179,122,0.1)}
 .new-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--warm);background:rgba(216,161,95,0.14);border:1px solid rgba(216,161,95,0.45);padding:2px 8px;border-radius:20px;text-transform:uppercase;align-self:flex-start;margin-top:2px}
 
 @media (max-width:960px){
@@ -492,6 +503,91 @@ function matches(c) {
   return hay.indexOf(searchTerm) !== -1;
 }
 
+/* Everything the pipeline found out about a business, for someone about to
+   ring it. Built with DOM nodes rather than innerHTML because every value
+   here came off the open internet.
+
+   The one thing deliberately NOT copied in is Google's own listing data —
+   reviews, photos, hours, opening times. That is a link instead: it is always
+   current, and a number we cached last Tuesday would be worse than useless on
+   a call. */
+function leadDetail(c) {
+  var box = document.createElement('div');
+  box.className = 'lead-detail';
+
+  function line(key, node) {
+    var d = document.createElement('div');
+    d.className = 'ld-line';
+    var k = document.createElement('span');
+    k.className = 'ld-k';
+    k.textContent = key;
+    d.appendChild(k);
+    d.appendChild(node);
+    box.appendChild(d);
+    return d;
+  }
+  function text(t, cls) {
+    var s = document.createElement('span');
+    if (cls) s.className = cls;
+    s.textContent = t;
+    return s;
+  }
+  function link(href, label) {
+    var a = document.createElement('a');
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = label;
+    return a;
+  }
+
+  // The headline: is there a site, and can I look at it right now?
+  if (c.website_url) {
+    var href = /^https?:\/\//i.test(c.website_url) ? c.website_url : 'https://' + c.website_url;
+    line('Site', link(href, c.website_url));
+  } else {
+    line('Site', text('No website at all', 'ld-none'));
+  }
+
+  // Google's own mobile verdict, when we measured one.
+  if (c.lead_speed != null || c.lead_mobile_ready != null) {
+    var row = document.createElement('span');
+    if (c.lead_speed != null) {
+      var n = Number(c.lead_speed);
+      var pill = text(n + '/100 mobile', 'speed-pill ' + (n < 50 ? 'speed-bad' : n < 90 ? 'speed-mid' : 'speed-ok'));
+      row.appendChild(pill);
+    }
+    if (Number(c.lead_mobile_ready) === 0) {
+      var warn = text('not built for phones', 'speed-pill speed-bad');
+      warn.style.marginLeft = '6px';
+      row.appendChild(warn);
+    }
+    line('Speed', row);
+  }
+
+  if (c.lead_address) line('Where', text(c.lead_address));
+  if (c.lead_segment) line('Trade', text(c.lead_segment));
+
+  /* Straight to the live listing — reviews, photos, hours, how long they have
+     been there. place_id is the only thing Google lets us keep, and it is the
+     only thing this needs. */
+  if (c.place_id) {
+    line('Google', link(
+      'https://www.google.com/maps/search/?api=1&query=' +
+        encodeURIComponent(c.business_name || '') +
+        '&query_place_id=' + encodeURIComponent(c.place_id),
+      'Open their listing'));
+  }
+
+  if (c.lead_reason) {
+    var why = document.createElement('div');
+    why.className = 'ld-line ld-why';
+    why.textContent = c.lead_reason;
+    box.appendChild(why);
+  }
+  return box;
+}
+
 function render() {
   var body = document.getElementById('clients-body');
   body.innerHTML = '';
@@ -534,6 +630,7 @@ function render() {
       wrap.appendChild(badge);
     }
     tdName.appendChild(wrap);
+    if (Number(c.created_by_pipeline) === 1) tdName.appendChild(leadDetail(c));
 
     // contact
     var tdContact = document.createElement('td');
