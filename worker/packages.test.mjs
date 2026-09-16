@@ -74,11 +74,41 @@ test("the three tiers carry the prices we sell them at", async () => {
   assert.equal(by.tier1.monthly, 20);
   assert.equal(by.tier2.monthly, 75);
   assert.equal(by.tier3.monthly, 150);
-  // Scoped per business — a figure here would be a guess quoted as a price.
-  assert.equal(by.crm.price, null);
-  assert.equal(by.crm.monthly, null);
-  assert.equal(by.platform.price, null);
-  assert.equal(by.platform.monthly, null);
+  // The two scoped builds carry FLOORS, and must say so.
+  assert.equal(by.crm.price, 2000);
+  assert.equal(by.crm.monthly, 250);
+  assert.equal(by.crm.from, true);
+  assert.equal(by.platform.price, 5000);
+  assert.equal(by.platform.monthly, 350);
+  assert.equal(by.platform.from, true);
+  assert.equal(by.platform.seatsIncluded, 2);
+  assert.equal(by.platform.perSeat, 50);
+  // A website tier is a list price, not a floor. If one ever gains `from`,
+  // the CRM would stop calling it a list price and the copy would be wrong.
+  ["tier1", "tier2", "tier3"].forEach((k) => assert.ok(!by[k].from, k + " is a list price"));
+  // Custom is what you pick when none of the above applies. It has no figure.
+  assert.equal(by.custom.price, null);
+});
+
+test("a floor is never shown as if it were a price", async () => {
+  /* The CRM fills 2000 into the build fee for a Custom CRM exactly as it
+     fills 1200 for a Tier 2. The only thing separating "this is the price"
+     from "this is where it starts" is this line, so it is worth a test. */
+  /* The shipped function, lifted out of the shared file and run — not a copy
+     of it rewritten here, which would pass while the real one was broken. */
+  const lead = fs.readFileSync(path.join(repo, "crm-lead.js"), "utf8");
+  const from = lead.indexOf("  function feeHint(row)");
+  const to = lead.indexOf("  global.LeadDetail");
+  assert.ok(from > -1 && to > from, "found feeHint and money in crm-lead.js");
+  const feeHint = new Function(lead.slice(from, to) + "\nreturn feeHint;")();
+  assert.match(feeHint({ price: 1200, monthly: 75 }), /^List: \$1,200 build · \$75\/mo$/);
+  assert.match(feeHint({ price: 2000, monthly: 250, from: true }), /^Starts at — scope it: from \$2,000/);
+  assert.match(feeHint({ price: 5000, monthly: 350, from: true, seatsIncluded: 2, perSeat: 50, perSeatFrom: true }),
+    /2 logins included, \$50\+\/mo each after$/);
+  assert.equal(feeHint({ price: null }), "");
+  assert.equal(feeHint(null), "");
+  // And the page that renders it is the shared one, so both CRM pages agree.
+  assert.ok(lead.includes("bindFeePrefill"), "crm-lead.js owns the prefill");
 });
 
 test("every tier carries a retainer, because the page now says so", async () => {
@@ -146,6 +176,8 @@ test("no price is written into a page anyone can read", async () => {
        test that cries wolf gets deleted. The two distinctive figures are
        enough to catch the mistake this guards against: pasting the price
        table into a page. */
+    /* Plus a structural check below: the number scan only catches figures it
+       knows, and the real mistake is pasting the table in. */
     for (const price of ["1200", "1800"]) {
       /* The number on its own, not part of a longer one and not a CSS length —
          max-width:1200px is a layout, not a price. */
@@ -153,6 +185,13 @@ test("no price is written into a page anyone can read", async () => {
       assert.equal(hit, null,
         f + " looks like it contains the price " + price + " near: " +
         (hit ? JSON.stringify(src.slice(Math.max(0, hit.index - 40), hit.index + 40)) : ""));
+    }
+    /* Catches the figures no scan knows about — 2000 and 5000 cannot be
+       searched for literally, because z-index:2000 is a real line in
+       index.html. What cannot be innocent is the shape of the table. */
+    for (const shape of [/price\s*:\s*\d/, /monthly\s*:\s*\d/, /perSeat\s*:\s*\d/]) {
+      assert.equal(shape.test(src), false,
+        f + " contains a price table (" + shape + ") — it belongs in the Worker");
     }
   }
 });

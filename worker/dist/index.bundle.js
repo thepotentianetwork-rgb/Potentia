@@ -2944,7 +2944,7 @@ Tier 3 — Gallery Site + Scheduling: everything in Tier 2, plus a live booking 
 
 Stage Two — the system (scoped and quoted per business):
 Fully Custom CRM: the software that manages the work once it arrives, built around the client's own pipeline stages and language, not a template. Website leads captured automatically, call logs, notes and follow-ups, per-person lead ownership, role-based access, their data exportable any time. Includes a monthly plan for hosting, support and changes.
-Sales Platform & Data Tracking: the tool the client's team works in all day — quoting, configuring, scheduling, inventory, customer portals — with live pipeline and revenue reporting underneath. Built in stages so each piece earns its keep before the next.
+Sales Platform & Data Tracking: the tool the client's team works in all day — quoting, configuring, scheduling, inventory, customer portals — with live pipeline and revenue reporting underneath. Built in stages so each piece earns its keep before the next. Two logins are included and further logins are charged monthly per person.
 
 Add-ons, available at any stage: AI Chat Assistant (like this one!), Lead Alerts & Monthly Reporting, Promotional Video, Google Business Setup, Google Profile Management (monthly), AI Content Engine (monthly), Professional Photography, Logo Vectorization, Service Menu Design.
 
@@ -5121,8 +5121,13 @@ const CRM_PACKAGE_LIST = [
   { key: "tier1", label: "Tier 1 — Home & Contact", price: 500, monthly: 20 },
   { key: "tier2", label: "Tier 2 — Home, Gallery & Contact", price: 1200, monthly: 75 },
   { key: "tier3", label: "Tier 3 — Gallery + Scheduling", price: 1800, monthly: 150 },
-  { key: "crm", label: "Custom CRM", price: null, monthly: null },
-  { key: "platform", label: "Sales Platform", price: null, monthly: null },
+  /* `from: true` means the figure is a FLOOR, not the price. A CRM build is
+     scoped per business and starts here; quoting exactly 2000 because the box
+     was filled in with 2000 is the mistake this flag exists to prevent, so
+     the CRM says "from" next to it rather than showing it as a price. */
+  { key: "crm", label: "Custom CRM", price: 2000, monthly: 250, from: true },
+  { key: "platform", label: "Sales Platform", price: 5000, monthly: 350, from: true,
+    seatsIncluded: 2, perSeat: 50, perSeatFrom: true },
   { key: "custom", label: "Custom", price: null, monthly: null },
   { key: "foundation", label: "Foundation", price: null, retired: true },
   { key: "booking", label: "Booking", price: null, retired: true },

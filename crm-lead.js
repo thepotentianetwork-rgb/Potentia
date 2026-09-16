@@ -144,9 +144,9 @@
          and a custom build goes out priced like a two-page website.
 
      `prices` is { key: {price, monthly} }, read from /crm/packages. */
-  function bindFeePrefill(select, fields, prices) {
+  function bindFeePrefill(select, fields, prices, hintEl) {
     var filled = {};                       // field -> what we last put in it
-    select.addEventListener('change', function () {
+    function apply() {
       var row = prices[select.value] || {};
       fields.forEach(function (f) {
         var el = f.el, cur = String(el.value).trim();
@@ -155,8 +155,38 @@
         el.value = v == null ? '' : v;
         filled[f.key] = v == null ? undefined : String(v);
       });
-    });
+      if (hintEl) hintEl.textContent = feeHint(row);
+    }
+    select.addEventListener('change', apply);
+    return apply;
   }
 
-  global.LeadDetail = { badge: whyBadge, block: leadDetail, bindFeePrefill: bindFeePrefill };
+  /* What the figures in the boxes MEAN, said next to them.
+
+     A website tier is a list price. A CRM or a platform is scoped per
+     business and the figure is only a floor — so the box says 2000 either
+     way, and without this line the difference is invisible. Someone quotes a
+     custom CRM at exactly 2000 because that is what the field said, and the
+     build runs at a loss. */
+  function feeHint(row) {
+    if (!row || row.price == null) return '';
+    var from = row.from ? 'from ' : '';
+    var bits = [from + money(row.price) + ' build'];
+    if (row.monthly != null) bits.push(from + money(row.monthly) + '/mo');
+    var line = (row.from ? 'Starts at — scope it: ' : 'List: ') + bits.join(' · ');
+    if (row.seatsIncluded != null) {
+      line += ' · ' + row.seatsIncluded + ' logins included';
+      if (row.perSeat != null) {
+        line += ', ' + (row.perSeatFrom ? '' : '') + money(row.perSeat) +
+                (row.perSeatFrom ? '+' : '') + '/mo each after';
+      }
+    }
+    return line;
+  }
+
+  function money(n) {
+    return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  }
+
+  global.LeadDetail = { badge: whyBadge, block: leadDetail, bindFeePrefill: bindFeePrefill, feeHint: feeHint };
 })(window);

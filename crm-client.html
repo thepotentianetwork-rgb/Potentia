@@ -65,6 +65,8 @@ section{margin-bottom:52px}
 /* details form */
 .field-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;padding:24px 0;border-top:1px solid var(--dim);border-bottom:1px solid var(--dim)}
 .field label{display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.fee-hint{grid-column:1 / -1;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.04em;color:var(--silver);margin:-6px 0 4px;min-height:13px}
+
 .field input,.field select{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none;appearance:none}
 .field select,.field input[type="date"]{font-family:'DM Mono',monospace;font-size:12px;text-transform:uppercase}
 .field input:focus,.field select:focus{border-color:var(--silver)}
@@ -187,6 +189,7 @@ section{margin-bottom:52px}
       <div class="field"><label for="f-package">Package</label><select id="f-package"></select></div>
       <div class="field"><label for="f-build">Build Fee ($)</label><input id="f-build" type="number" min="0" step="0.01"></div>
       <div class="field"><label for="f-monthly">Monthly ($)</label><input id="f-monthly" type="number" min="0" step="0.01"></div>
+      <p class="fee-hint" id="f-fee-hint"></p>
       <div class="field"><label for="f-source">Source</label><select id="f-source"></select></div>
       <div class="field"><label for="f-website">Live Site URL</label><input id="f-website" type="url" placeholder="https://"></div>
       <div class="field"><label for="f-domain">Domain</label><input id="f-domain" type="text" placeholder="example.com"></div>
@@ -365,7 +368,8 @@ el('f-phone').addEventListener('input', renderPhoneActions);
 LeadDetail.bindFeePrefill(
   el('f-package'),
   [{ key: 'price', el: el('f-build') }, { key: 'monthly', el: el('f-monthly') }],
-  PACKAGE_PRICE);
+  PACKAGE_PRICE,
+  el('f-fee-hint'));
 
 // ---- details ----
 // ---- Google Voice quick actions ----
@@ -495,6 +499,10 @@ function fillDetails(c) {
   renderPhoneActions();
   el('f-status').value = status;
   setPackage(c.package || '');
+  /* The hint, for the package they are already on — read from the same table
+     the prefill uses, but nothing is written into the fee fields here. What a
+     client is being charged is what the record says, not what the list says. */
+  el('f-fee-hint').textContent = LeadDetail.feeHint(PACKAGE_PRICE[c.package] || null);
   el('f-source').value = c.source || '';
   el('f-build').value = c.build_fee == null ? '' : c.build_fee;
   el('f-monthly').value = c.monthly_fee == null ? '' : c.monthly_fee;
@@ -982,11 +990,20 @@ function loadPackages() {
     if (!r.ok || !r.data || !r.data.packages) return;
     r.data.packages.forEach(function (p) {
       PACKAGE_LABELS[p.key] = p.label;
-      PACKAGE_PRICE[p.key] = { price: p.price, monthly: p.monthly };
+      /* The whole row, not picked-out fields: `from`, `seatsIncluded` and
+         `perSeat` are what make the hint say "starts at" instead of "list",
+         and copying two keys silently dropped them. */
+      PACKAGE_PRICE[p.key] = p;
       if (!p.retired) PACKAGES.push([p.key, p.label]);
     });
     fillSelect(el('f-package'), PACKAGES);
-    if (currentClient) setPackage(currentClient.package || '');
+    /* The client can already be on screen by the time this lands — it is a
+       second request. Re-apply both, or a client loaded first sits there with
+       an empty dropdown and no hint. */
+    if (currentClient) {
+      setPackage(currentClient.package || '');
+      el('f-fee-hint').textContent = LeadDetail.feeHint(PACKAGE_PRICE[currentClient.package] || null);
+    }
   }).catch(function () { /* setPackage still adds whatever the client has */ });
 }
 

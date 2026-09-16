@@ -96,6 +96,8 @@ tr.group-head td{background:rgba(216,161,95,0.07);border-top:1px solid rgba(216,
 .new-panel.open{display:block}
 .field-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:18px}
 .field label{display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.fee-hint{grid-column:1 / -1;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.04em;color:var(--silver);margin:-6px 0 4px;min-height:13px}
+
 .field input,.field select{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:10px 12px;outline:none;-webkit-appearance:none;appearance:none}
 .field select{font-family:'DM Mono',monospace;font-size:12px;text-transform:uppercase}
 .field input:focus,.field select:focus{border-color:var(--silver)}
@@ -306,6 +308,7 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
         <div class="field"><label for="n-build">Build Fee ($)</label><input id="n-build" type="number" min="0" step="0.01"></div>
         <div class="field"><label for="n-monthly">Monthly ($)</label><input id="n-monthly" type="number" min="0" step="0.01"></div>
         <div class="field"><label for="n-source">Source</label><select id="n-source"></select></div>
+        <p class="fee-hint" id="n-fee-hint"></p>
       </div>
       <div class="panel-actions">
         <button class="btn" id="n-save">Add Client</button>
@@ -886,7 +889,10 @@ function loadPackages() {
     r.data.packages.forEach(function (p) {
       if (p.retired) return;               // still shown on clients who have one, not offered for new work
       PACKAGES.push([p.key, p.label]);
-      PACKAGE_PRICE[p.key] = { price: p.price, monthly: p.monthly };
+      /* The whole row, not picked-out fields: `from`, `seatsIncluded` and
+         `perSeat` are what make the hint say "starts at" instead of "list",
+         and copying two keys silently dropped them. */
+      PACKAGE_PRICE[p.key] = p;
     });
     (r.data.packages || []).forEach(function (p) { PACKAGE_LABELS[p.key] = p.label; });
     fillSelect(document.getElementById('n-package'), PACKAGES);
@@ -911,7 +917,8 @@ LeadDetail.bindFeePrefill(
   document.getElementById('n-package'),
   [{ key: 'price', el: document.getElementById('n-build') },
    { key: 'monthly', el: document.getElementById('n-monthly') }],
-  PACKAGE_PRICE);
+  PACKAGE_PRICE,
+  document.getElementById('n-fee-hint'));
 document.getElementById('n-save').addEventListener('click', function () {
   var msg = document.getElementById('n-msg');
   var payload = {

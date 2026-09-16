@@ -355,9 +355,19 @@ The website tiers and their build prices live in **one** place:
 | `tier1` | Tier 1 — Home & Contact | $500 | $20 |
 | `tier2` | Tier 2 — Home, Gallery & Contact | $1,200 | $75 |
 | `tier3` | Tier 3 — Gallery + Scheduling | $1,800 | $150 |
-| `crm` | Custom CRM | scoped per business | scoped |
-| `platform` | Sales Platform | scoped per business | scoped |
+| `crm` | Custom CRM | from $2,000 | from $250 |
+| `platform` | Sales Platform | from $5,000 | from $350 |
 | `custom` | Custom | — | — |
+
+The last two carry `from: true`, which means the figure is a **floor, not a
+price**. Both are scoped per business. The CRM fills the box with 2000 either
+way, so without that flag the difference is invisible and someone quotes a
+custom CRM at exactly $2,000 — which is why the page prints *"Starts at —
+scope it"* beside those two and *"List:"* beside the website tiers.
+
+The Sales Platform includes **2 logins**; further logins are `perSeat` $50+
+per month each. That is on `pricing.html` as a feature (the count, not the
+price) because it shapes what a customer expects before they call.
 
 Every tier carries a retainer — hosting, patching and upkeep. That is load-
 bearing copy: `pricing.html` used to promise Tier 1 *"No monthly
