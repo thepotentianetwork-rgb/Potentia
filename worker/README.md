@@ -496,6 +496,33 @@ Set the key with `wrangler secret put NAME`, or in the dashboard under
 Settings → Variables and Secrets. `scheduled()` returns immediately if
 `GOOGLE_PLACES_API_KEY` is unset.
 
+### Categories
+
+Every category is seeded for every city whether or not it ships switched on,
+so turning one on is an `UPDATE`, not a reseed — a reseed would throw away
+which cities have already been searched.
+
+| Category | Ships | Offer |
+|---|---|---|
+| Subcontractors | on | Credibility Website |
+| General contractors | on | Credibility Website |
+| Handymen | off | $99 Website |
+| Auto detailers | off | $99 Website |
+| Car dealerships | off | Dealership CRM |
+
+The CRM's Lead Pipeline section has a chip per category; clicking one calls
+`POST /crm/leads/segments` with `{segment, enabled}`. There is no separate
+setting to keep in step — a category is on when its searches are on, and
+`lead_sources` is the only place that is recorded.
+
+A category toggle never switches on the home state (`HOME_STATE`, currently
+`UT`). Turning on "Auto detailers" should not start ringing the shop down the
+road.
+
+A new category is one entry in `SEGMENTS`: key, label, offer, default, and its
+search terms. Everything else — the seed grid, the key list, the CRM's toggles
+and filters — derives from it.
+
 ### Running it
 
 ```
