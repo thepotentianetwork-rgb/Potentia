@@ -33,6 +33,18 @@ main{max-width:1280px;margin:0 auto;padding:44px 40px 100px}
 h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:24px}
 
 /* headline numbers */
+/* Lead pipeline controls */
+.lp-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.lp-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;padding:12px 18px;cursor:pointer;background:none;border:1px solid var(--dim);color:var(--silver);transition:all 0.3s;flex:1 1 220px}
+.lp-btn:hover:not(:disabled){border-color:var(--silver);color:var(--bright)}
+.lp-live{border-color:rgba(200,120,60,0.5);color:#d89b6a}
+.lp-live:hover:not(:disabled){border-color:#d89b6a;color:#f0b884}
+.lp-btn:disabled{opacity:.45;cursor:progress}
+.lp-note{font-size:12px;color:var(--dim);line-height:1.6;margin-bottom:14px;max-width:640px}
+.lp-out{border:1px solid var(--dim);padding:14px 16px;font-size:13px;line-height:1.7;margin-bottom:40px}
+.lp-out b{color:var(--bright);font-family:'DM Mono',monospace}
+.lp-err{color:#d97a6a;font-size:12px;margin-top:8px;line-height:1.6;word-break:break-word}
+@media(max-width:600px){ .lp-btn{flex:1 1 100%} }
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:40px}
 .stat{background:var(--deep);padding:22px 24px}
 .stat .sl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
@@ -143,6 +155,23 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 </header>
 
 <main>
+  <!-- Lead pipeline trigger. A button rather than a curl command or a console
+       paste: this gets used from an iPad and a phone, where neither exists. -->
+  <section id="lp-section">
+    <p class="sec-label">Lead Pipeline</p>
+    <h2>Find new leads</h2>
+    <div class="lp-row">
+      <button class="lp-btn lp-dry" id="lp-dry">Dry run &mdash; find &amp; dedupe only</button>
+      <button class="lp-btn lp-live" id="lp-live">Real run &mdash; research &amp; score 5</button>
+    </div>
+    <p class="lp-note">
+      A dry run searches your configured cities and stages what it finds. It makes no AI
+      calls and costs a few cents. A real run researches and scores 5 of those, and adds
+      anything scoring 55+ to the list below.
+    </p>
+    <div class="lp-out" id="lp-out" hidden></div>
+  </section>
+
   <section>
     <p class="sec-label">Overview</p>
     <h2>Clients</h2>
@@ -213,6 +242,72 @@ function authFetch(path, options) {
     return res.json().then(function (data) { return { ok: res.ok, data: data }; });
   });
 }
+
+/* ── Lead pipeline ──────────────────────────────────────────────────────
+   A real run makes several slow AI calls, so it can sit there for a minute or
+   two. Both buttons are disabled while one is in flight — double-tapping would
+   start a second run that races the first for the same candidate rows. */
+(function () {
+  var dry = document.getElementById('lp-dry');
+  var live = document.getElementById('lp-live');
+  var out = document.getElementById('lp-out');
+  if (!dry || !live || !out) return;
+
+  function show(html) { out.hidden = false; out.innerHTML = html; }
+  function n(v) { return '<b>' + (v == null ? 0 : v) + '</b>'; }
+  /* This file has no shared escaper — everywhere else it sets textContent. The
+     counts below are numbers, but error strings come back from upstream APIs
+     and land in innerHTML, so they get escaped here. */
+  function esc(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function run(isDry) {
+    dry.disabled = true; live.disabled = true;
+    show(isDry
+      ? 'Searching&hellip; this takes a few seconds.'
+      : 'Researching and scoring&hellip; this can take a minute or two. Leave the page open.');
+
+    authFetch('/crm/leads/run-now?' + (isDry ? 'dry=1' : 'limit=5'), { method: 'POST' })
+      .then(function (r) {
+        if (!r.ok) {
+          show('<span class="lp-err">That run failed: ' +
+               esc((r.data && r.data.error) || 'unknown error') + '</span>');
+          return;
+        }
+        var d = r.data || {};
+        var html =
+          'Found ' + n(d.sourced) + ' businesses, ' + n(d.deduped) + ' already known.';
+        if (!d.dry_run) {
+          html += '<br>Researched ' + n(d.enriched) + ', scored ' + n(d.scored) +
+                  ' &rarr; ' + n(d.pushed) + ' added as leads, ' + n(d.rejected) + ' not worth a call.';
+          if (d.failed) html += '<br>' + n(d.failed) + ' could not be researched.';
+          html += '<br>Cost this run: <b>$' + Number(d.est_cost_usd || 0).toFixed(2) + '</b>';
+        } else {
+          html += '<br>Staged and ready. Nothing was researched and nothing was spent on AI.';
+        }
+        if (d.errors && d.errors.length) {
+          html += '<div class="lp-err">' + esc(d.errors.join(' | ')) + '</div>';
+        }
+        show(html);
+        // A real run may have added leads, so repaint the list underneath.
+        if (!d.dry_run && d.pushed) loadClients();
+      })
+      .catch(function (e) {
+        if (e && /Session expired/.test(e.message || '')) return;   // already redirecting
+        show('<span class="lp-err">Could not reach the server (' +
+             esc(e && e.message ? e.message : 'network error') + '). Nothing was charged.</span>');
+      })
+      .then(function () { dry.disabled = false; live.disabled = false; });
+  }
+
+  dry.addEventListener('click', function () { run(true); });
+  live.addEventListener('click', function () {
+    if (confirm('Research and score 5 new businesses? This spends a small amount on AI.')) run(false);
+  });
+})();
 
 document.getElementById('logout-btn').addEventListener('click', function () {
   localStorage.removeItem('potentia_crm_token');
