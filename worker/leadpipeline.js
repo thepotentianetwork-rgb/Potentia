@@ -717,6 +717,18 @@ export async function pageSpeed(env, url, fetchImpl) {
     res = await go(false);
   }
 
+  /* Keyless requests share one quota with everyone on the internet who has not
+     set a key, and it is usually spent. Worth trying as a fallback, not worth
+     reporting as though the project itself were out of quota — so if the
+     keyless attempt is the thing that hit the limit, say what the KEYED
+     attempt said, which is the failure there is something to do about. */
+  if (res.status === 429 && key) {
+    const body = await res.text().catch(() => "");
+    throw providerError("PageSpeed", 403,
+      "the API key is not allowed to call PageSpeed, and the keyless fallback is out of shared quota: " +
+      String(body).slice(0, 160));
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw providerError("PageSpeed", res.status, body);

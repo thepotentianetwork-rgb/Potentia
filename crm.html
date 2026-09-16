@@ -444,7 +444,17 @@ function authFetch(path, options) {
      nothing when it is something I have not seen before. */
   function readable(msg) {
     var m = String(msg || '');
-    if (/PageSpeed 403/.test(m) || /pagespeedonline/.test(m)) {
+    /* Two different PageSpeed failures that need two different answers, and
+       the quota one used to be reported as the restriction one — because it
+       mentions pagespeedonline too, and that was enough to match. */
+    if (/Quota exceeded|rateLimitExceeded|RESOURCE_EXHAUSTED/i.test(m)) {
+      return 'The speed test ran out of quota. Requests without an API key share ' +
+             'one pool with the whole internet and it is usually empty, so the fix ' +
+             'is the same: in Google Cloud \u2192 APIs & Services \u2192 Credentials, ' +
+             'open your key and add "PageSpeed Insights API" to its API restrictions. ' +
+             'That gives you your own quota. Leads with no website are unaffected.';
+    }
+    if (/PageSpeed 40[13]/.test(m) || /pagespeedonline/.test(m)) {
       return 'Google is refusing the speed test for this API key. In Google Cloud ' +
              '\u2192 APIs & Services \u2192 Credentials, open the key and add ' +
              '"PageSpeed Insights API" to its API restrictions, alongside Places. ' +
