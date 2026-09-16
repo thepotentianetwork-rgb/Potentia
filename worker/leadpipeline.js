@@ -33,7 +33,7 @@ export const LEAD_SEGMENTS = ["subcontractor", "general", "handyman", "dealer"];
 // owns those at top level, and the bundler flattens both modules into one
 // file where a duplicate const is a hard SyntaxError.
 export const LEAD_COST = {
-  placesSearchUsd: 0.035,     // per Text Search call (~20 results) — CALIBRATE
+  placesSearchUsd: 0.035,     // Text Search Enterprise, $35/1000 — VERIFIED
   grokEnrichUsd: 0.05,        // per candidate, incl. web_search — CALIBRATE
   claudeScoreUsd: 0.01        // per candidate — from published token rates
 };
@@ -64,7 +64,7 @@ export async function ensureLeadPipelineTables(env) {
       source_id INTEGER, status TEXT NOT NULL DEFAULT 'new',
       attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT,
       places_json TEXT, places_fetched_at TEXT, enrichment_json TEXT,
-      score INTEGER, best_offer INTEGER, reason TEXT, opener TEXT,
+      promise INTEGER, score INTEGER, best_offer INTEGER, reason TEXT, opener TEXT,
       crm_client_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`
   ).run();
   await db.prepare(
@@ -81,6 +81,14 @@ export async function ensureLeadPipelineTables(env) {
   /* D1 has no "ADD COLUMN IF NOT EXISTS", and a duplicate ADD throws. Read the
      table first and add only what is missing — the same lazy-migration shape
      the rest of this Worker uses. */
+
+  // `promise` arrived after the first candidates were staged, so it has to be
+  // added to an existing table as well as declared in CREATE TABLE above.
+  const candCols = await db.prepare("PRAGMA table_info(lead_candidates)").all();
+  if ((candCols.results || []).map((r) => r.name).indexOf("promise") === -1) {
+    await db.prepare("ALTER TABLE lead_candidates ADD COLUMN promise INTEGER").run();
+  }
+
   const have = await db.prepare("PRAGMA table_info(clients)").all();
   const cols = (have.results || []).map((r) => r.name);
   const wanted = [
@@ -127,6 +135,14 @@ export function registrableDomain(url) {
 /* Places API (New) Text Search. The field mask is deliberately short: it sets
    the billing tier, and every field we ask for is one we would then have to
    delete at judgement time anyway. */
+/* places.photos is a Pro-tier field and rating/userRatingCount/websiteUri/
+   nationalPhoneNumber are Enterprise-tier, so this mask bills at Enterprise
+   either way — the photo list rides along for nothing. We only ever COUNT the
+   references; fetching an actual photo is a separate SKU we never call.
+
+   Photo count is one of the better tells in this whole pipeline. A working
+   trade business with four photos on its listing is not managing its online
+   presence; one with sixty has someone who is. */
 const PLACES_FIELDS = [
   "places.id",
   "places.displayName",
@@ -135,6 +151,7 @@ const PLACES_FIELDS = [
   "places.websiteUri",
   "places.rating",
   "places.userRatingCount",
+  "places.photos",
   "places.businessStatus"
 ].join(",");
 
@@ -162,6 +179,7 @@ export async function placesTextSearch(env, query, signal) {
     website: p.websiteUri || "",
     rating: p.rating == null ? null : Number(p.rating),
     review_count: p.userRatingCount == null ? null : Number(p.userRatingCount),
+    photo_count: Array.isArray(p.photos) ? p.photos.length : 0,
     status: p.businessStatus || ""
   }));
 }
@@ -203,6 +221,51 @@ export async function findExisting(env, cand) {
   if (seen) return { where: "lead_candidates", on: "place_id", row: seen };
 
   return null;
+}
+
+/* ── CHEAP TRIAGE, BEFORE ANY MONEY IS SPENT ────────────────────────────────
+   Places gives us review count, photo count and whether a website exists for
+   the price of the search we already paid for. Research costs ~$0.06 a head,
+   so spending it on a business that visibly cannot fit the profile is waste —
+   and worse, it fills the caller's list with near-misses.
+
+   Two jobs here. reject() throws out the clearly-hopeless for free. promise()
+   ranks what is left, so the five we DO pay to research each run are the five
+   that look most like the profile, rather than whichever happened to be
+   sourced first.
+
+   Both read only free fields. Nothing here is a final verdict — the scorer
+   still decides, having actually read the business. */
+export function placesReject(p) {
+  const rc = p.review_count;
+  if (rc == null || rc < 5) {
+    return "only " + (rc == null ? "no" : rc) + " reviews — no evidence of real trading";
+  }
+  if (rc > 150) {
+    return rc + " reviews — too established to buy a cheap site";
+  }
+  return null;
+}
+
+export function placesPromise(p) {
+  let score = 0;
+  const rc = Number(p.review_count || 0);
+
+  // A real, working business, not a giant one. 8-80 is the sweet spot.
+  if (rc >= 8 && rc <= 80) score += 40;
+  else if (rc > 80 && rc <= 150) score += 15;
+  else score += 5;
+
+  // No website at all is the strongest free signal we get.
+  if (!p.website) score += 35;
+
+  // Few photos means nobody is tending the listing.
+  const ph = Number(p.photo_count || 0);
+  if (ph <= 5) score += 25;
+  else if (ph <= 15) score += 12;
+  else if (ph >= 40) score -= 10;
+
+  return Math.max(0, Math.min(100, score));
 }
 
 // ── the search grid ───────────────────────────────────────────────────────
@@ -314,11 +377,29 @@ export async function sourceCandidates(env, counts, opts) {
       counts.sourced++;
       const existing = await findExisting(env, p);
       if (existing) { counts.deduped++; continue; }
+
+      /* Free triage, before a single paid call. A hopeless candidate is still
+         written down — as a tombstone carrying place_id, the verdict and the
+         reason, and none of the Places content — so the next run that meets
+         this business again dedupes it away instead of paying to look at it
+         a second time. */
+      const veto = placesReject(p);
+      if (veto) {
+        await db.prepare(
+          `INSERT INTO lead_candidates
+             (place_id, segment, offer_hint, source_id, status, promise, score, reason, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'rejected', 0, 0, ?, ?, ?)`
+        ).bind(p.place_id, s.segment, s.offer_hint, s.id, veto.slice(0, 300), now, now).run();
+        counts.rejected++;
+        continue;
+      }
+
       await db.prepare(
         `INSERT INTO lead_candidates
-           (place_id, segment, offer_hint, source_id, status, places_json, places_fetched_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?)`
-      ).bind(p.place_id, s.segment, s.offer_hint, s.id, JSON.stringify(p), now, now, now).run();
+           (place_id, segment, offer_hint, source_id, status, promise, places_json, places_fetched_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?)`
+      ).bind(p.place_id, s.segment, s.offer_hint, s.id, placesPromise(p),
+             JSON.stringify(p), now, now, now).run();
     }
   }
 }
@@ -359,7 +440,14 @@ const TRADE_PROPS = {
      have. Null where none of that is establishable. */
   establishment: { type: ["string", "null"],
                    enum: ["just_starting", "small", "growing", "established", null] },
-  establishment_evidence: { type: ["string", "null"] }
+  establishment_evidence: { type: ["string", "null"] },
+  /* "No website OR one that is clearly old" is the buying trigger, so how
+     dated the existing site looks matters as much as whether one exists. A
+     copyright year several years stale, a Flash-era or early-responsive
+     layout, a phone number in an image, a blog that stops in 2019 — these are
+     things search results actually show, unlike a mobile-friendliness verdict. */
+  site_looks_dated: { type: ["boolean", "null"] },
+  site_dated_evidence: { type: ["string", "null"] }
 };
 
 const DEALER_PROPS = {
@@ -405,6 +493,9 @@ function enrichPrompt(segment, p) {
     `Facebook page, or no web presence at all; whether the site is http-only (no padlock); ` +
     `whether they show a license or proof of insurance anywhere; and whether they take ` +
     `subcontract work for general contractors.\n\n` +
+    `If they do have a site, judge whether it looks OLD and say what gave it away — a ` +
+    `stale copyright year, a dated layout, contact details only in an image, content or ` +
+    `a blog that stops years ago. Null if there is no site or you cannot tell.\n\n` +
     `Also judge HOW ESTABLISHED they are, and say what you based it on. Look for review ` +
     `volume, how long they have been trading, crew or fleet size, more than one location, ` +
     `and how polished whatever they already have looks. A one-person outfit with 6 reviews ` +
@@ -498,6 +589,26 @@ discount a dealer because a handyman has a worse website. 100 means the pain is
 obvious and the offer lands squarely. Below 55 means do not spend a call on it.
 A business with a good, current website scores low: there is nothing to sell them.
 
+THE PROFILE WE ARE ACTUALLY LOOKING FOR — a real, working business that has
+never invested in being found online:
+
+  Reviews: a decent number, nothing huge. Enough to prove they have real,
+  paying customers — roughly 8 to 80 is the sweet spot. Under about 5 may be a
+  dead or barely-trading listing and is worth little; over about 150 is a big
+  operation that already has an agency and will not take the call.
+
+  Web presence: none at all, or a site that is clearly old. "Clearly old" is as
+  good a signal as "none" — arguably better, because they have already shown
+  they will pay for a website; theirs has just aged out.
+
+  Google photos: FEW is good. A working trade business with a handful of photos
+  on its listing is one that nobody is managing. Thirty or more means somebody
+  already tends their presence, and the pitch lands badly.
+
+Score that profile high. A business missing one leg of it — plenty of reviews
+but a slick current site, or no site but two reviews and no evidence of trading
+— is a weaker lead, not an equal one.
+
 HOW ESTABLISHED THEY ARE IS A HARD GATE, not a tiebreaker. A big, settled firm
 does not buy a cheap website no matter how ordinary its current one is, and
 calling one wastes the call and looks amateur:
@@ -517,6 +628,7 @@ something specific and verifiable about this business. No "Hi, I hope you're
 doing well", no invented facts, no claims about their site you were not told.
 
 BUSINESS: ${places.name} — ${places.address}
+GOOGLE LISTING: ${places.review_count == null ? "reviews unknown" : places.review_count + " reviews"}${places.rating ? " at " + places.rating : ""}, ${places.photo_count == null ? "photo count unknown" : places.photo_count + " photos"}
 RESEARCH: ${JSON.stringify(enrichment)}`;
 }
 
@@ -676,7 +788,7 @@ export async function runLeadPipeline(env, opts) {
       const batch = await db.prepare(
         `SELECT * FROM lead_candidates
           WHERE status IN ('new','enriched') AND attempts < ?
-          ORDER BY id ASC LIMIT ?`
+          ORDER BY COALESCE(promise, -1) DESC, id ASC LIMIT ?`
       ).bind(LEAD_DEFAULTS.maxAttempts, perRun).all();
 
       for (const cand of batch.results || []) {

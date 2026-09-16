@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS lead_candidates (
   enrichment_json TEXT,
 
   -- Kept: our own derived numbers, not Places content.
+  -- promise is the free pre-screen (0-100) from the Places row alone. It
+  -- decides WHICH candidates a run pays to research; score is the verdict
+  -- afterwards.
+  promise INTEGER,
   score INTEGER,
   best_offer INTEGER,
   reason TEXT,

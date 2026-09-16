@@ -12,7 +12,7 @@ import {
   normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
   pushLeadToCrm, stripCandidate, spentToday, withRetry, parseClaudeJson,
   parseGrokJson, enrichmentSchemaFor, defaultSources, seedLeadSources,
-  offerName, LEAD_DEFAULTS, scorePrompt
+  offerName, LEAD_DEFAULTS, scorePrompt, placesReject, placesPromise
 } from './leadpipeline.js';
 
 function makeD1(db) {
@@ -280,6 +280,33 @@ test('the scoring prompt gates on establishment, hardest for general contractors
   assert.match(prompt, /do not guess/, 'null establishment must not be invented');
 });
 
+test('the free triage vetoes the dead and the too-big, and nothing between', () => {
+  // Under 5 reviews: no evidence the business actually trades.
+  assert.match(placesReject({ review_count: 2 }), /reviews/);
+  assert.match(placesReject({ review_count: null }), /no reviews/);
+  // Over 150: they can afford an agency and are not buying a cheap site.
+  assert.match(placesReject({ review_count: 400 }), /too established/);
+  // The whole band in between is somebody's problem to research, not to veto.
+  assert.equal(placesReject({ review_count: 5 }), null);
+  assert.equal(placesReject({ review_count: 150 }), null);
+});
+
+test('promise ranks the profile: mid reviews, no site, few photos', () => {
+  const ideal = placesPromise({ review_count: 24, website: '', photo_count: 3 });
+  const hasSite = placesPromise({ review_count: 24, website: 'x.com', photo_count: 3 });
+  const tended = placesPromise({ review_count: 24, website: '', photo_count: 50 });
+  const big = placesPromise({ review_count: 140, website: '', photo_count: 3 });
+
+  assert.equal(ideal, 100);
+  assert.ok(hasSite < ideal, 'an existing site is the weakest lead of the four');
+  assert.ok(tended < ideal, 'a listing somebody tends is a worse lead');
+  assert.ok(big < ideal, 'near the review ceiling is a worse lead');
+  // Always a usable ORDER BY key.
+  for (const v of [ideal, hasSite, tended, big]) {
+    assert.ok(v >= 0 && v <= 100 && Number.isFinite(v));
+  }
+});
+
 test('seeding is idempotent — a second call adds nothing', async () => {
   const { env, db } = await freshEnv();
   const first = await seedLeadSources(env);
@@ -437,4 +464,77 @@ test('a reseed replaces the grid; without force it leaves it alone', async () =>
   assert.equal(utOn(), 0, 'reseed returns every row to what the code ships');
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM lead_sources").get().c), first,
     'replaced, not appended — a reseed must not double the grid');
+});
+
+/* PLACE(n) is the middle of the band on purpose, so the triage passes it.
+   These two build the edges. */
+const DEAD = n => Object.assign(PLACE(n), { userRatingCount: 1 });
+const HUGE = n => Object.assign(PLACE(n), { userRatingCount: 900 });
+const TENDED = n => Object.assign(PLACE(n), {
+  websiteUri: 'https://biz' + n + '.com',
+  photos: new Array(60).fill({ name: 'p' })
+});
+
+test('hopeless candidates are vetoed at sourcing, before any paid call', async () => {
+  const { env, db } = await seededEnv();
+  const calls = stubFetch({
+    places: () => ok({ places: [DEAD(1), HUGE(2), PLACE(3)] }),
+    xai: () => { throw new Error('a vetoed candidate must never reach xAI'); },
+    anthropic: () => { throw new Error('a vetoed candidate must never reach Anthropic'); }
+  });
+  const out = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(out.sourced, 3);
+  assert.equal(out.rejected, 2, 'the dead one and the huge one are vetoed for free');
+  assert.equal(calls.xai + calls.anthropic, 0);
+
+  const staged = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates WHERE status='new'").get();
+  assert.equal(Number(staged.c), 1, 'only the one worth researching is staged');
+
+  /* The tombstone keeps place_id and the reason and no Places content — that
+     is what stops us paying to look at this business a second time. */
+  const tomb = db.prepare("SELECT * FROM lead_candidates WHERE place_id='P1'").get();
+  assert.equal(tomb.status, 'rejected');
+  assert.equal(tomb.places_json, null);
+  assert.match(tomb.reason, /reviews/);
+});
+
+test('a vetoed business is not re-sourced on the next run', async () => {
+  const { env, db } = await seededEnv();
+  stubFetch({ places: () => ok({ places: [DEAD(1)] }), xai: () => { throw new Error('no'); },
+              anthropic: () => { throw new Error('no'); } });
+  await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  const second = await runLeadPipeline(env, { trigger: 'manual', dryRun: true });
+  assert.equal(second.rejected, 0, 'the second sighting dedupes, it does not re-veto');
+  assert.equal(second.deduped, 1);
+  const n = db.prepare("SELECT COUNT(*) AS c FROM lead_candidates").get();
+  assert.equal(Number(n.c), 1);
+});
+
+test('the run spends its budget on the most promising candidates first', async () => {
+  const { env, db } = await seededEnv();
+  /* TENDED(1) is sourced first and is the weaker lead: it has a website and a
+     tended listing. PLACE(2) has neither. With one slot in the run, the money
+     must go to PLACE(2) even though it was staged second. */
+  const seen = [];
+  stubFetch({
+    places: () => ok({ places: [TENDED(1), PLACE(2)] }),
+    xai: (body) => {
+      seen.push(JSON.stringify(body).includes('Biz 2') ? 'P2' : 'P1');
+      return ok({ output_text: JSON.stringify({
+        has_website: false, website_quality: 'none', mobile_friendly: null,
+        google_rating: 4.5, review_count: 10, notes: 'n', source_urls: [],
+        contact_phone: null, contact_website: null, web_presence: 'none'
+      }) });
+    },
+    anthropic: () => ok({ content: [{ type: 'text', text: JSON.stringify({
+      score: 10, best_offer: 1, reason: 'r', opener: 'o'
+    }) }] })
+  });
+
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 1 });
+  assert.equal(out.enriched, 1, 'exactly one candidate was paid for');
+  assert.deepEqual(seen, ['P2'], 'the money went to the better lead, not the older row');
+
+  const left = db.prepare("SELECT place_id FROM lead_candidates WHERE status='new'").all();
+  assert.deepEqual(left.map(r => r.place_id), ['P1'], 'the weaker one waits for the next run');
 });
