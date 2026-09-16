@@ -1252,3 +1252,24 @@ test('every search the grid can run has a sub-category name', () => {
   assert.ok(subs.has('Roofing') && subs.has('Plumbing') && subs.has('Handyman'));
   assert.equal(subs.size < hs.queries.length, true, 'and near-duplicates collapse');
 });
+
+test('a keyless fallback that is out of shared quota still names the key', async () => {
+  /* Anonymous PageSpeed requests share one quota with the whole internet and it
+     is usually spent, so the keyless retry mostly comes back 429. Reporting
+     that verbatim sends you looking at your own project's quota, which is
+     fine — the thing to fix is the key restriction that caused the 403. */
+  const reply = async (u) => new Response(
+    String(u).includes('key=')
+      ? JSON.stringify({ error: { code: 403, message: 'Requests to this API pagespeedonline method ... are blocked.' } })
+      : JSON.stringify({ error: { code: 429, message: "Quota exceeded for quota metric 'Queries'" } }),
+    { status: String(u).includes('key=') ? 403 : 429 });
+
+  await assert.rejects(
+    () => pageSpeed({ GOOGLE_PLACES_API_KEY: 'restricted' }, 'https://x.example', reply),
+    (e) => {
+      assert.match(e.message, /not allowed to call PageSpeed/);
+      assert.match(e.message, /shared quota/);
+      assert.equal(e.accountFailure, true, 'still stops the run rather than asking 20 times');
+      return true;
+    });
+});
