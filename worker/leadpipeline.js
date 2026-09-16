@@ -131,6 +131,23 @@ export async function ensureLeadPipelineTables(env) {
       await db.prepare(`ALTER TABLE clients ADD COLUMN ${name} ${decl}`).run();
     }
   }
+
+  /* Subcontractors and general contractors used to be two categories. Renaming
+     them in place keeps every row's last_run_at and enabled flag, which a
+     rebuild would throw away — and rebuilds are the thing that loses track of
+     which cities have already been searched. Idempotent: once nothing matches
+     it does nothing.
+
+     Runs last on purpose: it writes clients.lead_segment, which only exists
+     after the loop above has added it. */
+  for (const [table, col] of [["lead_sources", "segment"],
+                              ["lead_candidates", "segment"],
+                              ["clients", "lead_segment"]]) {
+    await db.prepare(
+      `UPDATE ${table} SET ${col} = 'home_service'
+        WHERE ${col} IN ('subcontractor', 'general')`
+    ).run();
+  }
 }
 
 // ── dedupe helpers ────────────────────────────────────────────────────────
@@ -326,21 +343,23 @@ export function placesPromise(p) {
    worked is whatever lead_sources says, and that is what the CRM toggles. */
 export const SEGMENTS = [
   {
-    key: "subcontractor", label: "Subcontractors", offer: 2, on: true,
+    /* Everyone who turns up at a house in a van. Specialty trades who sub to
+       general contractors, and the small GCs who hire them — one category
+       because they are the same sales conversation: looking legitimate to
+       whoever is deciding who gets the job.
+
+       Established general contractors are not the target and never were, but
+       nothing here has to know that: the review ceiling in placesReject sends
+       anyone big enough to have an agency straight out. */
+    key: "home_service", label: "Home Services", offer: 2, on: true,
     queries: [
       "concrete contractor", "framing contractor", "drywall contractor",
       "electrician", "plumber", "HVAC contractor", "roofing contractor",
       "painting contractor", "flooring installer", "fencing contractor",
       "excavation contractor", "siding contractor", "masonry contractor",
-      "stucco contractor", "insulation contractor", "gutter installer"
+      "stucco contractor", "insulation contractor", "gutter installer",
+      "general contractor", "home builder", "remodeling contractor"
     ]
-  },
-  {
-    /* A different animal: an established GC has a real site, a real crew and
-       no interest in a $99 anything. Searched anyway, because the small and
-       new ones are exactly the target — the review ceiling does the filtering. */
-    key: "general", label: "General contractors", offer: 2, on: true,
-    queries: ["general contractor", "home builder", "remodeling contractor"]
   },
   {
     key: "handyman", label: "Handymen", offer: 1, on: false,
