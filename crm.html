@@ -131,6 +131,9 @@ select.status-sel:focus{border-color:var(--silver)}
 tr.is-lead{background:linear-gradient(90deg,rgba(216,161,95,0.09),rgba(216,161,95,0.01) 55%)}
 tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 .name-area{color:var(--silver)}
+.why-badge{display:inline-flex;align-self:flex-start;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid;margin-top:5px}
+.why-bad{color:#e0725f;border-color:rgba(224,114,95,0.45);background:rgba(224,114,95,0.1)}
+.why-mid{color:#d8a15f;border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
 .lead-detail{display:flex;flex-direction:column;gap:5px;margin-top:9px;padding-left:10px;border-left:1px solid rgba(216,161,95,0.3)}
 .lead-detail .ld-line{font-size:13px;color:var(--silver);line-height:1.5}
 .lead-detail .ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:7px}
@@ -731,6 +734,33 @@ function matches(c) {
   return hay.indexOf(searchTerm) !== -1;
 }
 
+/* The headline reason, short enough to sit under the business name. The full
+   sentence is still in the detail block; this is the version you can read at
+   a glance down a list of thirty.
+
+   Derived from the stored evidence rather than parsed back out of the reason
+   text, so it cannot drift from what the pipeline actually decided. */
+function whyBadge(c) {
+  if (c.lead_speed != null) {
+    var n = Number(c.lead_speed);
+    if (Number(c.lead_mobile_ready) === 0) {
+      return { tone: 'bad', text: n + '/100 · not built for phones' };
+    }
+    return { tone: n < 50 ? 'bad' : 'mid', text: n + '/100 on mobile' };
+  }
+  if (Number(c.lead_mobile_ready) === 0) return { tone: 'bad', text: 'Not built for phones' };
+  if (!c.website_url) return { tone: 'bad', text: 'No website' };
+
+  /* A site we never scored: either it is one of the pages that never needed a
+     speed test, or Google could not load it. The reason line says which. */
+  var r = String(c.lead_reason || '');
+  if (/business\.site/.test(r)) return { tone: 'bad', text: 'Dead Google site' };
+  if (/just a ([a-z.]+) page/.test(r)) return { tone: 'bad', text: r.match(/just a ([a-z.]+) page/)[1] + ' only' };
+  if (/plain http/.test(r)) return { tone: 'bad', text: 'No https' };
+  if (/cannot load/.test(r)) return { tone: 'bad', text: 'Site will not load' };
+  return null;
+}
+
 /* Everything the pipeline found out about a business, for someone about to
    ring it. Built with DOM nodes rather than innerHTML because every value
    here came off the open internet.
@@ -812,12 +842,7 @@ function leadDetail(c) {
       'Open their listing'));
   }
 
-  if (c.lead_reason) {
-    var why = document.createElement('div');
-    why.className = 'ld-line ld-why';
-    why.textContent = c.lead_reason;
-    box.appendChild(why);
-  }
+  if (c.lead_reason) line('Why', text(c.lead_reason, 'ld-why'));
   return box;
 }
 
@@ -894,6 +919,18 @@ function render() {
       sub.className = 'name-sub';
       sub.textContent = c.contact_name;
       wrap.appendChild(sub);
+    }
+    /* The one-line reason it is a lead, right under the name. It used to live
+       only in the detail block underneath, which meant seeing a lead WITH a
+       website and having no idea what was wrong with it. */
+    if (Number(c.created_by_pipeline) === 1) {
+      var why = whyBadge(c);
+      if (why) {
+        var wb = document.createElement('span');
+        wb.className = 'why-badge why-' + why.tone;
+        wb.textContent = why.text;
+        wrap.appendChild(wb);
+      }
     }
     /* The town, right under the name, because that is what you scan by when
        you are deciding which five to ring this morning. Leads found before

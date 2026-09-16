@@ -1102,3 +1102,45 @@ test('a rebuilt grid replaces the old one wholesale', async () => {
   const on = (await listSegments(env)).find(s => s.key === 'handyman');
   assert.ok(on.searches > 200, 'and switching it on offers the whole region, not 42 searches');
 });
+
+test('a run only checks the categories that are switched on', async () => {
+  const { env, db } = await freshEnv();
+  Object.assign(env, { GOOGLE_PLACES_API_KEY: 'k' });
+  await seedLeadSources(env);
+  const now = new Date().toISOString();
+
+  /* A backlog staged by earlier runs, from categories that are now off. The
+     complaint this fixes: switch everything to Auto detailers, press run, and
+     get roofers — because the toggles governed sourcing only. */
+  const stage = (id, segment, trade) => db.prepare(
+    `INSERT INTO lead_candidates (place_id, segment, trade, offer_hint, status, places_json, promise, created_at, updated_at)
+     VALUES (?, ?, ?, 1, 'new', ?, 90, ?, ?)`
+  ).run(id, segment, trade,
+        JSON.stringify({ place_id: id, name: trade + ' Co', website: '', review_count: 20 }), now, now);
+
+  stage('S1', 'subcontractor', 'roofing contractor');
+  stage('H1', 'handyman', 'handyman');
+  stage('D1', 'detailer', 'mobile detailing');
+  stage('D2', 'detailer', 'ceramic coating');
+
+  for (const k of LEAD_SEGMENTS) await setSegmentEnabled(env, k, k === 'detailer');
+
+  stubFetch({ places: () => ok({ places: [] }), pagespeed: PS(10) });
+  const out = await runLeadPipeline(env, { trigger: 'manual', limit: 10 });
+
+  assert.equal(out.pushed, 2, 'both detailers');
+  const names = db.prepare("SELECT business_name FROM clients WHERE created_by_pipeline = 1 ORDER BY business_name").all();
+  assert.deepEqual(names.map(r => r.business_name),
+    ['ceramic coating Co', 'mobile detailing Co']);
+
+  // Parked, not discarded — switching the category back on picks them up.
+  for (const id of ['S1', 'H1']) {
+    const row = db.prepare("SELECT status, attempts FROM lead_candidates WHERE place_id=?").get(id);
+    assert.equal(row.status, 'new', id + ' is waiting, not judged');
+    assert.equal(Number(row.attempts), 0);
+  }
+
+  await setSegmentEnabled(env, 'subcontractor', true);
+  const after = await runLeadPipeline(env, { trigger: 'manual', limit: 10 });
+  assert.equal(after.pushed, 1, 'the roofer lands once its category is back on');
+});
