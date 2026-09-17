@@ -84,6 +84,12 @@ select:focus{border-color:var(--sp-blue)}
 .adj-kind.adj-comp{color:#5fd08a;border:1px solid rgba(95,208,138,0.45);background:rgba(95,208,138,0.12)}
 .adj-kind.adj-percent{color:var(--sp-blue);border:1px solid rgba(44,192,253,0.45);background:rgba(44,192,253,0.1)}
 .adj-kind.adj-amount{color:var(--sp-orange);border:1px solid rgba(246,148,31,0.45);background:rgba(246,148,31,0.1)}
+/* Direction beats kind on the chip. Whether a line ADDS to the price is the
+   thing you need to see at a glance; whether it was a percent or a flat
+   amount is the detail. Declared after the kind colours so it wins. */
+.adj-kind.adj-up{color:#f6941f;border:1px solid rgba(246,148,31,0.55);background:rgba(246,148,31,0.16)}
+.adj-kind.adj-down{color:#5fd08a;border:1px solid rgba(95,208,138,0.45);background:rgba(95,208,138,0.12)}
+.adj-dir-hint{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);line-height:1.6;margin-top:8px;flex-basis:100%}
 .adj-text{font-size:15px;color:var(--bright)}
 .adj-form button{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--black);background:var(--sp-blue);padding:7px 12px;border:none;text-transform:uppercase;cursor:pointer;font-weight:700}
 .adj-form button:hover{background:#5ad0ff}
@@ -765,9 +771,12 @@ function renderAdjustBlock(card, s, details) {
     list.forEach(function (a, i) {
       var row = document.createElement('div');
       row.className = 'adj-item';
+      var up = a.kind !== 'comp' && Number(a.value) > 0;
       var kind = document.createElement('span');
-      kind.className = 'adj-kind adj-' + a.kind;
-      kind.textContent = a.kind === 'comp' ? 'Free' : (a.kind === 'percent' ? '%' : '$');
+      kind.className = 'adj-kind adj-' + a.kind + (a.kind === 'comp' ? '' : (up ? ' adj-up' : ' adj-down'));
+      kind.textContent = a.kind === 'comp'
+        ? 'Free'
+        : (up ? '+' : '\u2212') + (a.kind === 'percent' ? '%' : '$');
       var text = document.createElement('span');
       text.className = 'adj-text';
       text.textContent = adjLabelFor(a, compPrices);
@@ -806,7 +815,7 @@ function renderAdjustBlock(card, s, details) {
   form.className = 'adj-form';
 
   var kindSel = document.createElement('select');
-  [['comp', 'Include free'], ['percent', 'Percent off'], ['amount', 'Amount off']].forEach(function (k) {
+  [['comp', 'Include free'], ['percent', 'Percent'], ['amount', 'Amount']].forEach(function (k) {
     var o = document.createElement('option');
     o.value = k[0];
     o.textContent = k[1];
@@ -831,6 +840,17 @@ function renderAdjustBlock(card, s, details) {
     itemSel.disabled = true;
   }
 
+  /* Direction is its own control rather than a minus sign someone has to
+     remember to type. The value is always entered positive; this decides
+     which way it goes. */
+  var dirSel = document.createElement('select');
+  [['down', 'Off  \u2212'], ['up', 'On top  +']].forEach(function (d) {
+    var o = document.createElement('option');
+    o.value = d[0];
+    o.textContent = d[1];
+    dirSel.appendChild(o);
+  });
+
   var valIn = document.createElement('input');
   valIn.className = 'adj-amt';
   valIn.type = 'number';
@@ -842,14 +862,28 @@ function renderAdjustBlock(card, s, details) {
   noteIn.type = 'text';
   noteIn.placeholder = 'Reason shown on the quote';
 
+  var hint = document.createElement('p');
+  hint.className = 'adj-dir-hint';
+
   function syncKind() {
-    var k = kindSel.value;
-    itemSel.style.display = (k === 'comp') ? '' : 'none';
-    valIn.style.display = (k === 'comp') ? 'none' : '';
-    noteIn.style.display = (k === 'comp') ? 'none' : '';
+    var k = kindSel.value, isComp = (k === 'comp');
+    itemSel.style.display = isComp ? '' : 'none';
+    dirSel.style.display = isComp ? 'none' : '';
+    valIn.style.display = isComp ? 'none' : '';
+    noteIn.style.display = isComp ? 'none' : '';
     valIn.placeholder = (k === 'percent') ? '10' : '500';
+    /* A price going UP reaches the customer as a line on their quote. Saying
+       why is not optional, so the note is required in that direction only. */
+    noteIn.placeholder = dirSel.value === 'up'
+      ? 'Reason shown on the quote (required)'
+      : 'Reason shown on the quote';
+    hint.textContent = isComp ? ''
+      : (dirSel.value === 'up'
+          ? 'Raises the price. The customer sees this line and your reason for it.'
+          : 'Lowers the price.');
   }
   kindSel.addEventListener('change', syncKind);
+  dirSel.addEventListener('change', syncKind);
 
   var btn = document.createElement('button');
   btn.type = 'submit';
@@ -869,19 +903,27 @@ function renderAdjustBlock(card, s, details) {
     } else {
       var v = Number(valIn.value);
       if (!valIn.value || !isFinite(v) || v === 0) { alert('Enter an amount.'); return; }
-      // Typed as a positive number and applied as a reduction: "10% off" is
-      // what gets said out loud, and making them type -10 invites the sign
-      // going the wrong way on a live quote.
-      entry = { kind: k, value: -Math.abs(v), note: noteIn.value };
+      var up = dirSel.value === 'up';
+      /* Always typed positive; the direction control decides the sign. The
+         old form forced every entry negative, which is why a price could only
+         ever come down. */
+      if (up && !noteIn.value.trim()) {
+        alert('Say why the price is going up — the customer sees this line on their quote.');
+        noteIn.focus();
+        return;
+      }
+      entry = { kind: k, value: up ? Math.abs(v) : -Math.abs(v), note: noteIn.value };
     }
     saveAdjustments(s.id, list.concat([entry]));
   });
 
   form.appendChild(kindSel);
   form.appendChild(itemSel);
+  form.appendChild(dirSel);
   form.appendChild(valIn);
   form.appendChild(noteIn);
   form.appendChild(btn);
+  form.appendChild(hint);
   block.appendChild(form);
   syncKind();
   card.appendChild(block);
