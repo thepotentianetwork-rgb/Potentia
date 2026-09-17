@@ -17,7 +17,6 @@
 html{scroll-behavior:smooth}
 body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;overflow-x:hidden}
 
-/* ---- site nav, matching the marketing pages ---- */
 nav{position:sticky;top:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:20px 40px;background:rgba(4,4,7,0.97);border-bottom:1px solid var(--dim)}
 .nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
 .nav-logo img{width:30px;height:30px;object-fit:contain}
@@ -27,38 +26,36 @@ nav{position:sticky;top:0;z-index:1000;display:flex;align-items:center;justify-c
 .nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--chrome);padding:10px 20px;text-decoration:none;text-transform:uppercase}
 @media(max-width:860px){ .nav-links{display:none} nav{padding:16px 20px} }
 
-/* ---- the banner that must never be missable ---- */
 .sample-bar{background:rgba(216,161,95,0.12);border-bottom:1px solid rgba(216,161,95,0.45);padding:12px 40px;text-align:center}
 .sample-bar p{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.14em;color:var(--warm);text-transform:uppercase}
 .sample-bar span{color:#f0c48a}
 @media(max-width:860px){ .sample-bar{padding:10px 20px} .sample-bar p{letter-spacing:0.08em;line-height:1.6} }
 
-main{max-width:1280px;margin:0 auto;padding:56px 40px 110px}
-.intro{max-width:720px;margin-bottom:64px}
-.intro .sec-label{margin-bottom:20px}
-.intro h1{font-size:clamp(34px,5vw,58px);font-weight:300;color:var(--bright);line-height:1.08;letter-spacing:-0.01em;margin-bottom:22px}
+main{max-width:1180px;margin:0 auto;padding:56px 40px 90px}
+.intro{max-width:700px;margin-bottom:46px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+.intro .sec-label{margin-bottom:18px}
+.intro h1{font-size:clamp(32px,4.6vw,52px);font-weight:300;color:var(--bright);line-height:1.1;letter-spacing:-0.01em;margin-bottom:20px}
 .intro h1 em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
-.intro p{font-size:17px;font-weight:300;color:var(--silver);line-height:1.8;margin-bottom:16px}
+.intro p{font-size:17px;font-weight:300;color:var(--silver);line-height:1.8}
 .intro strong{color:var(--chrome);font-weight:400}
 
-.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
-.screen{border:1px solid var(--dim);background:var(--deep);margin-bottom:64px}
-.screen-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:16px 24px;border-bottom:1px solid var(--dim);background:rgba(255,255,255,0.02)}
+.screen{border:1px solid var(--dim);background:var(--deep);margin-bottom:44px}
+.screen-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:15px 24px;border-bottom:1px solid var(--dim);background:rgba(255,255,255,0.02)}
 .screen-bar .sb-name{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
 .screen-bar .sb-note{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
-.screen-body{padding:30px 24px 34px}
-.screen h2{font-size:30px;font-weight:300;color:var(--bright);line-height:1.1;margin-bottom:6px}
-.screen-lede{font-size:15px;color:var(--silver);font-weight:300;line-height:1.75;max-width:660px;margin-bottom:28px}
+.screen-body{padding:28px 24px 32px}
+.screen h2{font-size:27px;font-weight:300;color:var(--bright);line-height:1.15;margin-bottom:6px}
+.screen-lede{font-size:15px;color:var(--silver);font-weight:300;line-height:1.75;max-width:640px;margin-bottom:26px}
 
-.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:30px}
-.stat{background:var(--deep);padding:20px 22px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--dim);border:1px solid var(--dim);margin-bottom:26px}
+.stat{background:var(--deep);padding:18px 20px}
 .stat .sl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
-.stat .sv{font-size:28px;color:var(--bright);font-weight:300;line-height:1}
-.stat .sv.good{color:var(--live)}
+.stat .sv{font-size:26px;color:var(--bright);font-weight:300;line-height:1}
 .stat .sn{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);margin-top:6px}
 
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
-.bar-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;min-width:66px}
+.bar-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;min-width:60px}
 .chip{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--silver);background:none;border:1px solid var(--dim);padding:7px 12px;cursor:pointer;text-transform:uppercase;transition:all 0.2s}
 .chip:hover{color:var(--bright)}
 .chip.on{background:var(--chrome);color:var(--black);border-color:var(--chrome)}
@@ -70,84 +67,49 @@ table{width:100%;border-collapse:collapse;table-layout:fixed}
 th{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:left;padding:10px 12px;border-bottom:1px solid var(--dim)}
 td{padding:13px 12px;border-bottom:1px solid var(--dim);font-size:15px;font-weight:300;vertical-align:top;overflow-wrap:anywhere}
 tr:hover td{background:rgba(255,255,255,0.02)}
-tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
-.name-area{display:flex;flex-direction:column;gap:2px}
 .row-name{color:var(--bright)}
 .row-sub{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--dim);text-transform:uppercase;margin-top:3px}
 .status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);flex-shrink:0}
 .status-cell{display:flex;align-items:center;gap:8px}
-.status-lead{background:var(--silver)}.status-contacted,.status-proposal{background:var(--warm)}
-.status-building{background:var(--build)}.status-live,.status-won{background:var(--live)}
-.status-lost{background:var(--dim)}
+.status-enquiry{background:var(--silver)}.status-quoted{background:var(--warm)}
+.status-proofing{background:var(--build)}.status-press{background:var(--build)}
+.status-delivered{background:var(--live)}.status-lost{background:var(--dim)}
 .status-sel{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:11px;padding:6px 8px;outline:none;text-transform:uppercase;border-radius:20px}
-.pill{display:inline-flex;align-self:flex-start;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid;margin-top:5px}
-.p-bad{color:#e0725f;border-color:rgba(224,114,95,0.45);background:rgba(224,114,95,0.1)}
-.p-mid{color:var(--warm);border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
-.p-new{color:var(--warm);border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.14)}
+.pill{display:inline-flex;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid;margin-top:6px}
 .p-due{color:var(--live);border-color:rgba(95,208,138,0.45);background:rgba(95,208,138,0.1)}
-.p-dormant{color:var(--silver);border-color:var(--dim);background:none;border-style:dashed}
-.p-owner{color:var(--warm);border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
-.revisit{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);margin-top:5px}
-.lead-detail{display:flex;flex-wrap:wrap;gap:8px 30px;padding-left:12px;border-left:1px solid rgba(216,161,95,0.3)}
-.ld-line{font-size:13px;color:var(--silver);line-height:1.5}
-.ld-line.ld-wide{flex-basis:100%}
-.ld-k{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;text-transform:uppercase;color:var(--dim);margin-right:7px}
-.ld-why{color:var(--dim);font-size:12.5px;line-height:1.55}
-.ld-none{color:#d89b6a;font-weight:500}
-.lead-detail a{color:var(--warm);text-decoration:none;border-bottom:1px solid rgba(216,161,95,0.35);overflow-wrap:anywhere}
-.speed-pill{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;padding:2px 8px;border-radius:20px;border:1px solid}
-.speed-bad{color:#e0725f;border-color:rgba(224,114,95,0.5);background:rgba(224,114,95,0.1)}
-.open-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;color:var(--silver);text-transform:uppercase}
+.p-rush{color:var(--warm);border-color:rgba(216,161,95,0.45);background:rgba(216,161,95,0.1)}
+.p-repeat{color:var(--silver);border-color:var(--dim);background:none}
 
-.split{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:12px}
-.bars h3{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:18px}
-.bar-row{margin-bottom:16px}
-.bar-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
-.bar-name{font-size:15px;font-weight:300;color:var(--chrome)}
-.bar-n{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
-.bar-track{height:4px;background:rgba(255,255,255,0.05)}
-.bar-fill{height:100%;background:var(--build);width:0;transition:width 0.9s cubic-bezier(.2,.7,.3,1)}
-/* The map. Drawn from coordinates in an inline SVG rather than a mapping
+/* The map is drawn from coordinates in an inline SVG rather than a mapping
    library over a tile server: it keeps the page's promise that it makes no
    network request, and a marketing page should not pull a third party's
    JavaScript to draw six dots. */
-.map-grid{display:grid;grid-template-columns:auto 1fr;gap:44px;align-items:start;margin-top:8px}
+.map-grid{display:grid;grid-template-columns:1.25fr 1fr;gap:40px;align-items:start;margin-top:4px}
 .map-wrap{position:relative;line-height:0}
-.map-svg{height:420px;width:auto;max-width:100%;overflow:visible}
+.map-svg{width:100%;height:auto;overflow:visible}
 .map-state{fill:rgba(255,255,255,0.025);stroke:var(--dim);stroke-width:1.2}
-.map-city{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.12em;fill:var(--dim);text-transform:uppercase}
+.map-city{font-family:'DM Mono',monospace;font-size:7px;letter-spacing:0.12em;fill:var(--dim);text-transform:uppercase}
 .map-city-dot{fill:var(--dim)}
 .cluster{cursor:default}
 .cluster .halo{transition:opacity 0.25s}
 .cluster .core{fill:#9ad2f5;transition:r 0.25s}
-.cluster:hover .core{r:5}
-.cluster:hover .halo{opacity:1}
+.cluster:hover .core{r:4.5}
 .map-tip{position:absolute;pointer-events:none;opacity:0;transform:translate(-50%,-140%);transition:opacity 0.15s;background:#0a0a12;border:1px solid var(--dim);padding:7px 11px;white-space:nowrap;line-height:1.5}
-/* Cache Valley sits at the top of the state, and a tip drawn above it lands
-   outside the map and over the heading. Near the top, it goes below instead. */
 .map-tip.below{transform:translate(-50%,40%)}
 .map-tip.on{opacity:1}
 .map-tip b{display:block;font-size:14px;font-weight:300;color:var(--bright)}
 .map-tip span{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--silver);text-transform:uppercase}
-.map-side h3{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:18px}
+.map-side h3{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:16px}
 .area-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:9px 0;border-bottom:1px solid var(--dim)}
 .area-row:last-of-type{border-bottom:none}
 .area-name{font-size:15px;font-weight:300;color:var(--chrome)}
 .area-n{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
-.map-foot{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);line-height:1.7;margin-top:18px}
-@media(max-width:860px){
-  .map-grid{grid-template-columns:1fr;gap:28px;justify-items:center}
-  .map-svg{height:340px}
-  .map-side{width:100%}
-}
-.caveats{border-left:1px solid var(--dim);padding-left:16px;margin:26px 0 8px}
-.caveats p{font-size:14px;color:var(--silver);font-weight:300;line-height:1.8}
-.caveats b{color:var(--bright)}
+.map-foot{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);line-height:1.7;margin-top:16px}
 
-.closer{border:1px solid var(--dim);background:var(--deep);padding:44px 40px;text-align:center}
-.closer h2{font-size:clamp(24px,3.4vw,36px);font-weight:300;color:var(--bright);margin-bottom:14px;line-height:1.2}
+.closer{border:1px solid var(--dim);background:var(--deep);padding:40px 36px;text-align:center}
+.closer h2{font-size:clamp(23px,3.2vw,33px);font-weight:300;color:var(--bright);margin-bottom:14px;line-height:1.2}
 .closer h2 em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
-.closer p{font-size:16px;color:var(--silver);font-weight:300;line-height:1.75;max-width:560px;margin:0 auto 28px}
+.closer p{font-size:16px;color:var(--silver);font-weight:300;line-height:1.75;max-width:540px;margin:0 auto 26px}
 .btn-solid{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:14px 32px;text-decoration:none;text-transform:uppercase;display:inline-block;transition:background 0.3s}
 .btn-solid:hover{background:var(--bright)}
 
@@ -159,17 +121,16 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
 .footer-links a:hover{color:var(--silver)}
 .footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
 
-@media(max-width:960px){
-  .stats{grid-template-columns:repeat(2,1fr)}
-  .split{grid-template-columns:1fr;gap:28px}
-  main{padding:40px 20px 80px}
+@media(max-width:860px){
+  .stats{grid-template-columns:1fr}
+  .map-grid{grid-template-columns:1fr;gap:26px}
+  main{padding:40px 20px 70px}
   .screen-body{padding:22px 16px 26px}
   table,thead,tbody,tr,td{display:block;width:100%}
   thead{display:none}
   tbody tr{border:1px solid var(--dim);padding:14px 16px;margin-bottom:14px}
   tbody td{border:none;padding:6px 0}
   tbody td::before{content:attr(data-label);display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--dim);text-transform:uppercase;margin-bottom:4px}
-  tr.is-lead td:first-child{box-shadow:none}
   footer{flex-direction:column;text-align:center}
 }
 </style>
@@ -189,7 +150,7 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
 </nav>
 
 <div class="sample-bar">
-  <p><span>Sample data.</span> Every name, number and figure on this page is invented. No client's data appears here.</p>
+  <p><span>Sample data.</span> An invented company, invented people, invented numbers. No client's data appears here.</p>
 </div>
 
 <main>
@@ -197,92 +158,43 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
   <div class="intro">
     <p class="sec-label">Live Sample</p>
     <h1>This is the software, <em>running</em></h1>
-    <p>Screenshots of a CRM all look the same. This is the real interface, on a made-up company, so you can click through it the way your team would — filter the pipeline, watch the numbers, read what the software says about a lead before anyone has picked up the phone.</p>
-    <p><strong>Every business, person, phone number and dollar figure below is fabricated.</strong> We do not put a client's customer list on a marketing page, and neither would we put yours.</p>
+    <p>A made-up print shop, so you can click through it rather than look at a screenshot. <strong>The stages across the top are theirs</strong> — enquiry, quoted, proofing, on press, delivered. Yours would be your own words, in your own order, because that is the part a template cannot do.</p>
   </div>
 
-  <!-- ===================== 1. THE PIPELINE ===================== -->
   <section class="screen">
     <div class="screen-bar">
-      <p class="sb-name">Custom CRM · Pipeline</p>
+      <p class="sb-name">Foxglove Press · Jobs</p>
       <p class="sb-note">Filters and search are live — try them</p>
     </div>
     <div class="screen-body">
-      <h2>Clients</h2>
-      <p class="screen-lede">Every enquiry in one list, with the ones worth calling first marked. A lead found by the outreach tool arrives with its own reasoning attached: what is wrong with their website, how many reviews they have, and where they are — so the first call opens with something specific instead of a pitch.</p>
+      <h2>Jobs</h2>
+      <p class="screen-lede">Every job in one list, at the stage it is actually at. No spreadsheet, no whiteboard, nobody asking who was chasing the yearbook.</p>
 
-      <div class="stats" id="crm-stats"></div>
+      <div class="stats" id="stats"></div>
 
       <div class="toolbar">
-        <span class="bar-label">Status</span>
-        <div class="chips" id="status-chips"></div>
-      </div>
-      <div class="toolbar">
-        <span class="bar-label">Category</span>
-        <div class="chips" id="cat-chips"></div>
+        <span class="bar-label">Stage</span>
+        <div class="chips" id="stage-chips"></div>
       </div>
       <div class="toolbar">
         <span class="bar-label">Search</span>
-        <input class="search" id="crm-search" type="text" placeholder="Search name, trade, town…" autocomplete="off">
+        <input class="search" id="search" type="text" placeholder="Search client, job, contact…" autocomplete="off">
       </div>
 
       <div class="table-wrap">
         <table>
-          <colgroup><col style="width:24%"><col style="width:16%"><col style="width:13%"><col style="width:39%"><col style="width:8%"></colgroup>
-          <thead><tr><th>Client</th><th>Contact</th><th>Status</th><th>Why / Value</th><th></th></tr></thead>
-          <tbody id="crm-rows"></tbody>
+          <colgroup><col style="width:26%"><col style="width:24%"><col style="width:22%"><col style="width:16%"><col style="width:12%"></colgroup>
+          <thead><tr><th>Client</th><th>Job</th><th>Contact</th><th>Stage</th><th>Value</th></tr></thead>
+          <tbody id="rows"></tbody>
         </table>
       </div>
-    </div>
-  </section>
 
-  <!-- ===================== 2. THE PARTNER VIEW ===================== -->
-  <section class="screen">
-    <div class="screen-bar">
-      <p class="sb-name">Sales Platform · Customers</p>
-      <p class="sb-note">A quoting business, mid-season</p>
-    </div>
-    <div class="screen-body">
-      <h2>Customers</h2>
-      <p class="screen-lede">The same list from the other side of the business: who has been quoted, what it came to, and who has gone quiet. The software works out which of those is which. Nobody has to remember that a quote from three weeks ago needs chasing — it says so.</p>
-      <div class="table-wrap">
-        <table>
-          <colgroup><col style="width:17%"><col style="width:17%"><col style="width:24%"><col style="width:13%"><col style="width:13%"><col style="width:16%"></colgroup>
-          <thead><tr><th>Last activity</th><th>Name</th><th>Email</th><th>Phone</th><th>Latest quote</th><th>Status</th></tr></thead>
-          <tbody id="cust-rows"></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===================== 3. THE DATA ===================== -->
-  <section class="screen">
-    <div class="screen-bar">
-      <p class="sb-name">Data Tracking</p>
-      <p class="sb-note">Every figure below is invented</p>
-    </div>
-    <div class="screen-body">
-      <h2>Data</h2>
-      <p class="screen-lede">What the quoting is actually producing. Not a dashboard of everything — four numbers that decide something, and two charts that answer the only question worth asking about marketing spend: which of it turned into work.</p>
-
-      <div class="stats" id="data-top"></div>
-
-      <p class="sec-label" style="margin-top:34px">Won projects</p>
-      <h2 style="font-size:24px;margin-bottom:18px">What you&rsquo;ve closed</h2>
-      <div class="stats" id="data-closed"></div>
-      <div class="caveats" id="data-caveats"></div>
-
-      <div class="split">
-        <div class="bars"><h3>Where enquiries come from</h3><div id="bars-sources"></div></div>
-        <div class="bars"><h3>What wins &amp; what loses</h3><div id="bars-wins"></div></div>
-      </div>
-
-      <p class="sec-label" style="margin-top:44px">Geography</p>
-      <h2 style="font-size:24px;margin-bottom:8px">Where submissions come from</h2>
-      <p class="screen-lede">Each enquiry plotted from the address on its own form. It is how you find out that half your work comes from one valley and none of it from the town you have been advertising in.</p>
+      <p class="sec-label" style="margin-top:38px">Geography</p>
+      <h2 style="font-size:22px;margin-bottom:8px">Where the work comes from</h2>
+      <p class="screen-lede">Each job placed by the address on the order. It is how a shop finds out that a third of its work walks in from one town it has never advertised in.</p>
       <div class="map-grid">
         <div class="map-wrap">
-          <svg class="map-svg" id="map-svg" role="img" aria-label="Map of submissions by area — sample data"></svg>
+          <svg class="map-svg" id="map-svg" role="img" aria-label="Map of jobs by area — sample data"></svg>
           <div class="map-tip" id="map-tip"></div>
         </div>
         <div class="map-side">
@@ -296,7 +208,7 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
 
   <div class="closer">
     <h2>Yours would look like <em>your business</em></h2>
-    <p>None of this is a template we drop on top of you. The stages, the words, the things it flags and the numbers it puts at the top are built around how you already work — this one just happens to sell sheds.</p>
+    <p>Nothing here is a template we drop on top of you. The stages, the words and the numbers at the top are built around how you already work — this one just happens to print things.</p>
     <a href="contact.html" class="btn-solid">Start the conversation</a>
   </div>
 
@@ -312,8 +224,8 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
   <p class="footer-copy">&copy; 2026 Potentia Studio</p>
 </footer>
 <script>
-/* SAMPLE DATA — every name, number, address and figure on this page is
-   invented. Nothing here comes from a client's CRM.
+/* SAMPLE DATA — an invented print shop. Every company, person, number and
+   address below is made up, and none of it resembles a client of ours.
 
    Rules this file follows, so it can never become a leak:
      - phone numbers use 555-01xx, reserved for fiction
@@ -321,121 +233,62 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
      - the page makes no network request, so there is nothing to fetch
 */
 var SAMPLE = {
-  crm: {
-    stats: { mrr: 2015, active: 3, openLeads: 67, collected: 2975 },
-    categories: [
-      { key: 'all', label: 'All', count: 70 },
-      { key: 'dealer', label: 'Car dealerships', count: 6 },
-      { key: 'detailer', label: 'Auto detailers', count: 31 },
-      { key: 'home_service', label: 'Home services', count: 33 }
-    ],
-    rows: [
-      { name: 'Ridgeline Mobile Detailing', cat: 'detailer', status: 'lead', isLead: true,
-        phone: '(555) 0142', place: 'Surprise, AZ', badge: { text: 'No website', tone: 'bad' },
-        why: 'No website at all, 6 Google reviews.', site: null,
-        trade: 'Detailing · Auto detailers', address: 'Surprise, AZ 85374' },
-      { name: 'Copperfield Auto Spa', cat: 'detailer', status: 'lead', isLead: true,
-        phone: '(555) 0188', place: 'Oxnard, CA', badge: { text: '41/100 · no mobile', tone: 'bad' },
-        why: "Website scores 41/100 on Google's mobile speed test, 31 Google reviews.",
-        site: 'copperfieldautospa.example.com', speed: { score: 41, viewport: false },
-        trade: 'Detailing · Auto detailers', address: '601 N Del Norte Blvd, Oxnard, CA 93030' },
-      { name: 'Harlow Motors', cat: 'dealer', status: 'contacted', isLead: true,
-        phone: '(555) 0113', place: 'Chandler, AZ', badge: { text: 'No https', tone: 'mid' },
-        why: 'Site still served over plain http, 48 Google reviews.',
-        site: 'harlowmotors.example.com', owner: 'Fernando M',
-        trade: 'Used cars · Car dealerships', address: '2210 W Chandler Blvd, Chandler, AZ 85224' },
-      { name: 'Vance & Sons Roofing', cat: 'home_service', status: 'lead', isLead: true,
-        phone: '(555) 0176', place: 'Riverside, CA', badge: { text: 'Site won’t load', tone: 'bad' },
-        why: 'Their website does not load, 22 Google reviews.',
-        site: 'vancesonsroofing.example.com', broken: true,
-        trade: 'Roofing · Home services', address: '3841 Tyler St, Riverside, CA 92503' },
-      { name: 'Juniper Tile & Stone', cat: 'home_service', status: 'proposal', isLead: false,
-        phone: '(555) 0121', place: 'Newport Beach, CA', pkg: 'Tier 2', value: 1200,
-        note: 'Wants the gallery live before their spring push.' },
-      { name: 'Crestview Landscaping', cat: 'home_service', status: 'building', isLead: false,
-        phone: '(555) 0134', place: 'Pasadena, CA', pkg: 'Tier 3', value: 1800,
-        note: 'Booking calendar wired up; content due Friday.' },
-      { name: 'Alder Street Collision', cat: 'dealer', status: 'live', isLead: false,
-        phone: '(555) 0159', place: 'Logan, UT', pkg: 'Custom CRM', value: 4200,
-        note: 'Second round of pipeline stages signed off.' }
-    ]
-  },
-  partner: {
-    customers: [
-      { date: 'Sep 14', ago: 'quoted yesterday', name: 'Dana Whitfield', email: 'dana.whitfield@example.com',
-        phone: '(555) 0101', quote: 9778, extra: '4 designs', status: 'won' },
-      { date: 'Sep 12', ago: 'quoted 3 days ago', name: 'Marcus Vell', email: 'm.vell@example.com',
-        phone: '(555) 0102', quote: 7879, status: 'lost' },
-      { date: 'Sep 11', ago: 'quoted 4 days ago', name: 'Priya Raman', email: 'p.raman@example.com',
-        phone: '(555) 0103', quote: 5292, status: 'won' },
-      { date: 'Sep 10', ago: 'quoted 6 days ago', name: 'Older Brennan', email: 'o.brennan@example.com',
-        phone: '(555) 0104', quote: 10917, status: 'quoted', flag: { text: 'Warm', kind: 'warm' } },
-      { date: 'Sep 8', ago: 'quoted 7 days ago', name: 'Tom Ashby', email: 't.ashby@example.com',
-        phone: '(555) 0105', quote: 23839, status: 'quoted',
-        flag: { text: 'Dormant', kind: 'dormant' }, revisit: 'revisit Feb 28' },
-      { date: 'Aug 25', ago: 'quoted 21 days ago', name: 'Callum Reyes', email: 'c.reyes@example.com',
-        phone: '(555) 0106', quote: 23053, status: 'quoted',
-        flag: { text: 'Dormant', kind: 'dormant' }, revisit: 'revisit Jan 31' },
-      { date: 'Aug 24', ago: 'quoted 22 days ago', name: 'Wren Delgado', email: 'w.delgado@example.com',
-        phone: '(555) 0107', quote: 30381, status: 'quoted',
-        flag: { text: 'Follow up due', kind: 'due' } },
-      { date: 'Aug 24', ago: 'quoted 22 days ago', name: 'Errol Nakamura', email: 'errol@example.com',
-        phone: '(555) 0108', quote: 11378, status: 'won' }
-    ]
-  },
-  data: {
-    top: [
-      { label: 'Total submissions', value: '16' },
-      { label: 'Total customers', value: '13' },
-      { label: 'Avg quoted price', value: '$14,961' },
-      { label: 'Median quoted price', value: '$13,611' }
-    ],
-    closed: [
-      { label: 'Jobs won', value: '5', note: '71.4% of 7 decided' },
-      { label: 'Won revenue', value: '$55,993', note: 'avg $11,199 · med $8,278' },
-      { label: 'Gross profit', value: '$41,907', note: '74.8% margin · 5 of 5 jobs costed', good: true },
-      { label: 'Collected', value: '$38,400', note: 'All payments logged' }
-    ],
-    caveats: [
-      'Typical time from quote to won: <b>2 days</b> (median of 2).',
-      'Lost: <b>2 jobs</b> worth $29,352 quoted.'
-    ],
-    sources: [
-      { label: 'Our display shed', n: 7 },
-      { label: 'Google', n: 5 },
-      { label: 'Facebook', n: 3 },
-      { label: 'Word of mouth', n: 2 }
-    ],
-    wins: [ { label: 'gable', n: 3 }, { label: 'barn', n: 1 }, { label: 'leanto', n: 1 } ],
-    losses: [ { label: 'gable', n: 2 } ],
-    /* The state outline is real geography — Utah is a rectangle with the
-       north-east corner cut out by Wyoming, so six corners describe it
-       exactly. The submissions on it are not real: the areas are invented and
-       so are the counts, which add up to the 16 total above. No submission is
-       plotted at an address; each sits on its town. */
-    mapBounds: { west: -114.052, east: -109.041, south: 37.0, north: 42.0 },
-    mapOutline: [
-      [-114.052, 42.0], [-111.047, 42.0], [-111.047, 41.0],
-      [-109.041, 41.0], [-109.041, 37.0], [-114.052, 37.0]
-    ],
-    mapCities: [
-      { name: 'Logan', lat: 41.735, lon: -111.834 },
-      { name: 'Ogden', lat: 41.223, lon: -111.973 },
-      { name: 'Salt Lake City', lat: 40.761, lon: -111.891, anchor: 'end' },
-      { name: 'Provo', lat: 40.234, lon: -111.659 },
-      { name: 'Moab', lat: 38.573, lon: -109.550, anchor: 'end' },
-      { name: 'St George', lat: 37.096, lon: -113.576 }
-    ],
-    mapAreas: [
-      { name: 'Cache Valley', lat: 41.71, lon: -111.83, n: 4 },
-      { name: 'Box Elder', lat: 41.51, lon: -112.02, n: 2 },
-      { name: 'Ogden', lat: 41.22, lon: -111.97, n: 3 },
-      { name: 'Davis County', lat: 41.06, lon: -111.97, n: 1 },
-      { name: 'Salt Lake Valley', lat: 40.72, lon: -111.90, n: 3 },
-      { name: 'Tooele', lat: 40.53, lon: -112.30, n: 1 },
-      { name: 'Utah County', lat: 40.30, lon: -111.75, n: 2 }
-    ]
-  }
+  stats: [
+    { label: 'Open jobs', value: '6', note: 'Not yet delivered' },
+    { label: 'Quoted, last 30 days', value: '$14,280', note: 'Across 5 quotes' },
+    { label: 'Average job', value: '$2,380', note: 'Last 12 months' }
+  ],
+  /* The stages are the shop's own words, in the order work actually moves
+     through the place. That is the whole point of the screen. */
+  stages: ['all', 'enquiry', 'quoted', 'proofing', 'press', 'delivered'],
+  stageLabels: { enquiry: 'Enquiry', quoted: 'Quoted', proofing: 'Proofing',
+                 press: 'On press', delivered: 'Delivered', lost: 'Lost' },
+  jobs: [
+    { client: 'Vane & Locke Solicitors', place: 'Boulder', stage: 'enquiry',
+      job: 'Letterhead & comp slips', spec: 'Uncoated, 120gsm',
+      person: 'Theo Vane', email: 't.vane@example.com', phone: '(555) 0131', value: null },
+    { client: 'Marlowe Dental Group', place: 'Denver', stage: 'quoted',
+      job: '5,000 appointment cards', spec: 'Double-sided, matt',
+      person: 'Ada Marlowe', email: 'a.marlowe@example.com', phone: '(555) 0118', value: 1240,
+      flag: { text: 'Repeat', kind: 'repeat' } },
+    { client: 'Pinewood Veterinary', place: 'Longmont', stage: 'quoted',
+      job: 'Wellness booklets, 2k', spec: '16pp, saddle-stitched',
+      person: 'Marta Sol', email: 'm.sol@example.com', phone: '(555) 0124', value: 2150 },
+    { client: 'Redhill Academy', place: 'Fort Collins', stage: 'proofing',
+      job: 'Yearbook, 240 copies', spec: 'Case-bound, 96pp',
+      person: 'Ivo Petrov', email: 'i.petrov@example.com', phone: '(555) 0107', value: 6900,
+      flag: { text: 'Proof due Thu', kind: 'due' } },
+    { client: 'Ninth Street Brewing', place: 'Denver', stage: 'press',
+      job: 'Can labels, 12k run', spec: 'Metallic, 5 colour',
+      person: 'Cass Ingram', email: 'c.ingram@example.com', phone: '(555) 0142', value: 3480,
+      flag: { text: 'Rush', kind: 'rush' } },
+    { client: 'Copperline Coffee', place: 'Boulder', stage: 'delivered',
+      job: 'Menu reprint', spec: 'Laminated, A4',
+      person: 'Nell Ashby', email: 'n.ashby@example.com', phone: '(555) 0155', value: 410,
+      flag: { text: 'Repeat', kind: 'repeat' } },
+    { client: 'Fairhaven Cycles', place: 'Greeley', stage: 'delivered',
+      job: 'Event posters, 300', spec: 'A2, poster stock',
+      person: 'Otis Kerr', email: 'o.kerr@example.com', phone: '(555) 0169', value: 880 }
+  ],
+  /* Colorado is a rectangle, so four corners describe it exactly. The jobs on
+     it are invented, and sit on towns rather than addresses. */
+  mapBounds: { west: -109.045, east: -102.041, south: 37.0, north: 41.0 },
+  mapOutline: [ [-109.045, 41.0], [-102.041, 41.0], [-102.041, 37.0], [-109.045, 37.0] ],
+  mapCities: [
+    { name: 'Fort Collins', lat: 40.585, lon: -105.084, anchor: 'end' },
+    { name: 'Denver', lat: 39.739, lon: -104.990, anchor: 'end' },
+    { name: 'Colorado Springs', lat: 38.834, lon: -104.821, anchor: 'end' },
+    { name: 'Grand Junction', lat: 39.064, lon: -108.551 },
+    { name: 'Pueblo', lat: 38.254, lon: -104.609, anchor: 'end' }
+  ],
+  mapAreas: [
+    { name: 'Denver', lat: 39.74, lon: -104.99, n: 5 },
+    { name: 'Boulder', lat: 40.02, lon: -105.27, n: 3 },
+    { name: 'Fort Collins', lat: 40.59, lon: -105.08, n: 2 },
+    { name: 'Longmont', lat: 40.17, lon: -105.10, n: 2 },
+    { name: 'Colorado Springs', lat: 38.83, lon: -104.82, n: 1 },
+    { name: 'Greeley', lat: 40.42, lon: -104.71, n: 1 }
+  ]
 };
 
 /* Everything below reads from SAMPLE and nothing else. There is no fetch on
@@ -450,158 +303,92 @@ function el(tag, cls, text) {
 }
 function money(n) { return '$' + Number(n).toLocaleString('en-US'); }
 
-/* ---------- 1. Pipeline ---------- */
-var CRM = SAMPLE.crm;
-var STATUSES = ['all', 'lead', 'contacted', 'proposal', 'building', 'live'];
-var activeStatus = 'all', activeCat = 'all', term = '';
-
-function statCard(label, value, note, good) {
-  var s = el('div', 'stat');
-  s.appendChild(el('p', 'sl', label));
-  s.appendChild(el('p', 'sv' + (good ? ' good' : ''), value));
-  if (note) s.appendChild(el('p', 'sn', note));
-  return s;
-}
-
-(function paintStats() {
-  var box = document.getElementById('crm-stats'), s = CRM.stats;
-  box.appendChild(statCard('Monthly recurring', money(s.mrr), 'Active plans'));
-  box.appendChild(statCard('Active clients', String(s.active), 'Building + live'));
-  box.appendChild(statCard('Open leads', String(s.openLeads), 'Not yet contacted'));
-  box.appendChild(statCard('Collected (30d)', money(s.collected), 'All payments logged'));
+(function stats() {
+  var box = document.getElementById('stats');
+  SAMPLE.stats.forEach(function (s) {
+    var c = el('div', 'stat');
+    c.appendChild(el('p', 'sl', s.label));
+    c.appendChild(el('p', 'sv', s.value));
+    c.appendChild(el('p', 'sn', s.note));
+    box.appendChild(c);
+  });
 })();
 
-function chipBar(host, items, get, set) {
-  host.innerHTML = '';
-  items.forEach(function (it) {
-    var b = el('button', 'chip', it.count == null ? it.label : it.label + ' (' + it.count + ')');
-    b.addEventListener('click', function () { set(it.key); paintChips(); render(); });
-    b.dataset.key = it.key;
+/* ---------- the job list ---------- */
+var activeStage = 'all', term = '';
+
+(function chips() {
+  var host = document.getElementById('stage-chips');
+  SAMPLE.stages.forEach(function (s) {
+    var b = el('button', 'chip', s === 'all' ? 'All' : SAMPLE.stageLabels[s]);
+    b.dataset.key = s;
+    b.addEventListener('click', function () { activeStage = s; paintChips(); render(); });
     host.appendChild(b);
   });
-}
+})();
 function paintChips() {
-  document.querySelectorAll('#status-chips .chip').forEach(function (c) {
-    c.classList.toggle('on', c.dataset.key === activeStatus);
-  });
-  document.querySelectorAll('#cat-chips .chip').forEach(function (c) {
-    c.classList.toggle('on', c.dataset.key === activeCat);
+  document.querySelectorAll('#stage-chips .chip').forEach(function (c) {
+    c.classList.toggle('on', c.dataset.key === activeStage);
   });
 }
-chipBar(document.getElementById('status-chips'),
-  STATUSES.map(function (s) { return { key: s, label: s }; }),
-  null, function (k) { activeStatus = k; });
-chipBar(document.getElementById('cat-chips'), CRM.categories,
-  null, function (k) { activeCat = k; });
-
-document.getElementById('crm-search').addEventListener('input', function () {
+document.getElementById('search').addEventListener('input', function () {
   term = this.value.trim().toLowerCase();
   render();
 });
 
-/* The detail block beside a lead — the same shape the real CRM renders, and
-   the reason a caller can open with a fact instead of a pitch. */
-function leadDetail(r) {
-  var box = el('div', 'lead-detail');
-  function line(k, wide) {
-    var l = el('div', 'ld-line' + (wide ? ' ld-wide' : ''));
-    l.appendChild(el('span', 'ld-k', k));
-    return l;
-  }
-  var why = line('Why', true);
-  why.appendChild(el('span', 'ld-why', r.why));
-  box.appendChild(why);
-
-  var site = line('Site');
-  if (!r.site) site.appendChild(el('span', 'ld-none', 'No website at all'));
-  else {
-    var a = el('a', null, 'https://' + r.site);
-    a.href = '#'; a.addEventListener('click', function (e) { e.preventDefault(); });
-    a.title = 'Sample link — goes nowhere';
-    site.appendChild(a);
-  }
-  box.appendChild(site);
-
-  if (r.speed) {
-    var sp = line('Speed');
-    sp.appendChild(el('span', 'speed-pill speed-bad', r.speed.score + '/100 mobile'));
-    if (!r.speed.viewport) {
-      sp.appendChild(document.createTextNode(' '));
-      sp.appendChild(el('span', 'speed-pill speed-bad', 'no mobile viewport'));
-    }
-    box.appendChild(sp);
-  }
-  if (r.broken) {
-    var br = line('Speed');
-    br.appendChild(el('span', 'speed-pill speed-bad', 'will not load'));
-    box.appendChild(br);
-  }
-  if (r.address) { var ad = line('Address'); ad.appendChild(document.createTextNode(r.address)); box.appendChild(ad); }
-  if (r.trade) { var tr = line('Trade'); tr.appendChild(document.createTextNode(r.trade)); box.appendChild(tr); }
-  return box;
-}
-
 function render() {
-  var body = document.getElementById('crm-rows');
+  var body = document.getElementById('rows');
   body.innerHTML = '';
-  var shown = CRM.rows.filter(function (r) {
-    if (activeStatus !== 'all' && r.status !== activeStatus) return false;
-    if (activeCat !== 'all' && r.cat !== activeCat) return false;
+  var shown = SAMPLE.jobs.filter(function (j) {
+    if (activeStage !== 'all' && j.stage !== activeStage) return false;
     if (!term) return true;
-    return (r.name + ' ' + (r.trade || '') + ' ' + (r.place || '')).toLowerCase().indexOf(term) > -1;
+    return (j.client + ' ' + j.job + ' ' + j.person + ' ' + j.place).toLowerCase().indexOf(term) > -1;
   });
 
   if (!shown.length) {
-    var tr0 = el('tr'), td0 = el('td', null, 'Nothing matches that — clear the filters to see the rest.');
+    var tr0 = el('tr'), td0 = el('td', null, 'Nothing at that stage — clear the filter to see the rest.');
     td0.colSpan = 5; td0.style.color = 'var(--dim)';
     tr0.appendChild(td0); body.appendChild(tr0); return;
   }
 
-  shown.forEach(function (r) {
+  shown.forEach(function (j) {
     var tr = el('tr');
-    if (r.isLead) tr.className = 'is-lead';
 
-    var tdName = el('td'); tdName.setAttribute('data-label', 'Client');
-    var area = el('div', 'name-area');
-    area.appendChild(el('p', 'row-name', r.name));
-    if (r.badge) area.appendChild(el('span', 'pill p-' + r.badge.tone, r.badge.text));
-    if (r.place) area.appendChild(el('p', 'row-sub', r.place));
-    if (r.isLead && r.status === 'lead') area.appendChild(el('span', 'pill p-new', 'New lead'));
-    if (r.owner) area.appendChild(el('span', 'pill p-owner', r.owner));
-    tdName.appendChild(area); tr.appendChild(tdName);
+    var tdClient = el('td'); tdClient.setAttribute('data-label', 'Client');
+    tdClient.appendChild(el('p', 'row-name', j.client));
+    tdClient.appendChild(el('p', 'row-sub', j.place));
+    if (j.flag) tdClient.appendChild(el('span', 'pill p-' + j.flag.kind, j.flag.text));
+    tr.appendChild(tdClient);
 
-    var tdContact = el('td', null, r.phone); tdContact.setAttribute('data-label', 'Contact');
-    tr.appendChild(tdContact);
+    var tdJob = el('td'); tdJob.setAttribute('data-label', 'Job');
+    tdJob.appendChild(el('p', null, j.job));
+    tdJob.appendChild(el('p', 'row-sub', j.spec));
+    tr.appendChild(tdJob);
 
-    var tdStatus = el('td'); tdStatus.setAttribute('data-label', 'Status');
+    var tdWho = el('td'); tdWho.setAttribute('data-label', 'Contact');
+    tdWho.appendChild(el('p', null, j.person));
+    tdWho.appendChild(el('p', 'row-sub', j.phone));
+    tr.appendChild(tdWho);
+
+    var tdStage = el('td'); tdStage.setAttribute('data-label', 'Stage');
     var cell = el('div', 'status-cell');
-    cell.appendChild(el('span', 'status-dot status-' + r.status));
+    cell.appendChild(el('span', 'status-dot status-' + j.stage));
     var sel = el('select', 'status-sel');
-    ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'].forEach(function (s) {
-      var o = el('option', null, s); o.value = s; sel.appendChild(o);
+    Object.keys(SAMPLE.stageLabels).forEach(function (k) {
+      var o = el('option', null, SAMPLE.stageLabels[k]); o.value = k; sel.appendChild(o);
     });
-    sel.value = r.status;
-    /* Changing it moves the dot, and nothing else — there is nowhere for it
-       to save to, which is the point of a sample. */
+    sel.value = j.stage;
+    /* Changing it moves the dot and nothing else — there is nowhere for it to
+       save to, which is rather the point of a sample. */
     sel.addEventListener('change', function () {
       cell.querySelector('.status-dot').className = 'status-dot status-' + sel.value;
     });
     cell.appendChild(sel);
-    tdStatus.appendChild(cell); tr.appendChild(tdStatus);
+    tdStage.appendChild(cell); tr.appendChild(tdStage);
 
-    var tdWhy = el('td'); tdWhy.setAttribute('data-label', r.isLead ? 'Why' : 'Value');
-    if (r.isLead) tdWhy.appendChild(leadDetail(r));
-    else {
-      var v = el('div');
-      v.appendChild(el('p', null, r.pkg + ' · ' + money(r.value)));
-      if (r.note) { var n = el('p', 'ld-why', r.note); n.style.marginTop = '6px'; v.appendChild(n); }
-      tdWhy.appendChild(v);
-    }
-    tr.appendChild(tdWhy);
-
-    var tdOpen = el('td'); tdOpen.setAttribute('data-label', '');
-    tdOpen.appendChild(el('span', 'open-link', 'Open →'));
-    tr.appendChild(tdOpen);
+    var tdVal = el('td', null, j.value == null ? '—' : money(j.value));
+    tdVal.setAttribute('data-label', 'Value');
+    tr.appendChild(tdVal);
 
     body.appendChild(tr);
   });
@@ -609,91 +396,12 @@ function render() {
 paintChips();
 render();
 
-/* ---------- 2. Customers ---------- */
-(function customers() {
-  var body = document.getElementById('cust-rows');
-  SAMPLE.partner.customers.forEach(function (c) {
-    var tr = el('tr');
-    var tdWhen = el('td'); tdWhen.setAttribute('data-label', 'Last activity');
-    tdWhen.appendChild(el('p', null, c.date + ', 2026'));
-    tdWhen.appendChild(el('p', 'row-sub', c.ago));
-    if (c.flag) tdWhen.appendChild(el('span', 'pill p-' + c.flag.kind, c.flag.text));
-    if (c.revisit) tdWhen.appendChild(el('p', 'revisit', c.revisit));
-    tr.appendChild(tdWhen);
-
-    [['Name', c.name], ['Email', c.email], ['Phone', c.phone]].forEach(function (p) {
-      var td = el('td', null, p[1]); td.setAttribute('data-label', p[0]); tr.appendChild(td);
-    });
-
-    var tdQ = el('td'); tdQ.setAttribute('data-label', 'Latest quote');
-    tdQ.appendChild(el('p', null, money(c.quote)));
-    if (c.extra) tdQ.appendChild(el('p', 'row-sub', c.extra));
-    tr.appendChild(tdQ);
-
-    var tdS = el('td'); tdS.setAttribute('data-label', 'Status');
-    var cell = el('div', 'status-cell');
-    cell.appendChild(el('span', 'status-dot status-' + c.status));
-    cell.appendChild(el('span', 'status-sel', c.status));
-    tdS.appendChild(cell); tr.appendChild(tdS);
-
-    body.appendChild(tr);
-  });
-})();
-
-/* ---------- 3. Data ---------- */
-(function data() {
-  var d = SAMPLE.data;
-  var top = document.getElementById('data-top');
-  d.top.forEach(function (s) { top.appendChild(statCard(s.label, s.value)); });
-  var closed = document.getElementById('data-closed');
-  d.closed.forEach(function (s) { closed.appendChild(statCard(s.label, s.value, s.note, s.good)); });
-
-  var cav = document.getElementById('data-caveats');
-  d.caveats.forEach(function (c) { var p = el('p'); p.innerHTML = c; cav.appendChild(p); });
-
-  function bars(host, rows, max) {
-    rows.forEach(function (r) {
-      var wrap = el('div', 'bar-row');
-      var top = el('div', 'bar-top');
-      top.appendChild(el('span', 'bar-name', r.label));
-      top.appendChild(el('span', 'bar-n', String(r.n)));
-      wrap.appendChild(top);
-      var track = el('div', 'bar-track'), fill = el('div', 'bar-fill');
-      fill.dataset.pct = Math.round((r.n / max) * 100);
-      track.appendChild(fill); wrap.appendChild(track);
-      host.appendChild(wrap);
-    });
-  }
-  var srcMax = Math.max.apply(null, d.sources.map(function (r) { return r.n; }));
-  bars(document.getElementById('bars-sources'), d.sources, srcMax);
-
-  var winHost = document.getElementById('bars-wins');
-  var winMax = Math.max.apply(null, d.wins.concat(d.losses).map(function (r) { return r.n; }));
-  var wl = el('p', 'sec-label', 'Won'); wl.style.marginBottom = '12px'; winHost.appendChild(wl);
-  bars(winHost, d.wins, winMax);
-  var ll = el('p', 'sec-label', 'Lost'); ll.style.margin = '22px 0 12px'; winHost.appendChild(ll);
-  bars(winHost, d.losses, winMax);
-
-  /* The bars grow when they come into view — the numbers are made up, but a
-     chart that animates on scroll is what the real page does. */
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) {
-      if (!e.isIntersecting) return;
-      e.target.style.width = e.target.dataset.pct + '%';
-      io.unobserve(e.target);
-    });
-  }, { threshold: 0.2 });
-  document.querySelectorAll('.bar-fill').forEach(function (f) { io.observe(f); });
-})();
-
-/* ---------- 4. The map ----------
+/* ---------- the map ----------
    Equirectangular, with the longitude degrees narrowed by cos(mid-latitude)
-   so the state is not drawn 30% too wide. Over five degrees that is accurate
-   enough that the outline is the real shape, which matters: a map that is
-   visibly wrong makes a viewer distrust the numbers next to it. */
+   so the state is not drawn about 30% too wide. A map that is visibly the
+   wrong shape makes a viewer distrust the numbers printed beside it. */
 (function map() {
-  var d = SAMPLE.data;
-  var b = d.mapBounds;
+  var b = SAMPLE.mapBounds;
   var SCALE = 100;                                   // svg units per degree of latitude
   var squeeze = Math.cos((b.south + b.north) / 2 * Math.PI / 180);
   var W = (b.east - b.west) * squeeze * SCALE;
@@ -712,7 +420,6 @@ render();
   var svg = document.getElementById('map-svg');
   svg.setAttribute('viewBox', '0 0 ' + W.toFixed(1) + ' ' + H.toFixed(1));
 
-  // the glow each cluster sits in
   var defs = node('defs');
   var grad = node('radialGradient', { id: 'heat' });
   grad.appendChild(node('stop', { offset: '0%', 'stop-color': '#6fa8dc', 'stop-opacity': '0.55' }));
@@ -723,16 +430,16 @@ render();
 
   svg.appendChild(node('path', {
     class: 'map-state',
-    d: d.mapOutline.map(function (p, i) {
+    d: SAMPLE.mapOutline.map(function (p, i) {
       return (i ? 'L' : 'M') + px(p[0]).toFixed(1) + ' ' + py(p[1]).toFixed(1);
     }).join(' ') + ' Z'
   }));
 
-  d.mapCities.forEach(function (c) {
+  SAMPLE.mapCities.forEach(function (c) {
     var x = px(c.lon), y = py(c.lat), end = c.anchor === 'end';
-    svg.appendChild(node('circle', { class: 'map-city-dot', cx: x, cy: y, r: 1.6 }));
+    svg.appendChild(node('circle', { class: 'map-city-dot', cx: x, cy: y, r: 1.4 }));
     var t = node('text', {
-      class: 'map-city', x: x + (end ? -7 : 7), y: y + 3,
+      class: 'map-city', x: x + (end ? -6 : 6), y: y + 2.6,
       'text-anchor': end ? 'end' : 'start'
     });
     t.textContent = c.name;
@@ -740,30 +447,29 @@ render();
   });
 
   var tip = document.getElementById('map-tip');
-  var wrap = tip.parentNode;
-  var biggest = Math.max.apply(null, d.mapAreas.map(function (a) { return a.n; }));
+  var biggest = Math.max.apply(null, SAMPLE.mapAreas.map(function (a) { return a.n; }));
 
-  d.mapAreas.forEach(function (a) {
+  SAMPLE.mapAreas.forEach(function (a) {
     var x = px(a.lon), y = py(a.lat);
     var g = node('g', { class: 'cluster', tabindex: '0',
-      'aria-label': a.name + ', ' + a.n + ' submissions' });
-    // area scales with the count, so four submissions look like four
-    var r = 16 + (a.n / biggest) * 26;
+      'aria-label': a.name + ', ' + a.n + ' jobs' });
+    var r = 14 + (a.n / biggest) * 22;              // area scales with the count
     g.appendChild(node('circle', { class: 'halo', cx: x, cy: y, r: r, fill: 'url(#heat)' }));
-    g.appendChild(node('circle', { class: 'core', cx: x, cy: y, r: 3.2 }));
-    // a bigger invisible target, because a 3px dot is not clickable on a phone
-    g.appendChild(node('circle', { cx: x, cy: y, r: 14, fill: 'transparent' }));
+    g.appendChild(node('circle', { class: 'core', cx: x, cy: y, r: 3 }));
+    // a bigger invisible target, because a 3px dot is not tappable on a phone
+    g.appendChild(node('circle', { cx: x, cy: y, r: 13, fill: 'transparent' }));
 
     function show() {
       tip.innerHTML = '';
-      var b1 = document.createElement('b'); b1.textContent = a.name;
-      var s1 = document.createElement('span');
-      s1.textContent = a.n + (a.n === 1 ? ' submission' : ' submissions');
-      tip.appendChild(b1); tip.appendChild(s1);
+      var name = document.createElement('b'); name.textContent = a.name;
+      var n = document.createElement('span');
+      n.textContent = a.n + (a.n === 1 ? ' job' : ' jobs');
+      tip.appendChild(name); tip.appendChild(n);
       // svg units -> css pixels, which differ because the svg is scaled to fit
       var box = svg.getBoundingClientRect();
       tip.style.left = (x / W * box.width) + 'px';
       tip.style.top = (y / H * box.height) + 'px';
+      // near the top, a tip drawn above the point lands outside the map
       tip.classList.toggle('below', y / H < 0.22);
       tip.classList.add('on');
     }
@@ -776,16 +482,16 @@ render();
   });
 
   var side = document.getElementById('area-rows');
-  d.mapAreas.slice().sort(function (a, b2) { return b2.n - a.n; }).forEach(function (a) {
+  SAMPLE.mapAreas.slice().sort(function (a, b2) { return b2.n - a.n; }).forEach(function (a) {
     var row = el('div', 'area-row');
     row.appendChild(el('span', 'area-name', a.name));
     row.appendChild(el('span', 'area-n', String(a.n)));
     side.appendChild(row);
   });
 
-  var total = d.mapAreas.reduce(function (t, a) { return t + a.n; }, 0);
+  var total = SAMPLE.mapAreas.reduce(function (t, a) { return t + a.n; }, 0);
   document.getElementById('map-foot').textContent =
-    total + ' submissions plotted. Areas and counts are invented, like everything else here.';
+    total + ' jobs plotted. Areas and counts are invented, like everything else here.';
 })();
 </script>
 </body>

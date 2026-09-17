@@ -63,8 +63,8 @@ test("it says it is a sample, above the fold and in the markup", () => {
   const bar = page.indexOf("sample-bar");
   const main = page.indexOf("<main");
   assert.ok(bar > -1 && bar < main, "the sample banner must come before the content");
-  assert.match(page, /Every name, number and figure on this page is invented/);
-  assert.match(page, /fabricated/);
+  assert.match(page, /An invented company, invented people, invented numbers/);
+  assert.match(page, /Areas and counts are invented/);
 });
 
 test("no client of ours is named in it", () => {
@@ -86,15 +86,27 @@ test("the map is drawn here, not fetched from a map service", () => {
   assert.match(page, /createElementNS/);
 });
 
-test("the map plots exactly as many submissions as the page claims", () => {
-  /* Two invented numbers in the same screen that disagree look like a bug in
-     the software, which is the opposite of what a sample is for. */
-  const areas = page.match(/\{ name: '[^']+', lat: [-\d.]+, lon: [-\d.]+, n: (\d+) \}/g) || [];
-  assert.ok(areas.length >= 5, "found the plotted areas");
-  const plotted = areas.reduce((t, a) => t + Number(/n: (\d+)/.exec(a)[1]), 0);
-  const claimed = Number(/label: 'Total submissions', value: '(\d+)'/.exec(page)[1]);
-  assert.equal(plotted, claimed,
-    "the map plots " + plotted + " submissions but the page says " + claimed);
+test("the sample says nothing about website performance", () => {
+  /* How we find leads — a slow site, a missing viewport, no https — is our
+     own tooling, and it is not what this page is selling. It also reads to a
+     visitor as "we grade your website", which is a different conversation
+     from the one this page is for. */
+  const forbidden = ["PageSpeed", "pagespeed", "viewport ", "mobile speed", "/100",
+                     "No website", "no website", "Lighthouse", "won't load",
+                     "no https", "No https", "speed test", "SEO", "load time"];
+  forbidden.forEach((word) => assert.equal(page.indexOf(word), -1,
+    "sample.html must not mention " + JSON.stringify(word)));
+  /* The one legitimate "viewport" is the meta tag every page has. */
+  assert.equal((page.match(/viewport/g) || []).length, 1);
+});
+
+test("the sample is one screen, not a tour", () => {
+  /* It is a taste of the software, not a manual. If it grows back into three
+     full screens this is the thing that should argue about it. */
+  const screens = (page.match(/<section class="screen">/g) || []).length;
+  assert.equal(screens, 1, "the sample should stay at one screen, found " + screens);
+  const lines = page.split("\n").length;
+  assert.ok(lines < 600, "sample.html has grown to " + lines + " lines");
 });
 
 test("no submission is plotted at a street address", () => {
