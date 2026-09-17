@@ -424,7 +424,10 @@ function buildBreakdown(bd) {
     var v = Number(a.value);
     if (a.kind === 'percent' && isFinite(v)) {
       var pAmt = bd.subtotal * (v / 100);
-      var pLabel = (a.note || 'Discount') + ' (' + Math.abs(v) + '%)';
+      /* Not hardcoded "Discount": a percentage can go up as well as down, and
+         "Discount (10%)" beside a +$500 figure is the kind of contradiction a
+         customer reads as a mistake on the whole quote. */
+      var pLabel = (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)';
       rowsHtml += '<div class="br-row"><span class="br-label">' + esc(pLabel) + '</span>'
         + '<span class="br-amt">' + (pAmt < 0 ? '\u2212' : '+') + money2(Math.abs(pAmt)) + '</span></div>';
     } else if (a.kind === 'amount' && isFinite(v)) {

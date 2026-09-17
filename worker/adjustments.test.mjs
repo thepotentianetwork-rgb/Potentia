@@ -95,6 +95,36 @@ check("empty list clears", r.status===200 && r.data.effective_price===null, r.da
 r = await call("GET","/admin/analytics",null,tok);
 check("revenue back to the quoted price", r.data.won.revenue===20000, r.data.won.revenue);
 
+console.log("\n-- raising the price --");
+/* The direction nothing exercised until now. The arithmetic always allowed it
+   (running += value) but the admin form forced every entry negative, so a
+   surcharge had never once been through this path. */
+r = await set([{kind:"amount",value:1500,note:"Site access"}]);
+check("a flat increase is accepted", r.status===200, r);
+check("effective price 20000+1500", r.data.effective_price===21500, r.data.effective_price);
+r = await call("GET","/admin/analytics",null,tok);
+check("revenue follows a price that went UP", r.data.won.revenue===21500, r.data.won.revenue);
+check("margin follows it too", r.data.won.marginPct===44.2, r.data.won.marginPct);
+
+r = await set([{kind:"percent",value:10,note:"Rush build"}]);
+check("a percentage increase is accepted", r.status===200, r);
+check("effective price 20000+10%", r.data.effective_price===22000, r.data.effective_price);
+
+console.log("\n-- up and down in the same quote --");
+/* Comps come off first, the percentage lands on the post-comp figure, then
+   flat amounts. A surcharge must not change that order. */
+r = await set([{kind:"comp",item:"Skylight"},
+               {kind:"percent",value:10,note:"Rush build"},
+               {kind:"amount",value:-500,note:"Repeat customer"}]);
+check("mixed directions accepted", r.status===200, r);
+// 20000 - 184 = 19816; +10% of 19816 = 1981.60; -500  => 21297.60
+check("comp, then percent up, then amount off", r.data.effective_price===21297.6, r.data.effective_price);
+
+r = await set([{kind:"percent",value:100,note:"Double"}]);
+check("+100% is allowed (it doubles)", r.status===200 && r.data.effective_price===40000, r.data.effective_price);
+r = await set([{kind:"percent",value:150}]);
+check("percent beyond +100 refused", r.status===400, r);
+
 console.log("\n-- an older single-adjustment row still reads --");
 db.prepare("UPDATE submissions SET price_adjustment=-2000, adjustment_note='Legacy', adjustments=NULL, effective_price=NULL WHERE id=1").run();
 r = await call("GET","/admin/submissions/1",null,tok);
