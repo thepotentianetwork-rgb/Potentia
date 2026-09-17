@@ -44,6 +44,15 @@ main{max-width:1180px;margin:0 auto;padding:64px 40px 90px}
 .card-list{display:flex;flex-direction:column;gap:9px}
 .card-list span{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.05em;color:var(--chrome);padding-left:16px;position:relative;line-height:1.6}
 .card-list span::before{content:'\2014';position:absolute;left:0;color:var(--dim)}
+/* One real result, on the card it belongs to. The client is not named —
+   the number is theirs and the uplift is their own figure, not ours. */
+.result{margin-top:26px;padding-top:22px;border-top:1px solid var(--dim)}
+/* Qualified with .result, because `.card p` is a class AND a type and beats
+   a bare class — the figure was rendering at the body size in body grey. */
+.result .result-fig{font-size:32px;font-weight:300;color:var(--live);line-height:1.05;letter-spacing:-0.01em;margin:0}
+.result .result-of{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase;margin:9px 0 0}
+.result p{font-size:13.5px;color:var(--silver);line-height:1.7;margin:12px 0 0}
+.result b{color:var(--chrome);font-weight:400}
 
 /* The map, the one thing on the page that actually runs. */
 .feature{border:1px solid var(--dim);background:var(--deep);margin-bottom:56px}
@@ -128,6 +137,11 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
         <span>Quotes you can trust</span>
         <span>Customer-facing portals</span>
         <span>Works on a phone, on site</span>
+      </div>
+      <div class="result">
+        <p class="result-fig">+$3,000&ndash;5,000</p>
+        <p class="result-of">On the average sale</p>
+        <p>What one client has seen since we built theirs &mdash; the same job, priced and presented properly. On <b>their own low-end estimate, about $60,000 more a year</b>.</p>
       </div>
     </div>
 
