@@ -336,6 +336,14 @@ const PAINT_FLAT = 1400;
    does not scale with height, so the rate has to absorb all of it. */
 const LABOR_BY_HEIGHT = { 6: 5.00, 7: 6.50, 8: 7.75, 9: 9.75, 10: 11.50, 12: 14.50 };
 
+/* The charge paint and labour replaced: $7 per sqft of WALL area, which is what
+   the old three-tier table always came to in practice. Kept only as the
+   yardstick for the shortfall top-up above - where the fitted fee and rates
+   land under it, the difference is recovered into the base shed price so no
+   shed is quoted for less than it used to be. Not a price, and read nowhere
+   else. */
+const LEGACY_FINISH_RATE = 7;
+
 export let SELL = {
   /* INTERIOR FINISH — drywall, mud & paint.
      A FLAT JOB PRICE, tiered on FLOOR area (W x D), not a per-sq-ft rate.
@@ -1246,6 +1254,31 @@ export function computePricing(cfgIn, opts){
   }
   customerPrice += laborSell;
 
+  /* ── FINISH SHORTFALL RECOVERED INTO THE BASE SHED ──
+     Paint and labour used to be one charge of $7 per sqft of WALL area. The
+     flat fee plus the per-height footprint rate were fitted to land on that,
+     but a fit is not exact: on mid-size sheds it comes out a little under.
+     Rather than leave that on the table, the shortfall goes into the base
+     shed price - the money is kept, and the customer sees one shed price
+     rather than a finish line that does not match what the work costs.
+     Only ever a top-up. Where the new model already charges MORE than the old
+     one did (small sheds, and the tallest walls) nothing is taken back off:
+     those prices stand as quoted by the fitted rates.
+     Pine is excluded because it pays neither paint nor labour and never paid
+     the $7 either, so there is nothing to recover on it.
+     LEGACY_FINISH_RATE is the old rate, kept solely as the yardstick this
+     top-up measures against. It is not a price any more and nothing else
+     reads it. */
+  var finishRecovered = 0;
+  if(sidId!=='pine'){
+    var _legacyFinish = LEGACY_FINISH_RATE * wallAreaFt(Wf, Df, Hf);
+    finishRecovered = Math.max(0, _legacyFinish - (paintSell + laborSell));
+    if(finishRecovered>0){
+      marginPrice   += finishRecovered;
+      customerPrice += finishRecovered;
+    }
+  }
+
   // ── WALL HEIGHT UPCHARGE (customer): per sqft of wall area — 8ft is the included standard ──
   var heightSell = 0, heightSellName = '';
   var heightRate = SELL.wallHeight[Hf];
@@ -1461,6 +1494,7 @@ export function computePricing(cfgIn, opts){
       sidingSell: sidingSell, sidingSellName: sidingSellName,
       paintSell: paintSell, paintSellName: paintSellName,
       laborSell: laborSell, laborSellName: laborSellName,
+      finishRecovered: finishRecovered,
       heightSell: heightSell, heightSellName: heightSellName,
       windowSell: windowSell, windowSellLines: windowSellLines,
       intSell: intSell, intSellName: intSellName,
