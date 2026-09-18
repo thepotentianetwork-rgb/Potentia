@@ -256,7 +256,7 @@ var SELL_DEFAULTS = {
   gravelTiers: { tier1: 750, tier2: 1100, tier3: 1500, break1: 75, break2: 150, maxSqft: 200 },
   interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 },
   exteriorPaint: { flat: 1400 },
-  labor: { rate: 7.75 },
+  labor: { 6: 5.00, 7: 6.50, 8: 7.75, 9: 9.75, 10: 11.50, 12: 14.50 },
   // Only Basic / Core / Essential are sold — the old "Standard" tier and its
   // a la carte variant were dropped Sep 2026 (shedpro-utah.com/gallery only
   // ever listed three tiers). "Exterior Light" stays: a standalone add-on,
@@ -337,10 +337,15 @@ var TIER_GROUPS = [
     ]
   },
   {
-    key: 'labor', label: 'Build Labor — $/Sq Ft of Shed',
-    note: 'Per sq ft of the shed\u2019s own footprint (width × length), not wall area. Bigger shed, more time. Folded into the Base Shed line on the customer\u2019s quote rather than shown separately. Not charged on pine siding. Paint fee and this rate were set together to hold the previous pricing roughly still across every size — move one and the other should move the other way.',
+    key: 'labor', label: 'Build Labor — $/Sq Ft of Shed, by Wall Height',
+    note: 'Per sq ft of the shed\u2019s own footprint (width × length), not wall area — but stepped by wall height, because a taller shed of the same footprint really is more wall to build and paint. Folded into the Base Shed line on the customer\u2019s quote rather than shown separately. Not charged on pine siding. These rates and the paint fee were set together to hold the previous pricing roughly still at every height — move one and the others should follow.',
     fields: [
-      { key: 'rate', label: 'Rate', unit: '$/sq ft', prefix: true }
+      { key: '6',  label: "6' walls",  unit: '$/sq ft', prefix: true },
+      { key: '7',  label: "7' walls",  unit: '$/sq ft', prefix: true },
+      { key: '8',  label: "8' walls (standard)", unit: '$/sq ft', prefix: true },
+      { key: '9',  label: "9' walls",  unit: '$/sq ft', prefix: true },
+      { key: '10', label: "10' walls", unit: '$/sq ft', prefix: true },
+      { key: '12', label: "12' walls", unit: '$/sq ft', prefix: true }
     ]
   }
 ];

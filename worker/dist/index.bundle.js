@@ -327,10 +327,15 @@ const PAINT_FLAT = 1400;
 
 /* Build labour, per sqft of SHED FLOOR area - the shed's own size, the way it
    is quoted and talked about, not wall area. Bigger shed, more time.
-   $1,400 + $7.75/sqft was fitted to hold the old $7-a-wall-foot charge roughly
-   still across the whole size range (worst case about $260, inside 10%), so
-   moving to this model did not reprice anyone. */
-const LABOR_RATE = 7.75;
+   Keyed by wall height, because a taller shed of the same footprint genuinely
+   is more wall to build and paint: pricing on footprint alone handed a 12x20
+   with 10ft walls about $1,220 off, since none of its extra 147 sqft of wall
+   reached this line. Same shape as SELL.wallHeight below, and the same heights.
+   Each rate is fitted so that PAINT_FLAT + rate x footprint lands on what the
+   old $7-a-wall-foot charge came to at that height, across 6x8 through 16x32.
+   Worst residual runs about $260 at 8ft up to $810 at 12ft - the flat paint fee
+   does not scale with height, so the rate has to absorb all of it. */
+const LABOR_BY_HEIGHT = { 6: 5.00, 7: 6.50, 8: 7.75, 9: 9.75, 10: 11.50, 12: 14.50 };
 
 let SELL = {
   /* INTERIOR FINISH — drywall, mud & paint.
@@ -521,11 +526,12 @@ let SELL = {
      above), never painted. */
   exteriorPaint: { flat: PAINT_FLAT },
 
-  /* ── BUILD LABOUR ($/sqft of SHED FLOOR AREA) ──
-     The time to build and paint it, which does scale with size. Charged on the
-     same builds as exterior paint, and folded into the Base Shed line on the
-     customer's quote rather than shown as a line of its own. */
-  labor: { rate: LABOR_RATE },
+  /* ── BUILD LABOUR ($/sqft of SHED FLOOR AREA, by wall height) ──
+     The time to build and paint it, which scales with both footprint and how
+     tall the walls are. Charged on the same builds as exterior paint, and
+     folded into the Base Shed line on the customer's quote rather than shown
+     as a line of its own. */
+  labor: Object.assign({}, LABOR_BY_HEIGHT),
 
   // ── ELECTRICAL PACKAGES (flat) ── Basic / Core / Essential only — the old
   // "Standard" tier and its a la carte variant were dropped Sep 2026
@@ -1226,8 +1232,16 @@ function computePricing(cfgIn, opts){
   var laborSell = 0, laborSellName = '';
   if(sidId!=='pine'){
     var _laborSqft = floorAreaFt(Wf, Df);
-    var _lr = SELL.labor && SELL.labor.rate;
-    var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0) ? _lr : LABOR_RATE;
+    /* Keyed by wall height. An unknown height falls back to the 8ft rate, the
+       same way wallHObjFor treats an unknown height as standard. A saved
+       override predating this carries labor.rate and no height keys; the merge
+       never deletes from the defaults, so the height keys survive underneath
+       and the stale `rate` sits inert. Anything unusable falls back to the
+       shipped rate rather than to 0 - building a shed for free is the leak
+       vents already had. An explicit 0 is honoured. */
+    var _lr = SELL.labor && SELL.labor[Hf];
+    var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0)
+      ? _lr : (LABOR_BY_HEIGHT[Hf] || LABOR_BY_HEIGHT[8]);
     laborSell = laborRate * _laborSqft;
     laborSellName = 'Build Labor (' + Math.round(_laborSqft) + ' sqft)';
   }

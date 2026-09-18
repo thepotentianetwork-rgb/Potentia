@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { computePricing, SELL, pricingDefaults, applyPricingOverrides } from './pricing.js';
 
 const PAINT = 1400;
-const LABOR = 7.75;
+const LABOR = { 6: 5.00, 7: 6.50, 8: 7.75, 9: 9.75, 10: 11.50, 12: 14.50 };
 
 /* SELL is live module state shared by every later test in the run, so an
    override test has to hand it back exactly as it found it. */
@@ -65,20 +65,41 @@ test('labor is the rate times the SHED footprint, not the wall area', () => {
   for (const s of SIZES) {
     const { redline } = computePricing({ style: 'gable', ...s });
     assert.equal(
-      Math.round(redline.laborSell), Math.round(LABOR * s.w * s.l),
-      `${s.w}x${s.l}: labor bills on ${s.w * s.l} sqft of shed`
+      Math.round(redline.laborSell), Math.round(LABOR[s.h] * s.w * s.l),
+      `${s.w}x${s.l} @ ${s.h}ft: labor bills on ${s.w * s.l} sqft of shed`
     );
   }
 });
 
-test('labor tracks footprint and ignores wall height', () => {
-  const base = computePricing({ style: 'gable', w: 10, l: 12, h: 8 }).redline.laborSell;
-  for (const h of [6, 9, 10, 12]) {
-    const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h });
-    assert.equal(redline.laborSell, base, `${h}ft walls bill the same labor`);
+test('labor steps with wall height, so a taller shed is not built for the same', () => {
+  const at = h => computePricing({ style: 'gable', w: 10, l: 12, h }).redline.laborSell;
+  const heights = [6, 7, 8, 9, 10, 12];
+  for (let i = 1; i < heights.length; i++) {
+    assert.ok(at(heights[i]) > at(heights[i - 1]),
+      `${heights[i]}ft walls cost more labor than ${heights[i - 1]}ft`);
   }
-  const bigger = computePricing({ style: 'gable', w: 12, l: 20, h: 8 }).redline.laborSell;
-  assert.ok(bigger > base, 'a bigger footprint does cost more labor');
+  assert.equal(Math.round(at(12) / at(6) * 100) / 100, Math.round(LABOR[12] / LABOR[6] * 100) / 100);
+});
+
+test('a bigger footprint costs more labor at the same height', () => {
+  const small = computePricing({ style: 'gable', w: 10, l: 12, h: 9 }).redline.laborSell;
+  const big = computePricing({ style: 'gable', w: 12, l: 20, h: 9 }).redline.laborSell;
+  assert.ok(big > small);
+});
+
+test('a height with no rate of its own is built at the standard 8ft rate', () => {
+  /* 11ft is not in the table. wallHObjFor already treats an unknown height as
+     standard, and the labor rate has to agree with it rather than price at 0. */
+  const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 11 });
+  assert.equal(Math.round(redline.laborSell), Math.round(LABOR[8] * 120));
+});
+
+test('tombstoning a height rate restores the shipped one, it does not zero it', () => {
+  withOverride({ SELL: { labor: { 9: null } } }, () => {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 9 });
+    assert.equal(Math.round(redline.laborSell), Math.round(LABOR[9] * 120),
+      'a deleted height rate must not price labor at zero');
+  });
 });
 
 test('labor is named with the shed sqft, which is the footprint', () => {
@@ -98,7 +119,7 @@ test('both reach the customer total', () => {
   const build = { style: 'gable', w: 10, l: 16, h: 9 };
   const full = computePricing(build).customer;
   const none = withOverride(
-    { SELL: { exteriorPaint: { flat: 0 }, labor: { rate: 0 } } },
+    { SELL: { exteriorPaint: { flat: 0 }, labor: { 9: 0 } } },
     () => computePricing(build).customer
   );
   const { redline } = computePricing(build);
@@ -110,12 +131,12 @@ test('both reach the customer total', () => {
 });
 
 test('the owner can move both, and zero either deliberately', () => {
-  withOverride({ SELL: { exteriorPaint: { flat: 900 }, labor: { rate: 10 } } }, () => {
+  withOverride({ SELL: { exteriorPaint: { flat: 900 }, labor: { 8: 10 } } }, () => {
     const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 8 });
     assert.equal(redline.paintSell, 900);
     assert.equal(Math.round(redline.laborSell), 1200);
   });
-  withOverride({ SELL: { exteriorPaint: { flat: 0 }, labor: { rate: 0 } } }, () => {
+  withOverride({ SELL: { exteriorPaint: { flat: 0 }, labor: { 8: 0 } } }, () => {
     const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 8 });
     assert.equal(redline.paintSell, 0);
     assert.equal(redline.laborSell, 0);
@@ -131,15 +152,15 @@ test('a saved override from the tier era still prices paint and labor correctly'
   withOverride(legacy, () => {
     const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10 });
     assert.equal(redline.paintSell, PAINT, 'the flat fee survives a stale snapshot');
-    assert.equal(Math.round(redline.laborSell), Math.round(LABOR * 240));
+    assert.equal(Math.round(redline.laborSell), Math.round(LABOR[10] * 240));
   });
 });
 
 test('a tombstoned fee or rate falls back to shipped, never to free', () => {
-  withOverride({ SELL: { exteriorPaint: { flat: null }, labor: { rate: null } } }, () => {
+  withOverride({ SELL: { exteriorPaint: { flat: null }, labor: { 8: null } } }, () => {
     const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 8 });
     assert.equal(redline.paintSell, PAINT, 'paint must never silently fall to $0');
-    assert.equal(Math.round(redline.laborSell), Math.round(LABOR * 120));
+    assert.equal(Math.round(redline.laborSell), Math.round(LABOR[8] * 120));
   });
 });
 
@@ -156,27 +177,28 @@ test('at the standard 8ft wall, the change of basis held prices still', () => {
   }
 });
 
-/* Taller walls DO come out cheaper than they used to, and that is not a bug to
-   be quietly patched — it falls straight out of pricing on footprint, which is
-   what was asked for. A 12x20 with 10ft walls has 640 sqft of wall against 493
-   at 8ft, and none of that difference reaches paint or labor any more.
-   Pinned so the size of the cut is visible and nobody changes it by accident.
-   The wall height upcharge still scales with wall area, so height is not free
-   overall — it just no longer feeds these two lines. */
-test('pricing on footprint means taller walls are charged less than they were', () => {
-  const cut = (w, l, h, wallH) => {
-    const { redline } = computePricing({ style: 'gable', w, l, h });
-    return (redline.paintSell + redline.laborSell) - 7 * 2 * (w + l) * wallH;
-  };
-  const tall = cut(12, 20, 10, 10);
-  assert.ok(tall < -1000 && tall > -1400,
-    `a 12x20 with 10ft walls is about $1,220 cheaper on these two lines, got $${Math.round(tall)}`);
+/* The height steps exist precisely so this is NOT true any more. Pricing on
+   footprint alone handed a 12x20 with 10ft walls about $1,220 off, because none
+   of its extra 147 sqft of wall reached paint or labor. The per-height rates
+   put that back. */
+test('a taller shed is no longer quietly discounted', () => {
+  const WALLH = { 8: 7.71, 9: 9, 10: 10, 12: 12 };
+  for (const s of [{ w: 10, l: 16, h: 9 }, { w: 12, l: 16, h: 9 },
+                   { w: 12, l: 20, h: 10 }, { w: 16, l: 24, h: 10 }, { w: 16, l: 32, h: 12 }]) {
+    const { redline } = computePricing({ style: 'gable', ...s });
+    const wasCharged = 7 * 2 * (s.w + s.l) * WALLH[s.h];
+    const nowCharged = redline.paintSell + redline.laborSell;
+    const drift = Math.abs(nowCharged - wasCharged);
+    assert.ok(drift < 900,
+      `${s.w}x${s.l} @ ${s.h}ft moved $${Math.round(drift)} (was $${Math.round(wasCharged)}, now $${Math.round(nowCharged)})`);
+  }
+});
 
-  /* and the taller the wall, the bigger the cut */
-  assert.ok(cut(10, 12, 12, 12) < cut(10, 12, 9, 9), '12ft walls are cut harder than 9ft');
-
-  /* height still costs money, just not here */
-  const a = computePricing({ style: 'gable', w: 10, l: 12, h: 8 }).customer;
-  const b = computePricing({ style: 'gable', w: 10, l: 12, h: 12 }).customer;
-  assert.ok(b > a, 'a taller shed still costs more overall, via the wall height upcharge');
+/* Same footprint, twice the wall, should not be anywhere near the same price. */
+test('a 12ft-wall shed costs meaningfully more than a 6ft one of the same footprint', () => {
+  const short = computePricing({ style: 'gable', w: 10, l: 12, h: 6 });
+  const tall = computePricing({ style: 'gable', w: 10, l: 12, h: 12 });
+  const gap = tall.redline.laborSell - short.redline.laborSell;
+  assert.ok(gap > 1000, `labor gap is only $${Math.round(gap)}`);
+  assert.ok(tall.customer > short.customer);
 });
