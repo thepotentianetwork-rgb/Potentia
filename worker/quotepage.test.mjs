@@ -170,6 +170,46 @@ for (const [label, config] of Object.entries(BUILDS)) {
   });
 }
 
+/* The itemisation has one job that matters more than being complete: the parts
+   must add up to the line they sit under. A customer reading a breakdown does
+   the sum — that is why they asked for it — and a shed row that does not match
+   its own items discredits the whole document. */
+for (const [label, config] of Object.entries(BUILDS)) {
+  test(`the shed's items add up to the shed: ${label}`, () => {
+    const page = loadQuotePage();
+    const { redline } = computePricing(config);
+    const bd = page.taxBreakdown(redline);
+    const shed = bd.rows.find(r => / Shed\b/.test(r.label));
+    assert.ok(shed, 'there is a shed phase');
+    const subs = shed.subLines || [];
+    assert.ok(subs.length > 2, `the shed is itemised (${subs.length} lines)`);
+    const summed = subs.reduce((t, l) => t + l.amt, 0);
+    assert.ok(
+      Math.abs(summed - shed.amt) < 1,
+      `items total $${Math.round(summed)} but the Shed line reads $${Math.round(shed.amt)} ` +
+      `(off by $${Math.round(summed - shed.amt)}) — something the engine charges for is ` +
+      `either missing from the itemisation or counted twice`
+    );
+  });
+}
+
+test('a comped item is not charged in the itemisation', () => {
+  /* It is already listed under "Included at No Charge". Showing it at full
+     price here as well would put the same item on the quote twice, once
+     charged and once free, and break the sum above. */
+  const page = loadQuotePage();
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const skylight = (redline.addonLines || []).find(l => l.name === 'Skylight');
+  assert.ok(skylight, 'the fixture has a skylight to comp');
+  page.ADJUSTMENTS = [{ kind: 'comp', item: 'Skylight' }];
+  page.COMPED = { Skylight: skylight.amt };
+  page.COMP_TOTAL = skylight.amt;
+  const bd = page.taxBreakdown(redline);
+  const shed = bd.rows.find(r => / Shed\b/.test(r.label));
+  const line = (shed.subLines || []).find(l => l.label === 'Skylight');
+  assert.ok(!line, 'a fully comped line is not charged in the breakdown');
+});
+
 test('exterior paint is inside the shed phase, not a phase of its own', () => {
   const page = loadQuotePage();
   const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
