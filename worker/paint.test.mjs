@@ -115,20 +115,18 @@ test('pine is stained, not painted, so it is charged neither', () => {
   assert.equal(redline.laborSellName, '');
 });
 
-/* Probed ABOVE the legacy yardstick on purpose. Below it the shortfall top-up
-   closes any gap, so zeroing the fee would leave the total unmoved - correct
-   behaviour, but it tells you nothing about whether the money reaches the
-   total. Pushed over the yardstick the top-up is 0 and the fee is visible. */
-test('paint and labor reach the customer total', () => {
+test('paint and labor both reach the customer total', () => {
   const build = { style: 'gable', w: 10, l: 16, h: 9 };
-  const hi = withOverride({ SELL: { exteriorPaint: { flat: 6000 } } },
-    () => computePricing(build));
-  assert.equal(hi.redline.finishRecovered, 0, 'well over the yardstick, so no top-up');
-
-  const hi2 = withOverride({ SELL: { exteriorPaint: { flat: 6500 } } },
-    () => computePricing(build));
-  assert.equal(Math.round(hi2.customer - hi.customer), 500,
-    'every dollar of the fee lands on the total');
+  const full = computePricing(build);
+  const none = withOverride(
+    { SELL: { exteriorPaint: { flat: 0 }, labor: { 9: 0 } } },
+    () => computePricing(build).customer
+  );
+  assert.equal(
+    Math.round(full.customer - none),
+    Math.round(full.redline.paintSell + full.redline.laborSell),
+    'the total moves by exactly paint plus labor'
+  );
 });
 
 test('the owner can move both, and zero either deliberately', () => {
@@ -202,83 +200,4 @@ test('a 12ft-wall shed costs meaningfully more than a 6ft one of the same footpr
   const gap = tall.redline.laborSell - short.redline.laborSell;
   assert.ok(gap > 1000, `labor gap is only $${Math.round(gap)}`);
   assert.ok(tall.customer > short.customer);
-});
-
-/* ── THE SHORTFALL TOP-UP ────────────────────────────────────────────────────
- * The flat fee and the per-height rates were FITTED to the old $7-a-wall-foot
- * finish charge, and a fit is not exact — mid-size sheds came out a few hundred
- * under. That difference is recovered into the base shed price, so no shed is
- * quoted for less than it used to be. It is a top-up only: where the fitted
- * rates already charge more, nothing is handed back.
- */
-const LEGACY = 7;
-const WALLH = { 6: 6, 7: 7, 8: 7.71, 9: 9, 10: 10, 12: 12 };
-const legacyFinish = (w, l, h) => LEGACY * 2 * (w + l) * WALLH[h];
-
-test('no shed is quoted for less finish than it used to be', () => {
-  for (const s of [{ w: 8, l: 8, h: 8 }, { w: 8, l: 12, h: 8 }, { w: 10, l: 12, h: 8 },
-                   { w: 10, l: 16, h: 9 }, { w: 12, l: 16, h: 9 }, { w: 12, l: 20, h: 9 },
-                   { w: 12, l: 20, h: 10 }, { w: 14, l: 24, h: 10 }, { w: 16, l: 24, h: 10 },
-                   { w: 16, l: 32, h: 12 }]) {
-    const { redline } = computePricing({ style: 'gable', ...s });
-    const charged = redline.paintSell + redline.laborSell + redline.finishRecovered;
-    assert.ok(charged >= legacyFinish(s.w, s.l, s.h) - 1,
-      `${s.w}x${s.l} @ ${s.h}ft charges $${Math.round(charged)}, under the old $${Math.round(legacyFinish(s.w, s.l, s.h))}`);
-  }
-});
-
-test('the top-up closes the gap exactly, never overshoots', () => {
-  for (const s of [{ w: 10, l: 12, h: 8 }, { w: 12, l: 16, h: 9 }, { w: 12, l: 20, h: 10 }]) {
-    const { redline } = computePricing({ style: 'gable', ...s });
-    assert.ok(redline.finishRecovered > 0, `${s.w}x${s.l} @ ${s.h}ft has a gap to close`);
-    assert.equal(
-      Math.round(redline.paintSell + redline.laborSell + redline.finishRecovered),
-      Math.round(legacyFinish(s.w, s.l, s.h)),
-      'lands on the old figure, not past it'
-    );
-  }
-});
-
-test('nothing is handed back where the new rates already charge more', () => {
-  for (const s of [{ w: 8, l: 8, h: 8 }, { w: 16, l: 24, h: 10 }, { w: 16, l: 32, h: 12 }]) {
-    const { redline } = computePricing({ style: 'gable', ...s });
-    assert.equal(redline.finishRecovered, 0);
-    assert.ok(redline.paintSell + redline.laborSell > legacyFinish(s.w, s.l, s.h),
-      'these builds are over the old figure and stay there');
-  }
-});
-
-test('the top-up lands in the base shed, not in a line of its own', () => {
-  const build = { style: 'gable', w: 12, l: 20, h: 10 };
-  const { redline } = computePricing(build);
-  assert.ok(redline.finishRecovered > 0);
-
-  /* marginPrice is what the quote prints as Base Shed, so the top-up has to be
-     inside it — and it has to reach the customer total exactly once. */
-  const bare = computePricing({ ...build, siding: 'pine' });
-  assert.equal(bare.redline.finishRecovered, 0, 'pine pays no finish, so nothing to recover');
-  assert.ok(redline.marginPrice > bare.redline.marginPrice,
-    'the recovered money is inside the base shed price');
-});
-
-test('pine recovers nothing, having never paid the old charge', () => {
-  const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10, siding: 'pine' });
-  assert.equal(redline.paintSell, 0);
-  assert.equal(redline.laborSell, 0);
-  assert.equal(redline.finishRecovered, 0);
-});
-
-test('the top-up follows the owner down if they cut the paint fee', () => {
-  const build = { style: 'gable', w: 12, l: 20, h: 10 };
-  const base = computePricing(build).redline.finishRecovered;
-  withOverride({ SELL: { exteriorPaint: { flat: 700 } } }, () => {
-    const { redline } = computePricing(build);
-    assert.equal(Math.round(redline.finishRecovered), Math.round(base + 700),
-      'cutting the fee widens the gap, and the top-up covers it');
-    assert.equal(
-      Math.round(redline.paintSell + redline.laborSell + redline.finishRecovered),
-      Math.round(legacyFinish(12, 20, 10)),
-      'the shed still totals the same either way'
-    );
-  });
 });
