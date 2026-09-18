@@ -255,7 +255,8 @@ var SELL_DEFAULTS = {
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
   gravelTiers: { tier1: 750, tier2: 1100, tier3: 1500, break1: 75, break2: 150, maxSqft: 200 },
   interior: { under: 3250, mid: 3750, over: 4000, breakLo: 125, breakHi: 175, unpaintedPct: 15, roundTo: 5 },
-  exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 },
+  exteriorPaint: { rate: 4 },
+  labor: { rate: 3 },
   // Only Basic / Core / Essential are sold — the old "Standard" tier and its
   // a la carte variant were dropped Sep 2026 (shedpro-utah.com/gallery only
   // ever listed three tiers). "Exterior Light" stays: a standalone add-on,
@@ -329,14 +330,17 @@ var TIER_GROUPS = [
     ]
   },
   {
-    key: 'exteriorPaint', label: 'Exterior Paint — Tiered $/Sq Ft of Wall Area',
-    note: 'A rate per sq ft of exterior WALL area (not floor footprint) — covers siding and trim in one rate. Never charged on pine siding, which gets stained instead. Boundaries inclusive at the bottom: a wall area exactly at "Break — Mid at" pays the Mid rate.',
+    key: 'exteriorPaint', label: 'Exterior Paint — $/Sq Ft of Wall Area',
+    note: 'A flat rate per sq ft of exterior WALL area (not floor footprint) — 2 × (width + depth) × wall height. Covers siding and trim in one rate. Never charged on pine siding, which gets stained instead. This was three tiers until Sep 2026, but every shed cleared the top break, so the lower two rates never once applied.',
     fields: [
-      { key: 'under', label: 'Under the first break', unit: '$/sq ft', prefix: true },
-      { key: 'mid', label: 'Break — Mid at', unit: '$/sq ft', prefix: true },
-      { key: 'over', label: 'Break — Over at', unit: '$/sq ft', prefix: true },
-      { key: 'breakLo', label: 'First break point', unit: 'sq ft' },
-      { key: 'breakHi', label: 'Second break point', unit: 'sq ft' }
+      { key: 'rate', label: 'Rate', unit: '$/sq ft', prefix: true }
+    ]
+  },
+  {
+    key: 'labor', label: 'Build Labor — $/Sq Ft of Wall Area',
+    note: 'The half of the old $7 exterior paint rate that was never paint. Charged on the same wall area, and on the same builds, as exterior paint — so paint and labor together come to exactly what paint alone used to cost. Not charged on pine siding, which never paid the paint rate; labor is inside the base shed price on those builds.',
+    fields: [
+      { key: 'rate', label: 'Rate', unit: '$/sq ft', prefix: true }
     ]
   }
 ];

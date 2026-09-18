@@ -230,3 +230,36 @@ test('flooring is broken out without displacing electrical', () => {
   assert.match(labels, /Electrical/, 'electrical still shown');
   assert.match(labels, /Flooring/, 'flooring shown alongside it, not instead of it');
 });
+
+/* A quote that went out before the paint/labour split has a redline with the
+ * old $7-a-foot paintSell on it and no laborSell at all. Redlines freeze at
+ * submit time and this page reads the stored one — it re-prices nothing — so
+ * that customer must still see the number they were quoted, with no Build
+ * Labor line appearing under it and no change to the total.
+ */
+test('a quote sent before the split still shows its original price', () => {
+  const page = loadQuotePage();
+  const legacy = {
+    marginPrice: 6759,
+    paintSell: 4480, paintSellName: 'Exterior Paint (640 sqft)',   // the old $7/sqft
+    sidingSell: 1600, sidingSellName: 'Board & Batten',
+    heightSell: 1920, heightSellName: "10' Walls",
+    baseSheetLabel: 'Barn'
+    /* no laborSell — the field did not exist when this was written */
+  };
+  const bd = page.taxBreakdown(legacy);
+  const shed = bd.rows.find(r => / Shed\b/.test(r.label));
+
+  assert.equal(Math.round(shed.amt), 14759, 'the stored total must not move');
+
+  const subs = shed.subLines || [];
+  assert.ok(!subs.some(l => /Labor/i.test(l.label)),
+    'no labor line may appear on a quote written before it existed');
+
+  const paint = subs.find(l => /Exterior Paint/.test(l.label));
+  assert.equal(Math.round(paint.amt), 4480, 'the old paint figure is shown as quoted');
+
+  const summed = subs.reduce((t, l) => t + l.amt, 0);
+  assert.ok(Math.abs(summed - shed.amt) < 1,
+    `an old quote still itemises to its own total (${summed} vs ${shed.amt})`);
+});

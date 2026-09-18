@@ -311,6 +311,20 @@ export function gravelFoundationPrice(sqft){
       (SELL.baseSheets below) and, for most add-ons, a select button in the UI.
    Per-sqft items note their AREA BASIS — wall / floor / roof / own-size.
    ═══════════════════════════════════════════════════════════════════════ */
+/* The shipped exterior paint rate, held as a constant as well as in SELL so
+   the quote path has something sound to fall back to when an owner's saved
+   pricing override leaves SELL.exteriorPaint.rate missing or unusable. */
+const PAINT_RATE = 4;
+
+/* Build labour, per sqft of WALL area. This is not new money: the exterior
+   paint line used to be $7/sqft and is now $4, and the $3 difference is the
+   labour that rate had always been carrying. Splitting them leaves the
+   customer's total identical to the dollar while naming what they are paying
+   for, which is what an itemised quote is supposed to do.
+   Because it is a SPLIT and not a new charge, it has to be charged exactly
+   where the $7 paint rate used to be charged - see the pine note below. */
+const LABOR_RATE = 3;
+
 export let SELL = {
   /* INTERIOR FINISH — drywall, mud & paint.
      A FLAT JOB PRICE, tiered on FLOOR area (W x D), not a per-sq-ft rate.
@@ -494,18 +508,26 @@ export let SELL = {
     "pine": 0.70
   },
 
-  /* ── EXTERIOR PAINT (per sqft of WALL AREA, tiered by wall sqft) ──
+  /* ── EXTERIOR PAINT (flat $/sqft of WALL AREA) ──
      Covers the LP SmartSide siding AND the trim in one rate — trim area
      is small enough next to the walls that pricing it separately isn't
-     worth the extra line item. Fernando, 24 Aug 2026:
-       under 100 sqft ....... $4/sqft
-       100 up to 200 sqft ... $5/sqft
-       200 sqft and over .... $7/sqft
-     Boundaries inclusive at the bottom, same convention as every other
-     tier table here: exactly 100 pays the mid rate, exactly 200 pays over.
+     worth the extra line item.
+     Flat $4/sqft. Fernando, 18 Sep 2026. This replaced a three-tier table
+     (under 100 sqft $4, 100-200 $5, 200 and over $7) that was never really
+     a table: wall area is 2*(W+D)*wallH, so the smallest shed sold — an
+     8x8 with 8ft walls — is already 247 sqft. Every build cleared the top
+     break, so the $4 and $5 rates were unreachable and the whole thing was
+     a flat $7 in disguise. The tiers also ran the wrong way round, putting
+     the highest rate per sqft on the largest jobs.
      NOT charged for pine siding — pine gets STAINED, a separate mandatory
      finish step (see siding.pine above), never painted. */
-  exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 },
+  exteriorPaint: { rate: PAINT_RATE },
+
+  /* ── BUILD LABOUR (flat $/sqft of WALL AREA) ──
+     The half of the old $7 paint rate that was never paint. Charged on the
+     same builds and the same area as exterior paint, so the two together
+     come to exactly what paint alone used to cost. */
+  labor: { rate: LABOR_RATE },
 
   // ── ELECTRICAL PACKAGES (flat) ── Basic / Core / Essential only — the old
   // "Standard" tier and its a la carte variant were dropped Sep 2026
@@ -1186,12 +1208,35 @@ export function computePricing(cfgIn, opts){
   var paintSell = 0, paintSellName = '';
   if(sidId!=='pine'){
     var _paintSqft = wallAreaFt(Wf, Df, Hf);
-    var pt = SELL.exteriorPaint;
-    var paintRate = (_paintSqft>=pt.breakHi) ? pt.over : (_paintSqft>=pt.breakLo) ? pt.mid : pt.under;
+    /* A saved override predating the flat rate carries only the old
+       under/mid/over keys, and the merge never deletes from the defaults,
+       so `rate` survives underneath it. Anything that is not a usable
+       number falls back to the shipped rate rather than to 0 — silently
+       painting a shed for free is the leak vents already had. An explicit
+       0 is still honoured, so paint can be zeroed deliberately. */
+    var _pr = SELL.exteriorPaint && SELL.exteriorPaint.rate;
+    var paintRate = (typeof _pr==='number' && isFinite(_pr) && _pr>=0) ? _pr : PAINT_RATE;
     paintSell = paintRate * _paintSqft;
     paintSellName = 'Exterior Paint ('+Math.round(_paintSqft)+' sqft)';
   }
   customerPrice += paintSell;
+
+  /* ── BUILD LABOUR (customer): the other half of the old paint rate ──
+     Same area and the same pine exemption as paint above, deliberately. This
+     is a SPLIT of a charge that already existed, not a new one: charge it on a
+     pine build - which never paid the paint rate - and pine sheds get $3/sqft
+     more expensive than the quote the customer was given last month. Labour is
+     of course real on a pine shed too; it is inside the base shed price there,
+     the same place it sat on every shed before this split. */
+  var laborSell = 0, laborSellName = '';
+  if(sidId!=='pine'){
+    var _laborSqft = wallAreaFt(Wf, Df, Hf);
+    var _lr = SELL.labor && SELL.labor.rate;
+    var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0) ? _lr : LABOR_RATE;
+    laborSell = laborRate * _laborSqft;
+    laborSellName = 'Build Labor (' + Math.round(_laborSqft) + ' sqft)';
+  }
+  customerPrice += laborSell;
 
   // ── WALL HEIGHT UPCHARGE (customer): per sqft of wall area — 8ft is the included standard ──
   var heightSell = 0, heightSellName = '';
@@ -1407,6 +1452,7 @@ export function computePricing(cfgIn, opts){
       porchSell: porchSell, porchSellName: porchSellName,
       sidingSell: sidingSell, sidingSellName: sidingSellName,
       paintSell: paintSell, paintSellName: paintSellName,
+      laborSell: laborSell, laborSellName: laborSellName,
       heightSell: heightSell, heightSellName: heightSellName,
       windowSell: windowSell, windowSellLines: windowSellLines,
       intSell: intSell, intSellName: intSellName,
@@ -1473,7 +1519,7 @@ export function elecIncludesFor(sellName){
   return (ELEC_INCLUDES[tier] || []).slice();
 }
 
-const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','electrical','dormers','wallHeight',
+const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight',
   'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
