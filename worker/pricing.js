@@ -314,16 +314,27 @@ export function gravelFoundationPrice(sqft){
 /* The shipped exterior paint rate, held as a constant as well as in SELL so
    the quote path has something sound to fall back to when an owner's saved
    pricing override leaves SELL.exteriorPaint.rate missing or unusable. */
-const PAINT_RATE = 4;
+/* Exterior paint is a FLAT fee, not a rate. Fernando, 18 Sep 2026: a small
+   shed takes very nearly as much paint as a big one - you buy the same cans,
+   the same primer, the same masking - so charging it per square foot was
+   modelling a cost that does not actually vary that way. What varies with size
+   is the TIME to paint it, and that is labour, priced below.
+   This replaced $4/sqft of wall, which itself replaced a three-tier table that
+   was a flat $7 in disguise: wall area is 2*(W+D)*wallH, so every shed sold
+   cleared the top break and the two lower rates were unreachable. */
+const PAINT_FLAT = 1400;
 
-/* Build labour, per sqft of WALL area. This is not new money: the exterior
-   paint line used to be $7/sqft and is now $4, and the $3 difference is the
-   labour that rate had always been carrying. Splitting them leaves the
-   customer's total identical to the dollar while naming what they are paying
-   for, which is what an itemised quote is supposed to do.
-   Because it is a SPLIT and not a new charge, it has to be charged exactly
-   where the $7 paint rate used to be charged - see the pine note below. */
-const LABOR_RATE = 3;
+/* Build labour, per sqft of SHED FLOOR area - the shed's own size, the way it
+   is quoted and talked about, not wall area. Bigger shed, more time.
+   Keyed by wall height, because a taller shed of the same footprint genuinely
+   is more wall to build and paint: pricing on footprint alone handed a 12x20
+   with 10ft walls about $1,220 off, since none of its extra 147 sqft of wall
+   reached this line. Same shape as SELL.wallHeight below, and the same heights.
+   Each rate is fitted so that PAINT_FLAT + rate x footprint lands on what the
+   old $7-a-wall-foot charge came to at that height, across 6x8 through 16x32.
+   Worst residual runs about $260 at 8ft up to $810 at 12ft - the flat paint fee
+   does not scale with height, so the rate has to absorb all of it. */
+const LABOR_BY_HEIGHT = { 6: 5.00, 7: 6.50, 8: 7.75, 9: 9.75, 10: 11.50, 12: 14.50 };
 
 export let SELL = {
   /* INTERIOR FINISH — drywall, mud & paint.
@@ -508,26 +519,18 @@ export let SELL = {
     "pine": 0.70
   },
 
-  /* ── EXTERIOR PAINT (flat $/sqft of WALL AREA) ──
-     Covers the LP SmartSide siding AND the trim in one rate — trim area
-     is small enough next to the walls that pricing it separately isn't
-     worth the extra line item.
-     Flat $4/sqft. Fernando, 18 Sep 2026. This replaced a three-tier table
-     (under 100 sqft $4, 100-200 $5, 200 and over $7) that was never really
-     a table: wall area is 2*(W+D)*wallH, so the smallest shed sold — an
-     8x8 with 8ft walls — is already 247 sqft. Every build cleared the top
-     break, so the $4 and $5 rates were unreachable and the whole thing was
-     a flat $7 in disguise. The tiers also ran the wrong way round, putting
-     the highest rate per sqft on the largest jobs.
-     NOT charged for pine siding — pine gets STAINED, a separate mandatory
-     finish step (see siding.pine above), never painted. */
-  exteriorPaint: { rate: PAINT_RATE },
+  /* ── EXTERIOR PAINT (flat fee per shed) ──
+     Covers the LP SmartSide siding AND the trim. NOT charged for pine siding
+     — pine gets STAINED, a separate mandatory finish step (see siding.pine
+     above), never painted. */
+  exteriorPaint: { flat: PAINT_FLAT },
 
-  /* ── BUILD LABOUR (flat $/sqft of WALL AREA) ──
-     The half of the old $7 paint rate that was never paint. Charged on the
-     same builds and the same area as exterior paint, so the two together
-     come to exactly what paint alone used to cost. */
-  labor: { rate: LABOR_RATE },
+  /* ── BUILD LABOUR ($/sqft of SHED FLOOR AREA, by wall height) ──
+     The time to build and paint it, which scales with both footprint and how
+     tall the walls are. Charged on the same builds as exterior paint, and
+     folded into the Base Shed line on the customer's quote rather than shown
+     as a line of its own. */
+  labor: Object.assign({}, LABOR_BY_HEIGHT),
 
   // ── ELECTRICAL PACKAGES (flat) ── Basic / Core / Essential only — the old
   // "Standard" tier and its a la carte variant were dropped Sep 2026
@@ -1207,32 +1210,37 @@ export function computePricing(cfgIn, opts){
   // priced separately), never painted. Covers siding + trim in one rate.
   var paintSell = 0, paintSellName = '';
   if(sidId!=='pine'){
-    var _paintSqft = wallAreaFt(Wf, Df, Hf);
-    /* A saved override predating the flat rate carries only the old
-       under/mid/over keys, and the merge never deletes from the defaults,
-       so `rate` survives underneath it. Anything that is not a usable
-       number falls back to the shipped rate rather than to 0 — silently
-       painting a shed for free is the leak vents already had. An explicit
-       0 is still honoured, so paint can be zeroed deliberately. */
-    var _pr = SELL.exteriorPaint && SELL.exteriorPaint.rate;
-    var paintRate = (typeof _pr==='number' && isFinite(_pr) && _pr>=0) ? _pr : PAINT_RATE;
-    paintSell = paintRate * _paintSqft;
-    paintSellName = 'Exterior Paint ('+Math.round(_paintSqft)+' sqft)';
+    /* Flat, so nothing is read off an area. A saved override predating the
+       flat fee carries only the old rate/tier keys and the merge never deletes
+       from the defaults, so `flat` survives underneath it. Anything unusable
+       falls back to the shipped fee rather than to 0 - silently painting a
+       shed for free is the leak vents already had. An explicit 0 is honoured. */
+    var _pf = SELL.exteriorPaint && SELL.exteriorPaint.flat;
+    paintSell = (typeof _pf==='number' && isFinite(_pf) && _pf>=0) ? _pf : PAINT_FLAT;
+    paintSellName = 'Exterior Paint';
   }
   customerPrice += paintSell;
 
-  /* ── BUILD LABOUR (customer): the other half of the old paint rate ──
-     Same area and the same pine exemption as paint above, deliberately. This
-     is a SPLIT of a charge that already existed, not a new one: charge it on a
-     pine build - which never paid the paint rate - and pine sheds get $3/sqft
-     more expensive than the quote the customer was given last month. Labour is
-     of course real on a pine shed too; it is inside the base shed price there,
-     the same place it sat on every shed before this split. */
+  /* ── BUILD LABOUR (customer): per sqft of SHED FLOOR area ──
+     Same pine exemption as paint, deliberately: pine is stained rather than
+     painted, and that step is priced on its own.
+     Note this is floorAreaFt, the shed's own footprint - NOT wall area. Wall
+     height therefore does not move it, which is fine here because the wall
+     height upcharge below is itself charged per sqft of wall area and so
+     already rises with height. */
   var laborSell = 0, laborSellName = '';
   if(sidId!=='pine'){
-    var _laborSqft = wallAreaFt(Wf, Df, Hf);
-    var _lr = SELL.labor && SELL.labor.rate;
-    var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0) ? _lr : LABOR_RATE;
+    var _laborSqft = floorAreaFt(Wf, Df);
+    /* Keyed by wall height. An unknown height falls back to the 8ft rate, the
+       same way wallHObjFor treats an unknown height as standard. A saved
+       override predating this carries labor.rate and no height keys; the merge
+       never deletes from the defaults, so the height keys survive underneath
+       and the stale `rate` sits inert. Anything unusable falls back to the
+       shipped rate rather than to 0 - building a shed for free is the leak
+       vents already had. An explicit 0 is honoured. */
+    var _lr = SELL.labor && SELL.labor[Hf];
+    var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0)
+      ? _lr : (LABOR_BY_HEIGHT[Hf] || LABOR_BY_HEIGHT[8]);
     laborSell = laborRate * _laborSqft;
     laborSellName = 'Build Labor (' + Math.round(_laborSqft) + ' sqft)';
   }
