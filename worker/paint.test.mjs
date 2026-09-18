@@ -1,22 +1,27 @@
-/* Exterior paint is a flat rate per sq ft of WALL area.
+/* Exterior paint is a FLAT fee; build labor is per sq ft of SHED FLOOR area.
  *
- * It used to be a three-tier table — $4 under 100 sqft, $5 from 100, $7 from
- * 200 — which read like volume pricing but never behaved like it. Wall area is
- * 2 * (W + D) * wallH, so even an 8x8 with 8ft walls is 247 sqft: every shed
- * ever quoted cleared the top break and paid $7 on every square foot. The two
- * lower rates were dead code, and the table ran backwards anyway, charging the
- * most per sqft on the biggest jobs.
+ * The history matters, because each step was a correction of the last:
+ *   1. A three-tier table ($4 under 100 sqft of wall, $5 from 100, $7 from
+ *      200) that was never a table. Wall area is 2*(W+D)*wallH, so even a 6x6
+ *      with 6ft walls is 144 sqft and every shed sold cleared the top break.
+ *      A flat $7 in disguise, and tiered the wrong way round.
+ *   2. A flat $4/sqft of wall, with the other $3 split out as labor. Same
+ *      total, honest labels.
+ *   3. This: paint does not actually scale with area at all — a small shed
+ *      takes nearly the same paint as a big one. Time does. So paint is a flat
+ *      fee and labor carries the size, priced on the shed's own footprint.
  *
  * Run: node --test worker/paint.test.mjs
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computePricing, wallAreaFt, SELL, pricingDefaults, applyPricingOverrides } from './pricing.js';
+import { computePricing, SELL, pricingDefaults, applyPricingOverrides } from './pricing.js';
 
-const RATE = 4;
+const PAINT = 1400;
+const LABOR = 7.75;
 
-/* Every override test has to hand the module back exactly as it found it —
-   SELL is live module state shared by every later test in the run. */
+/* SELL is live module state shared by every later test in the run, so an
+   override test has to hand it back exactly as it found it. */
 function withOverride(o, fn) {
   const before = pricingDefaults();
   try { applyPricingOverrides(o); return fn(); }
@@ -27,190 +32,151 @@ function withOverride(o, fn) {
 }
 
 const SIZES = [
-  { w: 8,  l: 8,  h: 8 },
-  { w: 10, l: 12, h: 8 },
-  { w: 12, l: 16, h: 9 },
+  { w: 6,  l: 6,  h: 6  },
+  { w: 8,  l: 8,  h: 8  },
+  { w: 10, l: 12, h: 8  },
+  { w: 12, l: 16, h: 9  },
   { w: 12, l: 20, h: 10 },
   { w: 16, l: 24, h: 10 }
 ];
 
-test('paint is the flat rate times wall area, at every size', () => {
+test('paint is the same fee on every shed, whatever the size', () => {
   for (const s of SIZES) {
     const { redline } = computePricing({ style: 'gable', ...s });
-    const area = wallAreaFt(s.w, s.l, s.h);
+    assert.equal(redline.paintSell, PAINT, `${s.w}x${s.l} pays the flat fee`);
+  }
+});
+
+test('paint does not move with wall height either', () => {
+  const heights = [6, 8, 9, 10, 12].map(h => {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h });
+    return redline.paintSell;
+  });
+  assert.deepEqual(heights, heights.map(() => PAINT));
+});
+
+test('the paint line is not labelled with an area it is no longer charged on', () => {
+  const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10 });
+  assert.equal(redline.paintSellName, 'Exterior Paint');
+  assert.ok(!/sqft/i.test(redline.paintSellName), 'no square footage in the name');
+});
+
+test('labor is the rate times the SHED footprint, not the wall area', () => {
+  for (const s of SIZES) {
+    const { redline } = computePricing({ style: 'gable', ...s });
     assert.equal(
-      Math.round(redline.paintSell),
-      Math.round(RATE * area),
-      `${s.w}x${s.l} @ ${s.h}ft: ${area} sqft should paint at $${RATE}/sqft`
+      Math.round(redline.laborSell), Math.round(LABOR * s.w * s.l),
+      `${s.w}x${s.l}: labor bills on ${s.w * s.l} sqft of shed`
     );
   }
 });
 
-test('the rate per sq ft never changes with size', () => {
-  const rates = SIZES.map(s => {
-    const { redline } = computePricing({ style: 'gable', ...s });
-    return redline.paintSell / wallAreaFt(s.w, s.l, s.h);
-  });
-  for (const r of rates) assert.ok(Math.abs(r - RATE) < 1e-9, `rate drifted to ${r}`);
+test('labor tracks footprint and ignores wall height', () => {
+  const base = computePricing({ style: 'gable', w: 10, l: 12, h: 8 }).redline.laborSell;
+  for (const h of [6, 9, 10, 12]) {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h });
+    assert.equal(redline.laborSell, base, `${h}ft walls bill the same labor`);
+  }
+  const bigger = computePricing({ style: 'gable', w: 12, l: 20, h: 8 }).redline.laborSell;
+  assert.ok(bigger > base, 'a bigger footprint does cost more labor');
 });
 
-test('the old top tier is gone — a big shed is not paying $7/sqft', () => {
-  const s = { w: 16, l: 24, h: 10 };
-  const { redline } = computePricing({ style: 'gable', ...s });
-  const area = wallAreaFt(s.w, s.l, s.h);
-  assert.equal(Math.round(redline.paintSell), Math.round(RATE * area));
-  assert.ok(redline.paintSell < 7 * area, 'the $7 tier must not be reachable');
-});
-
-test('the line still names the wall sqft it charged for', () => {
+test('labor is named with the shed sqft, which is the footprint', () => {
   const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10 });
-  const area = Math.round(wallAreaFt(12, 20, 10));
-  assert.equal(redline.paintSellName, `Exterior Paint (${area} sqft)`);
+  assert.equal(redline.laborSellName, 'Build Labor (240 sqft)');
 });
 
-test('pine is stained, not painted, so it is charged no paint', () => {
+test('pine is stained, not painted, so it is charged neither', () => {
   const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9, siding: 'pine' });
   assert.equal(redline.paintSell, 0);
   assert.equal(redline.paintSellName, '');
-});
-
-test('the owner can still move the rate', () => {
-  withOverride({ SELL: { exteriorPaint: { rate: 6 } } }, () => {
-    const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
-    assert.equal(Math.round(redline.paintSell), Math.round(6 * wallAreaFt(10, 16, 9)));
-  });
-});
-
-test('the owner can zero paint out deliberately', () => {
-  withOverride({ SELL: { exteriorPaint: { rate: 0 } } }, () => {
-    const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
-    assert.equal(redline.paintSell, 0);
-  });
-});
-
-/* The one that matters in production: the owner's saved pricing snapshot in D1
-   predates the flat rate, so it carries under/mid/over and no `rate` at all. It
-   is layered OVER the shipped defaults and never deletes from them, so `rate`
-   has to survive underneath and the dead tier keys have to stay ignored. */
-test('a saved override from the tier era neither resurrects $7 nor zeroes paint', () => {
-  const legacy = { SELL: { exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 } } };
-  withOverride(legacy, () => {
-    const area = wallAreaFt(12, 20, 10);
-    const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10 });
-    assert.equal(Math.round(redline.paintSell), Math.round(RATE * area),
-      'a stale snapshot must still price paint at the shipped flat rate');
-  });
-});
-
-test('a tombstoned rate falls back to the shipped rate, not to free', () => {
-  withOverride({ SELL: { exteriorPaint: { rate: null } } }, () => {
-    const area = wallAreaFt(10, 16, 9);
-    const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
-    assert.equal(Math.round(redline.paintSell), Math.round(RATE * area),
-      'paint must never silently fall to $0');
-  });
-});
-
-/* Pine is the wrong baseline for this — it swaps in a siding upcharge and a
-   mandatory stain, so it is not the same shed minus paint. Zeroing the rate on
-   an otherwise identical build is. */
-test('paint is still folded into the customer price', () => {
-  const build = { style: 'gable', w: 10, l: 16, h: 9 };
-  const painted = computePricing(build);
-  assert.ok(painted.redline.paintSell > 0);
-  const unpainted = withOverride({ SELL: { exteriorPaint: { rate: 0 } } },
-    () => computePricing(build));
-  assert.equal(
-    Math.round(painted.customer - unpainted.customer),
-    Math.round(painted.redline.paintSell),
-    'the paint line has to reach the total, to the dollar'
-  );
-});
-
-/* ── THE SPLIT ───────────────────────────────────────────────────────────────
- * Dropping paint from $7 to $4 was never meant to drop anyone's price. The $3
- * difference moves to a Build Labor line on the same wall area, so a shed
- * quoted today totals exactly what it would have totalled under the old rate.
- * A customer holding a quote from last month and a customer quoted this
- * morning have to be looking at the same number.
- */
-
-/* What the build used to cost: paint at the old top tier, no labour line. */
-function legacyTotal(build) {
-  return withOverride(
-    { SELL: { exteriorPaint: { rate: 7 }, labor: { rate: 0 } } },
-    () => computePricing(build).customer
-  );
-}
-
-test('the paint cut and the labor line cancel out, at every size', () => {
-  for (const s of SIZES) {
-    const build = { style: 'gable', ...s };
-    const now = computePricing(build).customer;
-    assert.equal(
-      Math.round(now), Math.round(legacyTotal(build)),
-      `${s.w}x${s.l} @ ${s.h}ft: the total must not move`
-    );
-  }
-});
-
-test('paint plus labor is exactly the old paint charge', () => {
-  for (const s of SIZES) {
-    const { redline } = computePricing({ style: 'gable', ...s });
-    const area = wallAreaFt(s.w, s.l, s.h);
-    assert.equal(
-      Math.round(redline.paintSell + redline.laborSell),
-      Math.round(7 * area),
-      `${s.w}x${s.l}: $4 paint + $3 labor should equal the old $7`
-    );
-  }
-});
-
-test('the total holds on a fully loaded build, not just a bare shell', () => {
-  const build = {
-    style: 'barn', w: 12, l: 20, h: 10, siding: 'board-batten',
-    foundation: 'pad', foundationFinish: 'coated', intFinish: 'painted',
-    floor: 'better', elec: 'essential'
-  };
-  assert.equal(Math.round(computePricing(build).customer), Math.round(legacyTotal(build)));
-});
-
-/* Pine never paid the $7 paint rate, so there is nothing to split there and a
-   labour line would be a straight $3/sqft price rise on those builds. */
-test('a pine shed is charged no labor line, and its total is untouched', () => {
-  const build = { style: 'gable', w: 10, l: 16, h: 9, siding: 'pine' };
-  const { redline } = computePricing(build);
   assert.equal(redline.laborSell, 0);
   assert.equal(redline.laborSellName, '');
-  assert.equal(Math.round(computePricing(build).customer), Math.round(legacyTotal(build)));
 });
 
-test('labor is named with the wall sqft it was charged on', () => {
-  const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10 });
-  assert.equal(redline.laborSellName, `Build Labor (${Math.round(wallAreaFt(12, 20, 10))} sqft)`);
+test('both reach the customer total', () => {
+  const build = { style: 'gable', w: 10, l: 16, h: 9 };
+  const full = computePricing(build).customer;
+  const none = withOverride(
+    { SELL: { exteriorPaint: { flat: 0 }, labor: { rate: 0 } } },
+    () => computePricing(build).customer
+  );
+  const { redline } = computePricing(build);
+  assert.equal(
+    Math.round(full - none),
+    Math.round(redline.paintSell + redline.laborSell),
+    'paint and labor together move the total by exactly their sum'
+  );
 });
 
-test('the owner can move the labor rate, and a broken one falls back', () => {
-  const area = wallAreaFt(10, 16, 9);
-  withOverride({ SELL: { labor: { rate: 5 } } }, () => {
-    const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
-    assert.equal(Math.round(redline.laborSell), Math.round(5 * area));
+test('the owner can move both, and zero either deliberately', () => {
+  withOverride({ SELL: { exteriorPaint: { flat: 900 }, labor: { rate: 10 } } }, () => {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 8 });
+    assert.equal(redline.paintSell, 900);
+    assert.equal(Math.round(redline.laborSell), 1200);
   });
-  withOverride({ SELL: { labor: { rate: null } } }, () => {
-    const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
-    assert.equal(Math.round(redline.laborSell), Math.round(3 * area),
-      'labor must never silently fall to $0');
+  withOverride({ SELL: { exteriorPaint: { flat: 0 }, labor: { rate: 0 } } }, () => {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 8 });
+    assert.equal(redline.paintSell, 0);
+    assert.equal(redline.laborSell, 0);
   });
 });
 
-/* A snapshot saved before the split has no `labor` group at all. It must not
-   stop the labour line appearing, or new quotes would come out $3/sqft light. */
-test('a saved override from before the split still charges labor', () => {
+/* The one that matters in production: the owner's saved snapshot in D1 predates
+   every one of these shapes. It carries the original under/mid/over tier keys
+   and no `flat`, no `rate`. It layers OVER the shipped defaults and never
+   deletes from them, so the new keys have to survive underneath it. */
+test('a saved override from the tier era still prices paint and labor correctly', () => {
   const legacy = { SELL: { exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 } } };
   withOverride(legacy, () => {
-    const build = { style: 'gable', w: 12, l: 20, h: 10 };
-    const { redline } = computePricing(build);
-    assert.equal(Math.round(redline.laborSell), Math.round(3 * wallAreaFt(12, 20, 10)));
-    assert.equal(Math.round(computePricing(build).customer), Math.round(legacyTotal(build)));
+    const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10 });
+    assert.equal(redline.paintSell, PAINT, 'the flat fee survives a stale snapshot');
+    assert.equal(Math.round(redline.laborSell), Math.round(LABOR * 240));
   });
+});
+
+test('a tombstoned fee or rate falls back to shipped, never to free', () => {
+  withOverride({ SELL: { exteriorPaint: { flat: null }, labor: { rate: null } } }, () => {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 12, h: 8 });
+    assert.equal(redline.paintSell, PAINT, 'paint must never silently fall to $0');
+    assert.equal(Math.round(redline.laborSell), Math.round(LABOR * 120));
+  });
+});
+
+/* The fee and rate were fitted against the STANDARD 8ft wall, where the change
+   of basis was meant to be near-invisible. This guards that. */
+test('at the standard 8ft wall, the change of basis held prices still', () => {
+  for (const s of [{ w: 6, l: 8 }, { w: 8, l: 8 }, { w: 8, l: 12 }, { w: 10, l: 12 },
+                   { w: 10, l: 16 }, { w: 12, l: 16 }, { w: 12, l: 20 }, { w: 16, l: 24 }]) {
+    const { redline } = computePricing({ style: 'gable', ...s, h: 8 });
+    const wasCharged = 7 * 2 * (s.w + s.l) * 7.71;          // the old $7/sqft of wall
+    const nowCharged = redline.paintSell + redline.laborSell;
+    assert.ok(Math.abs(nowCharged - wasCharged) < 300,
+      `${s.w}x${s.l} moved $${Math.round(nowCharged - wasCharged)} (was $${Math.round(wasCharged)}, now $${Math.round(nowCharged)})`);
+  }
+});
+
+/* Taller walls DO come out cheaper than they used to, and that is not a bug to
+   be quietly patched — it falls straight out of pricing on footprint, which is
+   what was asked for. A 12x20 with 10ft walls has 640 sqft of wall against 493
+   at 8ft, and none of that difference reaches paint or labor any more.
+   Pinned so the size of the cut is visible and nobody changes it by accident.
+   The wall height upcharge still scales with wall area, so height is not free
+   overall — it just no longer feeds these two lines. */
+test('pricing on footprint means taller walls are charged less than they were', () => {
+  const cut = (w, l, h, wallH) => {
+    const { redline } = computePricing({ style: 'gable', w, l, h });
+    return (redline.paintSell + redline.laborSell) - 7 * 2 * (w + l) * wallH;
+  };
+  const tall = cut(12, 20, 10, 10);
+  assert.ok(tall < -1000 && tall > -1400,
+    `a 12x20 with 10ft walls is about $1,220 cheaper on these two lines, got $${Math.round(tall)}`);
+
+  /* and the taller the wall, the bigger the cut */
+  assert.ok(cut(10, 12, 12, 12) < cut(10, 12, 9, 9), '12ft walls are cut harder than 9ft');
+
+  /* height still costs money, just not here */
+  const a = computePricing({ style: 'gable', w: 10, l: 12, h: 8 }).customer;
+  const b = computePricing({ style: 'gable', w: 10, l: 12, h: 12 }).customer;
+  assert.ok(b > a, 'a taller shed still costs more overall, via the wall height upcharge');
 });
