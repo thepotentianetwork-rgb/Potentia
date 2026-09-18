@@ -13,6 +13,9 @@
 :root{
   --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
   --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+  /* Savings green. Deliberately not the brand blue or orange: money coming OFF
+     the price should not look like every other line on the document. */
+  --sp-green:#3ddc97;--sp-green-deep:#15803d;
 }
 body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;padding:40px 20px}
 
@@ -43,6 +46,14 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .price-box{background:rgba(44,192,253,0.06);border:1px solid var(--sp-blue-deep);padding:24px 28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
 .price-label{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
 .price-value{font-size:40px;color:var(--bright);font-weight:300}
+/* Each side of the box stacks, so the struck-through original sits under the
+   label and the saving under the figure it came off. Both are optional: with no
+   adjustment the box renders exactly as it always did. */
+.price-side{display:flex;flex-direction:column;gap:6px}
+.price-side-right{align-items:flex-end;text-align:right}
+.price-was{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);text-decoration:line-through}
+.price-save{font-family:'DM Mono',monospace;font-size:13px;letter-spacing:0.08em;color:var(--sp-green);font-weight:400;text-transform:uppercase}
+.price-box-deal{border-color:var(--sp-green);background:rgba(61,220,151,0.06)}
 
 .br-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--dim);font-size:15px}
 .br-row:last-child{border-bottom:none}
@@ -61,6 +72,10 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .br-row.br-sum .br-label{color:var(--bright);font-weight:600}
 .br-row.br-sum .br-amt{font-size:15px}
 .br-row.br-tax .br-label{color:var(--chrome)}
+/* A discount is the one line on this page the customer should catch first. */
+.br-row.br-save .br-label,.br-row.br-save .br-amt{color:var(--sp-green);font-weight:600}
+.br-row.br-save .br-amt{font-size:18px}
+.br-row.br-save{background:rgba(61,220,151,0.07);margin:0 -12px;padding-left:12px;padding-right:12px}
 .br-sub-note{font-size:11px;color:var(--chrome);opacity:.8;padding:0 0 8px;line-height:1.5}
 .br-label{color:var(--chrome)}
 .br-amt{color:var(--bright);font-family:'DM Mono',monospace;font-size:13px}
@@ -91,6 +106,19 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .symbol-legend-desc{color:var(--chrome);text-align:left;flex:1}
 .fp-dim-bg{fill:var(--deep)}
 
+/* Phone. The price box is a two-column layout that wraps to two rows, and a
+   right-aligned column stranded on its own row reads as a stray number rather
+   than the closing figure - so below this width everything left-aligns into one
+   stacked block. */
+@media(max-width:560px){
+  .doc{padding:28px 18px}
+  .doc::before{margin:-28px -18px 28px}
+  .price-box{flex-direction:column;align-items:stretch;padding:20px}
+  .price-side-right{align-items:flex-start;text-align:left}
+  .price-value{font-size:34px}
+  .br-row.br-save{margin:0 -8px;padding-left:8px;padding-right:8px}
+}
+
 @media print{
   body{background:#fff;color:#111;padding:0}
   .toolbar{display:none}
@@ -98,9 +126,17 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
   .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong,.br-amt,.spec-val{color:#111}
   .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label,.sub-label,.br-note{color:#333}
   .price-box{background:#f5f9fc;border-color:#bcdcf0}
+  .price-box-deal{background:#f2fbf6;border-color:#15803d}
+  .br-row.br-save{background:#f2fbf6}
+  .br-row.br-save .br-label,.br-row.br-save .br-amt,.price-save{color:var(--sp-green-deep)}
+  .price-was{color:#666}
   .br-row{border-color:#ddd}
   .br-row.br-sum{border-top-color:#111}
   .br-row.br-sum .br-label{color:#111}
+  /* .br-row.br-tax .br-label is (0,3,0) and outranks the bare .br-label above,
+     so without this the Sales Tax label keeps its on-screen --chrome and prints
+     at #c8cdd6 on white - effectively invisible on a printed quote. */
+  .br-row.br-tax .br-label{color:#333}
   .render-cell{border-color:#ccc}
   .render-grid{break-inside:avoid}
   .symbol-legend{border-color:#ccc}
@@ -452,8 +488,42 @@ function taxBreakdown(redline) {
     adjustedSubtotal: adjustedSubtotal,
     tax: tax,
     total: adjustedSubtotal + tax,
+    /* What the shed would have come to with nothing taken off, and what came
+       off, both tax-inclusive so they sit beside the Total Due figure and
+       subtract to it exactly. Derived from adjustedSubtotal rather than from
+       `adjust` directly, because adjustedSubtotal is clamped at zero - a
+       discount bigger than the shed would otherwise report a saving larger
+       than the price. Zero when the adjustment put the price UP; there is no
+       saving to claim then. */
+    totalBefore: subtotal * (1 + TAX_RATE),
+    savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
     depositTotal: depositTotal
   };
+}
+
+/* The closing figure. With no adjustment on the quote this renders exactly what
+   it always did: one label, one number. With one, it also shows what the shed
+   came to before it and - only when the price went DOWN - what the customer
+   saved. Both are tax-inclusive, like the Total Due they sit beside, so the
+   three numbers subtract to each other on the page instead of nearly doing so.
+   An adjustment that raises the price still shows the before figure, because
+   hiding it would be the same document telling the customer two different
+   things, but it claims no saving. */
+function priceBox(bd, totalDue) {
+  var hasAdjust = !!(bd && bd.adjust);
+  var saved = (bd && bd.savings > 0.005) ? bd.savings : 0;
+  return '<div class="doc-section">'
+    + '<div class="price-box' + (saved ? ' price-box-deal' : '') + '">'
+    +   '<div class="price-side">'
+    +     '<span class="price-label">Total Due' + (hasAdjust ? ' After Adjustment' : '') + ' (Tax Included)</span>'
+    +     (hasAdjust ? '<span class="price-was">Before adjustment ' + money2(bd.totalBefore) + '</span>' : '')
+    +   '</div>'
+    +   '<div class="price-side price-side-right">'
+    +     '<span class="price-value">' + (totalDue != null ? money2(totalDue) : 'Pending review') + '</span>'
+    +     (saved ? '<span class="price-save">You save ' + money2(saved) + '</span>' : '')
+    +   '</div>'
+    + '</div>'
+    + '</div>';
 }
 
 function buildBreakdown(bd) {
@@ -491,11 +561,11 @@ function buildBreakdown(bd) {
          "Discount (10%)" beside a +$500 figure is the kind of contradiction a
          customer reads as a mistake on the whole quote. */
       var pLabel = (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)';
-      rowsHtml += '<div class="br-row"><span class="br-label">' + esc(pLabel) + '</span>'
+      rowsHtml += '<div class="br-row' + (pAmt < 0 ? ' br-save' : '') + '"><span class="br-label">' + esc(pLabel) + '</span>'
         + '<span class="br-amt">' + (pAmt < 0 ? '\u2212' : '+') + money2(Math.abs(pAmt)) + '</span></div>';
     } else if (a.kind === 'amount' && isFinite(v)) {
       var aLabel = a.note || (v < 0 ? 'Discount' : 'Adjustment');
-      rowsHtml += '<div class="br-row"><span class="br-label">' + esc(aLabel) + '</span>'
+      rowsHtml += '<div class="br-row' + (v < 0 ? ' br-save' : '') + '"><span class="br-label">' + esc(aLabel) + '</span>'
         + '<span class="br-amt">' + (v < 0 ? '\u2212' : '+') + money2(Math.abs(v)) + '</span></div>';
     }
   });
@@ -681,12 +751,7 @@ function render(submission, customer) {
 
     + buildBreakdown(breakdown)
 
-    + '<div class="doc-section">'
-    +   '<div class="price-box">'
-    +     '<span class="price-label">Total Due (Tax Included)</span>'
-    +     '<span class="price-value">' + (totalDue != null ? money2(totalDue) : 'Pending review') + '</span>'
-    +   '</div>'
-    + '</div>'
+    + priceBox(breakdown, totalDue)
 
     + (details.notes ? '<div class="doc-section"><div class="doc-label">Customer Notes</div><div class="fv" style="font-size:15px">' + esc(details.notes) + '</div></div>' : '')
 
