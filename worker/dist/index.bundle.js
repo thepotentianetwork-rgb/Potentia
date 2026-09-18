@@ -1523,6 +1523,52 @@ const ELEC_INCLUDES = {
 };
 
 /* Given a stored "Core Electrical", hand back what Core contains. */
+/* Re-price the finish on a quote written before paint and labour were split.
+   Those redlines carry a single paintSell, charged at $7 per sqft of WALL area,
+   and no laborSell at all. This returns what the same build would be charged
+   today - the flat paint fee, plus labour on the shed's own footprint at the
+   rate for its wall height - so a quote already sent can be shown under current
+   pricing without being re-quoted.
+
+   Deliberately NOT a full re-price. Only the two finish figures are recomputed;
+   everything else on that redline is what the customer was quoted and stays
+   exactly as written. Re-running the whole engine would also move the base shed
+   with today's material costs, which is a different and much larger change.
+
+   Returns null - meaning leave the quote alone - when there is nothing to do or
+   nothing to do it from: a redline already carrying laborSell is current; a
+   build with no paint charge is pine or was never painted, and pine pays
+   neither line; and a config without usable dimensions cannot be priced, so it
+   is left as written rather than guessed at.
+
+   Reads SELL, so an owner's dashboard edits apply here exactly as they do to a
+   new quote. */
+function repriceFinish(redline, cfg){
+  if(!redline || typeof redline!=='object') return null;
+  if(!cfg || typeof cfg!=='object') return null;
+  if(redline.laborSell != null) return null;          // already on the new model
+  var oldPaint = Number(redline.paintSell) || 0;
+  if(cfg.siding==='pine' || oldPaint<=0) return null; // nothing was charged to redo
+  var w=Number(cfg.w), d=Number(cfg.l), h=Number(cfg.h);
+  if(!(w>0 && d>0 && h>0)) return null;
+
+  var _pf = SELL.exteriorPaint && SELL.exteriorPaint.flat;
+  var paintSell = (typeof _pf==='number' && isFinite(_pf) && _pf>=0) ? _pf : PAINT_FLAT;
+  var _lr = SELL.labor && SELL.labor[h];
+  var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0)
+    ? _lr : (LABOR_BY_HEIGHT[h] || LABOR_BY_HEIGHT[8]);
+  var floor = w*d;
+  var laborSell = laborRate * floor;
+
+  return {
+    paintSell: paintSell,
+    paintSellName: 'Exterior Paint',
+    laborSell: laborSell,
+    laborSellName: 'Build Labor (' + Math.round(floor) + ' sqft)',
+    delta: (paintSell + laborSell) - oldPaint
+  };
+}
+
 function elecIncludesFor(sellName){
   if(!sellName) return [];
   const tier = String(sellName).replace(/\s*Electrical\s*$/i, '').trim();
@@ -3458,6 +3504,10 @@ async function handleSetFollowUp(request, env, origin, customerId) {
 async function handleListCustomers(request, env, origin) {
   await ensureCustomerTempColumns(env);
   await ensureCallsTable(env);
+  /* Once for the whole list, not once per row: withCurrentFinish reads SELL
+     directly, so the owner's saved edits have to be layered on before the map
+     below runs. */
+  await applySavedPricing(env);
   const { results } = await env.DB.prepare(
     `SELECT c.id, c.name, c.email, c.phone, c.city, c.state, c.created_at, c.updated_at,
        c.temp_override, c.follow_up_at,
@@ -3480,6 +3530,9 @@ async function handleListCustomers(request, env, origin) {
     let consultEstimate = null;
     try {
       const d = JSON.parse(c.latest_details);
+      /* Same re-pricing the quote document gets, so the list and the quote
+         never disagree about what a customer is being asked to pay. */
+      withCurrentFinish(d);
       if (d && d.quotedPrice != null) quotedPrice = d.quotedPrice;
       // A consult request is a lead with no finished design behind it, so it
       // carries an estimate of what they had going, never a quotedPrice. The
@@ -3766,10 +3819,16 @@ async function handleGetSubmission(request, env, origin, id) {
      whether an old order itemises its electrical package. See
      withElecIncludes: the contents are filled back in from the stored package
      name, because a redline written before they existed has the name alone. */
+  await applySavedPricing(env);
   try {
     const parsed = JSON.parse(submission.details);
     if (parsed && parsed.redline) {
       withElecIncludes(parsed.redline);
+      /* And shows the finish under current pricing: a quote written before
+         paint and labour were split carries one wall-area paint charge and no
+         labour at all, so without this it would go on showing a number the
+         business no longer quotes. Stored row untouched — display only. */
+      withCurrentFinish(parsed);
       submission.details = JSON.stringify(parsed);
     }
   } catch (e) {}
@@ -3972,6 +4031,32 @@ function withElecIncludes(redline) {
   const filled = elecIncludesFor(redline.elecSellName);
   if (filled.length) redline.elecIncludes = filled;
   return redline;
+}
+
+/* Show a quote written before the paint/labour split under current pricing.
+   repriceFinish decides whether there is anything to do and returns null if
+   not, so this is safe to call on every submission regardless of vintage.
+
+   Mutates the parsed details in place and returns whether it changed anything.
+   Nothing is written back to D1: the stored row stays exactly as the customer
+   was originally quoted, and this only changes what is rendered from it. That
+   keeps the record intact and makes the whole thing reversible by shipping a
+   bundle that stops calling it.
+
+   quotedPrice moves by the same delta as the redline, or the admin list would
+   go on showing the old total while the quote document showed the new one. */
+function withCurrentFinish(details) {
+  if (!details || typeof details !== "object") return false;
+  const priced = repriceFinish(details.redline, details.config);
+  if (!priced) return false;
+  details.redline.paintSell     = priced.paintSell;
+  details.redline.paintSellName = priced.paintSellName;
+  details.redline.laborSell     = priced.laborSell;
+  details.redline.laborSellName = priced.laborSellName;
+  if (details.quotedPrice != null && isFinite(Number(details.quotedPrice))) {
+    details.quotedPrice = Number(details.quotedPrice) + priced.delta;
+  }
+  return true;
 }
 
 function compItemsFromRedline(redline) {
@@ -5072,19 +5157,26 @@ function computeOptionPrices(cfg) {
 // redline (the client can't compute either any more, and even if it could,
 // a submitted quote's numbers need to be the real ones, not whatever the
 // browser was told to send).
+/* Layer the owner's saved pricing edits over the shipped defaults. Pulled out
+   of computeQuoteResult because the read paths need it too: a quote being shown
+   under current pricing has to use the same table a new quote would be priced
+   from, or the dashboard's edits would apply to new quotes only. */
+async function applySavedPricing(env) {
+  const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
+  if (!row) return;
+  let saved;
+  try {
+    saved = JSON.parse(row.data);
+  } catch (e) {
+    saved = null;
+  }
+  if (saved) applyPricingOverrides(saved);
+}
+
 async function computeQuoteResult(rawConfig, overrides, env) {
   const cfg = validateShedConfig(rawConfig);
 
-  const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
-  if (row) {
-    let saved;
-    try {
-      saved = JSON.parse(row.data);
-    } catch (e) {
-      saved = null;
-    }
-    if (saved) applyPricingOverrides(saved);
-  }
+  await applySavedPricing(env);
 
   const opts = overrides && typeof overrides === "object" ? overrides : undefined;
   const result = computePricing(cfg, opts);

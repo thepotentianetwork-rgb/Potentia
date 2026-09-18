@@ -1522,6 +1522,52 @@ export const ELEC_INCLUDES = {
 };
 
 /* Given a stored "Core Electrical", hand back what Core contains. */
+/* Re-price the finish on a quote written before paint and labour were split.
+   Those redlines carry a single paintSell, charged at $7 per sqft of WALL area,
+   and no laborSell at all. This returns what the same build would be charged
+   today - the flat paint fee, plus labour on the shed's own footprint at the
+   rate for its wall height - so a quote already sent can be shown under current
+   pricing without being re-quoted.
+
+   Deliberately NOT a full re-price. Only the two finish figures are recomputed;
+   everything else on that redline is what the customer was quoted and stays
+   exactly as written. Re-running the whole engine would also move the base shed
+   with today's material costs, which is a different and much larger change.
+
+   Returns null - meaning leave the quote alone - when there is nothing to do or
+   nothing to do it from: a redline already carrying laborSell is current; a
+   build with no paint charge is pine or was never painted, and pine pays
+   neither line; and a config without usable dimensions cannot be priced, so it
+   is left as written rather than guessed at.
+
+   Reads SELL, so an owner's dashboard edits apply here exactly as they do to a
+   new quote. */
+export function repriceFinish(redline, cfg){
+  if(!redline || typeof redline!=='object') return null;
+  if(!cfg || typeof cfg!=='object') return null;
+  if(redline.laborSell != null) return null;          // already on the new model
+  var oldPaint = Number(redline.paintSell) || 0;
+  if(cfg.siding==='pine' || oldPaint<=0) return null; // nothing was charged to redo
+  var w=Number(cfg.w), d=Number(cfg.l), h=Number(cfg.h);
+  if(!(w>0 && d>0 && h>0)) return null;
+
+  var _pf = SELL.exteriorPaint && SELL.exteriorPaint.flat;
+  var paintSell = (typeof _pf==='number' && isFinite(_pf) && _pf>=0) ? _pf : PAINT_FLAT;
+  var _lr = SELL.labor && SELL.labor[h];
+  var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0)
+    ? _lr : (LABOR_BY_HEIGHT[h] || LABOR_BY_HEIGHT[8]);
+  var floor = w*d;
+  var laborSell = laborRate * floor;
+
+  return {
+    paintSell: paintSell,
+    paintSellName: 'Exterior Paint',
+    laborSell: laborSell,
+    laborSellName: 'Build Labor (' + Math.round(floor) + ' sqft)',
+    delta: (paintSell + laborSell) - oldPaint
+  };
+}
+
 export function elecIncludesFor(sellName){
   if(!sellName) return [];
   const tier = String(sellName).replace(/\s*Electrical\s*$/i, '').trim();
