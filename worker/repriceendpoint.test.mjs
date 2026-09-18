@@ -95,19 +95,31 @@ test('the quote endpoint serves the finish on current pricing', async () => {
   assert.equal(details.redline.laborSellName, 'Build Labor (216 sqft)');
 });
 
-test('the quoted total moves by exactly the finish delta', async () => {
+/* The customer agreed to $17,000. Re-pricing re-allocates that money; it does
+   not change how much of it there is. */
+test('the quoted total the customer was given does not move', async () => {
   const { env } = setup();
   const body = await (await getSubmission(env)).json();
   const details = JSON.parse(body.submission.details);
-  const delta = (1400 + 7.75 * 216) - 3238;
-  assert.equal(Math.round(details.quotedPrice), Math.round(17000 + delta));
+  assert.equal(Math.round(details.quotedPrice), 17000);
 });
 
-test('everything else the customer was quoted survives untouched', async () => {
+test('the shortfall lands in the base shed, which is the re-allocation', async () => {
   const { env } = setup();
   const body = await (await getSubmission(env)).json();
   const r = JSON.parse(body.submission.details).redline;
-  assert.equal(r.marginPrice, 8000);
+  const recovered = 3238 - 1400 - 7.75 * 216;
+  assert.ok(recovered > 0);
+  assert.equal(Math.round(r.marginPrice), Math.round(8000 + recovered),
+    'the base shed absorbs what came off the paint line');
+  assert.equal(Math.round(r.marginPrice + r.paintSell + r.laborSell),
+    Math.round(8000 + 3238), 'and the three together are what they always were');
+});
+
+test('everything NOT part of the finish survives untouched', async () => {
+  const { env } = setup();
+  const body = await (await getSubmission(env)).json();
+  const r = JSON.parse(body.submission.details).redline;
   assert.equal(r.sidingSell, 1600);
   assert.equal(r.elecSell, 3000);
   assert.equal(r.baseSheetLabel, 'Gable');
