@@ -263,3 +263,50 @@ test('a quote sent before the split still shows its original price', () => {
   assert.ok(Math.abs(summed - shed.amt) < 1,
     `an old quote still itemises to its own total (${summed} vs ${shed.amt})`);
 });
+
+/* Build labour is priced as its own thing by the engine so staff can see the
+ * split, but the customer is shown one price to build the shed. It has to be
+ * inside Base Shed, and it has to be inside it exactly once — folding it in
+ * while also listing it would double-charge, and the itemisation would stop
+ * adding up to the phase total.
+ */
+test('build labor is folded into Base Shed, not listed separately', () => {
+  const page = loadQuotePage();
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  assert.ok(redline.laborSell > 0, 'this build does charge labor');
+
+  const bd = page.taxBreakdown(redline);
+  const shed = bd.rows.find(r => / Shed\b/.test(r.label));
+  const subs = shed.subLines || [];
+
+  assert.ok(!subs.some(l => /Labor/i.test(l.label)),
+    'no standalone labor line reaches the customer');
+
+  const base = subs.find(l => l.label === 'Base Shed');
+  assert.equal(
+    Math.round(base.amt),
+    Math.round(redline.marginPrice + redline.laborSell),
+    'Base Shed carries the labor inside it'
+  );
+
+  const summed = subs.reduce((t, l) => t + l.amt, 0);
+  assert.ok(Math.abs(summed - shed.amt) < 1,
+    `the itemisation still adds up (${summed} vs ${shed.amt})`);
+});
+
+/* Labor is deliberately NOT compable: it is not a line the customer can see,
+ * so there is nothing to give away. This pins that, because the fold into Base
+ * Shed adds laborSell whole — if labor became compable in one of these lists
+ * without the other two following, Base Shed and the phase total would drift
+ * apart and the itemisation would stop adding up.
+ */
+test('labor is not in the compable set, which is what lets Base Shed add it whole', () => {
+  const page = loadQuotePage();
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  assert.ok(redline.laborSellName, 'this build has a labor line to look for');
+
+  assert.equal(page.compItemPrices(redline)[redline.laborSellName], undefined,
+    'labor cannot be selected as a comp');
+  assert.ok(!page.nameList(redline, 'shed').includes(redline.laborSellName),
+    'labor is not among the shed names a comp is deducted against');
+});
