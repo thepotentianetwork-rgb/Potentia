@@ -1,3 +1,7 @@
+// Build stamp, written by build-bundle.mjs. Read it back from GET /version.
+const WORKER_BUILD = "1b69b17-dirty";
+const WORKER_BUILT_AT = "2026-09-18T17:58:57.428Z";
+
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
    Extracted verbatim from the pricing IIFE that used to live inside
@@ -5960,6 +5964,20 @@ export default {
     }
 
     try {
+      /* Which build is actually live. Public, read-only, and deliberately
+         tiny: the worker ships by pasting a bundle into the Cloudflare
+         dashboard, so without this there is no way to tell a paste that landed
+         from one that never happened - and a stale worker is indistinguishable
+         from a bug in the code. Carries no data about the business.
+         WORKER_BUILD is injected by build-bundle.mjs; running index.js
+         unbundled has no stamp, hence the typeof guard. */
+      if (path === "/version" && request.method === "GET") {
+        return json({
+          build: (typeof WORKER_BUILD !== "undefined") ? WORKER_BUILD : "unbundled",
+          builtAt: (typeof WORKER_BUILT_AT !== "undefined") ? WORKER_BUILT_AT : null
+        }, 200, origin);
+      }
+
       if (path === "/chat" && request.method === "POST") {
         // The only endpoint here that spends money per call. 30/hour is far
         // more than a visitor asking about shed sizes will ever use, and far
