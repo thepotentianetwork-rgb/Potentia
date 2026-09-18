@@ -28,6 +28,7 @@ const redline = {
   trueTotalCost: 12000,
   addonLines: [{name:"Skylight", amt:184}, {name:"Cupola (Black Roof)", amt:600},
                {name:"Gable/Wall Vent \u00d72", amt:60}],
+  // Deliberately no elecIncludes — this is an order placed before they existed.
   elecSell: 2300, elecSellName: "Core Electrical",
   intSell: 1500, intSellName: "Drywall & Mud",
   paintSell: 900, paintSellName: "Exterior Paint",
@@ -100,6 +101,20 @@ r = await set([]);
 check("empty list clears", r.status===200 && r.data.effective_price===null, r.data);
 r = await call("GET","/admin/analytics",null,tok);
 check("revenue back to the quoted price", r.data.won.revenue===20000, r.data.won.revenue);
+
+console.log("\n-- an old order still itemises its electrical --");
+/* The fixture's redline carries elecSellName and NO elecIncludes, which is
+   exactly the shape of every order placed before the contents existed. If the
+   Worker did not fill them in from the name, those quotes would keep showing
+   "Core Electrical $2,300" with nothing under it forever. */
+r = await call("GET","/admin/submissions/1",null,tok);
+{
+  let inc=[];
+  try { inc=(JSON.parse(r.data.submission.details).redline||{}).elecIncludes||[]; } catch(e){}
+  check("contents filled in from the stored package name", inc.length===6, inc);
+  check("it is Core's list, not another tier's", inc.includes("(1) GFCI Outlet")
+        && !inc.includes("Exterior Soffit Lights"), inc);
+}
 
 console.log("\n-- raising the price --");
 /* The direction nothing exercised until now. The arithmetic always allowed it
