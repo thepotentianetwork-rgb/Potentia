@@ -1027,6 +1027,11 @@ function withCurrentFinish(details) {
   details.redline.paintSellName = priced.paintSellName;
   details.redline.laborSell     = priced.laborSell;
   details.redline.laborSellName = priced.laborSellName;
+  /* The top-up lands in the base shed, exactly as it does on a new quote, so
+     the customer's total holds and only the allocation changes. */
+  if (priced.recovered > 0) {
+    details.redline.marginPrice = (Number(details.redline.marginPrice) || 0) + priced.recovered;
+  }
   if (details.quotedPrice != null && isFinite(Number(details.quotedPrice))) {
     details.quotedPrice = Number(details.quotedPrice) + priced.delta;
   }

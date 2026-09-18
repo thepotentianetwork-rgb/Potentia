@@ -43,21 +43,30 @@ test('the finish is recomputed to what the same build costs today', () => {
   assert.equal(out.paintSellName, 'Exterior Paint');
   assert.equal(Math.round(out.laborSell), Math.round(LABOR[8] * 216));
   assert.equal(out.laborSellName, 'Build Labor (216 sqft)');
-  assert.equal(Math.round(out.delta), Math.round(PAINT + LABOR[8] * 216 - 3238));
 });
 
-test('the delta is what the total will move by, sign and all', () => {
+/* The customer agreed to a number. Re-pricing changes where that money is
+   shown going, not how much of it there is - the shortfall between the fitted
+   rates and what this quote originally charged is recovered into the base
+   shed, so the total holds exactly. */
+test('the total the customer was given does not move', () => {
   const out = repriceFinish(legacyRedline(), legacyConfig);
-  assert.equal(Math.round(out.delta), -164, 'this build gets cheaper by $164');
+  assert.equal(Math.round(out.recovered), Math.round(3238 - PAINT - LABOR[8] * 216));
+  assert.equal(Math.round(out.delta), 0, 'nothing moves');
+  assert.equal(Math.round(out.paintSell + out.laborSell + out.recovered), 3238);
 });
 
 /* Not every quote gets cheaper. A small shed has little wall and a lot of
    flat paint fee, so it goes UP — a customer holding one of those quotes is
    being shown a higher number than they were sent. Pinned so that is a
    decision on the record rather than a surprise. */
+/* The top-up only ever tops up. Where the fitted rates already charge more than
+   this quote originally did, there is nothing to recover and the rise is
+   reported rather than hidden. */
 test('a small shed is repriced UPWARDS, and the delta says so', () => {
   const small = { marginPrice: 4000, paintSell: 1727, paintSellName: 'Exterior Paint (247 sqft)' };
   const out = repriceFinish(small, { w: 8, l: 8, h: 8 });
+  assert.equal(out.recovered, 0, 'nothing to recover when already over');
   assert.ok(out.delta > 0, `expected a rise, got ${out.delta}`);
   assert.equal(Math.round(out.delta), Math.round(PAINT + LABOR[8] * 64 - 1727));
 });
@@ -68,7 +77,7 @@ test('nothing else on the redline is touched', () => {
   /* repriceFinish returns a patch and mutates nothing itself */
   assert.equal(before.paintSell, 3238, 'the input redline is left alone');
   assert.deepEqual(Object.keys(out).sort(),
-    ['delta', 'laborSell', 'laborSellName', 'paintSell', 'paintSellName']);
+    ['delta', 'laborSell', 'laborSellName', 'paintSell', 'paintSellName', 'recovered']);
 });
 
 test('a quote already on the new model is left alone', () => {

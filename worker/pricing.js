@@ -336,6 +336,11 @@ const PAINT_FLAT = 1400;
    does not scale with height, so the rate has to absorb all of it. */
 const LABOR_BY_HEIGHT = { 6: 5.00, 7: 6.50, 8: 7.75, 9: 9.75, 10: 11.50, 12: 14.50 };
 
+/* The single charge paint and labour replaced: $7 per sqft of WALL area, which
+   is what the old three-tier table always came to in practice. Kept only as the
+   yardstick for the top-up below. Not a price, and read nowhere else. */
+const LEGACY_FINISH_RATE = 7;
+
 
 export let SELL = {
   /* INTERIOR FINISH — drywall, mud & paint.
@@ -1247,6 +1252,30 @@ export function computePricing(cfgIn, opts){
   }
   customerPrice += laborSell;
 
+  /* ── FINISH SHORTFALL RECOVERED INTO THE BASE SHED ──
+     Splitting the old $7-a-wall-foot charge into a flat paint fee and a
+     per-height footprint rate was meant to change how the price is ARRIVED AT,
+     not what it comes to. The fitted rates land close but not exact, and on
+     mid-size sheds they come out a few hundred under - money the business was
+     not choosing to give away, it just fell out of the arithmetic.
+     So the difference goes into the base shed price. The total holds, and the
+     allocation is what changed: paint reads as the flat fee it actually is,
+     the labour sits with the build where it belongs, and the remainder lands
+     on the shed itself rather than being quietly dropped.
+     Only ever a top-up. Where the fitted rates already charge MORE than the old
+     model did - small sheds, and the tallest walls - nothing is taken back off.
+     Pine is excluded: it pays neither paint nor labour and never paid the $7,
+     so there is no shortfall to recover on it. */
+  var finishRecovered = 0;
+  if(sidId!=='pine'){
+    var _legacyFinish = LEGACY_FINISH_RATE * wallAreaFt(Wf, Df, Hf);
+    finishRecovered = Math.max(0, _legacyFinish - (paintSell + laborSell));
+    if(finishRecovered>0){
+      marginPrice   += finishRecovered;
+      customerPrice += finishRecovered;
+    }
+  }
+
   // ── WALL HEIGHT UPCHARGE (customer): per sqft of wall area — 8ft is the included standard ──
   var heightSell = 0, heightSellName = '';
   var heightRate = SELL.wallHeight[Hf];
@@ -1462,6 +1491,7 @@ export function computePricing(cfgIn, opts){
       sidingSell: sidingSell, sidingSellName: sidingSellName,
       paintSell: paintSell, paintSellName: paintSellName,
       laborSell: laborSell, laborSellName: laborSellName,
+      finishRecovered: finishRecovered,
       heightSell: heightSell, heightSellName: heightSellName,
       windowSell: windowSell, windowSellLines: windowSellLines,
       intSell: intSell, intSellName: intSellName,
@@ -1559,12 +1589,22 @@ export function repriceFinish(redline, cfg){
   var floor = w*d;
   var laborSell = laborRate * floor;
 
+  /* The same top-up a new quote gets, measured against this quote's own stored
+     paint charge rather than against LEGACY_FINISH_RATE. That stored figure IS
+     what the old model charged for this exact build, so it is the truest
+     yardstick available - and using it means an already-sent quote keeps the
+     total its customer was given, with only the allocation changing. Which is
+     the whole point: the customer sees where their money goes, not a different
+     number from the one they agreed to. */
+  var recovered = Math.max(0, oldPaint - (paintSell + laborSell));
+
   return {
     paintSell: paintSell,
     paintSellName: 'Exterior Paint',
     laborSell: laborSell,
     laborSellName: 'Build Labor (' + Math.round(floor) + ' sqft)',
-    delta: (paintSell + laborSell) - oldPaint
+    recovered: recovered,
+    delta: (paintSell + laborSell + recovered) - oldPaint
   };
 }
 

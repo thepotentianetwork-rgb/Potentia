@@ -292,6 +292,24 @@ function compedIn(names) {
 // sibling function, and a copy living inside taxBreakdown was invisible to it.
 function num(n) { return Number(n) || 0; }
 
+/* What the base shed price covers, named on the quote under the Base Shed line
+   the way the electrical package lists its contents.
+   NAMES ONLY, no figures, and that is deliberate. The shed line is a SELL
+   price; the money behind these headings is cost. Printing both would let a
+   customer subtract one from the other and read the margin straight off the
+   page - on a 10x20 that is about $2,500 of a $5,635 line. The headings answer
+   "what am I paying for" without answering "what did it cost you".
+   Fixed rather than derived: every shed takes materials, shop time, build time
+   and a truck, so there is nothing here that varies by build. Living on the
+   page rather than the redline also means it reaches every quote ever sent
+   without the worker needing to backfill anything. */
+var BASE_SHED_INCLUDES = [
+  'Materials & lumber',
+  'Shop labor',
+  'Build labor & assembly',
+  'Fuel & delivery'
+];
+
 var REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 function removalLines(redline) {
   if (!redline || !Array.isArray(redline.addonLines)) return [];
@@ -423,7 +441,7 @@ function taxBreakdown(redline) {
      up to. If labour is ever made compable, all three move together.
      A quote written before the split has no laborSell, so num() gives 0 and
      its Base Shed reads exactly as it always did. */
-  shedSubLine(num(redline.marginPrice) + num(redline.laborSell), 'Base Shed');
+  shedSubLine(num(redline.marginPrice) + num(redline.laborSell), 'Base Shed', BASE_SHED_INCLUDES);
   shedItem(redline.heightSellName, redline.heightSell);
   shedItem(redline.sidingSellName, redline.sidingSell);
   shedItem(redline.paintSellName, redline.paintSell);
