@@ -1254,20 +1254,6 @@ export function computePricing(cfgIn, opts){
   customerPrice += floorSell;
 
   // ── ELECTRICAL PACKAGE (customer): flat price by tier ──
-  /* WHAT EACH TIER ACTUALLY INCLUDES.
-     Taken word for word from the tier cards on gallery.html, which is what the
-     customer read before they picked one — so the estimate promises exactly
-     what the website promised, and there is one place to change it if a tier
-     changes. Listed, never priced: the package is a single flat figure, and
-     putting a number beside each light would invite picking them apart. */
-  var ELEC_INCLUDES = {
-    Basic:     ['(1) 6" Light', '(1) Switch', '(1) Outlet', '(1) 120V Power Inlet'],
-    Core:      ['(4) 6" Lights', 'Porch Light', '(2) Switches', '(2) Outlets',
-                '(1) GFCI Outlet', '(1) 120V Power Inlet'],
-    Essential: ['(4) 6" Lights', 'Porch Light', 'Exterior Soffit Lights',
-                'Multiple Switch Locations', '(6) Outlets', '(1) GFCI Outlet',
-                '(1) 120V Power Inlet']
-  };
   var elecSell = 0, elecSellName = '', elecIncludes = [];
   var elecId = (typeof ELEC!=='undefined')?ELEC:'none';
   var ELEC_MAP = { basic:'Basic', core:'Core', essential:'Essential' };
@@ -1462,6 +1448,31 @@ export function pricingDefaults(){ return JSON.parse(PRISTINE); }
    by BOTH the live apply and the merged read below, because the two disagreeing
    about which groups exist is exactly how the dashboard ends up showing a
    different set of prices from the one being charged. */
+/* WHAT EACH ELECTRICAL TIER INCLUDES.
+   Word for word from the tier cards on gallery.html, which is what the
+   customer read before they picked one — so the estimate promises exactly what
+   the website promised, and there is one place to change it if a tier changes.
+   Listed, never priced: the tier is a single flat figure, and a number beside
+   each light would invite picking the package apart.
+   Exported because a quote stores its redline at submit time, so every order
+   placed before this existed has the package NAME but no contents — the Worker
+   fills them back in from the name when it serves one. */
+export const ELEC_INCLUDES = {
+  Basic:     ['(1) 6" Light', '(1) Switch', '(1) Outlet', '(1) 120V Power Inlet'],
+  Core:      ['(4) 6" Lights', 'Porch Light', '(2) Switches', '(2) Outlets',
+              '(1) GFCI Outlet', '(1) 120V Power Inlet'],
+  Essential: ['(4) 6" Lights', 'Porch Light', 'Exterior Soffit Lights',
+              'Multiple Switch Locations', '(6) Outlets', '(1) GFCI Outlet',
+              '(1) 120V Power Inlet']
+};
+
+/* Given a stored "Core Electrical", hand back what Core contains. */
+export function elecIncludesFor(sellName){
+  if(!sellName) return [];
+  const tier = String(sellName).replace(/\s*Electrical\s*$/i, '').trim();
+  return (ELEC_INCLUDES[tier] || []).slice();
+}
+
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','electrical','dormers','wallHeight',
   'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];

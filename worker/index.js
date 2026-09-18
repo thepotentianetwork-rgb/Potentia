@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget } from "./pricing.js";
+import { computePricing, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
@@ -582,12 +582,14 @@ async function handleGetCustomer(request, env, origin, id) {
   // column.
   submissions.forEach((sub) => {
     sub.adjustment_list = adjustmentsOf(sub);
-    let redline = null;
+    let redline = null, parsed = null;
     try {
-      const d = JSON.parse(sub.details);
-      redline = d && d.redline;
+      parsed = JSON.parse(sub.details);
+      redline = parsed && parsed.redline;
     } catch (e) {}
     sub.comp_items = compItemsFromRedline(redline);
+    // Backfill the electrical contents for orders taken before they existed.
+    if (parsed && withElecIncludes(redline)) sub.details = JSON.stringify(parsed);
   });
 
   const { results: notes } = await env.DB.prepare(
@@ -780,6 +782,17 @@ async function handleGetSubmission(request, env, origin, id) {
   // Normalised here so the quote document never has to know that older rows
   // store a single adjustment and newer ones store a list.
   submission.adjustment_list = adjustmentsOf(submission);
+  /* This is the endpoint the QUOTE reads, so it is the one that decides
+     whether an old order itemises its electrical package. See
+     withElecIncludes: the contents are filled back in from the stored package
+     name, because a redline written before they existed has the name alone. */
+  try {
+    const parsed = JSON.parse(submission.details);
+    if (parsed && parsed.redline) {
+      withElecIncludes(parsed.redline);
+      submission.details = JSON.stringify(parsed);
+    }
+  } catch (e) {}
   return json({ submission, customer: customer || null }, 200, origin);
 }
 
@@ -966,6 +979,21 @@ const ADJUSTMENT_KINDS = ["comp", "percent", "amount"];
 // appears under — which is exactly the set that can be given away. Read from
 // the submission's own stored redline, so it reflects what THAT customer was
 // quoted rather than a generic catalogue.
+/* A quote stores its redline when the order is placed, so every order taken
+   before the electrical contents existed has the package NAME and nothing
+   else — and the quote page would show "Core Electrical $2,300" with no list
+   under it however new the Worker is. Filled back in from the name on the way
+   out, so old quotes itemise like new ones.
+   Never overwrites: if the redline already carries a list, that is the one the
+   customer was quoted and it wins. */
+function withElecIncludes(redline) {
+  if (!redline || typeof redline !== "object") return redline;
+  if (Array.isArray(redline.elecIncludes) && redline.elecIncludes.length) return redline;
+  const filled = elecIncludesFor(redline.elecSellName);
+  if (filled.length) redline.elecIncludes = filled;
+  return redline;
+}
+
 function compItemsFromRedline(redline) {
   if (!redline || typeof redline !== "object") return [];
   const out = [];
