@@ -1306,6 +1306,24 @@ export function computePricing(cfgIn, opts){
     function _flat(on,name,label){ if(on){ var p=flat[name]||0; addonSell+=p; addonLines.push({name:label||name,amt:p}); } }
     _flat(ADDONS.shutters,'Shutters');
     if(ADDONS.flowerboxes){ var fbCt=(typeof windowsData!=='undefined'&&windowsData.length)?windowsData.length:1; var fp=(flat['Flowerboxes']||90)*fbCt; addonSell+=fp; addonLines.push({name:'Flowerboxes \u00d7'+fbCt,amt:fp}); }
+    /* GABLE/WALL VENTS — the ones the customer places in the designer.
+       "8x16 Gable/Wall Vent" has sat in SELL.options.flat since the table was
+       written with nothing ever reading it, so every vent placed was built and
+       fitted for nothing. It is not that the charge was folded into the base
+       either: the base-shed proxy above deliberately EXCLUDES ventCost, on the
+       grounds that vents are "items we charge for separately on the customer
+       side" — and the separate charge was never built. Each one costs
+       VENT_UNIT_COST to buy, so it was going out below cost.
+       Counted off ventsData like Flowerboxes counts off windowsData, so it
+       follows what is actually on the shed rather than a toggle. */
+    var _ventCt=(typeof ventsData!=='undefined'&&ventsData)?ventsData.length:0;
+    if(_ventCt>0){
+      var _vp=(flat['8x16 Gable/Wall Vent']||0)*_ventCt;
+      if(_vp>0){
+        addonSell+=_vp;
+        addonLines.push({name:'Gable/Wall Vent \u00d7'+_ventCt, amt:_vp});
+      }
+    }
     if(ADDONS.cupola==='black')  _flat(true,'Cupola 16" Black Roof','Cupola (Black Roof)');
     if(ADDONS.cupola==='copper') _flat(true,'Cupola 16" Copper Roof','Cupola (Copper Roof)');
     /* Roof Ridge Vent was priced in SELL.options.flat all along with nothing

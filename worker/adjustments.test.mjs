@@ -26,7 +26,8 @@ db.prepare("INSERT INTO customers (name,created_at,updated_at) VALUES ('A',?,?)"
 // A quote with real, comp-able lines
 const redline = {
   trueTotalCost: 12000,
-  addonLines: [{name:"Skylight", amt:184}, {name:"Cupola (Black Roof)", amt:600}],
+  addonLines: [{name:"Skylight", amt:184}, {name:"Cupola (Black Roof)", amt:600},
+               {name:"Gable/Wall Vent \u00d72", amt:60}],
   elecSell: 2300, elecSellName: "Core Electrical",
   intSell: 1500, intSellName: "Drywall & Mud",
   paintSell: 900, paintSellName: "Exterior Paint",
@@ -54,6 +55,11 @@ const names = items.map(i=>i.name);
 check("add-ons offered", names.includes("Skylight") && names.includes("Cupola (Black Roof)"), names);
 check("named options offered", names.includes("Core Electrical") && names.includes("Drywall & Mud"), names);
 check("shelf lines offered", names.includes('16" Shelf 8ft'), names);
+/* Vents were built and fitted for nothing: the sell price sat unread in the
+   table, and the base-shed proxy excluded them on the grounds they were
+   "charged separately" — which nothing did. Now they are a line, so they can
+   also be given away deliberately. */
+check("placed vents offered", names.some(n=>/Gable\/Wall Vent/.test(n)), names);
 check("exterior paint NOT offered — the quote never sums it", !names.includes("Exterior Paint"), names);
 check("prices come with them", items.find(i=>i.name==="Skylight").amt===184, items);
 
