@@ -11,6 +11,7 @@
 
 import fs from "fs";
 import path from "path";
+import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -44,10 +45,31 @@ for (const mod of MODULES) {
     stripped + "\n// ---- end inlined " + mod + " ----\n\n";
 }
 
-const bundled = inlined + indexSrc;
+/* Stamp the build so what is running in Cloudflare can be read from outside.
+   The worker is deployed by pasting this file into a dashboard editor, which
+   means there is no deploy log, no version number and no way to tell a paste
+   that landed from one that did not - a bundle sitting unpasted looks exactly
+   like a bug in the code. WORKER_BUILD is what /version reports back. */
+function gitDesc() {
+  try {
+    const sha = execSync("git rev-parse --short HEAD", { cwd: dir, stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim();
+    const dirty = execSync("git status --porcelain", { cwd: dir, stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim().length > 0;
+    return sha + (dirty ? "-dirty" : "");
+  } catch (e) {
+    return "unknown";
+  }
+}
+const stamp =
+  "// Build stamp, written by build-bundle.mjs. Read it back from GET /version.\n" +
+  "const WORKER_BUILD = " + JSON.stringify(gitDesc()) + ";\n" +
+  "const WORKER_BUILT_AT = " + JSON.stringify(new Date().toISOString()) + ";\n\n";
+
+const bundled = stamp + inlined + indexSrc;
 
 const outDir = path.join(dir, "dist");
 fs.mkdirSync(outDir, { recursive: true });
 const outPath = path.join(outDir, "index.bundle.js");
 fs.writeFileSync(outPath, bundled);
-console.log("Wrote " + outPath + " (" + bundled.split("\n").length + " lines, " + MODULES.length + " modules inlined)");
+console.log("Wrote " + outPath + " (" + bundled.split("\n").length + " lines, " + MODULES.length + " modules inlined, build " + gitDesc() + ")");
