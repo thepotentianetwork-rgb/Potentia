@@ -311,6 +311,11 @@ export function gravelFoundationPrice(sqft){
       (SELL.baseSheets below) and, for most add-ons, a select button in the UI.
    Per-sqft items note their AREA BASIS — wall / floor / roof / own-size.
    ═══════════════════════════════════════════════════════════════════════ */
+/* The shipped exterior paint rate, held as a constant as well as in SELL so
+   the quote path has something sound to fall back to when an owner's saved
+   pricing override leaves SELL.exteriorPaint.rate missing or unusable. */
+const PAINT_RATE = 4;
+
 export let SELL = {
   /* INTERIOR FINISH — drywall, mud & paint.
      A FLAT JOB PRICE, tiered on FLOOR area (W x D), not a per-sq-ft rate.
@@ -494,18 +499,20 @@ export let SELL = {
     "pine": 0.70
   },
 
-  /* ── EXTERIOR PAINT (per sqft of WALL AREA, tiered by wall sqft) ──
+  /* ── EXTERIOR PAINT (flat $/sqft of WALL AREA) ──
      Covers the LP SmartSide siding AND the trim in one rate — trim area
      is small enough next to the walls that pricing it separately isn't
-     worth the extra line item. Fernando, 24 Aug 2026:
-       under 100 sqft ....... $4/sqft
-       100 up to 200 sqft ... $5/sqft
-       200 sqft and over .... $7/sqft
-     Boundaries inclusive at the bottom, same convention as every other
-     tier table here: exactly 100 pays the mid rate, exactly 200 pays over.
+     worth the extra line item.
+     Flat $4/sqft. Fernando, 18 Sep 2026. This replaced a three-tier table
+     (under 100 sqft $4, 100-200 $5, 200 and over $7) that was never really
+     a table: wall area is 2*(W+D)*wallH, so the smallest shed sold — an
+     8x8 with 8ft walls — is already 247 sqft. Every build cleared the top
+     break, so the $4 and $5 rates were unreachable and the whole thing was
+     a flat $7 in disguise. The tiers also ran the wrong way round, putting
+     the highest rate per sqft on the largest jobs.
      NOT charged for pine siding — pine gets STAINED, a separate mandatory
      finish step (see siding.pine above), never painted. */
-  exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 },
+  exteriorPaint: { rate: PAINT_RATE },
 
   // ── ELECTRICAL PACKAGES (flat) ── Basic / Core / Essential only — the old
   // "Standard" tier and its a la carte variant were dropped Sep 2026
@@ -1186,8 +1193,14 @@ export function computePricing(cfgIn, opts){
   var paintSell = 0, paintSellName = '';
   if(sidId!=='pine'){
     var _paintSqft = wallAreaFt(Wf, Df, Hf);
-    var pt = SELL.exteriorPaint;
-    var paintRate = (_paintSqft>=pt.breakHi) ? pt.over : (_paintSqft>=pt.breakLo) ? pt.mid : pt.under;
+    /* A saved override predating the flat rate carries only the old
+       under/mid/over keys, and the merge never deletes from the defaults,
+       so `rate` survives underneath it. Anything that is not a usable
+       number falls back to the shipped rate rather than to 0 — silently
+       painting a shed for free is the leak vents already had. An explicit
+       0 is still honoured, so paint can be zeroed deliberately. */
+    var _pr = SELL.exteriorPaint && SELL.exteriorPaint.rate;
+    var paintRate = (typeof _pr==='number' && isFinite(_pr) && _pr>=0) ? _pr : PAINT_RATE;
     paintSell = paintRate * _paintSqft;
     paintSellName = 'Exterior Paint ('+Math.round(_paintSqft)+' sqft)';
   }
