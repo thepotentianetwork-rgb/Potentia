@@ -49,6 +49,14 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 /* The subtotal closes the itemised phases; tax is not one of them. Without
    this they were all identical rows and the line a customer reads as "the
    price" sat indistinguishable from the line that adds tax to it. */
+/* What a package contains — one item per line under its own charge. It was a
+   single dot-separated run-on, which is not an itemised list: it wrapped into
+   a grey block that read as a footnote and, on a narrow screen, as one long
+   line trailing off. Rows, tight together, with no border between them so
+   they read as one block belonging to the line above. */
+.br-row.br-inc{border-bottom:none;padding:2px 0 2px 34px;font-size:13px;color:var(--silver);display:block}
+.br-row.br-inc:first-of-type{padding-top:6px}
+.br-row.br-inc:last-of-type{padding-bottom:10px}
 .br-row.br-sum{border-top:2px solid var(--chrome);margin-top:4px;padding-top:11px}
 .br-row.br-sum .br-label{color:var(--bright);font-weight:600}
 .br-row.br-sum .br-amt{font-size:15px}
@@ -415,14 +423,13 @@ function buildBreakdown(bd) {
       html += '<div class="br-row" style="padding-left:20px;font-size:13px;color:var(--silver)">'
         + '<span class="br-label">&nbsp;&nbsp;+ ' + esc(s.label) + '</span>'
         + '<span class="br-amt">' + money2(s.amt) + '</span></div>';
-      /* What a package contains, under its own line and without prices — the
-         tier is one flat figure, and a number beside each light would invite
-         picking the package apart item by item. "Electrical" on its own told
-         the customer nothing about what they were buying. */
-      if (s.includes && s.includes.length) {
-        html += '<div class="br-row" style="padding-left:40px;font-size:12px;color:var(--dim);'
-          + 'line-height:1.7;display:block">' + esc(s.includes.join(' \u00b7 ')) + '</div>';
-      }
+      /* What a package contains: one line each, no prices. The tier is a
+         single flat figure, and a number beside each light would invite
+         picking the package apart. "Electrical" on its own told the customer
+         nothing about what they were buying. */
+      (s.includes || []).forEach(function (item) {
+        html += '<div class="br-row br-inc">\u2014&nbsp;&nbsp;' + esc(item) + '</div>';
+      });
     });
     return html;
   }).join('');
