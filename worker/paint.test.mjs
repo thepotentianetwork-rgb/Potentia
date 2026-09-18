@@ -126,3 +126,91 @@ test('paint is still folded into the customer price', () => {
     'the paint line has to reach the total, to the dollar'
   );
 });
+
+/* ── THE SPLIT ───────────────────────────────────────────────────────────────
+ * Dropping paint from $7 to $4 was never meant to drop anyone's price. The $3
+ * difference moves to a Build Labor line on the same wall area, so a shed
+ * quoted today totals exactly what it would have totalled under the old rate.
+ * A customer holding a quote from last month and a customer quoted this
+ * morning have to be looking at the same number.
+ */
+
+/* What the build used to cost: paint at the old top tier, no labour line. */
+function legacyTotal(build) {
+  return withOverride(
+    { SELL: { exteriorPaint: { rate: 7 }, labor: { rate: 0 } } },
+    () => computePricing(build).customer
+  );
+}
+
+test('the paint cut and the labor line cancel out, at every size', () => {
+  for (const s of SIZES) {
+    const build = { style: 'gable', ...s };
+    const now = computePricing(build).customer;
+    assert.equal(
+      Math.round(now), Math.round(legacyTotal(build)),
+      `${s.w}x${s.l} @ ${s.h}ft: the total must not move`
+    );
+  }
+});
+
+test('paint plus labor is exactly the old paint charge', () => {
+  for (const s of SIZES) {
+    const { redline } = computePricing({ style: 'gable', ...s });
+    const area = wallAreaFt(s.w, s.l, s.h);
+    assert.equal(
+      Math.round(redline.paintSell + redline.laborSell),
+      Math.round(7 * area),
+      `${s.w}x${s.l}: $4 paint + $3 labor should equal the old $7`
+    );
+  }
+});
+
+test('the total holds on a fully loaded build, not just a bare shell', () => {
+  const build = {
+    style: 'barn', w: 12, l: 20, h: 10, siding: 'board-batten',
+    foundation: 'pad', foundationFinish: 'coated', intFinish: 'painted',
+    floor: 'better', elec: 'essential'
+  };
+  assert.equal(Math.round(computePricing(build).customer), Math.round(legacyTotal(build)));
+});
+
+/* Pine never paid the $7 paint rate, so there is nothing to split there and a
+   labour line would be a straight $3/sqft price rise on those builds. */
+test('a pine shed is charged no labor line, and its total is untouched', () => {
+  const build = { style: 'gable', w: 10, l: 16, h: 9, siding: 'pine' };
+  const { redline } = computePricing(build);
+  assert.equal(redline.laborSell, 0);
+  assert.equal(redline.laborSellName, '');
+  assert.equal(Math.round(computePricing(build).customer), Math.round(legacyTotal(build)));
+});
+
+test('labor is named with the wall sqft it was charged on', () => {
+  const { redline } = computePricing({ style: 'gable', w: 12, l: 20, h: 10 });
+  assert.equal(redline.laborSellName, `Build Labor (${Math.round(wallAreaFt(12, 20, 10))} sqft)`);
+});
+
+test('the owner can move the labor rate, and a broken one falls back', () => {
+  const area = wallAreaFt(10, 16, 9);
+  withOverride({ SELL: { labor: { rate: 5 } } }, () => {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
+    assert.equal(Math.round(redline.laborSell), Math.round(5 * area));
+  });
+  withOverride({ SELL: { labor: { rate: null } } }, () => {
+    const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9 });
+    assert.equal(Math.round(redline.laborSell), Math.round(3 * area),
+      'labor must never silently fall to $0');
+  });
+});
+
+/* A snapshot saved before the split has no `labor` group at all. It must not
+   stop the labour line appearing, or new quotes would come out $3/sqft light. */
+test('a saved override from before the split still charges labor', () => {
+  const legacy = { SELL: { exteriorPaint: { under: 4, mid: 5, over: 7, breakLo: 100, breakHi: 200 } } };
+  withOverride(legacy, () => {
+    const build = { style: 'gable', w: 12, l: 20, h: 10 };
+    const { redline } = computePricing(build);
+    assert.equal(Math.round(redline.laborSell), Math.round(3 * wallAreaFt(12, 20, 10)));
+    assert.equal(Math.round(computePricing(build).customer), Math.round(legacyTotal(build)));
+  });
+});

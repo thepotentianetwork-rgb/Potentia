@@ -291,6 +291,7 @@ function taxBreakdown(redline) {
     + num(redline.porchSell)
     + num(redline.sidingSell)
     + num(redline.paintSell)
+    + num(redline.laborSell)
     + num(redline.heightSell)
     + num(redline.elecSell)
     + num(redline.floorSell)
@@ -376,6 +377,10 @@ function taxBreakdown(redline) {
   }
 
   shedSubLine(num(redline.marginPrice), 'Base Shed');
+  /* Right under the base shed, because that is what it is part of. A quote
+     written before the paint/labour split has no laborSell at all, so this
+     prints nothing and that quote itemises exactly as it did before. */
+  shedItem(redline.laborSellName, redline.laborSell);
   shedItem(redline.heightSellName, redline.heightSell);
   shedItem(redline.sidingSellName, redline.sidingSell);
   shedItem(redline.paintSellName, redline.paintSell);
