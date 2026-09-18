@@ -310,3 +310,107 @@ test('labor is not in the compable set, which is what lets Base Shed add it whol
   assert.ok(!page.nameList(redline, 'shed').includes(redline.laborSellName),
     'labor is not among the shed names a comp is deducted against');
 });
+
+/* ── THE DEAL ────────────────────────────────────────────────────────────────
+ * A discount should be the line a customer catches first, and the closing
+ * figure should say what the shed was before it. The numbers behind that have
+ * to be exact: a "you save" that does not subtract from the before figure to
+ * the total is worse than not showing one.
+ */
+const withAdjust = (redline, adjustments) => {
+  const page = loadQuotePage();
+  page.ADJUSTMENTS = adjustments;
+  page.COMPED = {};
+  return { page, bd: page.taxBreakdown(redline) };
+};
+
+test('before, saving and total subtract to each other exactly', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { bd } = withAdjust(redline, [{ kind: 'amount', value: -1500 }]);
+  assert.ok(bd.savings > 0);
+  assert.ok(Math.abs((bd.totalBefore - bd.savings) - bd.total) < 0.005,
+    `${bd.totalBefore} - ${bd.savings} should be ${bd.total}`);
+});
+
+test('the saving is the discount plus the tax no longer owed on it', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { bd } = withAdjust(redline, [{ kind: 'amount', value: -1500 }]);
+  assert.ok(Math.abs(bd.savings - 1500 * (bd.total / bd.adjustedSubtotal)) < 0.01,
+    'the customer saves the tax on the discount too');
+});
+
+test('a percentage discount works the same way', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { bd } = withAdjust(redline, [{ kind: 'percent', value: -10 }]);
+  assert.ok(Math.abs(bd.savings - bd.subtotal * 0.10 * (bd.total / bd.adjustedSubtotal)) < 0.01);
+  assert.ok(Math.abs((bd.totalBefore - bd.savings) - bd.total) < 0.005);
+});
+
+test('an adjustment that raises the price claims no saving', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { bd } = withAdjust(redline, [{ kind: 'amount', value: 800 }]);
+  assert.equal(bd.savings, 0, 'nothing was saved');
+  assert.ok(bd.total > bd.totalBefore, 'the price went up, and says so');
+});
+
+/* adjustedSubtotal is clamped at zero, so a discount bigger than the shed must
+   not report a saving larger than the price ever was. */
+test('an over-sized discount cannot save more than the shed cost', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { bd } = withAdjust(redline, [{ kind: 'amount', value: -999999 }]);
+  assert.equal(bd.adjustedSubtotal, 0);
+  assert.ok(Math.abs(bd.savings - bd.totalBefore) < 0.005,
+    'the most that can be saved is the whole price');
+  assert.equal(bd.total, 0);
+});
+
+test('with no adjustment there is no saving and no before figure to show', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { bd } = withAdjust(redline, []);
+  assert.equal(bd.savings, 0);
+  assert.equal(bd.adjust, 0);
+  assert.ok(Math.abs(bd.totalBefore - bd.total) < 0.005,
+    'before and after are the same number');
+});
+
+test('the discount line is marked so it can be made to stand out', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { page } = withAdjust(redline, [{ kind: 'amount', value: -1500, note: 'Fall promo' }]);
+  const html = page.buildBreakdown(page.taxBreakdown(redline));
+  assert.match(html, /br-row br-save/, 'the discount row carries the savings class');
+  assert.match(html, /Fall promo/, 'and the note staff wrote');
+});
+
+test('a price rise is not dressed up as a saving', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { page } = withAdjust(redline, [{ kind: 'amount', value: 800, note: 'Rush build' }]);
+  const html = page.buildBreakdown(page.taxBreakdown(redline));
+  assert.ok(!/br-save/.test(html), 'no savings styling on a line that costs more');
+});
+
+test('the price box shows the before figure and the saving', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { page, bd } = withAdjust(redline, [{ kind: 'amount', value: -1500 }]);
+  const html = page.priceBox(bd, bd.total);
+  assert.match(html, /Total Due After Adjustment/);
+  assert.match(html, /Before adjustment/);
+  assert.match(html, /You save/);
+  assert.match(html, /price-box-deal/);
+});
+
+test('the price box is unchanged when nothing was adjusted', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { page, bd } = withAdjust(redline, []);
+  const html = page.priceBox(bd, bd.total);
+  assert.match(html, /Total Due \(Tax Included\)/);
+  assert.ok(!/Before adjustment/.test(html));
+  assert.ok(!/You save/.test(html));
+  assert.ok(!/price-box-deal/.test(html));
+});
+
+test('a quote with no breakdown at all still renders a price box', () => {
+  const page = loadQuotePage();
+  const html = page.priceBox(null, null);
+  assert.match(html, /Pending review/);
+  assert.ok(!/You save/.test(html));
+});
