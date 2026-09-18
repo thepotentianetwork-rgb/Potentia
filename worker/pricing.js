@@ -1254,12 +1254,27 @@ export function computePricing(cfgIn, opts){
   customerPrice += floorSell;
 
   // ── ELECTRICAL PACKAGE (customer): flat price by tier ──
-  var elecSell = 0, elecSellName = '';
+  /* WHAT EACH TIER ACTUALLY INCLUDES.
+     Taken word for word from the tier cards on gallery.html, which is what the
+     customer read before they picked one — so the estimate promises exactly
+     what the website promised, and there is one place to change it if a tier
+     changes. Listed, never priced: the package is a single flat figure, and
+     putting a number beside each light would invite picking them apart. */
+  var ELEC_INCLUDES = {
+    Basic:     ['(1) 6" Light', '(1) Switch', '(1) Outlet', '(1) 120V Power Inlet'],
+    Core:      ['(4) 6" Lights', 'Porch Light', '(2) Switches', '(2) Outlets',
+                '(1) GFCI Outlet', '(1) 120V Power Inlet'],
+    Essential: ['(4) 6" Lights', 'Porch Light', 'Exterior Soffit Lights',
+                'Multiple Switch Locations', '(6) Outlets', '(1) GFCI Outlet',
+                '(1) 120V Power Inlet']
+  };
+  var elecSell = 0, elecSellName = '', elecIncludes = [];
   var elecId = (typeof ELEC!=='undefined')?ELEC:'none';
   var ELEC_MAP = { basic:'Basic', core:'Core', essential:'Essential' };
   if(ELEC_MAP[elecId] && SELL.electrical[ELEC_MAP[elecId]]!=null){
     elecSell = SELL.electrical[ELEC_MAP[elecId]];
     elecSellName = ELEC_MAP[elecId]+' Electrical';
+    elecIncludes = (ELEC_INCLUDES[ELEC_MAP[elecId]]||[]).slice();
   }
   customerPrice += elecSell;
 
@@ -1410,7 +1425,7 @@ export function computePricing(cfgIn, opts){
       windowSell: windowSell, windowSellLines: windowSellLines,
       intSell: intSell, intSellName: intSellName,
       floorSell: floorSell, floorSellName: floorSellName,
-      elecSell: elecSell, elecSellName: elecSellName,
+      elecSell: elecSell, elecSellName: elecSellName, elecIncludes: elecIncludes,
       shelfSell: shelfSell, shelfSellLines: shelfSellLines,
       loftSell: loftSell, loftSellName: loftSellName,
       addonSell: addonSell, addonLines: addonLines,

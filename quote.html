@@ -339,11 +339,14 @@ function taxBreakdown(redline) {
   //
   // Appended rather than assigned: electrical used to claim this slot
   // outright, so anything added alongside it would have silently replaced it.
-  function shedSubLine(amt, label) {
+  function shedSubLine(amt, label, includes) {
     if (!shedRow || !amt) return;
-    (shedRow.subLines = shedRow.subLines || []).push({ label: label, amt: num(amt) });
+    (shedRow.subLines = shedRow.subLines || []).push({
+      label: label, amt: num(amt),
+      includes: Array.isArray(includes) ? includes : null
+    });
   }
-  shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical');
+  shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical', redline.elecIncludes);
   shedSubLine(redline.floorSell, redline.floorSellName || 'Flooring');
 
   if (!rows.length) return null;
@@ -412,6 +415,14 @@ function buildBreakdown(bd) {
       html += '<div class="br-row" style="padding-left:20px;font-size:13px;color:var(--silver)">'
         + '<span class="br-label">&nbsp;&nbsp;+ ' + esc(s.label) + '</span>'
         + '<span class="br-amt">' + money2(s.amt) + '</span></div>';
+      /* What a package contains, under its own line and without prices — the
+         tier is one flat figure, and a number beside each light would invite
+         picking the package apart item by item. "Electrical" on its own told
+         the customer nothing about what they were buying. */
+      if (s.includes && s.includes.length) {
+        html += '<div class="br-row" style="padding-left:40px;font-size:12px;color:var(--dim);'
+          + 'line-height:1.7;display:block">' + esc(s.includes.join(' \u00b7 ')) + '</div>';
+      }
     });
     return html;
   }).join('');
