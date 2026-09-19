@@ -511,8 +511,41 @@ overlay.querySelectorAll('a').forEach(function(a) {
   const btn = document.getElementById('submitBtn');
   const successScreen = document.getElementById('successScreen');
 
+  /* Everything the sheet collects, as a plain object. Checkboxes share a name
+     (trade, project_type, credentials) so those come back as arrays; the rest
+     are single values. */
+  function formPayload(f) {
+    var data = new FormData(f);
+    var out = {};
+    data.forEach(function (v, k) {
+      if (k.charAt(0) === '_') return;                 // Formspree's own fields
+      if (out[k] === undefined) out[k] = v;
+      else if (Array.isArray(out[k])) out[k].push(v);
+      else out[k] = [out[k], v];
+    });
+    return out;
+  }
+
+  /* Into the CRM as well as to Formspree. Deliberately passive: fired without
+     awaiting, and failures are swallowed. If the CRM is unreachable the
+     Formspree submit below still goes through exactly as it would have, so
+     this can never cost a completed onboarding sheet. */
+  function sendToCrm(f) {
+    try {
+      var p = formPayload(f);
+      if (!p.email && !p.phone) return;
+      fetch('https://potentia-assistant.thepotentianetwork.workers.dev/crm/intake', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    sendToCrm(form);
     btn.disabled = true;
     btn.textContent = currentLang === 'en' ? 'Sending...' : 'Enviando...';
 

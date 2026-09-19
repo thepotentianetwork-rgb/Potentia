@@ -89,3 +89,16 @@ CREATE TABLE IF NOT EXISTS client_calls (
   called_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- The contractor intake sheet, kept whole as the JSON it arrived as. Most of
+-- its 46 fields have nowhere to live on the clients row, and flattening them
+-- into columns would mean a migration every time the form gains a question.
+-- One row per SUBMISSION, not per client: someone who fills it in twice has
+-- changed their mind about something, and which answers came first is worth
+-- being able to see.
+CREATE TABLE IF NOT EXISTS client_intake (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
