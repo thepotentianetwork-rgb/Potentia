@@ -414,3 +414,22 @@ test('a quote with no breakdown at all still renders a price box', () => {
   assert.match(html, /Pending review/);
   assert.ok(!/You save/.test(html));
 });
+
+/* A strikethrough reads as "the higher price you are NOT paying". On a price
+ * that went up, the before figure is the cheaper one — striking it through
+ * crosses out the lower number, which looks like an error on the document.
+ */
+test('the before figure is struck through only when the price came down', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+
+  const down = withAdjust(redline, [{ kind: 'amount', value: -1500 }]);
+  const downHtml = down.page.priceBox(down.bd, down.bd.total);
+  assert.match(downHtml, /price-was is-saving/, 'a discount strikes the old higher price');
+
+  const up = withAdjust(redline, [{ kind: 'amount', value: 500 }]);
+  const upHtml = up.page.priceBox(up.bd, up.bd.total);
+  assert.match(upHtml, /Before adjustment/, 'a rise still shows what it was');
+  assert.ok(!/is-saving/.test(upHtml), 'but does not strike the cheaper figure through');
+  assert.ok(!/You save/.test(upHtml));
+  assert.ok(!/price-box-deal/.test(upHtml));
+});

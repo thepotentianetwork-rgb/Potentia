@@ -51,7 +51,12 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
    adjustment the box renders exactly as it always did. */
 .price-side{display:flex;flex-direction:column;gap:6px}
 .price-side-right{align-items:flex-end;text-align:right}
-.price-was{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);text-decoration:line-through}
+/* Struck through ONLY when the price came down. A strikethrough reads as "the
+   higher price you are not paying", so putting one through the BEFORE figure of
+   a price that went UP strikes the cheaper number - it looks like a mistake on
+   the document and invites exactly the question you least want. */
+.price-was{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
+.price-was.is-saving{text-decoration:line-through}
 .price-save{font-family:'DM Mono',monospace;font-size:13px;letter-spacing:0.08em;color:var(--sp-green);font-weight:400;text-transform:uppercase}
 .price-box-deal{border-color:var(--sp-green);background:rgba(61,220,151,0.06)}
 
@@ -534,7 +539,8 @@ function priceBox(bd, totalDue) {
     + '<div class="price-box' + (saved ? ' price-box-deal' : '') + '">'
     +   '<div class="price-side">'
     +     '<span class="price-label">Total Due' + (hasAdjust ? ' After Adjustment' : '') + ' (Tax Included)</span>'
-    +     (hasAdjust ? '<span class="price-was">Before adjustment ' + money2(bd.totalBefore) + '</span>' : '')
+    +     (hasAdjust ? '<span class="price-was' + (saved ? ' is-saving' : '') + '">Before adjustment '
+            + money2(bd.totalBefore) + '</span>' : '')
     +   '</div>'
     +   '<div class="price-side price-side-right">'
     +     '<span class="price-value">' + (totalDue != null ? money2(totalDue) : 'Pending review') + '</span>'
