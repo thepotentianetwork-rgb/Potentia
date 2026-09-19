@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "999533c";
-const WORKER_BUILT_AT = "2026-09-19T15:40:53.784Z";
+const WORKER_BUILD = "16c0130-dirty";
+const WORKER_BUILT_AT = "2026-09-19T15:46:14.445Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -6090,13 +6090,16 @@ async function handleCrmIntake(request, env, origin) {
 
   if (!client) {
     const trades = [].concat(body.trade || []).filter(Boolean).join(", ");
-    /* status 'lead', not 'building'. This form is linked from the public nav,
-       so anyone can fill it; landing a stranger straight in the build pipeline
-       is a mess someone has to clean up. source 'intake' is what marks it as
-       more than a cold enquiry. */
+    /* status 'building'. The form is unlisted and noindexed - the only way to
+       reach it is a link someone was sent, which is a far stronger signal than
+       a nav item anyone could wander into. Someone who was sent this sheet and
+       filled it in is a client whose build is starting, not a cold enquiry, and
+       landing them at 'lead' would mean moving every one of them by hand.
+       It was 'lead' while the form sat in the public nav; that reason went away
+       when the link did. */
     const res = await env.CRM_DB.prepare(
       `INSERT INTO clients (business_name, contact_name, email, phone, status, source, service, message, created_at, updated_at)
-       VALUES (?,?,?,?,'lead','intake',?,?,?,?)`
+       VALUES (?,?,?,?,'building','intake',?,?,?,?)`
     ).bind(business || owner || null, owner || null, email || null, phone || null,
            crmStr(trades, 200) || null, crmStr(body.story, 5000) || null, now, now).run();
     client = { id: res.meta.last_row_id };

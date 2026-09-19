@@ -85,6 +85,15 @@ test('a new contractor becomes a client', async () => {
   assert.equal(row.service, 'Drywall, Framing', 'the trades they ticked');
 });
 
+/* The form is unlisted and noindexed, so the only way to reach it is a link
+   someone was sent. Filling it in means their build is starting - landing them
+   at 'lead' would mean moving every one of them along by hand. */
+test('a new contractor lands in the build pipeline, not the lead pile', async () => {
+  const { crm, env } = setup();
+  const { id } = await (await post(env, SHEET)).json();
+  assert.equal(crm.prepare('SELECT status FROM clients WHERE id = ?').get(id).status, 'building');
+});
+
 test('the whole sheet is kept, not just the fields with columns', async () => {
   const { crm, env } = setup();
   const { id } = await (await post(env, SHEET)).json();
