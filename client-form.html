@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client Onboarding — Potentia</title>
+<meta name="description" content="Onboarding forms for Potentia clients — everything we need to start building.">
+<!-- Not for search: a client reaches this from a link we send them, and an
+     onboarding sheet has no business turning up in results. -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="Potentia_Logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+/* Lifted from contact.html rather than reinvented — this page has to read as
+   the same site, and a second set of near-identical values is the thing that
+   drifts. Anything below that is NOT in contact.html is marked. */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38}
+html{scroll-behavior:smooth}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;min-height:100vh}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:24px 48px;background:rgba(4,4,7,0.97);border-bottom:1px solid var(--dim)}
+.nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
+.nav-logo img{width:32px;height:32px;object-fit:contain}
+.nav-links{display:flex;gap:40px}
+.nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.nav-links a:hover,.nav-links a.active{color:var(--bright)}
+.nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--chrome);padding:10px 22px;text-decoration:none;text-transform:uppercase}
+.nav-cta:hover{background:var(--bright)}
+.nav-ham{display:none;flex-direction:column;gap:5px;background:none;border:none;padding:6px;cursor:pointer;z-index:2000}
+.nav-ham span{display:block;width:25px;height:2px;background:var(--bright);border-radius:1px}
+.mob-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#040407;z-index:1500;flex-direction:column;align-items:center;justify-content:center}
+.mob-overlay.open{display:flex}
+.mob-overlay a{font-family:'Syncopate',sans-serif;font-size:28px;letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 0;width:80%;text-align:center;border-bottom:1px solid var(--dim);transition:color 0.2s}
+.mob-overlay a:first-child{border-top:1px solid var(--dim)}
+.mob-overlay a:hover,.mob-overlay a.active{color:var(--bright)}
+.mob-cta-btn{margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:14px 40px!important;border:none!important}
+
+/* PAGE HEAD — same typographic system as .contact-label / .contact-title. */
+.of-head{max-width:860px;margin:0 auto;padding:140px 48px 0}
+.of-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:24px}
+.of-title{font-size:clamp(44px,5vw,72px);font-weight:300;color:var(--bright);line-height:0.95;margin-bottom:28px}
+.of-title em{font-style:italic;color:transparent;-webkit-text-stroke:1px var(--chrome)}
+.of-intro{font-size:19px;color:var(--silver);line-height:1.7;font-weight:300;max-width:560px}
+
+/* THE SLOT — where the onboarding sheet goes. A panel on desktop, edge to
+   edge on a phone, so a long form does not sit in a narrow column. */
+.of-wrap{max-width:860px;margin:0 auto;padding:56px 48px 100px}
+.of-panel{background:var(--deep);border:1px solid var(--dim);padding:48px}
+
+/* FORM — identical rules to contact.html, so anything dropped into the slot
+   using the same class names styles itself with no extra work. */
+.form-group{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}
+.form-group label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase}
+.form-group input,.form-group textarea,.form-group select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;padding:13px 16px;outline:none;transition:border-color 0.3s;-webkit-appearance:none;appearance:none;width:100%}
+.form-group input:focus,.form-group textarea:focus,.form-group select:focus{border-color:var(--silver)}
+.form-group textarea{resize:vertical;min-height:110px}
+.form-group select option{background:#0a0a12;color:var(--bright)}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.form-submit{width:100%;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.3s;margin-top:8px}
+.form-submit:hover{background:var(--bright)}
+.form-submit:disabled{opacity:0.5;cursor:not-allowed}
+.fs-error{font-family:'DM Mono',monospace;font-size:10px;color:#c0675a;letter-spacing:0.1em}
+.fs-success{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:300;color:var(--bright);font-style:italic;text-align:center;padding:60px 0}
+
+/* NOT in contact.html — an onboarding sheet is long enough to need sections
+   and checkboxes, which a one-message contact form never did. */
+.of-section{border-top:1px solid var(--dim);margin-top:44px;padding-top:36px}
+.of-section:first-child{border-top:none;margin-top:0;padding-top:0}
+.of-section-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-bottom:10px}
+.of-section-title{font-size:28px;font-weight:300;color:var(--bright);margin-bottom:8px}
+.of-section-note{font-size:16px;color:var(--silver);line-height:1.6;font-weight:300;margin-bottom:26px}
+.of-check{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px;cursor:pointer}
+.of-check input{width:18px;height:18px;flex-shrink:0;margin-top:3px;accent-color:var(--chrome)}
+.of-check span{font-size:17px;color:var(--chrome);font-weight:300;line-height:1.5}
+.of-help{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;color:var(--dim);margin-top:-10px;margin-bottom:18px;line-height:1.6}
+
+footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px}
+.footer-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver);text-decoration:none}
+.footer-logo img{width:24px;height:24px;object-fit:contain}
+.footer-links{display:flex;gap:32px}
+.footer-links a{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.footer-links a:hover{color:var(--silver)}
+.footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links,.nav-cta{display:none}
+  .nav-ham{display:flex!important}
+  .of-head{padding:108px 20px 0}
+  .of-wrap{padding:36px 20px 72px}
+  /* Edge to edge: a bordered panel inside a 20px gutter wastes the width a
+     long form needs most on a phone. */
+  .of-panel{padding:28px 20px;margin:0 -20px;border-left:none;border-right:none}
+  .form-row{grid-template-columns:1fr}
+  footer{padding:32px 20px;flex-direction:column;text-align:center}
+  .footer-links{justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="sample.html">Platform</a>
+    <a href="contact.html">Contact</a>
+    <a href="client-form.html" class="active">Client Forms</a>
+  </div>
+  <a href="contact.html" class="nav-cta">Get Started</a>
+  <button class="nav-ham" id="navHam" aria-label="Menu"><span></span><span></span><span></span></button>
+</nav>
+
+<div class="mob-overlay" id="mobOverlay">
+  <a href="index.html">Home</a>
+  <a href="portfolio.html">Portfolio</a>
+  <a href="pricing.html">Pricing</a>
+  <a href="sample.html">Platform</a>
+  <a href="contact.html">Contact</a>
+  <a href="client-form.html" class="active">Client Forms</a>
+  <a href="contact.html" class="mob-cta-btn">Get Started</a>
+</div>
+
+<div class="of-head">
+  <p class="of-label">Client onboarding</p>
+  <h1 class="of-title">Let's get<br><em>started</em></h1>
+  <p class="of-intro">Everything we need to begin building, in one place. Take your time — you can come back to this page whenever you like.</p>
+</div>
+
+<div class="of-wrap">
+  <div class="of-panel">
+    <!-- ======================================================================
+         ONBOARDING SHEET GOES HERE.
+
+         Drop the form markup straight in. The classes above are already
+         styled, so plain markup using them needs nothing else:
+
+           .of-section / .of-section-num / .of-section-title / .of-section-note
+           .form-group  (label + input | textarea | select)
+           .form-row    (two fields side by side, stacks on a phone)
+           .of-check    (checkbox + label)
+           .of-help     (small note under a field)
+           .form-submit (the button)
+
+         Nothing here posts anywhere yet — no action, no endpoint. That is
+         deliberate: where the answers land is a decision, not a default.
+         ====================================================================== -->
+    <div class="of-section">
+      <p class="of-section-num">Placeholder</p>
+      <h2 class="of-section-title">This page is not finished</h2>
+      <p class="of-section-note">The onboarding sheet has not been added yet. This file exists so the layout, logo and styling are settled first — it is not linked from anywhere on the site.</p>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <p class="footer-copy">&copy; 2026 Potentia Network</p>
+</footer>
+
+<script>
+var ham = document.getElementById('navHam');
+var overlay = document.getElementById('mobOverlay');
+ham.addEventListener('click', function() {
+  overlay.classList.toggle('open');
+  document.body.style.overflow = overlay.classList.contains('open') ? 'hidden' : '';
+});
+overlay.querySelectorAll('a').forEach(function(a) {
+  a.addEventListener('click', function() {
+    overlay.classList.remove('open');
+    document.body.style.overflow = '';
+  });
+});
+</script>
+<script src="assistant.js" defer></script>
+</body>
+</html>
