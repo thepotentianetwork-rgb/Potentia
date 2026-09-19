@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Contractor Intake — Potentia</title>
+<meta name="description" content="Everything Potentia needs to build your contracting website.">
+<!-- An intake sheet a client is sent a link to. It has no business turning up
+     in search results. -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="Potentia_Logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+/* The form's own structure, wearing the site's clothes. Tokens, fonts and the
+   nav/footer are copied from contact.html so this reads as the same site; the
+   form-specific rules below it (sections, checkbox chips, the services table)
+   are the ones the intake sheet needs and no other page has. */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;--red:#c0675a}
+html{scroll-behavior:smooth}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;min-height:100vh}
+
+/* NAV — contact.html's, plus the language toggle index.html already carries. */
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:24px 48px;background:rgba(4,4,7,0.97);border-bottom:1px solid var(--dim)}
+.nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
+.nav-logo img{width:32px;height:32px;object-fit:contain}
+.nav-links{display:flex;gap:40px}
+.nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.nav-links a:hover,.nav-links a.active{color:var(--bright)}
+.nav-right{display:flex;align-items:center;gap:16px}
+.lang-toggle{display:flex;border:1px solid var(--dim);overflow:hidden}
+.lang-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--silver);background:none;border:none;padding:8px 12px;cursor:pointer;text-transform:uppercase}
+.lang-btn.active{background:var(--dim);color:var(--bright)}
+.nav-ham{display:none;flex-direction:column;gap:5px;background:none;border:none;padding:6px;cursor:pointer;z-index:2000}
+.nav-ham span{display:block;width:25px;height:2px;background:var(--bright);border-radius:1px}
+.mob-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#040407;z-index:1500;flex-direction:column;align-items:center;justify-content:center}
+.mob-overlay.open{display:flex}
+.mob-overlay a{font-family:'Syncopate',sans-serif;font-size:28px;letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 0;width:80%;text-align:center;border-bottom:1px solid var(--dim);transition:color 0.2s}
+.mob-overlay a:first-child{border-top:1px solid var(--dim)}
+.mob-overlay a:hover,.mob-overlay a.active{color:var(--bright)}
+.mob-cta-btn{margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:14px 40px!important;border:none!important}
+
+/* PAGE */
+.page{max-width:860px;margin:0 auto;padding:132px 48px 90px}
+.intro{margin-bottom:64px}
+.intro h1{font-size:clamp(40px,5vw,64px);font-weight:300;color:var(--bright);line-height:1.02;margin-bottom:22px;font-style:italic}
+.intro p{color:var(--silver);max-width:56ch;font-size:19px;line-height:1.7;font-weight:300}
+
+.section{margin-bottom:56px}
+.section-header{display:flex;align-items:baseline;gap:16px;margin-bottom:28px;padding-bottom:14px;border-bottom:1px solid var(--dim)}
+.section-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);flex-shrink:0;position:relative;top:-2px}
+.section-title{font-size:28px;font-weight:300;color:var(--bright);line-height:1.2}
+.section-sub{font-size:16px;color:var(--silver);margin-top:4px;font-weight:300;line-height:1.5}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.col-full{grid-column:1 / -1}
+.field{display:flex;flex-direction:column;gap:8px}
+
+/* Labels and inputs are contact.html's .form-group rules, so a field here and
+   a field on the contact page are the same object. */
+label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase}
+label .req{color:var(--red);margin-left:2px}
+.hint{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.05em;color:var(--dim);text-transform:none;line-height:1.6;margin-top:-2px}
+
+input[type="text"],input[type="email"],input[type="tel"],textarea,select{
+  background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);
+  font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;padding:13px 16px;
+  width:100%;outline:none;transition:border-color 0.3s;-webkit-appearance:none;appearance:none}
+input:focus,textarea:focus,select:focus{border-color:var(--silver)}
+textarea{resize:vertical;min-height:110px;line-height:1.6}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238a909e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 16px center;padding-right:40px;cursor:pointer}
+select option{background:#0a0a12;color:var(--bright)}
+::placeholder{color:var(--dim);opacity:1}
+
+/* Checkbox chips — nothing on the site does this, and a 14-trade list needs it. */
+.checkbox-group{display:flex;flex-wrap:wrap;gap:10px;margin-top:2px}
+.checkbox-item{display:flex;align-items:center;gap:9px;cursor:pointer;font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:300;letter-spacing:0;text-transform:none;color:var(--silver);padding:9px 14px;border:1px solid var(--dim);background:rgba(255,255,255,0.03);transition:border-color 0.3s,color 0.3s;user-select:none}
+.checkbox-item:hover{border-color:var(--silver)}
+.checkbox-item:has(input:checked){border-color:var(--chrome);color:var(--bright)}
+.checkbox-item input[type="checkbox"]{width:14px;height:14px;accent-color:var(--chrome);margin:0;flex-shrink:0}
+
+/* Services table */
+.services-table{border:1px solid var(--dim)}
+.services-table-header{display:grid;grid-template-columns:2fr 1.4fr 2fr;background:rgba(255,255,255,0.03);border-bottom:1px solid var(--dim);padding:12px 14px;gap:12px}
+.services-table-header span{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.25em;text-transform:uppercase;color:var(--silver)}
+/* 1.4fr, not 1fr: at 1fr the price placeholder clipped mid-word, which reads
+   as a broken field rather than a hint. */
+.service-row{display:grid;grid-template-columns:2fr 1.4fr 2fr;gap:12px;padding:10px 14px;border-bottom:1px solid var(--dim)}
+.service-row:last-child{border-bottom:none}
+/* Smaller here on purpose: six rows of three at the full field size turns a
+   table you scan into a wall you read. */
+.service-row input{padding:9px 12px;font-size:16px}
+
+.submit-area{margin-top:56px;padding-top:36px;border-top:1px solid var(--dim);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px}
+.submit-note{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.05em;color:var(--dim);max-width:40ch;line-height:1.7}
+button[type="submit"]{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 34px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.3s;flex-shrink:0}
+button[type="submit"]:hover{background:var(--bright)}
+button[type="submit"]:disabled{opacity:0.5;cursor:not-allowed}
+
+.success-screen{display:none;text-align:center;padding:90px 32px}
+.success-screen.visible{display:block}
+.success-mark{width:52px;height:52px;border:1px solid var(--dim);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 28px;font-size:22px;color:var(--silver)}
+.success-screen h2{font-size:40px;font-weight:300;font-style:italic;color:var(--bright);margin-bottom:18px}
+.success-screen p{color:var(--silver);font-size:19px;max-width:44ch;margin:0 auto;line-height:1.7;font-weight:300}
+
+footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px}
+.footer-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver);text-decoration:none}
+.footer-logo img{width:24px;height:24px;object-fit:contain}
+.footer-links{display:flex;gap:32px}
+.footer-links a{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.footer-links a:hover{color:var(--silver)}
+.footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links,.nav-cta{display:none}
+  .nav-ham{display:flex!important}
+  .page{padding:104px 20px 64px}
+  .grid-2{grid-template-columns:1fr}
+  .col-full{grid-column:1}
+  .services-table-header{display:none}
+  /* Stacked, each row needs a rule between it and the next or six services
+     read as eighteen loose boxes. */
+  .service-row{grid-template-columns:1fr;gap:10px;padding:14px}
+  .submit-area{flex-direction:column;align-items:stretch}
+  button[type="submit"]{width:100%}
+  footer{padding:32px 20px;flex-direction:column;text-align:center}
+  .footer-links{justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="sample.html">Platform</a>
+    <a href="contact.html">Contact</a>
+    <a href="contractorform.html" class="active">Client Forms</a>
+  </div>
+  <div class="nav-right">
+    <div class="lang-toggle">
+      <button class="lang-btn active" id="btnEN" onclick="setLang('en')">EN</button>
+      <button class="lang-btn" id="btnES" onclick="setLang('es')">ES</button>
+    </div>
+  </div>
+  <button class="nav-ham" id="navHam" aria-label="Menu"><span></span><span></span><span></span></button>
+</nav>
+
+<div class="mob-overlay" id="mobOverlay">
+  <a href="index.html">Home</a>
+  <a href="portfolio.html">Portfolio</a>
+  <a href="pricing.html">Pricing</a>
+  <a href="sample.html">Platform</a>
+  <a href="contact.html">Contact</a>
+  <a href="contractorform.html" class="active">Client Forms</a>
+</div>
+
+<div class="page" id="formPage">
+
+  <div class="intro">
+    <h1 data-en="Tell us about your business." data-es="Cuéntenos sobre su negocio."></h1>
+    <p data-en="This is everything we need to build your website. The more detail you give us here, the better your site will represent what you actually do — and the faster we can get it live."
+       data-es="Esto es todo lo que necesitamos para construir su sitio web. Cuanto más detalle nos dé aquí, mejor representará su sitio lo que usted hace — y más rápido lo ponemos en línea."></p>
+  </div>
+
+  <form id="onboardingForm" action="https://formspree.io/f/mredlobr" method="POST">
+    <input type="hidden" name="_subject" value="New Potentia Website Intake">
+
+    <!-- 01 · Business Basics -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <div>
+          <div class="section-title" data-en="Business Basics" data-es="Información del Negocio"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field col-full">
+          <label for="f_business_name" data-en="Business name *" data-es="Nombre del negocio *"></label>
+          <input id="f_business_name" type="text" name="business_name" required autocomplete="organization">
+        </div>
+        <div class="field">
+          <label for="f_owner_name" data-en="Owner name *" data-es="Nombre del dueño *"></label>
+          <input id="f_owner_name" type="text" name="owner_name" required autocomplete="name">
+        </div>
+        <div class="field">
+          <label for="f_phone" data-en="Best phone number *" data-es="Mejor número de teléfono *"></label>
+          <input id="f_phone" type="tel" name="phone" required autocomplete="tel">
+        </div>
+        <div class="field">
+          <label for="f_email" data-en="Email address" data-es="Correo electrónico"></label>
+          <input id="f_email" type="email" name="email" autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="f_years_exp" data-en="Years in business" data-es="Años en el negocio"></label>
+          <input id="f_years_exp" type="text" name="years_exp" data-ph-en="e.g. 12 years, since 2011" data-ph-es="ej. 12 años, desde 2011">
+        </div>
+        <div class="field">
+          <label for="f_service_area" data-en="Service area *" data-es="Área de servicio *"></label>
+          <input id="f_service_area" type="text" name="service_area" required data-ph-en="Cities, counties, or zip codes" data-ph-es="Ciudades, condados o códigos postales">
+        </div>
+        <div class="field col-full">
+          <label for="f_tagline" data-en="Tagline or slogan" data-es="Eslogan o frase del negocio"></label>
+          <input id="f_tagline" type="text" name="tagline" data-ph-en="e.g. 'Built right the first time'" data-ph-es="ej. 'Hecho bien desde la primera vez'">
+          <span class="hint" data-en="Leave blank if you don't have one — we can suggest one" data-es="Déjelo en blanco si no tiene uno — podemos sugerirle uno"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 02 · Trade & Credentials -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <div>
+          <div class="section-title" data-en="Trade & Credentials" data-es="Oficio y Credenciales"></div>
+          <div class="section-sub" data-en="This builds trust with GCs and homeowners immediately" data-es="Esto genera confianza con contratistas y propietarios de inmediato"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field col-full">
+          <label data-en="Trade(s)" data-es="Oficio(s)"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Drywall"> <span>Drywall</span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Framing"> <span data-en="Framing" data-es="Armado / Estructura"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Concrete"> <span data-en="Concrete" data-es="Concreto"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Roofing"> <span data-en="Roofing" data-es="Techos"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Painting"> <span data-en="Painting" data-es="Pintura"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Flooring"> <span data-en="Flooring" data-es="Pisos"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Plumbing"> <span data-en="Plumbing" data-es="Plomería"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Electrical"> <span data-en="Electrical" data-es="Electricidad"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="HVAC"> <span>HVAC</span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Landscaping"> <span data-en="Landscaping" data-es="Jardinería"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Gutters"> <span data-en="Gutters" data-es="Canaletas"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Fencing"> <span data-en="Fencing" data-es="Cercas"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="Insulation"> <span data-en="Insulation" data-es="Aislamiento"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="trade" value="General Contracting"> <span data-en="General Contracting" data-es="Contratación General"></span></label>
+          </div>
+        </div>
+        <div class="field col-full">
+          <label for="f_other_trade" data-en="Other trade not listed" data-es="Otro oficio no listado"></label>
+          <input id="f_other_trade" type="text" name="other_trade" data-ph-en="Describe your trade" data-ph-es="Describa su oficio">
+        </div>
+        <div class="field col-full">
+          <label data-en="Project types" data-es="Tipos de proyectos"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Residential"> <span data-en="Residential" data-es="Residencial"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Commercial"> <span data-en="Commercial" data-es="Comercial"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Industrial"> <span data-en="Industrial" data-es="Industrial"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="project_type" value="New Construction"> <span data-en="New Construction" data-es="Construcción Nueva"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Remodels / Renovations"> <span data-en="Remodels / Renovations" data-es="Remodelaciones"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Repairs"> <span data-en="Repairs" data-es="Reparaciones"></span></label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f_license_number" data-en="License number" data-es="Número de licencia"></label>
+          <input id="f_license_number" type="text" name="license_number" data-ph-en="State license #" data-ph-es="# de licencia estatal">
+          <span class="hint" data-en="Displayed on site to build trust with GCs" data-es="Se muestra en el sitio para generar confianza con contratistas"></span>
+        </div>
+        <div class="field">
+          <label for="f_license_state" data-en="Licensed in which state(s)" data-es="Licenciado en qué estado(s)"></label>
+          <input id="f_license_state" type="text" name="license_state" data-ph-en="e.g. Utah, Idaho" data-ph-es="ej. Utah, Idaho">
+        </div>
+        <div class="field col-full">
+          <label data-en="Insurance & bonding" data-es="Seguro y fianza"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="General Liability Insured"> <span data-en="General Liability Insured" data-es="Seguro de Responsabilidad General"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Workers Comp"> <span data-en="Workers Comp" data-es="Compensación de Trabajadores"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Bonded"> <span data-en="Bonded" data-es="Afianzado"></span></label>
+          </div>
+        </div>
+        <div class="field col-full">
+          <label for="f_certifications" data-en="Certifications or specialties" data-es="Certificaciones o especialidades"></label>
+          <input id="f_certifications" type="text" name="certifications" data-ph-en="e.g. OSHA 30, lead-safe certified, Level 5 finish specialist" data-ph-es="ej. OSHA 30, certificado libre de plomo, especialista en acabado Nivel 5">
+        </div>
+      </div>
+    </div>
+
+    <!-- 03 · Services & Pricing -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <div>
+          <div class="section-title" data-en="Services & Pricing" data-es="Servicios y Precios"></div>
+          <div class="section-sub" data-en="List your main services — add pricing if you want it on the site" data-es="Liste sus servicios principales — agregue precios si desea mostrarlos"></div>
+        </div>
+      </div>
+      <div class="services-table">
+        <div class="services-table-header">
+          <span data-en="Service / Package" data-es="Servicio / Paquete"></span>
+          <span data-en="Starting Price" data-es="Precio Inicial"></span>
+          <span data-en="Details / What's Included" data-es="Detalles / Qué Incluye"></span>
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_1" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_price_1" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_1" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_2" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_price_2" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_2" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_3" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_price_3" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_3" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_4" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_price_4" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_4" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_5" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_price_5" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_5" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_6" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_price_6" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_6" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+      </div>
+    </div>
+
+    <!-- 04 · About -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <div>
+          <div class="section-title" data-en="About the Business" data-es="Acerca del Negocio"></div>
+          <div class="section-sub" data-en="What goes on your About page" data-es="Lo que va en su página Acerca de"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field col-full">
+          <label for="f_story" data-en="Your story *" data-es="Su historia *"></label>
+          <textarea id="f_story" name="story" required style="min-height:110px"
+            data-ph-en="How did you get started? What drives you? What makes your work different from the next crew? Write it like you're talking to a homeowner."
+            data-ph-es="¿Cómo empezó? ¿Qué lo motiva? ¿Qué hace que su trabajo sea diferente al de otros? Escríbalo como si le hablara directamente a un propietario."></textarea>
+        </div>
+        <div class="field">
+          <label for="f_crew_size" data-en="Team / crew size" data-es="Tamaño del equipo / cuadrilla"></label>
+          <select id="f_crew_size" name="crew_size">
+            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
+            <option data-en="Solo operator" data-es="Trabajador independiente"></option>
+            <option data-en="2–5 crew" data-es="2–5 trabajadores"></option>
+            <option data-en="6–10 crew" data-es="6–10 trabajadores"></option>
+            <option data-en="10+ crew" data-es="10+ trabajadores"></option>
+            <option data-en="Multiple crews" data-es="Múltiples cuadrillas"></option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f_languages" data-en="Languages spoken" data-es="Idiomas hablados"></label>
+          <input id="f_languages" type="text" name="languages" data-ph-en="e.g. English, Spanish" data-ph-es="ej. Inglés, Español">
+        </div>
+        <div class="field col-full">
+          <label for="f_why_us" data-en="Why should someone hire you over a competitor?" data-es="¿Por qué deberían contratarle a usted y no a un competidor?"></label>
+          <textarea id="f_why_us" name="why_us"
+            data-ph-en="Quality of work, reliability, communication, price, speed — be specific"
+            data-ph-es="Calidad del trabajo, confiabilidad, comunicación, precio, rapidez — sea específico"></textarea>
+        </div>
+        <div class="field col-full">
+          <label for="f_testimonials" data-en="Testimonials or reviews to feature" data-es="Testimonios o reseñas para mostrar"></label>
+          <textarea id="f_testimonials" name="testimonials"
+            data-ph-en="Paste any reviews or quotes from happy customers you want on the site"
+            data-ph-es="Pegue aquí reseñas o citas de clientes satisfechos que desee mostrar en el sitio"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- 05 · Contact -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">05</span>
+        <div>
+          <div class="section-title" data-en="Contact & Preferences" data-es="Contacto y Preferencias"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label for="f_contact_method" data-en="How should customers reach you?" data-es="¿Cómo deben contactarle los clientes?"></label>
+          <select id="f_contact_method" name="contact_method">
+            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
+            <option data-en="Call only" data-es="Solo llamadas"></option>
+            <option data-en="Text only" data-es="Solo mensajes de texto"></option>
+            <option data-en="Call or text" data-es="Llamada o mensaje"></option>
+            <option data-en="Email only" data-es="Solo correo electrónico"></option>
+            <option data-en="Fill out a contact form" data-es="Llenar un formulario de contacto"></option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f_response_time" data-en="Typical response time" data-es="Tiempo de respuesta típico"></label>
+          <select id="f_response_time" name="response_time">
+            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
+            <option data-en="Same day" data-es="El mismo día"></option>
+            <option data-en="Within 24 hours" data-es="Dentro de 24 horas"></option>
+            <option data-en="Within 48 hours" data-es="Dentro de 48 horas"></option>
+            <option data-en="Within a week" data-es="Dentro de una semana"></option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f_social" data-en="Social media handles" data-es="Redes sociales"></label>
+          <input id="f_social" type="text" name="social" data-ph-en="@yourhandle — Instagram, Facebook, etc." data-ph-es="@suusuario — Instagram, Facebook, etc.">
+        </div>
+        <div class="field">
+          <label for="f_website_ref" data-en="Website you like the look of" data-es="Sitio web cuyo diseño le gusta"></label>
+          <input id="f_website_ref" type="text" name="website_ref" data-ph-en="URL of any site you like" data-ph-es="URL de algún sitio que le guste">
+          <span class="hint" data-en="Helps us match the vibe you're going for" data-es="Nos ayuda a entender el estilo que busca"></span>
+        </div>
+        <div class="field col-full">
+          <label for="f_notes" data-en="Anything else we should know" data-es="¿Algo más que debamos saber?"></label>
+          <textarea id="f_notes" name="notes"
+            data-ph-en="Seasonal availability, special equipment, types of jobs you don't take, anything that sets you apart"
+            data-ph-es="Disponibilidad por temporada, equipo especial, tipos de trabajos que no acepta, lo que lo distingue"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="submit-area">
+      <p class="submit-note"
+        data-en="Your responses go directly to the Potentia team. We'll follow up within 24 hours."
+        data-es="Sus respuestas van directamente al equipo de Potentia. Le responderemos en menos de 24 horas."></p>
+      <button type="submit" id="submitBtn" data-en="Send to Potentia" data-es="Enviar a Potentia"></button>
+    </div>
+
+  </form>
+
+  <div class="success-screen" id="successScreen">
+    <div class="success-mark">✓</div>
+    <h2 data-en="We've got everything." data-es="Lo tenemos todo."></h2>
+    <p data-en="Your information is on its way to the Potentia team. Expect to hear from us within 24 hours."
+       data-es="Su información está en camino al equipo de Potentia. Espere noticias nuestras en las próximas 24 horas."></p>
+  </div>
+
+</div>
+
+<footer>
+  <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <p class="footer-copy">&copy; 2026 Potentia Network</p>
+</footer>
+
+<script>
+var ham = document.getElementById('navHam');
+var overlay = document.getElementById('mobOverlay');
+ham.addEventListener('click', function() {
+  overlay.classList.toggle('open');
+  document.body.style.overflow = overlay.classList.contains('open') ? 'hidden' : '';
+});
+overlay.querySelectorAll('a').forEach(function(a) {
+  a.addEventListener('click', function() {
+    overlay.classList.remove('open');
+    document.body.style.overflow = '';
+  });
+});
+</script>
+
+<script>
+  let currentLang = 'en';
+
+  function setLang(lang) {
+    currentLang = lang;
+
+    // Toggle button styles
+    document.getElementById('btnEN').classList.toggle('active', lang === 'en');
+    document.getElementById('btnES').classList.toggle('active', lang === 'es');
+
+    // Update html lang attribute
+    document.documentElement.lang = lang;
+
+    // Update all data-en / data-es text nodes
+    document.querySelectorAll('[data-en]').forEach(el => {
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON') {
+        el.value = el.dataset[lang] || '';
+        if (el.tagName === 'BUTTON') el.textContent = el.dataset[lang] || '';
+      } else {
+        el.textContent = el.dataset[lang] || '';
+      }
+    });
+
+    // Update placeholders
+    document.querySelectorAll('[data-ph-en]').forEach(el => {
+      el.placeholder = lang === 'en' ? el.dataset.phEn : el.dataset.phEs;
+    });
+
+    // Update select options
+    document.querySelectorAll('select option[data-en]').forEach(opt => {
+      opt.textContent = opt.dataset[lang] || '';
+      opt.value = opt.dataset.en || ''; // always submit English value
+    });
+  }
+
+  // Init English on load
+  setLang('en');
+
+  // Form submit
+  const form = document.getElementById('onboardingForm');
+  const btn = document.getElementById('submitBtn');
+  const successScreen = document.getElementById('successScreen');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    btn.textContent = currentLang === 'en' ? 'Sending...' : 'Enviando...';
+
+    try {
+      const res = await fetch(form.action, {
+        method: 'POST',
+        body: new FormData(form),
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (res.ok) {
+        form.style.display = 'none';
+        successScreen.classList.add('visible');
+        // Translate success screen
+        successScreen.querySelectorAll('[data-en]').forEach(el => {
+          el.textContent = el.dataset[currentLang] || '';
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        btn.disabled = false;
+        btn.textContent = currentLang === 'en' ? 'Send to Potentia' : 'Enviar a Potentia';
+        alert(currentLang === 'en'
+          ? 'Something went wrong. Please try again or text us directly.'
+          : 'Algo salió mal. Por favor intente de nuevo o escríbanos directamente.');
+      }
+    } catch {
+      btn.disabled = false;
+      btn.textContent = currentLang === 'en' ? 'Send to Potentia' : 'Enviar a Potentia';
+      alert(currentLang === 'en'
+        ? 'Something went wrong. Please try again or text us directly.'
+        : 'Algo salió mal. Por favor intente de nuevo o escríbanos directamente.');
+    }
+  });
+</script>
+
+</body>
+</html>
