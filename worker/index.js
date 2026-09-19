@@ -2408,6 +2408,21 @@ async function ensureCrmTables(env) {
         done_at TEXT,
         created_at TEXT NOT NULL
       )`
+    ),
+    env.CRM_DB.prepare(
+      /* The contractor intake sheet, kept whole as the JSON it arrived as.
+         46 fields and growing, and most of them have nowhere to live on the
+         clients row - flattening them into columns would mean a migration
+         every time the form gains a question. Stored per submission rather
+         than per client on purpose: a client who fills it in twice has
+         changed their mind about something, and which answers came first is
+         worth being able to see. */
+      `CREATE TABLE IF NOT EXISTS client_intake (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id INTEGER NOT NULL,
+        payload TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`
     )
   ]);
 
@@ -2928,6 +2943,119 @@ async function handleCrmLead(request, env, origin) {
   return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
 }
 
+/* Phone matching has to survive how people actually type a number. The CRM
+   holds whatever was typed the first time - "(801) 555-0148", "801-555-0148",
+   "8015550148" are all the same person and none of them are string-equal.
+   Compared on the last 10 digits so a leading 1 or a +1 does not break it. */
+function crmPhoneKey(phone) {
+  const d = String(phone || "").replace(/\D/g, "");
+  return d.length >= 10 ? d.slice(-10) : "";
+}
+
+/* Find the client an intake belongs to, by email first and phone second.
+   Email is the stronger signal: a phone gets reused between a business and its
+   owner far more often than an address does. Returns null for a new client. */
+async function findClientByContact(env, email, phone) {
+  if (email) {
+    const hit = await env.CRM_DB.prepare(
+      "SELECT * FROM clients WHERE lower(email) = lower(?) LIMIT 1"
+    ).bind(email).first();
+    if (hit) return hit;
+  }
+  const key = crmPhoneKey(phone);
+  if (!key) return null;
+  /* No phone_key column to index, so the normalising happens here over the
+     rows that have a phone at all. The client list is hundreds, not millions;
+     when that stops being true this wants a stored key. */
+  const { results } = await env.CRM_DB.prepare(
+    "SELECT * FROM clients WHERE phone IS NOT NULL AND phone != ''"
+  ).all();
+  for (const row of results || []) {
+    if (crmPhoneKey(row.phone) === key) return row;
+  }
+  return null;
+}
+
+/* A readable summary for the note that goes on the client's timeline. The
+   whole sheet is kept in client_intake either way - this is so someone
+   scanning the record sees what arrived without opening anything. */
+function intakeSummary(body) {
+  const trades = []
+    .concat(body.trade || [], body.other_trade ? [body.other_trade] : [])
+    .filter(Boolean);
+  const bits = ["Contractor intake sheet received"];
+  if (body.business_name) bits.push(String(body.business_name));
+  if (trades.length) bits.push("Trades: " + trades.join(", "));
+  if (body.service_area) bits.push("Service area: " + String(body.service_area));
+  return bits.join(" \u2014 ").slice(0, 2000);
+}
+
+/* ---- POST /crm/intake — public. The contractor intake sheet posts here
+   alongside its Formspree submit, the same way the contact form does.
+
+   Matching an existing client on email or phone is the point: someone who
+   enquired months ago and is now onboarding is the SAME record, and a second
+   row for them is how a CRM starts lying about how many clients there are.
+
+   Nothing on an existing client is ever overwritten. Blank fields get filled
+   in - a record with no business name gains one - but anything already there,
+   typed by staff or arrived earlier, wins. Status is never touched at all:
+   whatever stage they are at is a decision someone made, and an intake form
+   is not evidence it changed. */
+async function handleCrmIntake(request, env, origin) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+
+  const email = crmStr(body.email, 200);
+  const phone = crmStr(body.phone, 40);
+  if (!email && !phone) return json({ error: "email or phone required" }, 400, origin);
+
+  const business = crmStr(body.business_name, 200);
+  const owner = crmStr(body.owner_name, 120);
+  const now = new Date().toISOString();
+  const payload = JSON.stringify(body).slice(0, 60000);
+
+  let client = await findClientByContact(env, email, phone);
+  let created = false;
+
+  if (!client) {
+    const trades = [].concat(body.trade || []).filter(Boolean).join(", ");
+    /* status 'lead', not 'building'. This form is linked from the public nav,
+       so anyone can fill it; landing a stranger straight in the build pipeline
+       is a mess someone has to clean up. source 'intake' is what marks it as
+       more than a cold enquiry. */
+    const res = await env.CRM_DB.prepare(
+      `INSERT INTO clients (business_name, contact_name, email, phone, status, source, service, message, created_at, updated_at)
+       VALUES (?,?,?,?,'lead','intake',?,?,?,?)`
+    ).bind(business || owner || null, owner || null, email || null, phone || null,
+           crmStr(trades, 200) || null, crmStr(body.story, 5000) || null, now, now).run();
+    client = { id: res.meta.last_row_id };
+    created = true;
+  } else {
+    /* Fill the gaps, never the answers. COALESCE(NULLIF(col,''), ?) keeps a
+       value that is already there and takes the new one only when the column
+       is null or empty. */
+    await env.CRM_DB.prepare(
+      `UPDATE clients SET
+         business_name = COALESCE(NULLIF(business_name,''), ?),
+         contact_name  = COALESCE(NULLIF(contact_name,''),  ?),
+         email         = COALESCE(NULLIF(email,''),         ?),
+         phone         = COALESCE(NULLIF(phone,''),         ?),
+         updated_at    = ?
+       WHERE id = ?`
+    ).bind(business || null, owner || null, email || null, phone || null, now, client.id).run();
+  }
+
+  await env.CRM_DB.batch([
+    env.CRM_DB.prepare("INSERT INTO client_intake (client_id, payload, created_at) VALUES (?,?,?)")
+      .bind(client.id, payload, now),
+    env.CRM_DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
+      .bind(client.id, intakeSummary(body), now)
+  ]);
+
+  return json({ ok: true, id: client.id, created: created }, 200, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
@@ -3098,6 +3226,14 @@ export default {
       if (path === "/crm/login" && request.method === "POST") {
         return await handleCrmLogin(request, env, origin);
       }
+      if (path === "/crm/intake" && request.method === "POST") {
+        /* Tighter than the contact form's limit: an onboarding sheet is filled
+           in once, not repeatedly, and it writes three rows per call. */
+        const rl = await rateLimit(request, env, "intake", 20, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
+        return await handleCrmIntake(request, env, origin);
+      }
+
       if (path === "/crm/lead" && request.method === "POST") {
         return await handleCrmLead(request, env, origin);
       }
