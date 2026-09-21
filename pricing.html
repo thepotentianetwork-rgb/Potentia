@@ -57,6 +57,12 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .plan-features{display:flex;flex-wrap:wrap;gap:24px;border-top:1px solid var(--dim);padding-top:24px;margin-bottom:20px}
 .plan-features span{font-family:'DM Mono',monospace;font-size:13px;color:var(--chrome);display:flex;align-items:center;gap:8px}
 .plan-features span::before{content:'✦';color:var(--silver);font-size:10px}
+/* Turnaround. Its own line rather than another feature bullet: on these
+   timescales it is the strongest thing on the card, and the CONDITION has to
+   travel with the number - "24-48 hours" on its own reads as a promise that
+   starts the moment someone says yes, which is not what it is. */
+.plan-turnaround{font-family:'DM Mono',monospace;font-size:13px;color:var(--silver);line-height:1.7;border-left:2px solid var(--chrome);padding-left:14px;margin-bottom:20px}
+.plan-turnaround strong{color:var(--bright);font-weight:400;letter-spacing:0.02em}
 .plan-note{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);line-height:1.6}
 .plan-note strong{color:var(--silver);font-weight:400}
 
@@ -156,8 +162,8 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <div class="perk">
     <svg class="perk-icon" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="11" stroke="#8a909e" stroke-width="1.2"/><path d="M14 8v6l4 2" stroke="#c8cdd6" stroke-width="1.2" stroke-linecap="round"/></svg>
     <div>
-      <p class="perk-label">72-Hour Turnaround</p>
-      <p class="perk-sub">Your site live in as little as 3 days</p>
+      <p class="perk-label">24–72 Hour Turnaround</p>
+      <p class="perk-sub">Live in as little as 24 hours once we have what we need</p>
     </div>
   </div>
   <div class="perk">
@@ -194,6 +200,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       <span>Hosting, patching &amp; upkeep</span>
       <span>Free domain — 1 year included</span>
     </div>
+    <p class="plan-turnaround"><strong>Live in as little as 24–48 hours</strong><br>From your completed form and payment.</p>
     <p class="plan-note">Includes a <strong>monthly plan</strong> for hosting &amp; upkeep. Edits after the first <strong>7 days</strong> of launch are billed per change request — contact us for details.</p>
   </div>
 
@@ -214,6 +221,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       <span>1 video featured on-site</span>
       <span>Free domain — 1 year included</span>
     </div>
+    <p class="plan-turnaround"><strong>Live in as little as 48–72 hours</strong><br>From your completed form, deposit and gallery photos.</p>
     <p class="plan-note">Includes a <strong>monthly plan</strong> to edit, manage &amp; update photos — contact us for details.</p>
   </div>
 
@@ -234,6 +242,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       <span>12-photo gallery page</span>
       <span>Free domain — 1 year included</span>
     </div>
+    <p class="plan-turnaround"><strong>Live in as little as 48–72 hours</strong><br>From your completed form, deposit and gallery photos.</p>
     <p class="plan-note">Includes a <strong>monthly plan</strong> for the calendar &amp; ongoing management — contact us for details.</p>
   </div>
 

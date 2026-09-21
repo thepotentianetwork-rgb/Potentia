@@ -232,3 +232,91 @@ test("the tier names on the page and in the assistant are the same names", async
     assert.equal(page.indexOf(gone), -1, "pricing.html still shows " + gone);
   });
 });
+
+/* ── TURNAROUND ─────────────────────────────────────────────────────
+ * Every turnaround is a promise with a condition attached: the clock starts
+ * when the last thing we are waiting on arrives, not when someone says yes.
+ * "48–72 hours" quoted without "from form, deposit and gallery photos" is a
+ * different promise from the one being made, so the two live in one string and
+ * these tests keep them there.
+ */
+async function packagesByKey() {
+  const { call, crmTok } = await setup();
+  const r = await call("GET", "/crm/packages", null, crmTok);
+  assert.equal(r.status, 200);
+  const by = {};
+  r.data.packages.forEach((p) => { by[p.key] = p; });
+  return by;
+}
+
+test("every sellable package says how long it takes", async () => {
+  const by = await packagesByKey();
+  Object.values(by)
+    .filter((p) => !p.retired && p.key !== "custom")
+    .forEach((p) => assert.ok(p.turnaround, `${p.key} has no turnaround`));
+});
+
+test("a turnaround in hours always carries what starts the clock", async () => {
+  const by = await packagesByKey();
+  Object.values(by)
+    .filter((p) => p.turnaround && /\bhrs?\b|hour/i.test(p.turnaround))
+    .forEach((p) => assert.match(p.turnaround, /\bfrom\b/i,
+      `"${p.turnaround}" states hours without saying from what`));
+});
+
+test("the gallery tiers wait on photos and a deposit, and say so", async () => {
+  const by = await packagesByKey();
+  for (const key of ["tier2", "tier3"]) {
+    assert.match(by[key].turnaround, /photo/i, `${key} must name the photos it waits on`);
+    assert.match(by[key].turnaround, /deposit/i, `${key} must name the deposit`);
+  }
+});
+
+test("tier 1 waits on payment, not a deposit or photos", async () => {
+  const by = await packagesByKey();
+  assert.match(by.tier1.turnaround, /payment/i);
+  assert.ok(!/photo/i.test(by.tier1.turnaround), "tier 1 has no gallery to wait on");
+});
+
+/* Scoped work must not carry an hours figure at all - a number next to a build
+   whose shape is not known yet is the one that gets held against you. */
+test("the scoped builds quote no hours", async () => {
+  const by = await packagesByKey();
+  for (const key of ["crm", "platform"]) {
+    assert.ok(!/\d/.test(by[key].turnaround),
+      `${key}: "${by[key].turnaround}" puts a number on scoped work`);
+  }
+});
+
+test("the public page states the condition wherever it states the hours", () => {
+  const page = fs.readFileSync(path.join(repo, "pricing.html"), "utf8");
+  const lines = [...page.matchAll(/<p class="plan-turnaround">([\s\S]*?)<\/p>/g)].map((m) => m[1]);
+  assert.equal(lines.length, 3, "the three website tiers each state one");
+  lines.forEach((line) => {
+    assert.match(line, /hours/i);
+    assert.match(line, /From your/i, `"${line}" gives hours with no condition`);
+  });
+});
+
+/* The page carried "72-Hour Turnaround / as little as 3 days" long before the
+   per-tier times existed, and the two disagreed in both directions: the floor
+   is 24 hours, not 3 days. One page must not quote two different fastest
+   times, so the headline is checked against the tiers under it. */
+test("the headline turnaround agrees with the tiers beneath it", () => {
+  const page = fs.readFileSync(path.join(repo, "pricing.html"), "utf8");
+  const label = page.match(/<p class="perk-label">([^<]*Turnaround[^<]*)<\/p>/);
+  const sub = page.match(/<p class="perk-label">[^<]*Turnaround[^<]*<\/p>\s*<p class="perk-sub">([^<]*)<\/p>/);
+  assert.ok(label && sub, "the turnaround perk is still on the page");
+
+  const tierHours = [...page.matchAll(/<p class="plan-turnaround">[\s\S]*?(\d+)\u2013(\d+) hours/g)];
+  assert.equal(tierHours.length, 3, "three tiers state an hour range");
+  const fastest = Math.min(...tierHours.map((m) => Number(m[1])));
+  const slowest = Math.max(...tierHours.map((m) => Number(m[2])));
+
+  assert.ok(label[1].includes(String(slowest)),
+    `headline "${label[1]}" does not carry the slowest tier (${slowest}h)`);
+  assert.ok(sub[1].includes(String(fastest)),
+    `subtitle "${sub[1]}" does not carry the fastest tier (${fastest}h)`);
+  assert.ok(!/\bdays?\b/i.test(sub[1]),
+    `subtitle "${sub[1]}" still talks in days while the tiers talk in hours`);
+});
