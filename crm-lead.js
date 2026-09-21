@@ -181,6 +181,11 @@
                 (row.perSeatFrom ? '+' : '') + '/mo each after';
       }
     }
+    /* Turnaround on the same line as the price, because it is the other half
+       of what gets said on the phone - and because the string carries the
+       condition, quoting the hours without "from completed form + payment"
+       is not possible by accident. */
+    if (row.turnaround) line += ' · ' + row.turnaround;
     return line;
   }
 

@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "a92f225";
-const WORKER_BUILT_AT = "2026-09-19T15:46:39.123Z";
+const WORKER_BUILD = "56fdd75-dirty";
+const WORKER_BUILT_AT = "2026-09-21T15:47:06.660Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -5385,17 +5385,28 @@ const CRM_ACTIVE_STATUSES = ["building", "live"];
    record of what they paid for. They are marked retired so the CRM can stop
    offering them for new work while still showing them on the clients who
    have one. */
+/* `turnaround` is the build time, and it carries its CONDITION in the same
+   string on purpose. "24-48 hours" on its own reads as a clock that starts
+   when someone says yes; it starts when the last thing we are waiting on
+   arrives, which for a gallery tier means the photos. Splitting the two into
+   separate fields is how the condition gets dropped from one of the places
+   this is rendered. null means quoted per job, not "no idea". */
 const CRM_PACKAGE_LIST = [
-  { key: "tier1", label: "Tier 1 — Home & Contact", price: 500, monthly: 20 },
-  { key: "tier2", label: "Tier 2 — Home, Gallery & Contact", price: 1200, monthly: 75 },
-  { key: "tier3", label: "Tier 3 — Gallery + Scheduling", price: 1800, monthly: 150 },
+  { key: "tier1", label: "Tier 1 — Home & Contact", price: 500, monthly: 20,
+    turnaround: "As little as 24–48 hrs from completed form + payment" },
+  { key: "tier2", label: "Tier 2 — Home, Gallery & Contact", price: 1200, monthly: 75,
+    turnaround: "As little as 48–72 hrs from form, deposit + gallery photos" },
+  { key: "tier3", label: "Tier 3 — Gallery + Scheduling", price: 1800, monthly: 150,
+    turnaround: "As little as 48–72 hrs from form, deposit + gallery photos" },
   /* `from: true` means the figure is a FLOOR, not the price. A CRM build is
      scoped per business and starts here; quoting exactly 2000 because the box
      was filled in with 2000 is the mistake this flag exists to prevent, so
      the CRM says "from" next to it rather than showing it as a price. */
-  { key: "crm", label: "Custom CRM", price: 2000, monthly: 250, from: true },
+  { key: "crm", label: "Custom CRM", price: 2000, monthly: 250, from: true,
+    turnaround: "Scoped per build" },
   { key: "platform", label: "Sales Platform", price: 5000, monthly: 350, from: true,
-    seatsIncluded: 2, perSeat: 50, perSeatFrom: true },
+    seatsIncluded: 2, perSeat: 50, perSeatFrom: true,
+    turnaround: "Scoped per build" },
   { key: "custom", label: "Custom", price: null, monthly: null },
   { key: "foundation", label: "Foundation", price: null, retired: true },
   { key: "booking", label: "Booking", price: null, retired: true },
