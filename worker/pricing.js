@@ -579,6 +579,9 @@ export let SELL = {
       "Roof Ridge Vent": 263, "8x16 Gable/Wall Vent": 30, "Roof Vent": 53,
       "Cupola 16\" Black Roof": 600, "Cupola 16\" Copper Roof": 600,
       "Skylight": 184, "Stairs": 420, "Stationary Ladder": 105, "Attic Pull-Down Ladder": 375,
+      // Metal ramps at the drive-in door, so a quad can be ridden in. Flat for
+      // the shed, not per door: it is one item on one delivery.
+      "Ramp": 200,
       // Site clearance, priced flat rather than by size: the work is a crew and
       // a dump run either way, and quoting it per square foot would invite an
       // argument about measurements before anyone has seen the site.
@@ -1532,6 +1535,7 @@ export function computePricing(cfgIn, opts){
     _flat(ADDONS.ridgeVent && _hasRidge,'Roof Ridge Vent');
     _flat(ADDONS.skylight,'Skylight');
     _flat(ADDONS.stairs,'Stairs');
+    _flat(ADDONS.ramp,'Ramp');
     _flat(ADDONS.statLadder,'Stationary Ladder');
     _flat(ADDONS.atticLadder,'Attic Pull-Down Ladder');
     // Removal of what is already on the site. Priced through the same flat

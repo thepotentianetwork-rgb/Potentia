@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "a02c221";
-const WORKER_BUILT_AT = "2026-09-22T04:52:31.479Z";
+const WORKER_BUILD = "488cf0b";
+const WORKER_BUILT_AT = "2026-09-22T05:04:00.046Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -584,6 +584,9 @@ let SELL = {
       "Roof Ridge Vent": 263, "8x16 Gable/Wall Vent": 30, "Roof Vent": 53,
       "Cupola 16\" Black Roof": 600, "Cupola 16\" Copper Roof": 600,
       "Skylight": 184, "Stairs": 420, "Stationary Ladder": 105, "Attic Pull-Down Ladder": 375,
+      // Metal ramps at the drive-in door, so a quad can be ridden in. Flat for
+      // the shed, not per door: it is one item on one delivery.
+      "Ramp": 200,
       // Site clearance, priced flat rather than by size: the work is a crew and
       // a dump run either way, and quoting it per square foot would invite an
       // argument about measurements before anyone has seen the site.
@@ -1537,6 +1540,7 @@ function computePricing(cfgIn, opts){
     _flat(ADDONS.ridgeVent && _hasRidge,'Roof Ridge Vent');
     _flat(ADDONS.skylight,'Skylight');
     _flat(ADDONS.stairs,'Stairs');
+    _flat(ADDONS.ramp,'Ramp');
     _flat(ADDONS.statLadder,'Stationary Ladder');
     _flat(ADDONS.atticLadder,'Attic Pull-Down Ladder');
     // Removal of what is already on the site. Priced through the same flat
@@ -5262,7 +5266,7 @@ function computeOptionPrices(cfg) {
   // handed the $/sqft rate itself, only what it comes to for this build.
   const ADDON_FLAT_KEYS = {
     shutters: "Shutters", flowerboxes: "Flowerboxes", ridgeVent: "Roof Ridge Vent",
-    skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder",
+    skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder", ramp: "Ramp",
     shedRemoval: "Shed Removal", concreteRemoval: "Concrete Removal",
     atticLadder: "Attic Pull-Down Ladder"
   };
