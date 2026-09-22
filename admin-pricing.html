@@ -167,7 +167,7 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
         <span class="count-tag partial">Paste from another source</span>
       </summary>
       <div style="padding:0 20px 20px">
-        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>foundation</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>gravelTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
+        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>porchDeckSqft</code>, <code>foundation</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>gravelTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
         <textarea id="comp-import-text" class="add-form input" style="width:100%;min-height:120px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:10px 12px;outline:none" placeholder='{"doors":{"5\' Double":0,"5\' Double Craftsman":50}}'></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <button class="save-btn" id="comp-import-btn" type="button">Import Into Components</button>
@@ -250,6 +250,7 @@ var SELL_DEFAULTS = {
     "Posts & Beam, Finished Ceiling": 28, "Posts, Beams & Composite Floor": 35
   },
   porchSideSqft: { "standard": 8.33 },
+  porchDeckSqft: { "none": 0, "pt": 0, "composite": 8.50 },
   foundation: { pad: 3000, blocks: 0, existing: 0 },
   foundationFinish: { plain: 0, coated: 300 },
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
@@ -283,6 +284,7 @@ var FLAT_GROUPS = [
   { key: 'electrical', label: 'Electrical Packages', unit: '' },
   { key: 'porchFrontSqft', label: 'Porch — Front (item name = "standard" for the base finish, or a tier name like "Composite Awning")', unit: '/ sq ft (depth × shed width)' },
   { key: 'porchSideSqft', label: 'Porch — Side (item name = "standard"; only that one tier is offered)', unit: '/ sq ft (depth × shed length)' },
+  { key: 'porchDeckSqft', label: 'Porch Decking (item names: "none", "pt", "composite" — the front-finish tiers are retired, this is where a porch upgrade is charged now)', unit: '/ sq ft of porch' },
   { key: 'foundation', label: 'Foundation (item names: "pad", "blocks", "existing")', unit: 'flat' },
   { key: 'foundationFinish', label: 'Foundation Floor Finish — Plain & Coated (item names: "plain", "coated"; Broom is tiered, edited below)', unit: 'flat' }
 ];
@@ -751,7 +753,7 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
     return;
   }
   var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical',
-    'porchFrontSqft', 'porchSideSqft', 'foundation', 'foundationFinish', 'broomTiers', 'gravelTiers', 'interior'];
+    'porchFrontSqft', 'porchSideSqft', 'porchDeckSqft', 'foundation', 'foundationFinish', 'broomTiers', 'gravelTiers', 'interior'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {

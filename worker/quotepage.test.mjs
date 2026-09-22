@@ -143,6 +143,10 @@ const BUILDS = {
   'interior + electrical': { style: 'gable', w: 10, l: 16, h: 9, intFinish: 'painted', elec: 'essential' },
   'flooring (still hidden)': { style: 'gable', w: 10, l: 16, h: 9, intFinish: 'painted', floor: 'best' },
   'removals': { style: 'gable', w: 10, l: 16, h: 9, addons: { shedRemoval: true, concreteRemoval: true } },
+  'front porch, composite decking': { style: 'gable', w: 12, l: 20, h: 9,
+    porchLoc: 'front', porchDepth: 6, porchDeck: 'composite' },
+  'side porch, pressure treated': { style: 'gable', w: 12, l: 20, h: 9,
+    porchLoc: 'side', porchDepth: 4, porchDeck: 'pt' },
   'barn, everything on': {
     style: 'barn', w: 12, l: 20, h: 10, siding: 'board-batten', foundation: 'pad',
     foundationFinish: 'coated', intFinish: 'painted', floor: 'better', elec: 'essential',

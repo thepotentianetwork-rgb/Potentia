@@ -257,7 +257,7 @@ function nameList(redline, which) {
   (redline.windowSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
   (redline.dormerSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
   (redline.shelfSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
-  [redline.porchSellName, redline.sidingSellName, redline.heightSellName,
+  [redline.porchSellName, redline.porchDeckSellName, redline.sidingSellName, redline.heightSellName,
    redline.elecSellName, redline.loftSellName].forEach(function (n) { if (n) out.push(n); });
   return out;
 }
@@ -276,6 +276,7 @@ function compItemPrices(redline) {
   (redline.dormerSellLines || []).forEach(function (l) { push(l && l.label, l && l.price); });
   (redline.shelfSellLines || []).forEach(function (l) { push(l && l.label, l && l.price); });
   push(redline.porchSellName, redline.porchSell);
+  push(redline.porchDeckSellName, redline.porchDeckSell);
   push(redline.sidingSellName, redline.sidingSell);
   push(redline.heightSellName, redline.heightSell);
   push(redline.elecSellName, redline.elecSell);
@@ -348,6 +349,7 @@ function taxBreakdown(redline) {
     + sumLines(redline.windowSellLines, 'price')
     + sumLines(redline.dormerSellLines, 'price')
     + num(redline.porchSell)
+    + num(redline.porchDeckSell)
     + num(redline.sidingSell)
     + num(redline.paintSell)
     + num(redline.laborSell)
@@ -451,6 +453,7 @@ function taxBreakdown(redline) {
   shedItem(redline.sidingSellName, redline.sidingSell);
   shedItem(redline.paintSellName, redline.paintSell);
   shedItem(redline.porchSellName, redline.porchSell);
+  shedItem(redline.porchDeckSellName, redline.porchDeckSell);
   shedItemsFrom(redline.doorUpLines, 'label', 'up');
   shedItemsFrom(redline.windowSellLines, 'label', 'price');
   shedItemsFrom(redline.dormerSellLines, 'label', 'price');

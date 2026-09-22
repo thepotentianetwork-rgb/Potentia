@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
@@ -1058,6 +1058,7 @@ function compItemsFromRedline(redline) {
   (redline.dormerSellLines || []).forEach((l) => push(l && l.label, l && l.price));
   (redline.shelfSellLines || []).forEach((l) => push(l && l.label, l && l.price));
   push(redline.porchSellName, redline.porchSell);
+  push(redline.porchDeckSellName, redline.porchDeckSell);
   push(redline.sidingSellName, redline.sidingSell);
   push(redline.heightSellName, redline.heightSell);
   push(redline.elecSellName, redline.elecSell);
@@ -1921,6 +1922,7 @@ const SHED_STYLES = ["gable", "barn", "leanto", "hip", "3peak", "4peak"];
 const SHED_SIDING = ["vertical", "horizontal", "board-batten", "pine"];
 const SHED_ROOFTYPE = ["shingle", "metal"];
 const SHED_OVTYPE = ["gable", "all4"];
+const SHED_PORCHDECK = ["none", "pt", "composite"];
 const SHED_PORCHLOC = ["none", "front", "side"];
 const SHED_FOUNDATION = ["blocks", "pad", "existing", "gravel"];
 const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
@@ -1970,6 +1972,13 @@ function validateShedConfig(raw) {
     porchLoc: enumOr(raw.porchLoc, SHED_PORCHLOC, "none"),
     porchDepth: clampNum(raw.porchDepth, 0, 20, 0),
     porchTier: typeof raw.porchTier === "string" ? raw.porchTier.slice(0, 60) : "standard",
+    /* Whitelisted, not passed through. A client-supplied deck id now moves
+       money, so anything not in the rate table has to land on the free
+       default rather than reaching the engine — porchDeckLineFor charges
+       nothing for an unknown id anyway, but a validator that lets an unknown
+       value through is one rate-table edit away from being a way to pick a
+       price. */
+    porchDeck: enumOr(raw.porchDeck, SHED_PORCHDECK, "pt"),
     dormerL: clampNum(raw.dormerL, 0, 12, 0),
     dormerR: clampNum(raw.dormerR, 0, 12, 0),
     foundation: enumOr(raw.foundation, SHED_FOUNDATION, "blocks"),
@@ -2042,6 +2051,19 @@ function computeOptionPrices(cfg) {
     Object.keys(SELL.porchFrontSqft).forEach((tier) => {
       const line = porchLineFor("front", cfg.porchDepth, tier, cfg.w);
       if (line) frontTiers[tier] = line.price;
+    });
+  }
+  /* Decking, priced for THIS porch. The designer's deck buttons used to carry
+     no price because there was no charge to carry; the charge moved here off
+     the invisible finish tiers, so the buttons need the number. Every deck id
+     is listed, including the free ones, so the client can show "included"
+     rather than having to know which ids are free. */
+  const porchDeck = {};
+  if (cfg.porchLoc === "front" || cfg.porchLoc === "side") {
+    const span = cfg.porchLoc === "side" ? cfg.l : cfg.w;
+    Object.keys(SELL.porchDeckSqft).forEach((id) => {
+      const line = porchDeckLineFor(cfg.porchLoc, cfg.porchDepth, id, span);
+      porchDeck[id] = line ? line.price : 0;
     });
   }
 
@@ -2125,7 +2147,8 @@ function computeOptionPrices(cfg) {
     electrical: electrical,
     shelving: shelving,
     addons: addons,
-    porch: { frontDepths: frontDepths, sideDepths: sideDepths, frontTiers: frontTiers }
+    porch: { frontDepths: frontDepths, sideDepths: sideDepths, frontTiers: frontTiers,
+             deck: porchDeck }
   };
 }
 

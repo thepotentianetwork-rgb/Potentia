@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "40b919d";
-const WORKER_BUILT_AT = "2026-09-22T03:49:53.515Z";
+const WORKER_BUILD = "2e93f01";
+const WORKER_BUILT_AT = "2026-09-22T04:49:30.892Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -106,7 +106,7 @@ let COST = {
    stop and thread the values through as parameters instead. */
 let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     SIDING='vertical', W=8, L=12, H=8,
-    PORCH_LOC='none', SIDE_PORCH=0, PORCH_TIER='standard',
+    PORCH_LOC='none', SIDE_PORCH=0, PORCH_TIER='standard', PORCH_DECK='pt',
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
     LOFT='none', ELEC='none', INT_FINISH='none', FLOOR='none',
@@ -138,6 +138,7 @@ function setConfig(cfg){
   if(cfg.porchLoc!=null) PORCH_LOC=cfg.porchLoc;
   if(cfg.porchDepth!=null) SIDE_PORCH=+cfg.porchDepth;
   if(cfg.porchTier!=null) PORCH_TIER=cfg.porchTier;
+  if(cfg.porchDeck!=null) PORCH_DECK=cfg.porchDeck;
   if(cfg.dormerL!=null) DORMER_L=+cfg.dormerL;
   if(cfg.dormerR!=null) DORMER_R=+cfg.dormerR;
   if(cfg.foundation!=null) FOUNDATION=cfg.foundation;
@@ -160,7 +161,7 @@ function setConfig(cfg){
 function resetConfig(){
   STYLE='gable'; PITCH=6; ROOFTYPE='shingle'; OVTYPE='gable'; OVH=4;
   SIDING='vertical'; W=8; L=12; H=8;
-  PORCH_LOC='none'; SIDE_PORCH=0; PORCH_TIER='standard';
+  PORCH_LOC='none'; SIDE_PORCH=0; PORCH_TIER='standard'; PORCH_DECK='pt';
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
   LOFT='none'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
@@ -504,6 +505,30 @@ let SELL = {
   },
   porchSideSqft: { "standard": 8.33 },
 
+  /* ── PORCH DECKING (upcharge, per sqft of porch) ──
+     This is where the porch upgrade money lives now. It used to live in the
+     porchFrontSqft finish tiers, which ran to $35/sqft and were invisible:
+     nothing in the designer's 3D read PORCH_TIER, so a customer picking
+     "Posts, Beams & Composite Floor" saw the identical shed and a price
+     $1,900 higher on a 72 sqft porch. Meanwhile PORCH_DECK — pressure-treated
+     against composite — did change the 3D, was sent up with every config, and
+     was never priced at all. The page charged for the invisible choice and
+     gave away the visible one.
+
+     So the charge moved onto the control the customer can see. The rate is
+     derived from what the old tier table already implied composite flooring
+     was worth: Wood Floor Awning 15 -> Composite Awning 25 is +$10/sqft, and
+     Posts & Beam Finished Ceiling 28 -> Posts Beams & Composite Floor 35 is
+     +$7. This sits between them. It is an editable override like every other
+     rate here, so it can be moved without a deploy.
+
+     'pt' is 0 because the standard porch rate already includes a
+     pressure-treated floor. 'none' is also 0 rather than a credit — a
+     deckless porch is not currently discounted, and making it one would be a
+     price cut nobody asked for. Worth revisiting: the standard rate is
+     charging for a floor that is not being built. */
+  porchDeckSqft: { "none": 0, "pt": 0, "composite": 8.50 },
+
   // ── WALL HEIGHT (upcharge, per sqft of wall area — 8ft is the included standard) ──
   wallHeight: { 6: 1.00, 7: 1.00, 8: 0, 9: 2.00, 10: 3.00, 12: 5.00 },
 
@@ -638,6 +663,34 @@ function porchLineFor(loc, depth, tier, shedSpan){
            + (key==='standard' ? '' : ' \u2014 '+key)
            + ' ('+sqft+' sqft)';
   return { price: rate ? Math.round(rate*sqft) : 0, name: depth+label, unpriced: !rate };
+}
+
+/* The porch's own square footage — the area both the porch line and the
+   decking line bill on, so they cannot disagree about how big the porch is.
+   A front porch spans the shed's WIDTH, a side porch its LENGTH, matching
+   porchLineFor's shedSpan argument. */
+function porchSqftFor(loc, depth, shedSpan){
+  if(loc!=='front' && loc!=='side') return 0;
+  if(!(depth>0)) return 0;
+  return Math.round(depth * (shedSpan||0));
+}
+/* The decking upcharge. Separate from porchLineFor because it is a different
+   question — porchLineFor prices the porch, this prices what you walk on —
+   and because the designer needs to label its deck buttons with these prices
+   without re-deriving a rate on the client. Unknown deck ids charge nothing
+   rather than falling back to the composite rate: a typo must not invent a
+   charge. */
+function porchDeckLineFor(loc, depth, deck, shedSpan){
+  var sqft = porchSqftFor(loc, depth, shedSpan);
+  if(!sqft) return null;
+  var id = String(deck || 'pt');
+  var rate = (SELL.porchDeckSqft || {})[id];
+  if(!(typeof rate === 'number' && isFinite(rate) && rate > 0)) return null;
+  return {
+    price: Math.round(rate * sqft),
+    name: 'Composite Porch Decking (' + sqft + ' sqft)',
+    unpriced: false
+  };
 }
 
 // Area helpers for per-sqft sell items (feet). wallH from the wall-height map.
@@ -1246,15 +1299,24 @@ function computePricing(cfgIn, opts){
   var porchLoc = (typeof PORCH_LOC!=='undefined') ? PORCH_LOC : 'none';
   var porchDepth = (typeof SIDE_PORCH!=='undefined') ? SIDE_PORCH : 0;
   var porchTier = (typeof PORCH_TIER!=='undefined') ? PORCH_TIER : 'standard';
+  var porchDeck = (typeof PORCH_DECK!=='undefined') ? PORCH_DECK : 'pt';
+  var porchDeckSell = 0, porchDeckSellName = '';
   if(porchLoc!=='none' && porchDepth>0){
-    var pl = porchLineFor(porchLoc, porchDepth, porchTier, (porchLoc==='side'?Df:Wf));
+    var _span = (porchLoc==='side'?Df:Wf);
+    var pl = porchLineFor(porchLoc, porchDepth, porchTier, _span);
     if(pl){
       porchSell += pl.price;
       porchSellName = pl.name;
       if(pl.unpriced) unpriced.push(pl.name+' — no price set');
     }
+    /* Composite decking is its own line rather than folded into the porch.
+       It is the visible upgrade the customer picked and watched change in the
+       3D, so it should be the thing they see a price against — and keeping it
+       separate means a porch's base price stays comparable across quotes. */
+    var dk = porchDeckLineFor(porchLoc, porchDepth, porchDeck, _span);
+    if(dk){ porchDeckSell = dk.price; porchDeckSellName = dk.name; }
   }
-  customerPrice += porchSell;
+  customerPrice += porchSell + porchDeckSell;
 
   // ── SIDING UPCHARGE (customer): per sqft of WALL AREA over included T11 ──
   var sidingSell = 0, sidingSellName = '';
@@ -1543,6 +1605,7 @@ function computePricing(cfgIn, opts){
       doorUpcharge: doorUpcharge, doorUpLines: doorUpLines,
       dormerSell: dormerSell, dormerSellLines: dormerSellLines,
       porchSell: porchSell, porchSellName: porchSellName,
+      porchDeckSell: porchDeckSell, porchDeckSellName: porchDeckSellName,
       sidingSell: sidingSell, sidingSellName: sidingSellName,
       paintSell: paintSell, paintSellName: paintSellName,
       laborSell: laborSell, laborSellName: laborSellName,
@@ -1669,7 +1732,7 @@ function elecIncludesFor(sellName){
   return (ELEC_INCLUDES[tier] || []).slice();
 }
 
-const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight',
+const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
@@ -4178,6 +4241,7 @@ function compItemsFromRedline(redline) {
   (redline.dormerSellLines || []).forEach((l) => push(l && l.label, l && l.price));
   (redline.shelfSellLines || []).forEach((l) => push(l && l.label, l && l.price));
   push(redline.porchSellName, redline.porchSell);
+  push(redline.porchDeckSellName, redline.porchDeckSell);
   push(redline.sidingSellName, redline.sidingSell);
   push(redline.heightSellName, redline.heightSell);
   push(redline.elecSellName, redline.elecSell);
@@ -5041,6 +5105,7 @@ const SHED_STYLES = ["gable", "barn", "leanto", "hip", "3peak", "4peak"];
 const SHED_SIDING = ["vertical", "horizontal", "board-batten", "pine"];
 const SHED_ROOFTYPE = ["shingle", "metal"];
 const SHED_OVTYPE = ["gable", "all4"];
+const SHED_PORCHDECK = ["none", "pt", "composite"];
 const SHED_PORCHLOC = ["none", "front", "side"];
 const SHED_FOUNDATION = ["blocks", "pad", "existing", "gravel"];
 const SHED_FOUNDATION_FINISH = ["plain", "broom", "coated"];
@@ -5090,6 +5155,13 @@ function validateShedConfig(raw) {
     porchLoc: enumOr(raw.porchLoc, SHED_PORCHLOC, "none"),
     porchDepth: clampNum(raw.porchDepth, 0, 20, 0),
     porchTier: typeof raw.porchTier === "string" ? raw.porchTier.slice(0, 60) : "standard",
+    /* Whitelisted, not passed through. A client-supplied deck id now moves
+       money, so anything not in the rate table has to land on the free
+       default rather than reaching the engine — porchDeckLineFor charges
+       nothing for an unknown id anyway, but a validator that lets an unknown
+       value through is one rate-table edit away from being a way to pick a
+       price. */
+    porchDeck: enumOr(raw.porchDeck, SHED_PORCHDECK, "pt"),
     dormerL: clampNum(raw.dormerL, 0, 12, 0),
     dormerR: clampNum(raw.dormerR, 0, 12, 0),
     foundation: enumOr(raw.foundation, SHED_FOUNDATION, "blocks"),
@@ -5162,6 +5234,19 @@ function computeOptionPrices(cfg) {
     Object.keys(SELL.porchFrontSqft).forEach((tier) => {
       const line = porchLineFor("front", cfg.porchDepth, tier, cfg.w);
       if (line) frontTiers[tier] = line.price;
+    });
+  }
+  /* Decking, priced for THIS porch. The designer's deck buttons used to carry
+     no price because there was no charge to carry; the charge moved here off
+     the invisible finish tiers, so the buttons need the number. Every deck id
+     is listed, including the free ones, so the client can show "included"
+     rather than having to know which ids are free. */
+  const porchDeck = {};
+  if (cfg.porchLoc === "front" || cfg.porchLoc === "side") {
+    const span = cfg.porchLoc === "side" ? cfg.l : cfg.w;
+    Object.keys(SELL.porchDeckSqft).forEach((id) => {
+      const line = porchDeckLineFor(cfg.porchLoc, cfg.porchDepth, id, span);
+      porchDeck[id] = line ? line.price : 0;
     });
   }
 
@@ -5245,7 +5330,8 @@ function computeOptionPrices(cfg) {
     electrical: electrical,
     shelving: shelving,
     addons: addons,
-    porch: { frontDepths: frontDepths, sideDepths: sideDepths, frontTiers: frontTiers }
+    porch: { frontDepths: frontDepths, sideDepths: sideDepths, frontTiers: frontTiers,
+             deck: porchDeck }
   };
 }
 
