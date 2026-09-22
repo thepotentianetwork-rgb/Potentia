@@ -2493,8 +2493,42 @@ async function ensureCrmTables(env) {
         payload TEXT NOT NULL,
         created_at TEXT NOT NULL
       )`
+    ),
+    /* PROJECT PHOTOS, one row per photo rather than an array inside payload.
+       A sheet with ten photos in one column is a multi-megabyte row that has
+       to be read in full every time anyone opens the client, just to see the
+       answers. Separate rows mean the sheet loads at the size it always did
+       and a photo is fetched only when it is looked at.
+
+       The bytes live in D1 as a data URL. Not because that is how image
+       storage should work - R2 is - but because R2 needs a bucket and a
+       binding added in the dashboard, and this Worker is deployed by pasting
+       a bundle, so a feature that depends on new plumbing is a feature that
+       does not work until someone does the plumbing. The form downsizes to
+       roughly 150KB a photo, so ten is about 1.5MB per sheet: fine for an
+       onboarding form filled in a handful of times a month, and the obvious
+       thing to move to R2 if that ever stops being true. */
+    env.CRM_DB.prepare(
+      `CREATE TABLE IF NOT EXISTS client_intake_photos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        intake_id INTEGER NOT NULL,
+        client_id INTEGER NOT NULL,
+        idx INTEGER NOT NULL,
+        mime TEXT,
+        caption TEXT,
+        data TEXT NOT NULL,
+        bytes INTEGER,
+        created_at TEXT NOT NULL
+      )`
     )
   ]);
+
+  /* Its own statement, not part of the batch above. An index cannot be
+     PREPARED until the table it names exists, and a batch may prepare every
+     statement before running any of them. */
+  await env.CRM_DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_intake_photos_intake ON client_intake_photos (intake_id)"
+  ).run();
 
   /* CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
      so anything added after the first deploy has to be an ALTER. D1 has no
@@ -2502,7 +2536,15 @@ async function ensureCrmTables(env) {
      and add only what is missing. */
   for (const [table, cols] of [
     ["clients", [["owner", "TEXT"], ["owner_since", "TEXT"]]],
-    ["client_calls", [["logged_by", "TEXT"]]]
+    ["client_calls", [["logged_by", "TEXT"]]],
+    /* The deposit sits on the SHEET, not on the client. A client can send a
+       second sheet for a second project, and "did we get paid" is a question
+       about a project. deposit_received is 0/1 rather than a timestamp alone
+       so that "marked, then un-marked" is distinguishable from "never
+       marked" - someone will tick it by mistake. */
+    ["client_intake", [["deposit_received", "INTEGER"], ["deposit_received_at", "TEXT"],
+                       ["deposit_amount", "REAL"], ["deposit_note", "TEXT"],
+                       ["deposit_marked_by", "TEXT"]]]
   ]) {
     const have = await env.CRM_DB.prepare(`PRAGMA table_info(${table})`).all();
     const names = (have.results || []).map((r) => r.name);
@@ -3049,7 +3091,43 @@ async function findClientByContact(env, email, phone) {
 /* A readable summary for the note that goes on the client's timeline. The
    whole sheet is kept in client_intake either way - this is so someone
    scanning the record sees what arrived without opening anything. */
-function intakeSummary(body) {
+/* PHOTOS OFF A FORM ARE UNTRUSTED INPUT, so this decides what is acceptable
+   rather than trusting what arrived:
+     - at most MAX_INTAKE_PHOTOS, extras dropped rather than the sheet refused
+     - each one a data: URL for an image type we are willing to serve back
+     - each one under the cap, because a data URL is ~33% bigger than the
+       bytes it carries and D1 will not take an unbounded string
+   Anything that fails is skipped silently. A photo that cannot be stored must
+   never cost the onboarding sheet it came with - the answers matter more than
+   the pictures, and the form fires this without waiting for a reply. */
+const MAX_INTAKE_PHOTOS = 10;
+const MAX_INTAKE_PHOTO_CHARS = 700000;      // ~500KB of image
+const INTAKE_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+function intakePhotos(body) {
+  const raw = Array.isArray(body && body.project_photos) ? body.project_photos : [];
+  const out = [];
+  for (const item of raw) {
+    if (out.length >= MAX_INTAKE_PHOTOS) break;
+    const src = item && typeof item === "object" ? item : { data: item };
+    const data = typeof src.data === "string" ? src.data : "";
+    const m = /^data:(image\/[a-z+]+);base64,/i.exec(data);
+    if (!m) continue;
+    const mime = m[1].toLowerCase();
+    if (INTAKE_PHOTO_TYPES.indexOf(mime) === -1) continue;
+    if (data.length > MAX_INTAKE_PHOTO_CHARS) continue;
+    out.push({
+      mime,
+      caption: crmStr(src.caption, 300) || null,
+      data,
+      // What the image actually weighs, for the CRM to show.
+      bytes: Math.round((data.length - m[0].length) * 3 / 4)
+    });
+  }
+  return out;
+}
+
+function intakeSummary(body, photoCount) {
   const trades = []
     .concat(body.trade || [], body.other_trade ? [body.other_trade] : [])
     .filter(Boolean);
@@ -3057,6 +3135,8 @@ function intakeSummary(body) {
   if (body.business_name) bits.push(String(body.business_name));
   if (trades.length) bits.push("Trades: " + trades.join(", "));
   if (body.service_area) bits.push("Service area: " + String(body.service_area));
+  if (body.project_description) bits.push("Project: " + String(body.project_description).slice(0, 300));
+  if (photoCount) bits.push(photoCount + (photoCount === 1 ? " photo" : " photos"));
   return bits.join(" \u2014 ").slice(0, 2000);
 }
 
@@ -3083,7 +3163,15 @@ async function handleCrmIntake(request, env, origin) {
   const business = crmStr(body.business_name, 200);
   const owner = crmStr(body.owner_name, 120);
   const now = new Date().toISOString();
-  const payload = JSON.stringify(body).slice(0, 60000);
+  /* THE PHOTOS COME OUT BEFORE THE PAYLOAD IS BUILT, not after.
+     payload is capped at 60,000 characters, and a single base64 photo is
+     bigger than that on its own — leaving them in truncated the JSON mid
+     string, so JSON.parse failed later and EVERY ANSWER on the sheet came
+     back null. The pictures destroyed the answers. */
+  const photos = intakePhotos(body);
+  const answersOnly = Object.assign({}, body);
+  delete answersOnly.project_photos;
+  const payload = JSON.stringify(answersOnly).slice(0, 60000);
 
   let client = await findClientByContact(env, email, phone);
   let created = false;
@@ -3119,14 +3207,120 @@ async function handleCrmIntake(request, env, origin) {
     ).bind(business || null, owner || null, email || null, phone || null, now, client.id).run();
   }
 
-  await env.CRM_DB.batch([
-    env.CRM_DB.prepare("INSERT INTO client_intake (client_id, payload, created_at) VALUES (?,?,?)")
-      .bind(client.id, payload, now),
-    env.CRM_DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
-      .bind(client.id, intakeSummary(body), now)
-  ]);
+  const sheet = await env.CRM_DB.prepare(
+    "INSERT INTO client_intake (client_id, payload, created_at) VALUES (?,?,?)"
+  ).bind(client.id, payload, now).run();
+  const intakeId = sheet && sheet.meta ? sheet.meta.last_row_id : null;
 
-  return json({ ok: true, id: client.id, created: created }, 200, origin);
+  if (intakeId && photos.length) {
+    await env.CRM_DB.batch(photos.map((ph, i) =>
+      env.CRM_DB.prepare(
+        "INSERT INTO client_intake_photos (intake_id, client_id, idx, mime, caption, data, bytes, created_at) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(intakeId, client.id, i, ph.mime, ph.caption, ph.data, ph.bytes, now)
+    ));
+  }
+
+  await env.CRM_DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
+    .bind(client.id, intakeSummary(body, photos.length), now).run();
+
+  return json({ ok: true, id: client.id, created: created, photos: photos.length }, 200, origin);
+}
+
+/* READING A SHEET BACK. client_intake has been written since the form went
+   up and never once read: no endpoint returned it and no page showed it. The
+   contractor's answers went into the database and nobody could see them.
+   Adding photos and a deposit flag to a sheet nobody can open would have been
+   adding them to nothing. */
+async function handleClientIntakeList(request, env, origin, clientId) {
+  await ensureCrmTables(env);
+  const { results } = await env.CRM_DB.prepare(
+    `SELECT id, payload, created_at, deposit_received, deposit_received_at,
+            deposit_amount, deposit_note, deposit_marked_by
+     FROM client_intake WHERE client_id = ? ORDER BY created_at DESC`
+  ).bind(clientId).all();
+
+  /* Photo METADATA only. The bytes are fetched one at a time by the page, so
+     opening a client with four sheets of ten photos does not move 60MB. */
+  const { results: ph } = await env.CRM_DB.prepare(
+    `SELECT id, intake_id, idx, mime, caption, bytes
+     FROM client_intake_photos WHERE client_id = ? ORDER BY intake_id DESC, idx ASC`
+  ).bind(clientId).all();
+
+  const byIntake = {};
+  for (const p of ph || []) (byIntake[p.intake_id] = byIntake[p.intake_id] || []).push(p);
+
+  const sheets = (results || []).map((r) => {
+    let answers = null;
+    try { answers = JSON.parse(r.payload); } catch (e) {}
+    /* The photos were stripped before storage, but a sheet saved before that
+       could still carry them inside the payload — drop them here so the page
+       never receives megabytes it did not ask for. */
+    if (answers && answers.project_photos) delete answers.project_photos;
+    return {
+      id: r.id,
+      created_at: r.created_at,
+      answers,
+      photos: byIntake[r.id] || [],
+      deposit: {
+        received: r.deposit_received === 1,
+        at: r.deposit_received_at || null,
+        amount: r.deposit_amount != null ? Number(r.deposit_amount) : null,
+        note: r.deposit_note || null,
+        marked_by: r.deposit_marked_by || null
+      }
+    };
+  });
+  return json({ sheets }, 200, origin);
+}
+
+async function handleIntakePhoto(request, env, origin, photoId) {
+  await ensureCrmTables(env);
+  const row = await env.CRM_DB.prepare(
+    "SELECT mime, data FROM client_intake_photos WHERE id = ?"
+  ).bind(photoId).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  return json({ mime: row.mime, data: row.data }, 200, origin);
+}
+
+async function handleIntakeDeposit(request, env, origin) {
+  await ensureCrmTables(env);
+  const body = await request.json().catch(() => ({}));
+  const id = Number(body.intake_id);
+  if (!id) return json({ error: "intake_id required" }, 400, origin);
+
+  const received = body.received === true || body.received === 1 || body.received === "1";
+  const amount = body.amount === "" || body.amount == null ? null : Number(body.amount);
+  if (amount != null && !isFinite(amount)) return json({ error: "amount must be a number" }, 400, origin);
+
+  const existing = await env.CRM_DB.prepare(
+    "SELECT client_id, deposit_received, deposit_received_at FROM client_intake WHERE id = ?"
+  ).bind(id).first();
+  if (!existing) return json({ error: "Not found" }, 404, origin);
+
+  /* Keep the ORIGINAL date when it is already marked. Re-saving the amount or
+     a note should not quietly move the day the money arrived. */
+  const at = received
+    ? (existing.deposit_received === 1 && existing.deposit_received_at
+        ? existing.deposit_received_at
+        : new Date().toISOString())
+    : null;
+
+  await env.CRM_DB.prepare(
+    `UPDATE client_intake SET deposit_received = ?, deposit_received_at = ?,
+       deposit_amount = ?, deposit_note = ?, deposit_marked_by = ? WHERE id = ?`
+  ).bind(received ? 1 : 0, at, received ? amount : null,
+         received ? (crmStr(body.note, 500) || null) : null,
+         received ? (crmStr(body.by, 120) || null) : null, id).run();
+
+  /* On the timeline too. A deposit landing is the kind of thing someone will
+     look for in the history rather than on a panel. */
+  if (received) {
+    const amt = amount != null ? " (" + amount.toLocaleString("en-US", { style: "currency", currency: "USD" }) + ")" : "";
+    await env.CRM_DB.prepare("INSERT INTO client_notes (client_id, text, created_at) VALUES (?,?,?)")
+      .bind(existing.client_id, "Deposit received" + amt, new Date().toISOString()).run();
+  }
+
+  return json({ ok: true, received, at, amount: received ? amount : null }, 200, origin);
 }
 
 export default {
@@ -3299,6 +3493,23 @@ export default {
       if (path === "/crm/login" && request.method === "POST") {
         return await handleCrmLogin(request, env, origin);
       }
+      if (path.startsWith("/crm/clients/") && path.endsWith("/intake") && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const cid = Number(path.slice("/crm/clients/".length, -"/intake".length));
+        if (!cid) return json({ error: "Invalid id" }, 400, origin);
+        return await handleClientIntakeList(request, env, origin, cid);
+      }
+      if (path.startsWith("/crm/intake/photo/") && request.method === "GET") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.slice("/crm/intake/photo/".length));
+        if (!pid) return json({ error: "Invalid id" }, 400, origin);
+        return await handleIntakePhoto(request, env, origin, pid);
+      }
+      if (path === "/crm/intake/deposit" && request.method === "POST") {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleIntakeDeposit(request, env, origin);
+      }
+
       if (path === "/crm/intake" && request.method === "POST") {
         /* Tighter than the contact form's limit: an onboarding sheet is filled
            in once, not repeatedly, and it writes three rows per call. */
