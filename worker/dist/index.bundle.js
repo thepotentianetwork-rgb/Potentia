@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "a4130fc";
-const WORKER_BUILT_AT = "2026-09-22T05:04:16.569Z";
+const WORKER_BUILD = "d3790fb";
+const WORKER_BUILT_AT = "2026-09-22T19:37:32.150Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4868,6 +4868,22 @@ async function handleAnalytics(request, env, origin) {
   const sidingCounts = {};
   const points = [];
   const prices = [];
+  /* ONE CUSTOMER, ONE DATA POINT.
+     A customer working through ideas submits several times — that is normal
+     and the rows are all real. But every figure derived from them was counted
+     per SUBMISSION, so somebody who designed six sheds moved the average
+     price six times, made their own favourite style look six times as popular
+     and put six dots on the map at one address. The loudest customer set the
+     numbers.
+     Collected here and collapsed after the loop: the price is the MEAN of
+     everything they quoted, because a customer who priced an $8k shed and a
+     $14k shed is an $11k customer, not two customers. What they WANT — style,
+     siding, size, where they heard about us, where they live — comes from
+     their newest submission, since averaging a category is meaningless and
+     the latest one is what they settled on.
+     Won and lost deliberately stay per submission further down. Those are
+     jobs with money attached, and averaging a sale would misreport revenue. */
+  const perCustomer = new Map();
   const sizeCounts = {};
   const heardCounts = {};
 
@@ -4883,16 +4899,6 @@ async function handleAnalytics(request, env, origin) {
     } catch (e) {}
     if (d) {
       const config = d.config || {};
-      if (config.style) styleCounts[config.style] = (styleCounts[config.style] || 0) + 1;
-      if (config.siding) sidingCounts[config.siding] = (sidingCounts[config.siding] || 0) + 1;
-      if (config.w && config.l) {
-        const key = config.w + "x" + config.l;
-        sizeCounts[key] = (sizeCounts[key] || 0) + 1;
-      }
-      if (d.heardAbout) {
-        const key = d.heardAbout === "other" && d.heardAboutOther ? "other: " + d.heardAboutOther : d.heardAbout;
-        heardCounts[key] = (heardCounts[key] || 0) + 1;
-      }
       // Every figure below uses the price actually agreed — the quote plus any
       // adjustment made for this customer. Reporting won revenue at the
       // pre-discount number would overstate the takings, and worse, overstate
@@ -4910,7 +4916,14 @@ async function handleAnalytics(request, env, origin) {
         price = rawPrice + (isFinite(legacy) ? legacy : 0);
       }
       const adjust = (price != null && rawPrice != null && isFinite(rawPrice)) ? price - rawPrice : 0;
-      if (price != null && isFinite(price)) prices.push(price);
+
+      /* results is ordered created_at DESC, so the FIRST row seen for a
+         customer is their most recent one. A row with no customer_id (older
+         data) is its own bucket, which leaves it counted exactly as before. */
+      const ckey = row.customer_id != null ? "c" + row.customer_id : "row" + row.id;
+      let cust = perCustomer.get(ckey);
+      if (!cust) { cust = { newest: d, newestStatus: status, prices: [] }; perCustomer.set(ckey, cust); }
+      if (price != null && isFinite(price)) cust.prices.push(price);
       if (adjust && isFinite(adjust)) {
         adjustments.total += adjust;
         adjustments.count++;
@@ -4964,16 +4977,39 @@ async function handleAnalytics(request, env, origin) {
         if (price != null && isFinite(price)) lost.revenue += price;
         if (config.style) lost.byStyle[config.style] = (lost.byStyle[config.style] || 0) + 1;
       }
-      if (d.geo && d.geo.lat != null && d.geo.lng != null) {
-        points.push({
-          lat: d.geo.lat,
-          lng: d.geo.lng,
-          city: d.geo.city || null,
-          region: d.geo.region || null,
-          status,
-          price
-        });
-      }
+    }
+  }
+
+  /* The collapse. One entry per customer, their price the mean of everything
+     they quoted. */
+  for (const cust of perCustomer.values()) {
+    const d = cust.newest;
+    const config = (d && d.config) || {};
+    if (config.style) styleCounts[config.style] = (styleCounts[config.style] || 0) + 1;
+    if (config.siding) sidingCounts[config.siding] = (sidingCounts[config.siding] || 0) + 1;
+    if (config.w && config.l) {
+      const key = config.w + "x" + config.l;
+      sizeCounts[key] = (sizeCounts[key] || 0) + 1;
+    }
+    if (d && d.heardAbout) {
+      const key = d.heardAbout === "other" && d.heardAboutOther ? "other: " + d.heardAboutOther : d.heardAbout;
+      heardCounts[key] = (heardCounts[key] || 0) + 1;
+    }
+    const mean = cust.prices.length
+      ? cust.prices.reduce((a, b) => a + b, 0) / cust.prices.length
+      : null;
+    if (mean != null && isFinite(mean)) prices.push(mean);
+    if (d && d.geo && d.geo.lat != null && d.geo.lng != null) {
+      points.push({
+        lat: d.geo.lat,
+        lng: d.geo.lng,
+        city: d.geo.city || null,
+        region: d.geo.region || null,
+        status: cust.newestStatus,
+        // The dot carries what this customer is worth on average, not
+        // whichever of their sheds happened to be saved last.
+        price: mean != null && isFinite(mean) ? Math.round(mean) : null
+      });
     }
   }
 
