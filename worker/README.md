@@ -512,6 +512,42 @@ fail loudly.
 
 ---
 
+## Onboarding sheet: projects, photos, deposit
+
+`contractorform.html` posts the whole sheet to `POST /crm/intake`, which
+stores it in `client_intake` and drops a summary on the client's timeline.
+
+**It was written and never read.** No endpoint returned a sheet and no page
+showed one, so every answer a contractor gave went into the database where
+nobody could see it. `GET /crm/clients/:id/intake` and the Onboarding Sheet
+section on `crm-client.html` are the other half of that.
+
+**Photos** live in `client_intake_photos`, one row per photo, as a data URL.
+Not because that is how images should be stored — R2 is — but because R2 needs
+a bucket and a binding added in the dashboard, and this Worker ships by
+pasting a bundle, so a feature depending on new plumbing does not work until
+someone does the plumbing. The form resizes to ~150KB a photo in the browser,
+so ten is about 1.5MB per sheet: fine for a form filled in a handful of times
+a month, and the obvious thing to move to R2 if that stops being true.
+
+Ten is the cap. Extras are dropped rather than the sheet refused, and so is
+anything that is not a JPEG, PNG or WebP data URL under the size limit. A
+photo that cannot be stored must never cost the sheet it came with.
+
+The photos are stripped from `body` **before** the payload is built. They were
+not, at first: `payload` is capped at 60,000 characters and one base64 photo
+is bigger than that alone, so the JSON was truncated mid-string and every
+answer on the sheet came back null. The pictures destroyed the answers.
+
+`GET /crm/intake/photo/:id` returns one image. The sheet listing carries
+metadata only, so opening a client with four sheets of ten photos moves no
+image bytes until someone looks at one.
+
+**The deposit** is `POST /crm/intake/deposit`, and it sits on the SHEET, not
+the client: a client can send a second sheet for a second project, and "did we
+get paid" is a question about a project. Re-saving the amount keeps the
+original date — editing a number should not move the day the money arrived.
+
 ## Lead enrichment pipeline
 
 Sources local businesses from Google Places, researches each with Grok, scores

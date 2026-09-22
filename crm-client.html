@@ -251,6 +251,15 @@ section{margin-bottom:52px}
     <div id="calls-list"><p class="empty">Loading…</p></div>
   </section>
 
+  <!-- ONBOARDING SHEET. client_intake has been written since the contractor
+       form went up and was never once read: no endpoint returned it and no
+       page showed it. Everything a client told us about their business went
+       into the database where nobody could see it. -->
+  <section>
+    <h3>Onboarding Sheet</h3>
+    <div id="intake-list"><p class="empty">Loading…</p></div>
+  </section>
+
   <section>
     <h3>Notes</h3>
     <form class="row-form" id="note-form">
@@ -650,6 +659,153 @@ el('task-form').addEventListener('submit', function (e) {
   }).catch(function () {});
 });
 
+// ---- onboarding sheet ----
+var INTAKE_SKIP = { project_photos: 1, _subject: 1, _gotcha: 1 };
+var INTAKE_LABELS = {
+  business_name: 'Business', owner_name: 'Owner', email: 'Email', phone: 'Phone',
+  trade: 'Trade', other_trade: 'Other trade', service_area: 'Service area',
+  story: 'Their story', project_description: 'Projects', credentials: 'Credentials',
+  project_type: 'Project types', contact_method: 'Best contact', heard: 'Heard about us'
+};
+function intakeLabel(k) {
+  return INTAKE_LABELS[k] || k.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
+}
+function money(n) {
+  return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+}
+
+function loadIntake() {
+  authFetch('/crm/clients/' + clientId + '/intake').then(function (r) {
+    renderIntake(r.ok && r.data ? (r.data.sheets || []) : null);
+  }).catch(function () { renderIntake(null); });
+}
+
+function renderIntake(sheets) {
+  var box = el('intake-list');
+  if (!box) return;
+  box.innerHTML = '';
+  if (sheets === null) { box.innerHTML = '<p class="empty">Could not load the onboarding sheet.</p>'; return; }
+  if (!sheets.length) { box.innerHTML = '<p class="empty">No onboarding sheet yet.</p>'; return; }
+
+  sheets.forEach(function (sheet) {
+    var wrap = document.createElement('div');
+    wrap.className = 'note-item';
+
+    var head = document.createElement('p');
+    head.className = 'note-time';
+    head.textContent = 'Submitted ' + new Date(sheet.created_at).toLocaleString();
+    wrap.appendChild(head);
+
+    /* THE DEPOSIT, first and unmissable. It is the thing someone opens this
+       page to check, and burying it under thirty form answers would mean
+       scrolling past the business's life story to find out whether they
+       have paid. */
+    wrap.appendChild(depositRow(sheet));
+
+    var a = sheet.answers || {};
+    var dl = document.createElement('div');
+    dl.style.cssText = 'display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:10px 0 0;font-size:13px';
+    Object.keys(a).forEach(function (k) {
+      if (INTAKE_SKIP[k]) return;
+      var v = a[k];
+      if (v == null || v === '') return;
+      if (Array.isArray(v)) v = v.join(', ');
+      var dt = document.createElement('div');
+      dt.style.cssText = 'color:var(--mu,#8b949e);white-space:nowrap';
+      dt.textContent = intakeLabel(k);
+      var dd = document.createElement('div');
+      dd.style.whiteSpace = 'pre-wrap';
+      dd.textContent = String(v);       // textContent: a contractor typed this
+      dl.appendChild(dt); dl.appendChild(dd);
+    });
+    wrap.appendChild(dl);
+
+    if (sheet.photos && sheet.photos.length) wrap.appendChild(photoStrip(sheet.photos));
+    box.appendChild(wrap);
+  });
+}
+
+function depositRow(sheet) {
+  var d = sheet.deposit || {};
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border-radius:8px;margin-top:6px;' +
+    (d.received ? 'background:rgba(46,160,67,.12);border:1px solid rgba(46,160,67,.5)'
+                : 'background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12)');
+
+  var label = document.createElement('span');
+  label.style.cssText = 'font-weight:700;font-size:13px';
+  label.textContent = d.received
+    ? 'Deposit received' + (d.amount != null ? ' — ' + money(d.amount) : '')
+    : 'Deposit not received';
+  row.appendChild(label);
+
+  if (d.received && d.at) {
+    var when = document.createElement('span');
+    when.style.cssText = 'font-size:12px;color:var(--mu,#8b949e)';
+    when.textContent = new Date(d.at).toLocaleDateString() + (d.marked_by ? ' · ' + d.marked_by : '');
+    row.appendChild(when);
+  }
+
+  var spacer = document.createElement('span');
+  spacer.style.flex = '1';
+  row.appendChild(spacer);
+
+  if (!d.received) {
+    var amt = document.createElement('input');
+    amt.type = 'number'; amt.placeholder = 'Amount'; amt.step = '1'; amt.min = '0';
+    amt.style.cssText = 'width:100px;font-size:13px;padding:4px 6px';
+    row.appendChild(amt);
+  }
+
+  var btn = document.createElement('button');
+  btn.className = 'btn';
+  btn.type = 'button';
+  btn.textContent = d.received ? 'Undo' : 'Mark received';
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    var body = d.received
+      ? { intake_id: sheet.id, received: false }
+      : { intake_id: sheet.id, received: true, amount: amt && amt.value !== '' ? Number(amt.value) : null };
+    authFetch('/crm/intake/deposit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function () {
+      /* Both, because marking a deposit writes a line on the timeline too —
+         refreshing only this section would leave the note invisible until
+         the next reload. */
+      loadIntake(); loadClient();
+    }).catch(function () { btn.disabled = false; });
+  });
+  row.appendChild(btn);
+  return row;
+}
+
+/* Thumbnails are fetched one at a time and only once. The listing carries no
+   image bytes, so a client with four sheets of ten photos costs nothing to
+   open until someone actually looks. */
+function photoStrip(photos) {
+  var grid = document.createElement('div');
+  grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px';
+  photos.forEach(function (ph) {
+    var cell = document.createElement('div');
+    cell.style.cssText = 'height:110px;border-radius:8px;background:rgba(255,255,255,.05);overflow:hidden;cursor:pointer';
+    cell.title = ph.caption || '';
+    authFetch('/crm/intake/photo/' + ph.id).then(function (r) {
+      if (!r.ok || !r.data || !r.data.data) return;
+      var img = document.createElement('img');
+      img.src = r.data.data;
+      img.alt = ph.caption || 'Project photo';
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+      img.addEventListener('click', function () { window.open(r.data.data, '_blank'); });
+      cell.innerHTML = '';
+      cell.appendChild(img);
+    }).catch(function () {});
+    grid.appendChild(cell);
+  });
+  return grid;
+}
+
 // ---- notes ----
 function renderNotes(notes) {
   var box = el('notes-list');
@@ -1037,6 +1193,10 @@ function loadClient() {
    selected into it. loadClient runs either way if that call fails — setPackage
    covers the gap. */
 if (token && clientId) loadPackages().then(loadClient);
+/* Its own call, not chained onto loadClient. The sheet is a different query
+   against a different table, and a client with no sheet must not be able to
+   stop the rest of the page loading. */
+if (token && clientId) loadIntake();
 </script>
 </body>
 </html>
