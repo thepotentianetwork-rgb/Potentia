@@ -2079,7 +2079,7 @@ function computeOptionPrices(cfg) {
   // handed the $/sqft rate itself, only what it comes to for this build.
   const ADDON_FLAT_KEYS = {
     shutters: "Shutters", flowerboxes: "Flowerboxes", ridgeVent: "Roof Ridge Vent",
-    skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder",
+    skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder", ramp: "Ramp",
     shedRemoval: "Shed Removal", concreteRemoval: "Concrete Removal",
     atticLadder: "Attic Pull-Down Ladder"
   };
