@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "ade1cb2";
-const WORKER_BUILT_AT = "2026-09-21T15:47:37.781Z";
+const WORKER_BUILD = "65d5172";
+const WORKER_BUILT_AT = "2026-09-22T03:49:10.041Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -1012,6 +1012,26 @@ function windowCatEntry(key){
   for(var i=0;i<WINDOW_CATALOG.length;i++) if(WINDOW_CATALOG[i].key===key) return WINDOW_CATALOG[i];
   return null;
 }
+/* What the CUSTOMER reads on a window line.
+
+   The catalog key is "<Colour> <Material> <WxH>" — "Black Vinyl 36x36" — and
+   that key is the identity used by SELL.windows and by every saved design, so
+   it cannot be renamed at the source without missing every price entry. Same
+   trap doorDisplayName was written around, so the same answer: the noun goes
+   on at the point of display and the key is left alone. "Black Vinyl 36x36"
+   prices the window; "Black Vinyl Window 36x36" is what the quote calls it,
+   because a line reading only "Black Vinyl" tells a customer the colour and
+   the material and not what they are buying.
+
+   The noun lands before the size rather than after it so the size stays last,
+   matching the doors ("6' Roll-Up Garage Door" keeps its 6' out front). A key
+   with no WxH in it — the area-fallback "Window" — is returned untouched. */
+function windowDisplayName(key){
+  var k = String(key || '').trim();
+  if(!k) return 'Window';
+  if(/\bwindows?\b/i.test(k)) return k;
+  return /\d+\s*x\s*\d+\s*$/.test(k) ? k.replace(/(\d+\s*x\s*\d+)\s*$/, 'Window $1') : k;
+}
 // Customer price for a placed window. Uses wd.type if set; else nearest by area.
 function sellWindowPrice(wd){
   if(wd.type && SELL.windows[wd.type]!=null) return SELL.windows[wd.type];
@@ -1030,6 +1050,36 @@ function sellWindowPrice(wd){
 // they'd fall through the area buckets and quote as white vinyl.
 function sellWindowPriced(wd){
   return !!(wd && wd.type && SELL.windows[wd.type]!=null);
+}
+
+/* What the CUSTOMER reads on the siding line.
+
+   The horizontal product used to be labelled as lap siding here, and it is
+   not lap siding — it is T1-11 run horizontally, seamed every 8'. Naming a
+   product after a different product is the kind of thing a customer quotes
+   back at you, so the line is named by its orientation and nothing else. The
+   old label is deliberately not written out anywhere, including in a comment:
+   a test greps the repo for it.
+
+   Keys are the SIDING ids and are NOT display strings: they index SELL.siding
+   and live inside every saved design, so they stay as they are and the label
+   goes on here. An id with no entry falls back to the id rather than to an
+   empty string — an unnamed line with a price on it is worse than an ugly one,
+   and it would also break the comp picker, which matches on this exact text.
+
+   "Siding" is on the end for the same reason "Window" is on the window lines:
+   "Horizontal" beside a dollar amount does not tell a customer what they are
+   paying for. Vertical is in the table but never reaches a quote — it is the
+   included siding at rate 0, so no upcharge line is emitted for it. */
+const SIDING_DISPLAY = {
+  "vertical":     "Vertical Siding",
+  "horizontal":   "Horizontal Siding",
+  "board-batten": "Board & Batten Siding",
+  "pine":         "Pine T&G Siding"
+};
+function sidingDisplayName(id){
+  var k = String(id || '');
+  return SIDING_DISPLAY[k] || k;
 }
 
 // ── MARGIN / JOB-COST DEFAULTS (from the editable COST block) ────────────
@@ -1212,7 +1262,7 @@ function computePricing(cfgIn, opts){
   var sidRate = SELL.siding[sidId];
   if(sidRate>0){
     sidingSell = sidRate * wallAreaFt(Wf, Df, Hf);
-    sidingSellName = (sidId==='board-batten')?'Board & Batten':(sidId==='horizontal')?'Horizontal Lap':(sidId==='pine')?'Pine T&G':sidId;
+    sidingSellName = sidingDisplayName(sidId);
   }
   customerPrice += sidingSell;
 
@@ -1298,8 +1348,8 @@ function computePricing(cfgIn, opts){
       var priced = sellWindowPriced(wd);
       if(p>0){
         windowSell += p;
-        windowSellLines.push({label:(wd.type||'Window'), price:p, est:!priced});
-        if(!priced) unpriced.push((wd.type||'Untyped window')+' — no workbook price, estimated by area');
+        windowSellLines.push({label:windowDisplayName(wd.type), price:p, est:!priced});
+        if(!priced) unpriced.push((wd.type?windowDisplayName(wd.type):'Untyped window')+' — no workbook price, estimated by area');
       }
     });
   }
