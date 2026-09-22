@@ -548,7 +548,7 @@ authFetch('/admin/analytics').then(function (r) {
   renderMap(d.points);
   renderBars('bar-heard', d.heardCounts, HEARD_LABELS);
   renderBars('bar-style', d.styleCounts, STYLE_LABELS);
-  renderBars('bar-siding', d.sidingCounts, { vertical: 'Vertical T11', horizontal: 'Horizontal Lap', 'board-batten': 'Board & Batten', pine: 'Pine T&G' });
+  renderBars('bar-siding', d.sidingCounts, { vertical: 'Vertical', horizontal: 'Horizontal', 'board-batten': 'Board & Batten', pine: 'Pine T&G' });
   renderBars('bar-size', d.sizeCounts, null);
 });
 </script>
