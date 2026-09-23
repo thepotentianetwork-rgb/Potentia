@@ -499,6 +499,10 @@ overlay.querySelectorAll('a').forEach(function(a) {
 </script>
 
 <script>
+  /* Named so a test can point it at a stub. This request carries the photos,
+     and it has now broken twice in ways only a real browser showed. */
+  var CRM_INTAKE_URL = 'https://potentia-assistant.thepotentianetwork.workers.dev/crm/intake';
+
   let currentLang = 'en';
 
   function setLang(lang) {
@@ -647,27 +651,42 @@ overlay.querySelectorAll('a').forEach(function(a) {
      awaiting, and failures are swallowed. If the CRM is unreachable the
      Formspree submit below still goes through exactly as it would have, so
      this can never cost a completed onboarding sheet. */
+  /* NO keepalive. It caps the request body at 64 KiB — one photo is bigger
+     than that, so a sheet WITH photos did not just lose the pictures, the
+     whole request failed with a TypeError and the catch below swallowed it.
+     No sheet reached the CRM at all. Verified in headless Chromium, and kept
+     verified by tests/form-photos.test.mjs: 1.5MB with keepalive is refused
+     by the browser, the same body without it sends.
+
+     keepalive was there to survive the page unloading, and this page does not
+     unload: submit calls preventDefault, fetches Formspree and then hides the
+     form. There was never anything for it to protect.
+
+     Returns the promise now so the caller can wait for it. Still swallows its
+     own failures — a CRM that is down must never cost a completed sheet. */
   function sendToCrm(f) {
     try {
       var p = formPayload(f);
-      if (!p.email && !p.phone) return;
+      if (!p.email && !p.phone) return Promise.resolve();
       /* Photos go to the CRM, not to Formspree: an email with ten base64
          images in it is not a useful email, and the CRM is where they are
          actually looked at. */
       if (projectPhotos.length) p.project_photos = projectPhotos;
-      fetch('https://potentia-assistant.thepotentianetwork.workers.dev/crm/intake', {
+      return fetch(CRM_INTAKE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(p),
-        keepalive: true
+        body: JSON.stringify(p)
       }).catch(function () {});
-    } catch (e) {}
+    } catch (e) { return Promise.resolve(); }
   }
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    sendToCrm(form);
     btn.disabled = true;
+    /* Awaited, not fired and forgotten. A megabyte of photos over cell data
+       takes a moment, and showing "thanks, we got it" while the request is
+       still in the air — or has already failed — is how this went unnoticed. */
+    await sendToCrm(form);
     btn.textContent = currentLang === 'en' ? 'Sending...' : 'Enviando...';
 
     try {
