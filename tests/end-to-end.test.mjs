@@ -57,7 +57,23 @@ const env = { DB: makeD1(new DatabaseSync(':memory:')), CRM_DB: makeD1(new Datab
               ADMIN_PASSWORD: 'pw', CRM_PASSWORD: 'cpw', ADMIN_SESSION_SECRET: 'k' };
 
 // ---- the real worker, over real HTTP, plus the real page -----------------
-let page = readFileSync(path.join(here, '..', 'contractorform.html'), 'utf8');
+/* --live fetches the DEPLOYED page instead of the working copy, so a green
+   run says the thing customers actually load works — not just the file on
+   this machine. The CRM call is still redirected to the worker running here:
+   a test that writes a junk client into the live CRM is not a test anyone
+   wants to run twice. */
+const LIVE = process.argv.includes('--live');
+const LIVE_URL = 'https://www.potentianetwork.com/contractorform.html';
+let page;
+if (LIVE) {
+  const r = await fetch(LIVE_URL);
+  if (!r.ok) { console.log('could not fetch ' + LIVE_URL + ' (' + r.status + ')'); process.exit(1); }
+  page = await r.text();
+  console.log('page under test: ' + LIVE_URL + ' (' + page.length + ' bytes)');
+} else {
+  page = readFileSync(path.join(here, '..', 'contractorform.html'), 'utf8');
+  console.log('page under test: working copy');
+}
 const formspree = [];
 
 const srv = http.createServer(async (req, res) => {
