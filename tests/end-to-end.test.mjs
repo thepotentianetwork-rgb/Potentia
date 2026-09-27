@@ -57,7 +57,23 @@ const env = { DB: makeD1(new DatabaseSync(':memory:')), CRM_DB: makeD1(new Datab
               ADMIN_PASSWORD: 'pw', CRM_PASSWORD: 'cpw', ADMIN_SESSION_SECRET: 'k' };
 
 // ---- the real worker, over real HTTP, plus the real page -----------------
-let page = readFileSync(path.join(here, '..', 'contractorform.html'), 'utf8');
+/* --live fetches the DEPLOYED page instead of the working copy, so a green
+   run says the thing customers actually load works — not just the file on
+   this machine. The CRM call is still redirected to the worker running here:
+   a test that writes a junk client into the live CRM is not a test anyone
+   wants to run twice. */
+const LIVE = process.argv.includes('--live');
+const LIVE_URL = 'https://www.potentianetwork.com/contractorform.html';
+let page;
+if (LIVE) {
+  const r = await fetch(LIVE_URL);
+  if (!r.ok) { console.log('could not fetch ' + LIVE_URL + ' (' + r.status + ')'); process.exit(1); }
+  page = await r.text();
+  console.log('page under test: ' + LIVE_URL + ' (' + page.length + ' bytes)');
+} else {
+  page = readFileSync(path.join(here, '..', 'contractorform.html'), 'utf8');
+  console.log('page under test: working copy');
+}
 const formspree = [];
 
 const srv = http.createServer(async (req, res) => {
@@ -116,6 +132,9 @@ page = page
         await window.addProjectPhotos(inp);
         out.thumbs = document.querySelectorAll('#photoGrid img').length;
         out.note = document.getElementById('photoNote').textContent;
+        /* Three fit under the cap. The rest of his jobs come in by text, so
+           the number has to be on the page whether or not he hits it. */
+        out.tellsThemWhere = /435-291-0979/.test(document.body.textContent);
 
         var f = document.getElementById('onboardingForm');
         f.querySelectorAll('[required]').forEach(function (el) {
@@ -160,6 +179,7 @@ const rep = report || {};
 check('the browser got through it', !!report && !rep.threw, rep.threw || '(no report in 90s)');
 check('three photos were accepted', rep.thumbs === 3, rep.thumbs);
 check('with nothing reported as wrong', !rep.note, rep.note);
+check('and the page says where to text the rest', rep.tellsThemWhere === true, rep.tellsThemWhere);
 check('and the form showed its success screen', rep.successShown === true, rep.successShown);
 check('Formspree got the sheet too', formspree.length >= 1, formspree.length);
 

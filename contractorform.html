@@ -394,8 +394,8 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
         <div class="field col-full">
           <label data-en="Project photos" data-es="Fotos de proyectos"></label>
           <div class="section-sub" style="margin:0 0 8px"
-               data-en="Up to 10. Before-and-after shots are worth the most. They are resized on your phone before sending, so this works on cell data."
-               data-es="Hasta 10. Las fotos de antes y después son las más valiosas. Se redimensionan en su teléfono antes de enviarse, así que funciona con datos móviles."></div>
+               data-en="Up to 4 here — text the rest to 435-291-0979. Before-and-after shots are worth the most. They are resized on your phone before sending, so this works on cell data."
+               data-es="Hasta 4 aquí — envíe el resto por mensaje al 435-291-0979. Las fotos de antes y después son las más valiosas. Se redimensionan en su teléfono antes de enviarse, así que funciona con datos móviles."></div>
           <!-- capture is deliberately absent: these are photos of finished
                work, already in the camera roll, not something taken now. -->
           <input type="file" id="f_photos" accept="image/*" multiple
@@ -562,7 +562,13 @@ overlay.querySelectorAll('a').forEach(function(a) {
      than silently: a HEIC off an old iPhone is the usual case, and "nothing
      happened when I picked my photos" is a terrible thing to leave someone
      guessing about. */
-  var MAX_PHOTOS = 10;
+  /* Small on purpose. Ten was the number that produced the failures: iOS caps
+     total canvas memory per page, and each extra large photo walks closer to
+     it. A handful covers the gallery, and the rest come in by text — which is
+     what the page says when someone hits this. Change the number here and the
+     copy below follows it; the standing line under the label does not, so
+     change that too. */
+  var MAX_PHOTOS = 4;
   var projectPhotos = [];
 
   /* DECODING A PHONE PHOTO IS THE PART THAT FAILS.
@@ -659,15 +665,16 @@ overlay.querySelectorAll('a').forEach(function(a) {
     var msgs = [];
     var es = currentLang === 'es';
     if (reasons.full) {
-      msgs.push(es ? 'Solo se pueden enviar ' + MAX_PHOTOS + ' fotos.'
-                   : 'Only ' + MAX_PHOTOS + ' photos can be sent.');
+      msgs.push(es
+        ? 'Solo se pueden subir ' + MAX_PHOTOS + ' fotos aquí. Envíe el resto por mensaje al 435-291-0979.'
+        : 'Only ' + MAX_PHOTOS + ' photos can be uploaded here. Text the rest to 435-291-0979.');
     }
     if (reasons.decode) {
       /* Almost always HEIC off an iPhone. Naming it, and the setting that
          fixes it, beats "could not be read". */
       msgs.push(es
-        ? reasons.decode + ' foto(s) no se pudieron abrir — suelen ser fotos HEIC de iPhone. En Ajustes → Cámara → Formatos elija "Más compatible", o envíenoslas por mensaje.'
-        : reasons.decode + " photo(s) couldn't be opened — usually iPhone HEIC files. In Settings → Camera → Formats choose \u201cMost Compatible\u201d, or just text them to us.");
+        ? reasons.decode + ' foto(s) no se pudieron abrir — suelen ser fotos HEIC de iPhone. En Ajustes → Cámara → Formatos elija "Más compatible", o envíelas por mensaje al 435-291-0979.'
+        : reasons.decode + " photo(s) couldn't be opened — usually iPhone HEIC files. In Settings → Camera → Formats choose \u201cMost Compatible\u201d, or just text them to 435-291-0979.");
     }
     if (reasons.canvas) {
       msgs.push(es ? reasons.canvas + ' foto(s) fallaron en este teléfono. Intente de nuevo con menos a la vez.'

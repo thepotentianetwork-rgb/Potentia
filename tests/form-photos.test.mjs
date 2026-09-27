@@ -197,7 +197,7 @@ if (haveChrome) {
   check('the driver ran without throwing', !r.threw, r.threw);
   check('two good photos are added', r.afterTwoGood === 2, r.afterTwoGood);
   check('and nothing is reported as wrong', !r.noteAfterGood, r.noteAfterGood);
-  check('the count is written out', /2 of 10/.test(r.countText || ''), r.countText);
+  check('the count is written out', /2 of 4/.test(r.countText || ''), r.countText);
   check('each is stored as a JPEG data URL', r.firstIsJpegDataUrl === true, r.firstIsJpegDataUrl);
 
   /* The reported failure. It must not be silent, and it must not pretend it
@@ -207,8 +207,17 @@ if (haveChrome) {
     /couldn.t be opened/i.test(r.noteAfterBad || '') && /HEIC/i.test(r.noteAfterBad || ''),
     r.noteAfterBad);
 
-  check('twelve more stop at the ten cap', r.afterMany === 10, r.afterMany);
-  check('and the cap is explained', /Only 10 photos/i.test(r.noteAfterMany || ''), r.noteAfterMany);
+  check('twelve more stop at the four cap', r.afterMany === 4, r.afterMany);
+  /* Hitting the cap is the moment someone is holding photos with nowhere to
+     put them. The message has to name where they go, not just refuse. */
+  check('the cap is explained', /Only 4 photos/i.test(r.noteAfterMany || ''), r.noteAfterMany);
+  check('and it says to text the rest, with the number',
+    /text the rest/i.test(r.noteAfterMany || '') && /435-291-0979/.test(r.noteAfterMany || ''),
+    r.noteAfterMany);
+
+  /* The number has to be on the page before anyone hits the cap, too — most
+     people will just upload four and never see the message. */
+  check('the number is on the page from the start', /435-291-0979/.test(form), false);
 }
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nall passed');
