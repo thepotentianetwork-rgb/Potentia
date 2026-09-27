@@ -134,7 +134,7 @@ page = page
         out.note = document.getElementById('photoNote').textContent;
         /* Three fit under the cap. The rest of his jobs come in by text, so
            the number has to be on the page whether or not he hits it. */
-        out.tellsThemWhere = /435-277-0764/.test(document.body.textContent);
+        out.tellsThemWhere = /435-291-0979/.test(document.body.textContent);
 
         var f = document.getElementById('onboardingForm');
         f.querySelectorAll('[required]').forEach(function (el) {

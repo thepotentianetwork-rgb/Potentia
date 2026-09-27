@@ -212,12 +212,12 @@ if (haveChrome) {
      put them. The message has to name where they go, not just refuse. */
   check('the cap is explained', /Only 4 photos/i.test(r.noteAfterMany || ''), r.noteAfterMany);
   check('and it says to text the rest, with the number',
-    /text the rest/i.test(r.noteAfterMany || '') && /435-277-0764/.test(r.noteAfterMany || ''),
+    /text the rest/i.test(r.noteAfterMany || '') && /435-291-0979/.test(r.noteAfterMany || ''),
     r.noteAfterMany);
 
   /* The number has to be on the page before anyone hits the cap, too — most
      people will just upload four and never see the message. */
-  check('the number is on the page from the start', /435-277-0764/.test(form), false);
+  check('the number is on the page from the start', /435-291-0979/.test(form), false);
 }
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nall passed');
