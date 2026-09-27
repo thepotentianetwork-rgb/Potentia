@@ -1,18 +1,18 @@
 /* THE WHOLE JOURNEY, END TO END, WITHOUT TOUCHING PRODUCTION.
  *
- * A contractor opens the form on a phone and submits it. Someone opens him in
- * the CRM, reads his sheet, and marks his deposit as received.
+ * A contractor opens the form on a phone, attaches photos of his work, and
+ * submits. Someone opens him in the CRM, sees the photos, and marks his
+ * deposit as received. Every part of that has been tested on its own and the
+ * seams between them are where both real bugs lived:
  *
- * The form no longer takes photos — those come in by text now — but both real
- * bugs this file was written for lived in the request itself, not the picker:
+ *   - photos left on the body truncated the payload, so the ANSWERS were
+ *     destroyed by the PICTURES
+ *   - keepalive capped the request at 64 KiB, so a submission with photos
+ *     never arrived at all
  *
- *   - the payload was truncated, so the ANSWERS came back null
- *   - keepalive capped the request at 64 KiB, so nothing arrived at all
- *
- * Both are still reachable by anything that grows the body, so this still runs
- * the real page in a real browser against the real worker code, with SQLite
- * standing in for D1. Nothing is stubbed between the submit button and the
- * database row.
+ * So this runs the real page in a real browser against the real worker code,
+ * with SQLite standing in for D1. Nothing is stubbed between the file picker
+ * and the database row.
  *
  * Run: node --experimental-sqlite tests/end-to-end.test.mjs
  */
@@ -110,13 +110,30 @@ page = page
   .replace(/var CRM_INTAKE_URL = '[^']*';/, `var CRM_INTAKE_URL = '${BASE}/crm/intake';`)
   .replace(/action="[^"]*"/, `action="${BASE}/formspree"`)
   .replace('</body>', `<script>
+  function jpegFile(px, name) {
+    var cv = document.createElement('canvas'); cv.width = px; cv.height = px;
+    var g = cv.getContext('2d');
+    for (var i = 0; i < 60; i++) {
+      g.fillStyle = 'rgb(' + (i*31%256) + ',' + (i*57%256) + ',' + (i*91%256) + ')';
+      g.fillRect(Math.random()*px, Math.random()*px, px/5, px/5);
+    }
+    return new Promise(function (r) { cv.toBlob(function (b) { r(new File([b], name, {type:'image/jpeg'})); }, 'image/jpeg', 0.92); });
+  }
   window.addEventListener('load', function () {
     (async function () {
       var out = {};
       try {
-        /* The uploader is gone on purpose. Left behind, it would keep taking
-           photos the CRM no longer expects on this path. */
-        out.uploaders = document.querySelectorAll('input[type=file]').length;
+        /* Three photos at 1600px — the size a phone actually produces once
+           iOS has handed over a JPEG. */
+        var dt = new DataTransfer();
+        for (var i = 0; i < 3; i++) dt.items.add(await jpegFile(1600, 'job' + i + '.jpg'));
+        var inp = document.getElementById('f_photos');
+        inp.files = dt.files;
+        await window.addProjectPhotos(inp);
+        out.thumbs = document.querySelectorAll('#photoGrid img').length;
+        out.note = document.getElementById('photoNote').textContent;
+        /* Three fit under the cap. The rest of his jobs come in by text, so
+           the number has to be on the page whether or not he hits it. */
         out.tellsThemWhere = /435-277-0764/.test(document.body.textContent);
 
         var f = document.getElementById('onboardingForm');
@@ -151,7 +168,7 @@ srv.on('request', (req, res) => {
   return origHandler(req, res);
 });
 
-console.log('\n-- a contractor fills the form in --');
+console.log('\n-- a contractor fills the form in, with three photos --');
 const child = spawn(CHROME, ['--headless=new', '--no-sandbox', '--disable-gpu-sandbox',
   '--disable-dev-shm-usage', BASE + '/'], { stdio: 'ignore' });
 const deadline = Date.now() + 90000;
@@ -160,8 +177,9 @@ child.kill('SIGKILL');
 
 const rep = report || {};
 check('the browser got through it', !!report && !rep.threw, rep.threw || '(no report in 90s)');
-check('the file picker is gone from the page', rep.uploaders === 0, rep.uploaders);
-check('and it says where to text them instead', rep.tellsThemWhere === true, rep.tellsThemWhere);
+check('three photos were accepted', rep.thumbs === 3, rep.thumbs);
+check('with nothing reported as wrong', !rep.note, rep.note);
+check('and the page says where to text the rest', rep.tellsThemWhere === true, rep.tellsThemWhere);
 check('and the form showed its success screen', rep.successShown === true, rep.successShown);
 check('Formspree got the sheet too', formspree.length >= 1, formspree.length);
 
@@ -183,12 +201,18 @@ if (client) {
   const sheet = (sheets.data.sheets || [])[0];
   check('his onboarding sheet is readable', !!sheet, sheets.data);
   if (sheet) {
-    check('his answers came through', sheet.answers && sheet.answers.email === 'hank@roofing.test',
+    check('the answers survived the photos', sheet.answers && sheet.answers.email === 'hank@roofing.test',
       sheet.answers && Object.keys(sheet.answers).length);
     check('the project description is there',
       /cedar shake/.test((sheet.answers || {}).project_description || ''),
       (sheet.answers || {}).project_description);
-    check('and no photos rode along', (sheet.photos || []).length === 0, (sheet.photos || []).length);
+    check('all three photos are stored', sheet.photos.length === 3, sheet.photos.length);
+
+    const kb = Math.round((sheet.photos[0] || {}).bytes / 1024);
+    check('each was resized to a sane size (' + kb + 'KB)', kb > 5 && kb < 400, kb);
+
+    const img = await api('GET', '/crm/intake/photo/' + sheet.photos[0].id, null, tok);
+    check('a photo can be opened', /^data:image\/jpeg;base64,/.test((img.data || {}).data || ''), img.status);
 
     console.log('\n-- and the deposit can be marked --');
     check('it starts unmarked', sheet.deposit.received === false, sheet.deposit);
