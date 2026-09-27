@@ -380,7 +380,7 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
         <span class="section-num">05</span>
         <div>
           <div class="section-title" data-en="Your Work" data-es="Su Trabajo"></div>
-          <div class="section-sub" data-en="Photos of jobs you have done" data-es="Fotos de trabajos que ha hecho"></div>
+          <div class="section-sub" data-en="The jobs you have done" data-es="Los trabajos que ha hecho"></div>
         </div>
       </div>
       <div class="grid-2">
@@ -393,21 +393,9 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
         </div>
         <div class="field col-full">
           <label data-en="Project photos" data-es="Fotos de proyectos"></label>
-          <div class="section-sub" style="margin:0 0 8px"
-               data-en="Up to 10. Before-and-after shots are worth the most. They are resized on your phone before sending, so this works on cell data."
-               data-es="Hasta 10. Las fotos de antes y después son las más valiosas. Se redimensionan en su teléfono antes de enviarse, así que funciona con datos móviles."></div>
-          <!-- capture is deliberately absent: these are photos of finished
-               work, already in the camera roll, not something taken now. -->
-          <input type="file" id="f_photos" accept="image/*" multiple
-                 style="font-size:13px" onchange="addProjectPhotos(this)">
-          <div id="photoCount" class="section-sub" style="margin-top:8px"></div>
-          <!-- Failures are written here rather than into an alert: a modal on
-               a phone is dismissed and cannot be re-read, and the message is
-               the one instruction that gets someone unstuck. -->
-          <div id="photoNote" style="display:none;margin-top:8px;font-size:12px;line-height:1.5;
-               padding:8px 10px;border-radius:8px;background:rgba(255,193,7,.12);
-               border:1px solid rgba(255,193,7,.45);color:#ffd970"></div>
-          <div id="photoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:8px"></div>
+          <div class="section-sub" style="margin:0"
+               data-en="Text your photos to 435-277-0764 and we will add them to your build. Before-and-after shots are worth the most."
+               data-es="Envíe sus fotos por mensaje al 435-277-0764 y las agregamos a su sitio. Las fotos de antes y después son las más valiosas."></div>
         </div>
       </div>
     </div>
@@ -505,8 +493,8 @@ overlay.querySelectorAll('a').forEach(function(a) {
 </script>
 
 <script>
-  /* Named so a test can point it at a stub. This request carries the photos,
-     and it has now broken twice in ways only a real browser showed. */
+  /* Named so a test can point it at a stub. This request has broken twice in
+     ways only a real browser showed, so it stays testable. */
   var CRM_INTAKE_URL = 'https://potentia-assistant.thepotentianetwork.workers.dev/crm/intake';
 
   let currentLang = 'en';
@@ -551,165 +539,7 @@ overlay.querySelectorAll('a').forEach(function(a) {
   const btn = document.getElementById('submitBtn');
   const successScreen = document.getElementById('successScreen');
 
-  /* ---- PROJECT PHOTOS -------------------------------------------------
-     Resized in the browser, not on the server, for two reasons. A phone photo
-     is 3-5MB and a contractor filling this in from a job site is on cell
-     data; and the CRM keeps these in D1, which takes text, not files. 1400px
-     on the long edge at JPEG 0.72 lands around 150KB - big enough to look
-     like the work, small enough that ten of them is a megabyte and a half.
 
-     Anything that will not decode is skipped with a word to the person rather
-     than silently: a HEIC off an old iPhone is the usual case, and "nothing
-     happened when I picked my photos" is a terrible thing to leave someone
-     guessing about. */
-  var MAX_PHOTOS = 10;
-  var projectPhotos = [];
-
-  /* DECODING A PHONE PHOTO IS THE PART THAT FAILS.
-     A contractor reported "the form wouldn't let me submit photos". The
-     picker was fine, the script was fine — his pictures would not decode, and
-     the first version of this quietly dropped them and popped an alert, which
-     reads exactly like being refused.
-
-     Three things changed:
-
-     createImageBitmap FIRST. It decodes formats <img> will not, notably HEIC
-     on Safari, and it does not hold a second full-size copy of the image in
-     memory the way an <img> element does. <img> stays as the fallback for
-     older browsers.
-
-     ONE SHARED CANVAS. iOS caps total canvas memory across a page, and a
-     fresh 1400px canvas per photo walks into that cap after a few large
-     ones — at which point drawImage quietly produces a blank frame rather
-     than throwing. Reusing one canvas keeps the footprint flat.
-
-     AND IT SAYS WHY. A null return told the caller nothing, so the person got
-     a count and no idea what to do about it. */
-  function shrinkPhoto(file) {
-    var MAXPX = 1400, CAP = 650000;
-
-    function encode(src, w, h) {
-      var scale = Math.min(1, MAXPX / Math.max(w, h));
-      var dw = Math.max(1, Math.round(w * scale));
-      var dh = Math.max(1, Math.round(h * scale));
-      var cv = shrinkPhoto._cv || (shrinkPhoto._cv = document.createElement('canvas'));
-      cv.width = dw; cv.height = dh;
-      var g = cv.getContext('2d');
-      g.clearRect(0, 0, dw, dh);
-      g.drawImage(src, 0, 0, dw, dh);
-      var data = cv.toDataURL('image/jpeg', 0.72);
-      if (data.length > CAP) data = cv.toDataURL('image/jpeg', 0.55);
-      if (data.length > CAP) data = cv.toDataURL('image/jpeg', 0.4);
-      return data.length > CAP ? { err: 'toobig' } : { data: data };
-    }
-
-    /* A blank frame is what a canvas that ran out of memory produces, and it
-       encodes to a very small JPEG. Treat a suspiciously tiny result as a
-       failure rather than sending a white rectangle of someone's roof. */
-    function looksBlank(dataUrl) { return dataUrl.length < 2000; }
-
-    return new Promise(function (resolve) {
-      function viaImage() {
-        var url = URL.createObjectURL(file);
-        var img = new Image();
-        img.onload = function () {
-          var out;
-          try { out = encode(img, img.naturalWidth || img.width, img.naturalHeight || img.height); }
-          catch (e) { out = { err: 'canvas' }; }
-          URL.revokeObjectURL(url);
-          if (out.data && looksBlank(out.data)) out = { err: 'canvas' };
-          resolve(out);
-        };
-        img.onerror = function () { URL.revokeObjectURL(url); resolve({ err: 'decode' }); };
-        img.src = url;
-      }
-
-      if (typeof createImageBitmap === 'function') {
-        createImageBitmap(file).then(function (bmp) {
-          var out;
-          try { out = encode(bmp, bmp.width, bmp.height); }
-          catch (e) { out = { err: 'canvas' }; }
-          if (bmp.close) bmp.close();
-          if (out.data && looksBlank(out.data)) out = { err: 'canvas' };
-          resolve(out);
-        }).catch(viaImage);
-        return;
-      }
-      viaImage();
-    });
-  }
-
-  async function addProjectPhotos(input) {
-    var files = Array.prototype.slice.call(input.files || []);
-    input.value = '';                       // so the same file can be re-picked
-    if (!files.length) return;
-    var reasons = { decode: 0, canvas: 0, toobig: 0, full: 0 };
-    photoNote(currentLang === 'en' ? 'Adding photos…' : 'Agregando fotos…');
-    for (var i = 0; i < files.length; i++) {
-      if (projectPhotos.length >= MAX_PHOTOS) { reasons.full++; continue; }
-      var r = await shrinkPhoto(files[i]);
-      if (r && r.data) { projectPhotos.push({ data: r.data }); renderProjectPhotos(); }
-      else { reasons[(r && r.err) || 'decode']++; }
-    }
-    renderProjectPhotos();
-
-    /* Written into the page, not into an alert. An alert on a phone is a
-       modal you dismiss and cannot re-read, which is a poor way to deliver
-       the one instruction that would get someone unstuck. */
-    var msgs = [];
-    var es = currentLang === 'es';
-    if (reasons.full) {
-      msgs.push(es ? 'Solo se pueden enviar ' + MAX_PHOTOS + ' fotos.'
-                   : 'Only ' + MAX_PHOTOS + ' photos can be sent.');
-    }
-    if (reasons.decode) {
-      /* Almost always HEIC off an iPhone. Naming it, and the setting that
-         fixes it, beats "could not be read". */
-      msgs.push(es
-        ? reasons.decode + ' foto(s) no se pudieron abrir — suelen ser fotos HEIC de iPhone. En Ajustes → Cámara → Formatos elija "Más compatible", o envíenoslas por mensaje.'
-        : reasons.decode + " photo(s) couldn't be opened — usually iPhone HEIC files. In Settings → Camera → Formats choose \u201cMost Compatible\u201d, or just text them to us.");
-    }
-    if (reasons.canvas) {
-      msgs.push(es ? reasons.canvas + ' foto(s) fallaron en este teléfono. Intente de nuevo con menos a la vez.'
-                   : reasons.canvas + ' photo(s) failed on this phone. Try again with fewer at a time.');
-    }
-    if (reasons.toobig) {
-      msgs.push(es ? reasons.toobig + ' foto(s) son demasiado grandes incluso reducidas.'
-                   : reasons.toobig + ' photo(s) are too large even after resizing.');
-    }
-    photoNote(msgs.join(' '));
-  }
-
-  function photoNote(text) {
-    var n = document.getElementById('photoNote');
-    if (!n) return;
-    n.textContent = text || '';
-    n.style.display = text ? 'block' : 'none';
-  }
-
-  function removeProjectPhoto(i) { projectPhotos.splice(i, 1); renderProjectPhotos(); }
-
-  function renderProjectPhotos() {
-    var grid = document.getElementById('photoGrid');
-    var count = document.getElementById('photoCount');
-    if (!grid || !count) return;
-    grid.innerHTML = projectPhotos.map(function (p, i) {
-      return '<div style="position:relative">' +
-        '<img src="' + p.data + '" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:8px;display:block">' +
-        '<button type="button" onclick="removeProjectPhoto(' + i + ')" aria-label="Remove" ' +
-        'style="position:absolute;top:4px;right:4px;border:none;border-radius:50%;width:22px;height:22px;' +
-        'background:rgba(0,0,0,.65);color:#fff;font-size:14px;line-height:1;cursor:pointer">&times;</button></div>';
-    }).join('');
-    /* The count said out loud, because ten photos in a grid is something you
-       have to stop and count otherwise. */
-    count.textContent = projectPhotos.length
-      ? (currentLang === 'en'
-          ? projectPhotos.length + ' of ' + MAX_PHOTOS + ' photos added'
-          : projectPhotos.length + ' de ' + MAX_PHOTOS + ' fotos agregadas')
-      : '';
-  }
-  window.addProjectPhotos = addProjectPhotos;
-  window.removeProjectPhoto = removeProjectPhoto;
 
   /* Everything the sheet collects, as a plain object. Checkboxes share a name
      (trade, project_type, credentials) so those come back as arrays; the rest
@@ -730,27 +560,21 @@ overlay.querySelectorAll('a').forEach(function(a) {
      awaiting, and failures are swallowed. If the CRM is unreachable the
      Formspree submit below still goes through exactly as it would have, so
      this can never cost a completed onboarding sheet. */
-  /* NO keepalive. It caps the request body at 64 KiB — one photo is bigger
-     than that, so a sheet WITH photos did not just lose the pictures, the
-     whole request failed with a TypeError and the catch below swallowed it.
-     No sheet reached the CRM at all. Verified in headless Chromium, and kept
-     verified by tests/form-photos.test.mjs: 1.5MB with keepalive is refused
-     by the browser, the same body without it sends.
+  /* NO keepalive, and it stays off. It caps the request body at 64 KiB. When
+     this sheet carried photos that silently killed the WHOLE request with a
+     TypeError the catch below swallowed, so no sheet reached the CRM at all —
+     verified in headless Chromium. The photos are gone now and the body is
+     small again, but the cap is still a trap sitting under any field someone
+     adds later, and keepalive buys nothing here: it exists to survive a page
+     unloading, and this page does not unload — submit calls preventDefault,
+     fetches Formspree and hides the form.
 
-     keepalive was there to survive the page unloading, and this page does not
-     unload: submit calls preventDefault, fetches Formspree and then hides the
-     form. There was never anything for it to protect.
-
-     Returns the promise now so the caller can wait for it. Still swallows its
-     own failures — a CRM that is down must never cost a completed sheet. */
+     Returns the promise so the caller can wait for it. Still swallows its own
+     failures — a CRM that is down must never cost a completed sheet. */
   function sendToCrm(f) {
     try {
       var p = formPayload(f);
       if (!p.email && !p.phone) return Promise.resolve();
-      /* Photos go to the CRM, not to Formspree: an email with ten base64
-         images in it is not a useful email, and the CRM is where they are
-         actually looked at. */
-      if (projectPhotos.length) p.project_photos = projectPhotos;
       return fetch(CRM_INTAKE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -762,9 +586,9 @@ overlay.querySelectorAll('a').forEach(function(a) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     btn.disabled = true;
-    /* Awaited, not fired and forgotten. A megabyte of photos over cell data
-       takes a moment, and showing "thanks, we got it" while the request is
-       still in the air — or has already failed — is how this went unnoticed. */
+    /* Awaited, not fired and forgotten. Showing "thanks, we got it" while the
+       request is still in the air — or has already failed — is how the last
+       breakage went unnoticed for weeks. */
     await sendToCrm(form);
     btn.textContent = currentLang === 'en' ? 'Sending...' : 'Enviando...';
 
