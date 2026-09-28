@@ -17,7 +17,7 @@ import { fileURLToPath } from "url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
 // Add a module here when index.js starts importing one. Nothing else to change.
-const MODULES = ["pricing.js", "leadpipeline.js"];
+const MODULES = ["pricing.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js"];
 
 let indexSrc = fs.readFileSync(path.join(dir, "index.js"), "utf8");
 let inlined = "";

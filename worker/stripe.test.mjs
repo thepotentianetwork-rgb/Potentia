@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { stripeForm, stripeCall, createAndSendInvoice, ensureCustomer,
-         PAYMENT_METHODS, DAYS_UNTIL_DUE } from './stripe.js';
+         STRIPE_PAYMENT_METHODS, DAYS_UNTIL_DUE } from './stripe.js';
 
 const ENV = { STRIPE_SECRET_KEY: 'sk_test_fake' };
 
@@ -122,7 +122,7 @@ test('ACH is offered first, then card', async () => {
   const p = calls[0].params;
   assert.equal(p['payment_method_types[0]'], 'us_bank_account', 'ACH must be first');
   assert.equal(p['payment_method_types[1]'], 'card');
-  assert.deepEqual(PAYMENT_METHODS, ['us_bank_account', 'card']);
+  assert.deepEqual(STRIPE_PAYMENT_METHODS, ['us_bank_account', 'card']);
 });
 
 /* The 7.25% overcharge that would not raise an error anywhere. */

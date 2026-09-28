@@ -12,7 +12,7 @@
  * is its own function with its own tests.
  */
 
-const API = 'https://api.stripe.com/v1';
+const STRIPE_API = 'https://api.stripe.com/v1';
 
 /* Stripe's form encoding. Nested objects become a[b], arrays become a[0].
    Null and undefined are dropped rather than sent as the string "null", which
@@ -49,7 +49,7 @@ export async function stripeCall(env, path, body, opts = {}) {
      button is two invoices to the same customer for the same shed. */
   if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
 
-  const res = await fetch(API + path, {
+  const res = await fetch(STRIPE_API + path, {
     method: opts.method || 'POST',
     headers,
     body: body === undefined ? undefined : stripeForm(body),
@@ -70,7 +70,11 @@ export async function stripeCall(env, path, body, opts = {}) {
    order is the order they appear to the customer, so the cheaper one is the
    one they see first. Card stays because some people will always reach for it,
    and a deposit that does not get paid is worse than one that costs more. */
-export const PAYMENT_METHODS = ['us_bank_account', 'card'];
+/* STRIPE_ prefixed, not PAYMENT_METHODS: index.js already has a constant by
+   that name for the ways a human can record a payment, and the bundler
+   inlines every module at top level. A duplicate const there is a
+   SyntaxError that takes down the whole worker, not just this feature. */
+export const STRIPE_PAYMENT_METHODS = ['us_bank_account', 'card'];
 
 /* Days until due, per kind. A deposit gates the build starting, so it is due
    when it arrives; the balance is billed against work already done. */
@@ -107,7 +111,7 @@ export async function createAndSendInvoice(env, {
     customer: customerId,
     collection_method: 'send_invoice',
     days_until_due: days,
-    payment_method_types: PAYMENT_METHODS,
+    payment_method_types: STRIPE_PAYMENT_METHODS,
     auto_advance: false,
     automatic_tax: { enabled: false },
     currency: 'usd',
