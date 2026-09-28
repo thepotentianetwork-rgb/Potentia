@@ -783,6 +783,12 @@ async function ensureInvoicesTable(env) {
   }
 }
 
+/* Money in a sentence a customer's figures can be checked against. Same form
+   as the rest of the worker uses; kept short because it appears mid-message. */
+function usd(n) {
+  return Number(n || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
 /* Everything an invoice needs, gathered and priced, without sending anything.
    Shared by the preview and the send so the figures a person approves are the
    figures that go out — computing them twice would let the two drift. */
@@ -913,6 +919,30 @@ async function handleCreateInvoice(request, env, origin, actor) {
                "credited on this invoice. Assign them first if they belong to this shed."
     });
   }
+
+  /* Another invoice for this same shed, sent and not yet paid. The amount
+     below does NOT credit it — buildInvoice nets off money actually received,
+     which is the only honest basis for a bill — so the two outstanding at once
+     ask for more than the job costs. Nearly always it just means the deposit
+     has not cleared and the balance is early. Warned about rather than
+     blocked: there are real reasons to have both out, and guessing wrong here
+     silently changes what a customer is charged. */
+  const { results: outstanding } = await env.DB.prepare(
+    "SELECT id, kind, amount, hosted_url FROM invoices WHERE submission_id = ? AND kind != ? AND status NOT IN ('paid','void','draft_failed')"
+  ).bind(sub.id, kind).all();
+  (outstanding || []).forEach((o) => {
+    const combined = Number(o.amount || 0) + fromCents(invoice.totalCents);
+    warnings.push({
+      code: "unpaid_invoice",
+      kind: o.kind,
+      amount: Number(o.amount || 0),
+      combined,
+      hosted_url: o.hosted_url || null,
+      message: "The " + o.kind + " invoice for " + usd(o.amount) + " is still unpaid. This one does " +
+               "not credit it, so the two together ask for " + usd(combined) + " on a " +
+               usd(fromCents(invoice.jobTotalCents)) + " job. Wait for it to clear, or void it first."
+    });
+  });
 
   const shape = {
     kind, submission_id: sub.id, customer_id: customer.id,

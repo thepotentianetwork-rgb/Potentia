@@ -783,3 +783,105 @@ re-examine a rejected business you have to re-source it, and pay for it again.
 rates; the Places and xAI numbers are **placeholders set deliberately high**.
 Compare them against a real bill after the first week and correct them —
 the daily ceiling is only as good as those constants.
+
+# Invoicing from the quote (Stripe)
+
+The shed CRM raises the deposit and the balance invoice straight off the
+quote, sends them from Stripe, and records the payment on its own when the
+money clears. It replaces typing the same figures into Invoice 2 Go by hand.
+
+Where it lives: **customer page → each order card → Invoice**.
+
+## Setup
+
+### 1. Add two secrets
+
+Worker → **Settings → Variables and Secrets** → **Add variable**,
+Type = **Secret** for both. These are server-side only; nothing Stripe-related
+is ever sent to a browser.
+
+| Name | Where to get it |
+|---|---|
+| `STRIPE_SECRET_KEY` | Stripe → **Developers → API keys** → Secret key. Starts `sk_test_` while testing, `sk_live_` when you go live. |
+| `STRIPE_WEBHOOK_SECRET` | Given to you when you create the webhook in step 2. Starts `whsec_`. |
+
+Without `STRIPE_SECRET_KEY` the buttons still price a preview — that is all
+local arithmetic — but sending fails with Stripe's own error. Without
+`STRIPE_WEBHOOK_SECRET` every incoming webhook is rejected, so invoices go
+out and are never marked paid.
+
+### 2. Create the webhook
+
+Stripe → **Developers → Webhooks → Add endpoint**.
+
+- URL: `https://potentia-assistant.thepotentianetwork.workers.dev/stripe/webhook`
+- Event to send: **`invoice.paid`** (just that one)
+
+Stripe then shows a signing secret — that is `STRIPE_WEBHOOK_SECRET`.
+
+Every request to that URL is checked against it before the body is even
+parsed, and only the `v1` signature scheme is accepted. An unsigned or
+wrongly-signed call gets a 400 and nothing is written. That matters: the URL
+is public, and what it does is mark an $11,000 shed paid.
+
+### 3. Turn on ACH
+
+Stripe → **Settings → Payment methods** → enable **ACH Direct Debit**.
+
+Invoices offer ACH *before* card, deliberately. On an $11,000 shed that is
+**$5 instead of about $363**. The trade-off is real and worth knowing: ACH
+takes a few days to settle, and an ACH dispute is final — there is no appeal
+the way there is with a card chargeback.
+
+## How a job runs
+
+1. **Invoice → Work out the deposit.** Nothing is sent. You get the exact
+   lines and the exact total.
+2. Check it, then **Send this deposit invoice**. Stripe emails it.
+3. The row changes to **Sent — unpaid**, with **Open ↗** (the page the
+   customer pays on) and **Void**.
+4. When they pay, the webhook flips it to **Paid** and writes the payment
+   into the customer's payment list against that shed. Nothing to type.
+5. **Work out the balance** later. It credits what has actually been paid,
+   so the balance is the rest of the job.
+
+## The things that will bite, and what stops them
+
+- **A sent invoice cannot be edited.** Stripe treats a finalized invoice as a
+  legal document. Wrong figure → **Void** it (which voids the customer's copy
+  too) and send a corrected one. This is why every send shows a preview first
+  and why there is no one-click send.
+- **Two invoices out at once double-bills.** The balance credits money
+  *received*, not money invoiced — the only honest basis for a bill. So if you
+  raise the balance while the deposit is still unpaid, the customer holds two
+  bills adding up to more than the shed. The preview says so in yellow, gives
+  the combined figure, and makes you confirm twice. Normally: wait for the
+  deposit to clear.
+- **Payments with no shed against them are not credited.** A repeat customer
+  can have two builds; a payment not assigned to one is not netted off either.
+  The preview warns, and the payment list has a dropdown to assign it.
+- **One live invoice of each kind per shed.** A second attempt is refused
+  until the first is voided, so a double-tap a week apart cannot bill twice.
+- **A paid invoice has no Void button.** The money has moved — that is a
+  refund, done in Stripe.
+- **Tax is not recalculated by Stripe.** `automatic_tax` is off on purpose:
+  the quote already applied Utah's 7.25% and the line amounts are
+  tax-inclusive. Turning it on in Stripe would tax the tax.
+
+## Testing it before going live
+
+Use the `sk_test_` key and Stripe's test mode. Card `4242 4242 4242 4242`,
+any future expiry, any CVC. Send yourself a deposit invoice, pay it, and
+check the CRM flips it to Paid on its own. Then swap in the live key.
+
+## Checking a change didn't break it
+
+```
+node --test worker/invoices.test.mjs worker/stripe.test.mjs \
+  worker/stripewebhook.test.mjs worker/invoiceendpoints.test.mjs
+node --experimental-sqlite tests/invoice-buttons.test.mjs
+```
+
+The last one drives the real page in a real browser against the real Worker
+with Stripe stubbed, and its main job is to prove that the first click on an
+invoice button sends nothing.
