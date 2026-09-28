@@ -1,0 +1,298 @@
+/* THE QUOTE'S OWN ARITHMETIC, LIFTED OUT OF THE PAGE.
+ *
+ * Every figure a customer is billed — the phase rows, the 7.25% tax, the 30%
+ * deposit against each phase, and the way a discount scales through those
+ * deposits — was computed in quote.html and nowhere else. That was fine while
+ * the only thing that needed it was the page rendering it. It stops being fine
+ * the moment a Stripe invoice has to carry the same numbers: the server cannot
+ * ask a browser what to charge someone.
+ *
+ * So this is a PORT, not a rewrite. It is quote.html's taxBreakdown() with the
+ * two module-level globals it read (ADJUSTMENTS, COMPED) turned into arguments
+ * and the DOM left behind. Same order of operations, same rounding, same
+ * clamps. tests/quotelines.test.mjs runs this and the page's own copy against
+ * the same redlines and fails on any difference, because a port that is merely
+ * close would bill a customer a different number than the quote they agreed to.
+ *
+ * Why it matters that there is now ONE of these: this repo has been bitten
+ * repeatedly by a value living in two places with only one of them reachable —
+ * addVent vs ventCyIn, the lighting rig, the rail heights, the Google Voice
+ * URLs. quote.html's own comment says the adjustment arithmetic "mirrors
+ * applyAdjustments() in worker/index.js ... if you change one, change the
+ * other". A deposit figure is the worst candidate in the codebase for that
+ * arrangement.
+ */
+
+/* Utah sales tax — applied to the shed and to each separately-billed item
+   (concrete, interior finishing) since each is invoiced as its own sale. */
+export const TAX_RATE = 0.0725;
+/* Each item is invoiced as its own stage of work, and a 30% deposit is
+   collected against that item's tax-included price when its stage starts. */
+export const DEPOSIT_RATE = 0.30;
+
+/* What the base shed price covers, named under the Base Shed line. NAMES ONLY,
+   no figures: the shed line is a SELL price and the money behind these headings
+   is cost, so printing both would let a customer read the margin off the page. */
+export const BASE_SHED_INCLUDES = [
+  'Materials & lumber',
+  'Shop labor',
+  'Build labor & assembly',
+  'Fuel & delivery'
+];
+
+export const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
+
+function num(n) { return Number(n) || 0; }
+
+function sumLines(lines, amtKey) {
+  return (lines || []).reduce(function (t, l) { return t + num(l[amtKey]); }, 0);
+}
+
+/* Mirrors compItemsFromRedline() in the worker: the individually-priced lines
+   this quote actually sums, which is exactly the set that can be given away. */
+export function compItemPrices(redline) {
+  const out = {};
+  if (!redline || typeof redline !== 'object') return out;
+  function push(name, amt) {
+    const n = Number(amt);
+    if (!name || !isFinite(n) || n <= 0) return;
+    out[name] = (out[name] || 0) + Math.round(n * 100) / 100;
+  }
+  (redline.addonLines || []).forEach((l) => push(l && l.name, l && l.amt));
+  (redline.doorUpLines || []).forEach((l) => push(l && l.label, l && l.up));
+  (redline.windowSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  (redline.dormerSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  (redline.shelfSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  push(redline.porchSellName, redline.porchSell);
+  push(redline.porchDeckSellName, redline.porchDeckSell);
+  push(redline.sidingSellName, redline.sidingSell);
+  push(redline.heightSellName, redline.heightSell);
+  push(redline.elecSellName, redline.elecSell);
+  push(redline.loftSellName, redline.loftSell);
+  push(redline.intSellName, redline.intSell);
+  push(redline.foundName, redline.foundSell);
+  return out;
+}
+
+/* Which comp-able names belong to which quote row. Interior finishing and the
+   foundation are their own phases; everything else rolls into the shed. */
+function nameList(redline, which) {
+  if (!redline) return [];
+  if (which === 'interior') return [redline.intSellName].filter(Boolean);
+  if (which === 'foundation') return [redline.foundName].filter(Boolean);
+  const out = [];
+  (redline.addonLines || []).forEach(function (l) {
+    if (l && l.name && REMOVAL_NAMES.indexOf(l.name) === -1) out.push(l.name);
+  });
+  (redline.doorUpLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.windowSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.dormerSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.shelfSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  [redline.porchSellName, redline.porchDeckSellName, redline.sidingSellName,
+   redline.heightSellName, redline.elecSellName, redline.loftSellName]
+    .forEach(function (n) { if (n) out.push(n); });
+  return out;
+}
+
+/* The comped lines for this submission, as name -> amount. quote.html builds
+   this in render() before calling taxBreakdown; here it is derived inside, so
+   a caller cannot forget to. */
+export function compedMap(redline, adjustments) {
+  const prices = compItemPrices(redline);
+  const out = {};
+  (adjustments || []).forEach(function (a) {
+    if (a && a.kind === 'comp' && prices[a.item] != null) out[a.item] = prices[a.item];
+  });
+  return out;
+}
+
+function removalLines(redline) {
+  if (!redline || !Array.isArray(redline.addonLines)) return [];
+  return redline.addonLines.filter((l) => l && REMOVAL_NAMES.indexOf(l.name) !== -1);
+}
+function removalTotal(redline) {
+  return removalLines(redline).reduce((t, l) => t + num(l.amt), 0);
+}
+
+/* The phase rows and every total on the quote.
+   Returns null for a redline it cannot read, exactly as taxBreakdown does — a
+   caller that treats null as "no charge" would be a bug either way, but this
+   keeps the two identical. */
+export function quoteLines(redline, adjustments) {
+  if (!redline || typeof redline !== 'object') return null;
+  const COMPED = compedMap(redline, adjustments);
+  const ADJUSTMENTS = adjustments || [];
+
+  /* How much of a given row is being comped, so the reduction lands on the
+     phase the item actually belongs to rather than being lopped off the
+     bottom line. */
+  function compedIn(names) {
+    let t = 0;
+    names.forEach(function (n) { if (n && COMPED[n] != null) t += COMPED[n]; });
+    return t;
+  }
+
+  /* Everything about the shed itself is rolled into one "Shed" line; only
+     foundation and interior finishing are broken out.
+
+     This sum has to account for EVERY sell field the engine adds into
+     customerPrice. A field the engine charges for and this list omits is money
+     the quote silently fails to bill — paintSell was missing here for exactly
+     that reason, and it is on almost every shed. worker/quotepage.test.mjs
+     checks this sum against the engine. */
+  const shedTotal = num(redline.marginPrice)
+    + sumLines(redline.doorUpLines, 'up')
+    + sumLines(redline.windowSellLines, 'price')
+    + sumLines(redline.dormerSellLines, 'price')
+    + num(redline.porchSell)
+    + num(redline.porchDeckSell)
+    + num(redline.sidingSell)
+    + num(redline.paintSell)
+    + num(redline.laborSell)
+    + num(redline.heightSell)
+    + num(redline.elecSell)
+    + num(redline.floorSell)
+    + num(redline.loftSell)
+    + sumLines(redline.shelfSellLines, 'price')
+    + sumLines(redline.addonLines, 'amt')
+    - removalTotal(redline)
+    - compedIn(nameList(redline, 'shed'));
+
+  /* Build order matches how the job is actually run and billed: concrete goes
+     in first, then the shed, then interior finishing — each its own phase.
+     Phase numbers are assigned from position after the rows are built, because
+     removal is added at the FRONT when it applies. */
+  const rows = [];
+  function add(label, amt) {
+    if (!label || !amt) return null;
+    const row = { label: label, amt: Number(amt) };
+    rows.push(row);
+    return row;
+  }
+
+  const removal = removalLines(redline);
+  if (removal.length) {
+    const rTotal = removalTotal(redline) - compedIn(REMOVAL_NAMES);
+    const rRow = add(removal.length > 1 ? 'Site Clearance' : removal[0].name, rTotal);
+    if (rRow && removal.length > 1) {
+      rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) }));
+    }
+  }
+
+  /* The pad spec (4" poured slab) belongs on every quote regardless of when its
+     redline snapshot was taken, so it is added at display time rather than
+     depending on redline.foundName having been generated with it baked in. */
+  let foundLabel = redline.foundName || 'Concrete';
+  if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
+    foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
+  }
+  add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
+  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
+  add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
+
+  /* Electrical and flooring are still billed and deposited as part of the Shed
+     phase (their dollars stay inside shedTotal) — these just break them out so
+     the customer can see what the package costs, without changing the
+     invoicing or deposit schedule. Appended rather than assigned: electrical
+     used to claim this slot outright, so anything added alongside it silently
+     replaced it. */
+  function shedSubLine(amt, label, includes) {
+    if (!shedRow || !amt) return;
+    (shedRow.subLines = shedRow.subLines || []).push({
+      label: label, amt: num(amt),
+      includes: Array.isArray(includes) ? includes : null
+    });
+  }
+  /* Each is net of anything comped on it, because a comped line is already
+     listed under "Included at No Charge" — charging for it here and crediting
+     it there would show the customer the same item twice at two prices. */
+  function shedItem(label, amt) {
+    if (!label) return;
+    shedSubLine(num(amt) - (COMPED[label] || 0), label);
+  }
+  function shedItemsFrom(lines, nameKey, amtKey) {
+    (lines || []).forEach(function (l) {
+      if (!l || REMOVAL_NAMES.indexOf(l[nameKey]) > -1) return;   // its own phase
+      shedItem(l[nameKey], l[amtKey]);
+    });
+  }
+
+  /* Build labour is INSIDE this number, not a line of its own. Added whole,
+     with no comp subtracted, deliberately: labour is not in the compable set,
+     and shedTotal above adds laborSell with no comp handling either. Netting a
+     comp off here alone would drop Base Shed without dropping the phase total
+     it has to add up to. */
+  shedSubLine(num(redline.marginPrice) + num(redline.laborSell), 'Base Shed', BASE_SHED_INCLUDES);
+  shedItem(redline.heightSellName, redline.heightSell);
+  shedItem(redline.sidingSellName, redline.sidingSell);
+  shedItem(redline.paintSellName, redline.paintSell);
+  shedItem(redline.porchSellName, redline.porchSell);
+  shedItem(redline.porchDeckSellName, redline.porchDeckSell);
+  shedItemsFrom(redline.doorUpLines, 'label', 'up');
+  shedItemsFrom(redline.windowSellLines, 'label', 'price');
+  shedItemsFrom(redline.dormerSellLines, 'label', 'price');
+  shedItem(redline.loftSellName, redline.loftSell);
+  shedItemsFrom(redline.shelfSellLines, 'label', 'price');
+  shedItemsFrom(redline.addonLines, 'name', 'amt');
+
+  shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical', redline.elecIncludes);
+  shedSubLine(redline.floorSell, redline.floorSellName || 'Flooring');
+
+  if (!rows.length) return null;
+  rows.forEach(function (r, i) {
+    r.phase = i + 1;
+    r.label = 'Phase ' + r.phase + ' — ' + r.label;
+  });
+  rows.forEach(function (r) {
+    r.tax = r.amt * TAX_RATE;
+    r.total = r.amt + r.tax;
+    r.deposit = r.total * DEPOSIT_RATE;
+  });
+  const subtotal = rows.reduce((t, r) => t + r.amt, 0);
+
+  /* Percentages and flat amounts, applied BEFORE tax because tax is owed on
+     what they actually pay, and scaled through the per-phase deposits by the
+     same ratio — a discount that reduced the total but not the deposits would
+     have them paying a bigger share up front for a cheaper shed.
+     Comps are already gone by this point: they were removed from their own
+     phase rows above, which is what makes the percentage land on the post-comp
+     figure without any extra arithmetic here. */
+  let percentAdjust = 0, amountAdjust = 0;
+  ADJUSTMENTS.forEach(function (a) {
+    if (!a) return;
+    const v = Number(a.value);
+    if (a.kind === 'percent' && isFinite(v)) percentAdjust += subtotal * (v / 100);
+    else if (a.kind === 'amount' && isFinite(v)) amountAdjust += v;
+  });
+  const adjust = percentAdjust + amountAdjust;
+  let adjustedSubtotal = subtotal + adjust;
+  if (adjustedSubtotal < 0) adjustedSubtotal = 0;
+  const ratio = subtotal > 0 ? (adjustedSubtotal / subtotal) : 1;
+  if (adjust) {
+    rows.forEach(function (r) {
+      r.tax = r.amt * ratio * TAX_RATE;
+      r.total = r.amt * ratio + r.tax;
+      r.deposit = r.total * DEPOSIT_RATE;
+    });
+  }
+
+  const tax = adjustedSubtotal * TAX_RATE;
+  const depositTotal = rows.reduce((t, r) => t + r.deposit, 0);
+  return {
+    rows: rows,
+    subtotal: subtotal,
+    adjust: adjust,
+    percentAdjust: percentAdjust,
+    amountAdjust: amountAdjust,
+    adjustedSubtotal: adjustedSubtotal,
+    tax: tax,
+    total: adjustedSubtotal + tax,
+    /* Tax-inclusive so they sit beside the Total Due figure and subtract to it
+       exactly. Derived from adjustedSubtotal rather than from `adjust`, because
+       adjustedSubtotal is clamped at zero — a discount bigger than the shed
+       would otherwise report a saving larger than the price. */
+    totalBefore: subtotal * (1 + TAX_RATE),
+    savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
+    depositTotal: depositTotal
+  };
+}
