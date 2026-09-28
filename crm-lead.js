@@ -193,5 +193,90 @@
     return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
   }
 
-  global.LeadDetail = { badge: whyBadge, block: leadDetail, bindFeePrefill: bindFeePrefill, feeHint: feeHint };
+
+  /* CALL AND TEXT, one implementation for both pages.
+
+     Google Voice rather than tel: and sms:, so the call goes out on the
+     business line instead of whatever SIM the iPad in your hand happens to
+     have, and so the thread is in one place afterwards.
+
+     /calls?a=nc,<number> places the call. Text points at /calls with NO
+     number, because that same path WITH one opens the dialer — a Text button
+     that can place a call is a trap. Voice ignores /messages, so no link can
+     land on a specific thread; the number goes to the clipboard instead. */
+  /* voice.google.com deep-links: with the Google Voice app installed these
+     open the app directly (iOS Universal Links / Android App Links);
+     everywhere else they open Voice on the web, already pointed at the right
+     number. The two URLs differ on purpose, and the difference is not an
+     oversight.
+
+     CALL - no /u/0/ account index. Tested on iOS: with the index the link
+     opens Safari, without it the Google Voice app takes it. So don't add an
+     index back to disambiguate between Google accounts; it trades the app for
+     the browser. The app opens whichever account it is signed into.
+
+     TEXT - opens the app, and deliberately carries NO number. See the long
+     note in admin-customer.html for the testing behind it. */
+  var GV_CALL_URL = 'https://voice.google.com/calls?a=nc,';
+  var GV_TEXT_URL = 'https://voice.google.com/calls';
+  var CALL_ICON = '<path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>';
+  var TEXT_ICON = '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>';
+
+  /* Google Voice wants E.164 (+15551234567). Assumes US/Canada - a 10-digit
+     number gets +1, an 11-digit starting with 1 gets a plus, anything longer
+     is passed through as already-international. Null for anything else,
+     including the half-typed numbers the client page sees on every keystroke. */
+  function toE164(phone) {
+    var d = String(phone || '').replace(/\D/g, '');
+    if (!d) return null;
+    if (d.length === 10) return '+1' + d;
+    if (d.length === 11 && d.charAt(0) === '1') return '+' + d;
+    if (d.length > 11) return '+' + d;
+    return null;
+  }
+
+  /* A Call and a Text button for one number, or null when there is no number
+     we can dial. Null rather than an empty fragment so the caller can tell
+     "nothing to show" from "two buttons" without counting children.
+
+     opts.className goes on each link, because the list needs them smaller
+     than the client page does. */
+  function phoneActions(phone, opts) {
+    var e164 = toE164(phone);
+    if (!e164) return null;
+    opts = opts || {};
+    var size = opts.icon || 12;
+    var frag = document.createDocumentFragment();
+    [['Call', GV_CALL_URL, CALL_ICON, true],
+     ['Text', GV_TEXT_URL, TEXT_ICON, false]].forEach(function (spec) {
+      var a = document.createElement('a');
+      a.href = spec[3] ? spec[1] + encodeURIComponent(e164) : spec[1];
+      /* Current tab on both: a new tab is what stops iOS handing the link to
+         the app, and the app opening over Safari leaves this record right
+         here. */
+      a.rel = 'noopener';
+      if (opts.className) a.className = opts.className;
+      a.title = spec[3]
+        ? 'Call ' + e164 + ' on Google Voice'
+        : 'Text on Google Voice — opens the app and copies ' + e164;
+      if (!spec[3]) {
+        /* Rides along with the native navigation - no preventDefault, because
+           a scripted navigation is the kind iOS declines to hand to an app. */
+        a.addEventListener('click', function () {
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(e164);
+            }
+          } catch (e) {}
+        });
+      }
+      a.innerHTML = '<svg viewBox="0 0 24 24" width="' + size + '" height="' + size +
+        '" fill="none" stroke="currentColor" stroke-width="1.8">' + spec[2] + '</svg>' + spec[0];
+      frag.appendChild(a);
+    });
+    return frag;
+  }
+
+  global.LeadDetail = { badge: whyBadge, block: leadDetail, bindFeePrefill: bindFeePrefill,
+                        feeHint: feeHint, toE164: toE164, phoneActions: phoneActions };
 })(window);

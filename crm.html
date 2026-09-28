@@ -140,6 +140,9 @@ select.status-sel:focus{border-color:var(--silver)}
 .name-main{color:var(--bright);font-size:17px}
 .name-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:0.1em}
 .contact-line{font-size:14px;color:var(--silver);display:block}
+.quick-actions-sm{display:flex;gap:6px;margin-top:6px}
+.quick-actions-sm .qa-sm{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--silver);text-decoration:none;border:1px solid var(--dim);padding:4px 8px;transition:all 0.2s;white-space:nowrap}
+.quick-actions-sm .qa-sm:hover{border-color:var(--silver);color:var(--bright)}
 .fee-main{color:var(--bright)}
 .fee-sub{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--live);margin-top:3px}
 .task-pill{display:inline-block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--warm);border:1px solid rgba(216,161,95,0.45);background:rgba(216,161,95,0.12);padding:3px 9px;border-radius:20px}
@@ -1219,6 +1222,17 @@ function render() {
       s.textContent = line;
       tdContact.appendChild(s);
     });
+    /* Call and Text right here, so working down a morning's leads does not
+       mean opening each one to reach a button. Same two buttons as the client
+       page, from the same code in crm-lead.js, just smaller. Null when the
+       number is not dialable — a dead Call button is worse than none. */
+    var acts = LeadDetail.phoneActions(c.phone, { className: 'qa-sm', icon: 11 });
+    if (acts) {
+      var actBox = document.createElement('div');
+      actBox.className = 'quick-actions quick-actions-sm';
+      actBox.appendChild(acts);
+      tdContact.appendChild(actBox);
+    }
     if (!tdContact.childNodes.length) tdContact.textContent = '—';
 
     // package
