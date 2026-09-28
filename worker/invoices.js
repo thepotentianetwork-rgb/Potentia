@@ -94,6 +94,36 @@ function balanceInvoice(bd, payments) {
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
+/* WHICH PAYMENTS BELONG TO THIS JOB.
+ *
+ * payments is keyed to the CUSTOMER, not the job — it predates anyone buying a
+ * second shed, and a few customers have. Subtracting every payment a customer
+ * ever made from the balance on their second shed would credit them for the
+ * first one.
+ *
+ * So rows now carry submission_id, and they sort into three:
+ *
+ *   applied    — this job's. These come off the balance.
+ *   unassigned — recorded before the column existed, or entered without a job
+ *                picked. NOT guessed at in either direction: silently counting
+ *                them credits the wrong shed, silently ignoring them bills a
+ *                customer for money they already paid. The caller surfaces
+ *                them so a person decides.
+ *   other      — another job's. Excluded, and counted only so the UI can say
+ *                so rather than leaving someone wondering where a payment went.
+ */
+export function splitPayments(payments, submissionId) {
+  const applied = [], unassigned = [], other = [];
+  const want = Number(submissionId);
+  (payments || []).forEach((p) => {
+    const sid = p && p.submission_id;
+    if (sid == null || sid === '') unassigned.push(p);
+    else if (Number(sid) === want) applied.push(p);
+    else other.push(p);
+  });
+  return { applied, unassigned, other };
+}
+
 /* Build one invoice.
  *
  * Returns { kind, lines, totalCents, jobTotalCents, paidCents } — or throws.

@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computePricing } from './pricing.js';
 import { quoteLines } from './quotelines.js';
-import { buildInvoice, toCents } from './invoices.js';
+import { buildInvoice, splitPayments, toCents } from './invoices.js';
 
 const BUILDS = {
   'plain 10x16': { style: 'gable', w: 10, l: 16, h: 9 },
@@ -159,4 +159,53 @@ test('the amounts handed over are tax-inclusive', () => {
   assert.equal(inv.totalCents, toCents(bd.total), 'balance should be the tax-INCLUSIVE job total');
   assert.notEqual(inv.totalCents, toCents(bd.adjustedSubtotal), 'it must not be the pre-tax figure');
   assert.ok(inv.totalCents > toCents(bd.adjustedSubtotal));
+});
+
+/* ── WHOSE SHED WAS THAT PAYMENT FOR ─────────────────────────────────────────
+ * A few customers have bought a second shed. Crediting the second one with what
+ * they paid for the first is the failure this guards.
+ */
+const ROWS = [
+  { id: 1, amount: 3000, submission_id: 11, method: 'check' },   // first shed
+  { id: 2, amount: 8000, submission_id: 11, method: 'card' },    // first shed
+  { id: 3, amount: 2500, submission_id: 22, method: 'stripe' },  // second shed
+  { id: 4, amount: 500,  submission_id: null, method: 'cash' },  // before the column existed
+];
+
+test('a payment for the first shed never lands on the second', () => {
+  const { applied, unassigned, other } = splitPayments(ROWS, 22);
+  assert.deepEqual(applied.map((p) => p.id), [3], 'only this job');
+  assert.deepEqual(other.map((p) => p.id), [1, 2], 'the first shed, excluded');
+  assert.deepEqual(unassigned.map((p) => p.id), [4], 'and the one nobody placed');
+});
+
+test('the balance on the second shed is not reduced by the first', () => {
+  const [, bd] = cases()[0];
+  const job = toCents(bd.total);
+  const { applied } = splitPayments(ROWS, 22);
+  const inv = buildInvoice(bd, 'balance', applied);
+  assert.equal(inv.totalCents, job - toCents(2500), 'only the $2,500 comes off');
+  /* The number it would have been if every payment were subtracted. */
+  const wrong = job - toCents(3000 + 8000 + 2500 + 500);
+  assert.notEqual(inv.totalCents, wrong, 'it credited the other shed');
+});
+
+test('unassigned payments are handed back, not guessed at', () => {
+  const { applied, unassigned } = splitPayments(ROWS, 22);
+  /* Not silently counted... */
+  assert.ok(!applied.some((p) => p.submission_id == null));
+  /* ...and not silently dropped either: the caller gets them to put in front
+     of a person, because ignoring one bills a customer twice. */
+  assert.equal(unassigned.length, 1);
+  assert.equal(unassigned[0].amount, 500);
+});
+
+test('an empty string is as unassigned as a null', () => {
+  const { unassigned } = splitPayments([{ id: 9, amount: 100, submission_id: '' }], 22);
+  assert.equal(unassigned.length, 1, 'a blank from a form is not job 0');
+});
+
+test('ids compare by value, so a string id from the DB still matches', () => {
+  const { applied } = splitPayments([{ id: 9, amount: 100, submission_id: '22' }], 22);
+  assert.equal(applied.length, 1);
 });

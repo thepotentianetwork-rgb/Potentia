@@ -545,6 +545,26 @@ async function ensurePaymentsTable(env) {
       created_at TEXT NOT NULL
     )`
   ).run();
+
+  /* submission_id came later. This table was written when a payment only had
+     to say which CUSTOMER paid; a few customers have since bought a second
+     shed, and "what is still owed" is a question about a JOB. Without it, the
+     balance invoice on a second shed would credit the customer for the first.
+     The CRM side reached the same conclusion about its own deposits - see the
+     note on client_intake in ensureCrmTables.
+
+     Nullable, and left null on every existing row: those payments are real but
+     unattributed, and inventing a job for them would be worse than admitting
+     it. splitPayments() hands them back for a person to place.
+
+     CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, and
+     D1 has no ADD COLUMN IF NOT EXISTS, so read the table and add what is
+     missing. */
+  const have = await env.DB.prepare("PRAGMA table_info(payments)").all();
+  const names = (have.results || []).map((r) => r.name);
+  if (names.indexOf("submission_id") === -1) {
+    await env.DB.prepare("ALTER TABLE payments ADD COLUMN submission_id INTEGER").run();
+  }
 }
 
 // Lazily creates the installs table on first use — same reasoning as
