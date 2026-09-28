@@ -1,3 +1,10 @@
+/* GENERATED FROM worker/quotelines.js — DO NOT EDIT.
+   Rebuild with: node worker/build-quotelines-browser.mjs
+   The comments below are the module's own; this file is the same code with its
+   export keywords stripped and its names hung on the global for quote.html. */
+(function (root) {
+'use strict';
+
 /* THE QUOTE'S OWN ARITHMETIC, LIFTED OUT OF THE PAGE.
  *
  * Every figure a customer is billed — the phase rows, the 7.25% tax, the 30%
@@ -25,22 +32,22 @@
 
 /* Utah sales tax — applied to the shed and to each separately-billed item
    (concrete, interior finishing) since each is invoiced as its own sale. */
-export const TAX_RATE = 0.0725;
+const TAX_RATE = 0.0725;
 /* Each item is invoiced as its own stage of work, and a 30% deposit is
    collected against that item's tax-included price when its stage starts. */
-export const DEPOSIT_RATE = 0.30;
+const DEPOSIT_RATE = 0.30;
 
 /* What the base shed price covers, named under the Base Shed line. NAMES ONLY,
    no figures: the shed line is a SELL price and the money behind these headings
    is cost, so printing both would let a customer read the margin off the page. */
-export const BASE_SHED_INCLUDES = [
+const BASE_SHED_INCLUDES = [
   'Materials & lumber',
   'Shop labor',
   'Build labor & assembly',
   'Fuel & delivery'
 ];
 
-export const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
+const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 
 function num(n) { return Number(n) || 0; }
 
@@ -50,7 +57,7 @@ function sumLines(lines, amtKey) {
 
 /* Mirrors compItemsFromRedline() in the worker: the individually-priced lines
    this quote actually sums, which is exactly the set that can be given away. */
-export function compItemPrices(redline) {
+function compItemPrices(redline) {
   const out = {};
   if (!redline || typeof redline !== 'object') return out;
   function push(name, amt) {
@@ -76,7 +83,7 @@ export function compItemPrices(redline) {
 
 /* Which comp-able names belong to which quote row. Interior finishing and the
    foundation are their own phases; everything else rolls into the shed. */
-export function nameList(redline, which) {
+function nameList(redline, which) {
   if (!redline) return [];
   if (which === 'interior') return [redline.intSellName].filter(Boolean);
   if (which === 'foundation') return [redline.foundName].filter(Boolean);
@@ -97,7 +104,7 @@ export function nameList(redline, which) {
 /* The comped lines for this submission, as name -> amount. quote.html builds
    this in render() before calling taxBreakdown; here it is derived inside, so
    a caller cannot forget to. */
-export function compedMap(redline, adjustments) {
+function compedMap(redline, adjustments) {
   const prices = compItemPrices(redline);
   const out = {};
   (adjustments || []).forEach(function (a) {
@@ -118,7 +125,7 @@ function removalTotal(redline) {
    Returns null for a redline it cannot read, exactly as taxBreakdown does — a
    caller that treats null as "no charge" would be a bug either way, but this
    keeps the two identical. */
-export function quoteLines(redline, adjustments) {
+function quoteLines(redline, adjustments) {
   if (!redline || typeof redline !== 'object') return null;
   const COMPED = compedMap(redline, adjustments);
   const ADJUSTMENTS = adjustments || [];
@@ -296,3 +303,13 @@ export function quoteLines(redline, adjustments) {
     depositTotal: depositTotal
   };
 }
+
+  root.TAX_RATE = TAX_RATE;
+  root.DEPOSIT_RATE = DEPOSIT_RATE;
+  root.BASE_SHED_INCLUDES = BASE_SHED_INCLUDES;
+  root.REMOVAL_NAMES = REMOVAL_NAMES;
+  root.compItemPrices = compItemPrices;
+  root.compedMap = compedMap;
+  root.nameList = nameList;
+  root.quoteLines = quoteLines;
+})(typeof window !== 'undefined' ? window : globalThis);
