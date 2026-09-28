@@ -117,12 +117,51 @@ test('create, one call per line, then send', async () => {
   assert.equal(sent.hosted_invoice_page, 'https://pay/x');
 });
 
-test('ACH is offered first, then card', async () => {
+/* THE SHAPE STRIPE ACTUALLY ACCEPTS.
+ *
+ * This test used to assert payment_method_types[0] at the TOP level and
+ * passed every time, because the stub below accepts whatever it is handed.
+ * Stripe does not: the first real invoice anyone tried to send came back
+ * "Received unknown parameter: payment_method_types. Did you mean
+ * payment_settings?" and nothing went out. On the Invoice API the field is
+ * nested under payment_settings; it is top level on PaymentIntents and
+ * Checkout Sessions, which is where the wrong shape came from.
+ *
+ * So this asserts the nested path AND the absence of the top-level one — a
+ * test that only checks the right key is still green if the wrong key is
+ * sent alongside it, and the wrong key is what causes the rejection. */
+test('the payment methods go under payment_settings, where the Invoice API wants them', async () => {
   const { calls } = await sendOne();
   const p = calls[0].params;
-  assert.equal(p['payment_method_types[0]'], 'us_bank_account', 'ACH must be first');
-  assert.equal(p['payment_method_types[1]'], 'card');
+  assert.equal(p['payment_settings[payment_method_types][0]'], 'us_bank_account');
+  assert.equal(p['payment_settings[payment_method_types][1]'], 'card');
   assert.deepEqual(STRIPE_PAYMENT_METHODS, ['us_bank_account', 'card']);
+  assert.equal(Object.keys(p).filter((k) => k.startsWith('payment_method_types')).length, 0,
+    'a top-level payment_method_types is rejected outright by Stripe: ' +
+    JSON.stringify(Object.keys(p)));
+});
+
+/* Nothing else may quietly climb to the top level either, on any of the calls.
+   Stripe's failure mode for a parameter it does not recognise on a given
+   endpoint is a hard rejection — no invoice, no row, and a red box in the CRM
+   — and the parameter that is right on one endpoint is wrong on another, which
+   is exactly how the last one got in. Each list below is what the API
+   reference documents for that endpoint. */
+const DOCUMENTED = {
+  '/v1/invoices': ['customer', 'collection_method', 'days_until_due', 'auto_advance',
+    'automatic_tax', 'currency', 'description', 'footer', 'metadata', 'payment_settings'],
+  '/v1/invoiceitems': ['customer', 'invoice', 'amount', 'currency', 'description'],
+};
+test('every parameter sent is one that endpoint documents', async () => {
+  const { calls } = await sendOne();
+  for (const c of calls) {
+    const known = DOCUMENTED[new URL(c.url).pathname];
+    if (!known) continue;                       // /send takes no parameters
+    const roots = [...new Set(Object.keys(c.params).map((k) => k.split('[')[0]))];
+    const unknown = roots.filter((r) => !known.includes(r));
+    assert.deepEqual(unknown, [],
+      'not documented on POST ' + new URL(c.url).pathname + ': ' + unknown.join(', '));
+  }
 });
 
 /* The 7.25% overcharge that would not raise an error anywhere. */
