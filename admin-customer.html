@@ -183,6 +183,34 @@ select:focus{border-color:var(--sp-blue)}
 .install-state.installed{color:#5fd08a;border:1px solid rgba(95,208,138,0.5);background:rgba(95,208,138,0.1)}
 .sep-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--sp-blue);background:none;border:1px solid rgba(43,181,232,0.5);padding:5px 9px;cursor:pointer;text-transform:uppercase;margin-left:10px}
 .sep-btn:hover{background:rgba(43,181,232,0.12)}
+
+/* Invoicing. Amounts here are shown to the penny, unlike the rounded prices
+   elsewhere on this page: this is the figure a customer is actually asked to
+   pay, and rounding it would put the CRM and their invoice out of step. */
+.inv-block{margin-top:16px;padding-top:14px;border-top:1px solid var(--dim)}
+.inv-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:10px}
+.inv-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.inv-row:last-child{margin-bottom:0}
+.inv-kind{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);text-transform:uppercase;letter-spacing:0.05em;width:70px;flex-shrink:0}
+.inv-amt{font-size:14px;color:var(--bright)}
+.inv-state{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;padding:3px 8px;border-radius:20px;flex-shrink:0}
+.inv-state.open{color:var(--sp-blue);border:1px solid rgba(43,181,232,0.5);background:rgba(43,181,232,0.1)}
+.inv-state.paid{color:#5fd08a;border:1px solid rgba(95,208,138,0.5);background:rgba(95,208,138,0.1)}
+.inv-state.void{color:var(--dim);border:1px solid var(--dim)}
+.inv-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;padding:6px 10px;cursor:pointer;background:none;border:1px solid rgba(43,181,232,0.5);color:var(--sp-blue)}
+.inv-btn:hover{background:rgba(43,181,232,0.12)}
+.inv-btn[disabled]{opacity:0.45;pointer-events:none}
+.inv-btn.send{background:var(--sp-blue);color:var(--black);border-color:var(--sp-blue);font-weight:700}
+.inv-btn.send:hover{background:#5ad0ff}
+.inv-btn.quiet{border-color:var(--dim);color:var(--dim)}
+.inv-btn.quiet:hover{border-color:#e0684f;color:#e0684f;background:none}
+.inv-link{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border-bottom:1px solid rgba(43,181,232,0.4)}
+.inv-preview{margin:4px 0 10px;padding:12px 14px;border:1px solid rgba(43,181,232,0.45);background:rgba(43,181,232,0.06);border-radius:8px}
+.inv-pline{display:flex;justify-content:space-between;gap:14px;font-size:13px;color:var(--fg);margin-bottom:4px}
+.inv-ptotal{display:flex;justify-content:space-between;gap:14px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(43,181,232,0.35);font-size:15px;color:var(--bright)}
+.inv-note{font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5}
+.inv-warn{margin-top:10px;padding:9px 11px;border:1px solid rgba(224,180,79,0.5);background:rgba(224,180,79,0.08);color:#e0b44f;font-size:12px;line-height:1.5;border-radius:6px}
+.inv-err{margin-top:8px;color:#e0684f;font-size:12px;line-height:1.5}
 .payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
 
 @media (max-width:760px){
@@ -987,6 +1015,252 @@ function saveAdjustments(submissionId, adjustments) {
   }).catch(function () { alert('Could not reach the server.'); });
 }
 
+/* ---- Invoicing -----------------------------------------------------------
+ *
+ * Two buttons per shed: deposit and balance. Both go through a PREVIEW first,
+ * always. This is the only place in the CRM that asks a customer for money,
+ * and a wrong figure on a finalized Stripe invoice cannot be edited — it has
+ * to be voided and reissued, with an apology. So nothing is sent until the
+ * exact lines and the exact total have been shown and a second button pressed.
+ *
+ * The figures are not computed here. The worker prices the build from the same
+ * quoteLines() the quote page uses, and the preview shows what it returns, so
+ * what is approved on this screen is what goes out.
+ */
+var INVOICES = [];
+var INV_KIND_LABELS = { deposit: 'Deposit', balance: 'Balance' };
+
+function money(n) {
+  return '$' + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* Voided invoices are kept in the table — a reissue has to be traceable — but
+   they are not the current state of anything, so they do not count as "there
+   is already a deposit invoice". This matches the worker's own check. */
+function liveInvoice(submissionId, kind) {
+  return INVOICES.filter(function (i) {
+    return Number(i.submission_id) === Number(submissionId) &&
+           i.kind === kind && i.status !== 'void' && i.status !== 'draft_failed';
+  })[0];
+}
+
+function invStatePill(status) {
+  var pill = document.createElement('span');
+  var known = status === 'paid' || status === 'void' ? status : 'open';
+  pill.className = 'inv-state ' + known;
+  pill.textContent = status === 'paid' ? 'Paid' : status === 'void' ? 'Voided' : 'Sent — unpaid';
+  return pill;
+}
+
+/* Preview panel. Returns the element; the caller decides where it goes and
+   when it comes away. */
+function invPreviewPanel(kind, data, onSend, onCancel) {
+  var box = document.createElement('div');
+  box.className = 'inv-preview';
+
+  (data.lines || []).forEach(function (l) {
+    var row = document.createElement('div');
+    row.className = 'inv-pline';
+    var name = document.createElement('span');
+    name.textContent = l.label;
+    var amt = document.createElement('span');
+    amt.textContent = money(l.amount);
+    row.appendChild(name);
+    row.appendChild(amt);
+    box.appendChild(row);
+  });
+
+  var total = document.createElement('div');
+  total.className = 'inv-ptotal';
+  var tl = document.createElement('span');
+  tl.textContent = 'They will be asked for';
+  var tv = document.createElement('strong');
+  tv.textContent = money(data.amount);
+  total.appendChild(tl);
+  total.appendChild(tv);
+  box.appendChild(total);
+
+  /* What the invoice is netting off. Without this a balance of $7,830 on an
+     $11,315 shed looks like an error rather than the deposit already paid. */
+  var note = document.createElement('div');
+  note.className = 'inv-note';
+  note.textContent = 'Job total ' + money(data.job_total) + ' · already paid ' + money(data.already_paid) +
+    '. Sent from Stripe by email, payable by bank transfer or card.';
+  box.appendChild(note);
+
+  (data.warnings || []).forEach(function (w) {
+    var warn = document.createElement('div');
+    warn.className = 'inv-warn';
+    warn.textContent = w.message + (w.total ? ' (' + w.count + ' payment(s), ' + money(w.total) + ')' : '');
+    box.appendChild(warn);
+  });
+
+  var err = document.createElement('div');
+  err.className = 'inv-err';
+  err.style.display = 'none';
+  box.appendChild(err);
+
+  var actions = document.createElement('div');
+  actions.className = 'inv-row';
+  actions.style.marginTop = '12px';
+  var send = document.createElement('button');
+  send.type = 'button';
+  send.className = 'inv-btn send';
+  send.textContent = 'Send this ' + INV_KIND_LABELS[kind].toLowerCase() + ' invoice';
+  var cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'inv-btn quiet';
+  cancel.textContent = 'Cancel';
+  actions.appendChild(send);
+  actions.appendChild(cancel);
+  box.appendChild(actions);
+
+  /* Double-billing is the one mistake here that costs a customer money rather
+     than costing us a redo, so it gets a second press. Everything else the
+     preview says is information; this is a stop. */
+  var doubleBill = (data.warnings || []).filter(function (w) { return w.code === 'unpaid_invoice'; })[0];
+
+  send.addEventListener('click', function () {
+    if (doubleBill && !confirm(doubleBill.message + '\n\nSend it anyway?')) return;
+    send.disabled = true;
+    cancel.disabled = true;
+    send.textContent = 'Sending…';
+    err.style.display = 'none';
+    onSend(function (message) {
+      /* Only reached when the send failed — a success reloads the page data. */
+      send.disabled = false;
+      cancel.disabled = false;
+      send.textContent = 'Try again';
+      err.textContent = message;
+      err.style.display = 'block';
+    });
+  });
+  cancel.addEventListener('click', onCancel);
+  return box;
+}
+
+function renderInvoiceBlock(card, s, details) {
+  var block = document.createElement('div');
+  block.className = 'inv-block';
+  var label = document.createElement('div');
+  label.className = 'inv-label';
+  label.textContent = 'Invoice';
+  block.appendChild(label);
+
+  ['deposit', 'balance'].forEach(function (kind) {
+    var row = document.createElement('div');
+    row.className = 'inv-row';
+    var kindLabel = document.createElement('span');
+    kindLabel.className = 'inv-kind';
+    kindLabel.textContent = INV_KIND_LABELS[kind];
+    row.appendChild(kindLabel);
+
+    var existing = liveInvoice(s.id, kind);
+    if (existing) {
+      var amt = document.createElement('span');
+      amt.className = 'inv-amt';
+      amt.textContent = money(existing.amount);
+      row.appendChild(amt);
+      row.appendChild(invStatePill(existing.status));
+
+      if (existing.hosted_url) {
+        var open = document.createElement('a');
+        open.className = 'inv-link';
+        open.href = existing.hosted_url;
+        open.target = '_blank';
+        open.rel = 'noopener';
+        open.textContent = 'Open ↗';
+        open.title = 'The page the customer sees and pays on.';
+        row.appendChild(open);
+      }
+
+      /* Paid invoices get no void button: Stripe will not void one, and the
+         money has moved — that is a refund, done in Stripe, not here. */
+      if (existing.status !== 'paid') {
+        var voidBtn = document.createElement('button');
+        voidBtn.type = 'button';
+        voidBtn.className = 'inv-btn quiet';
+        voidBtn.textContent = 'Void';
+        voidBtn.title = 'Cancels it in Stripe too, so the customer’s copy cannot still be paid. Then you can send a corrected one.';
+        voidBtn.addEventListener('click', function () {
+          if (!confirm('Void this ' + kind + ' invoice for ' + money(existing.amount) + '? The customer will no longer be able to pay it.')) return;
+          voidBtn.disabled = true;
+          voidBtn.textContent = 'Voiding…';
+          authFetch('/admin/invoices/' + existing.id + '/void', { method: 'POST' }).then(function (r) {
+            if (r.ok) { loadCustomer(); return; }
+            voidBtn.disabled = false;
+            voidBtn.textContent = 'Void';
+            alert((r.data && r.data.error) || 'Could not void it.');
+          }).catch(function () {
+            voidBtn.disabled = false;
+            voidBtn.textContent = 'Void';
+            alert('Could not reach the server.');
+          });
+        });
+        row.appendChild(voidBtn);
+      }
+      block.appendChild(row);
+      return;
+    }
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'inv-btn';
+    btn.textContent = 'Work out the ' + kind;
+    btn.title = 'Shows you the exact lines and total first. Nothing is sent until you confirm.';
+    var err = document.createElement('div');
+    err.className = 'inv-err';
+    err.style.display = 'none';
+
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      btn.textContent = 'Working it out…';
+      err.style.display = 'none';
+      authFetch('/admin/invoices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submission_id: s.id, kind: kind, preview: true })
+      }).then(function (r) {
+        btn.disabled = false;
+        btn.textContent = 'Work out the ' + kind;
+        if (!r.ok) {
+          err.textContent = (r.data && r.data.error) || 'Could not price this one.';
+          err.style.display = 'block';
+          return;
+        }
+        var panel = invPreviewPanel(kind, r.data, function (fail) {
+          authFetch('/admin/invoices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ submission_id: s.id, kind: kind })
+          }).then(function (sent) {
+            if (sent.ok) { loadCustomer(); return; }
+            fail((sent.data && sent.data.error) || 'Stripe would not take it.');
+          }).catch(function () {
+            fail('Could not reach the server. Check before resending — it may have gone out.');
+          });
+        }, function () {
+          block.removeChild(panel);
+          row.style.display = '';
+        });
+        row.style.display = 'none';
+        block.insertBefore(panel, row);
+      }).catch(function () {
+        btn.disabled = false;
+        btn.textContent = 'Work out the ' + kind;
+        err.textContent = 'Could not reach the server.';
+        err.style.display = 'block';
+      });
+    });
+
+    row.appendChild(btn);
+    block.appendChild(row);
+    block.appendChild(err);
+  });
+
+  card.appendChild(block);
+}
+
 function renderOrders(submissions, installs) {
   installs = installs || [];
   var wrap = document.getElementById('orders-list');
@@ -1171,6 +1445,13 @@ function renderOrders(submissions, installs) {
     // where they went. Not shown on lost or superseded orders: nothing is
     // waiting on those.
     renderAdjustBlock(card, s, details);
+    /* Invoicing needs a priced build — a consult request has nothing to bill —
+       and there is no point offering it on a job that was lost or replaced.
+       Shown from 'new' onward rather than only on 'won' because the deposit
+       invoice is usually what WINS the job, not something that follows it. */
+    if (details.quotedPrice != null && s.status !== 'lost' && s.status !== 'superseded') {
+      renderInvoiceBlock(card, s, details);
+    }
     if (s.status === 'won') {
       renderInstallBlock(card, s, details, installs);
     } else if (s.status === 'new' || s.status === 'contacted' || s.status === 'quoted') {
@@ -1468,7 +1749,17 @@ document.getElementById('call-form').addEventListener('submit', function (e) {
 });
 
 function loadCustomer() {
-  authFetch('/admin/customers/' + customerId).then(function (r) {
+  /* Invoices live on their own endpoint but are drawn inside the order cards,
+     so both have to be in hand before anything renders. Fetched alongside, not
+     after, and a failure on the invoice half leaves the rest of the page
+     working — the buttons then simply offer to send a first invoice. */
+  Promise.all([
+    authFetch('/admin/customers/' + customerId),
+    authFetch('/admin/customers/' + customerId + '/invoices')
+      .catch(function () { return { ok: false, data: {} }; })
+  ]).then(function (both) {
+    var r = both[0];
+    INVOICES = (both[1].ok && both[1].data.invoices) || [];
     if (!r.ok) {
       document.getElementById('customer-name').textContent = 'Not found';
       document.getElementById('danger-zone').style.display = 'none';

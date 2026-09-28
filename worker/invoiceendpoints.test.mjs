@@ -440,3 +440,67 @@ test('the payment it records comes off the balance invoice by itself', async () 
   assert.ok(!(prev.data.warnings || []).some((w) => w.code === 'unassigned_payments'),
     'a Stripe payment is never unassigned — it knows its shed');
 });
+
+/* Deposit sent, not paid, and someone reaches for the balance. buildInvoice
+   nets off money RECEIVED, so the balance is still the whole job — correct,
+   and dangerous, because the customer now holds two bills adding up to more
+   than the shed. The endpoint has to say so. */
+test('an unpaid invoice on the same shed is called out on the next one', async () => {
+  const { env } = setup();
+  const t = await token(env);
+  const s = stubStripe();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
+  s.restore();
+  const warn = (r.data.warnings || []).find((w) => w.code === 'unpaid_invoice');
+  assert.ok(warn, 'no warning: ' + JSON.stringify(r.data.warnings));
+  assert.equal(warn.kind, 'deposit');
+  assert.ok(warn.combined > r.data.job_total,
+    'the point of the warning is that the two together exceed the job');
+  assert.ok(Math.abs(warn.combined - (warn.amount + r.data.amount)) < 0.005,
+    'combined is the two invoices added up');
+});
+
+test('a PAID deposit is credited instead of warned about', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const s = stubStripe();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  db.prepare("UPDATE invoices SET status = 'paid' WHERE kind = 'deposit'").run();
+  const inv = db.prepare("SELECT amount FROM invoices WHERE kind = 'deposit'").get();
+  db.prepare(`INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id)
+              VALUES (1,?,'stripe','',?,?,7)`).run(inv.amount, '2026-09-10', '2026-09-10');
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
+  s.restore();
+  assert.equal((r.data.warnings || []).filter((w) => w.code === 'unpaid_invoice').length, 0,
+    'a paid invoice is not outstanding');
+  assert.ok(Math.abs(r.data.already_paid - inv.amount) < 0.005, 'the deposit is credited');
+  assert.ok(Math.abs(r.data.amount - (r.data.job_total - inv.amount)) < 0.005,
+    'so the balance is the rest of the job');
+});
+
+test('a VOIDED invoice is neither credited nor warned about', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const s = stubStripe();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  db.prepare("UPDATE invoices SET status = 'void' WHERE kind = 'deposit'").run();
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
+  s.restore();
+  assert.equal((r.data.warnings || []).filter((w) => w.code === 'unpaid_invoice').length, 0);
+  assert.equal(r.data.already_paid, 0);
+});
+
+/* The other shed's invoice is not this shed's problem. Without the
+   submission_id in that query, every repeat customer would get a double-bill
+   warning on a job that has nothing to do with the open one. */
+test('an unpaid invoice on a DIFFERENT shed is not warned about here', async () => {
+  const { env } = setup();
+  const t = await token(env);
+  const s = stubStripe();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit' }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
+  s.restore();
+  assert.equal((r.data.warnings || []).filter((w) => w.code === 'unpaid_invoice').length, 0,
+    JSON.stringify(r.data.warnings));
+});
