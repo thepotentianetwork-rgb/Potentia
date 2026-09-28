@@ -19,6 +19,20 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 // Add a module here when index.js starts importing one. Nothing else to change.
 export const MODULES = ["pricing.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js", "stripewebhook.js"];
 
+/* The commit the bundle was built from, for the stamp below and the log
+   line at the end. Module scope so both can reach it. */
+function gitDesc() {
+  try {
+    const sha = execSync("git rev-parse --short HEAD", { cwd: dir, stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim();
+    const dirty = execSync("git status --porcelain", { cwd: dir, stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim().length > 0;
+    return sha + (dirty ? "-dirty" : "");
+  } catch (e) {
+    return "unknown";
+  }
+}
+
 /* The concatenation, as a function of the files on disk, so a test can build
    one in memory and check it without writing over dist/. dist/ is deliberately
    NOT kept current: it holds whatever was last pasted into Cloudflare, which
@@ -56,17 +70,6 @@ for (const mod of MODULES) {
    means there is no deploy log, no version number and no way to tell a paste
    that landed from one that did not - a bundle sitting unpasted looks exactly
    like a bug in the code. WORKER_BUILD is what /version reports back. */
-function gitDesc() {
-  try {
-    const sha = execSync("git rev-parse --short HEAD", { cwd: dir, stdio: ["ignore", "pipe", "ignore"] })
-      .toString().trim();
-    const dirty = execSync("git status --porcelain", { cwd: dir, stdio: ["ignore", "pipe", "ignore"] })
-      .toString().trim().length > 0;
-    return sha + (dirty ? "-dirty" : "");
-  } catch (e) {
-    return "unknown";
-  }
-}
 const stamp =
   "// Build stamp, written by build-bundle.mjs. Read it back from GET /version.\n" +
   "const WORKER_BUILD = " + JSON.stringify(gitDesc()) + ";\n" +
@@ -75,13 +78,25 @@ const stamp =
 return stamp + inlined + indexSrc;
 }
 
-/* Writing only happens when the file is run, never on import, so a test can
-   call assemble() without touching what is deployed. */
-if (import.meta.url === `file://${process.argv[1]}`) {
+/* The write, separated from the run check so a test can exercise it into a
+   temporary directory. Running it for real crashed here once, after the file
+   was already on disk - a build that looks failed but left a good bundle is
+   worse than one that plainly fails, so this path is covered now. */
+export function build(outDir = path.join(dir, "dist")) {
   const bundled = assemble();
-  const outDir = path.join(dir, "dist");
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, "index.bundle.js");
   fs.writeFileSync(outPath, bundled);
-  console.log("Wrote " + outPath + " (" + bundled.split("\n").length + " lines, " + MODULES.length + " modules inlined, build " + gitDesc() + ")");
+  /* Read the stamp back out of what was written rather than calling gitDesc()
+     again: by now the new dist file makes the tree dirty, so a fresh call
+     would report "-dirty" for a bundle stamped clean. */
+  const stamp = (bundled.match(/const WORKER_BUILD = "([^"]*)"/) || [])[1];
+  return { outPath, lines: bundled.split("\n").length, stamp };
+}
+
+/* Writing only happens when the file is run, never on import, so a test can
+   call assemble() without touching what is deployed. */
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const { outPath, lines, stamp } = build();
+  console.log("Wrote " + outPath + " (" + lines + " lines, " + MODULES.length + " modules inlined, build " + stamp + ")");
 }

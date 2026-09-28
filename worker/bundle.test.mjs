@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
-import { assemble, MODULES } from './build-bundle.mjs';
+import { assemble, build, MODULES } from './build-bundle.mjs';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -93,4 +93,28 @@ test('that bundle carries every module, and no import statements survive', () =>
   assert.match(out, /function quoteLines/, 'quotelines.js is not in the bundle');
   assert.match(out, /function buildInvoice/, 'invoices.js is not in the bundle');
   assert.match(out, /function createAndSendInvoice/, 'stripe.js is not in the bundle');
+});
+
+/* Running the builder for real once wrote a good bundle and THEN threw, on the
+   line that logs what it wrote. Nothing caught it: every test above calls
+   assemble(), and the write lived inside the `is this the main module` guard
+   where no test could reach it. A build that prints a stack trace but leaves a
+   correct file on disk is the worst of both — it looks broken and isn't, so
+   the fix does not get pasted. build() exists to be reachable; this runs it.
+
+   Into a temp directory, never worker/dist: that file holds whatever was last
+   pasted into Cloudflare, and overwriting it here would destroy the only
+   record of what is actually running. */
+test('the builder writes a bundle without falling over', () => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'bundle-build-'));
+  try {
+    const res = build(out);
+    assert.equal(res.outPath, path.join(out, 'index.bundle.js'));
+    assert.ok(res.lines > 100, 'suspiciously short bundle: ' + res.lines + ' lines');
+    assert.ok(res.stamp && res.stamp.length, 'no build stamp');
+    execFileSync(process.execPath, ['--check', res.outPath]);
+    assert.equal(fs.readFileSync(res.outPath, 'utf8').split('\n').length, res.lines);
+  } finally {
+    fs.rmSync(out, { recursive: true, force: true });
+  }
 });
