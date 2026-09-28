@@ -20,6 +20,10 @@
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
+import { quoteLines } from "./quotelines.js";
+import { buildInvoice, splitPayments, fromCents } from "./invoices.js";
+import { ensureCustomer, createAndSendInvoice, voidInvoice } from "./stripe.js";
+import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -254,15 +258,8 @@ async function verifyToken(secret, token) {
     return null;
   }
 }
-function timingSafeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  const len = Math.max(a.length, b.length);
-  let mismatch = a.length === b.length ? 0 : 1;
-  for (let i = 0; i < len; i++) {
-    mismatch |= (i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0);
-  }
-  return mismatch === 0;
-}
+/* timingSafeEqual now lives in stripewebhook.js, imported above — the
+   webhook needs the same comparison and two of them is one too many. */
 function bearerToken(request) {
   const auth = request.headers.get("Authorization") || "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -545,6 +542,26 @@ async function ensurePaymentsTable(env) {
       created_at TEXT NOT NULL
     )`
   ).run();
+
+  /* submission_id came later. This table was written when a payment only had
+     to say which CUSTOMER paid; a few customers have since bought a second
+     shed, and "what is still owed" is a question about a JOB. Without it, the
+     balance invoice on a second shed would credit the customer for the first.
+     The CRM side reached the same conclusion about its own deposits - see the
+     note on client_intake in ensureCrmTables.
+
+     Nullable, and left null on every existing row: those payments are real but
+     unattributed, and inventing a job for them would be worse than admitting
+     it. splitPayments() hands them back for a person to place.
+
+     CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, and
+     D1 has no ADD COLUMN IF NOT EXISTS, so read the table and add what is
+     missing. */
+  const have = await env.DB.prepare("PRAGMA table_info(payments)").all();
+  const names = (have.results || []).map((r) => r.name);
+  if (names.indexOf("submission_id") === -1) {
+    await env.DB.prepare("ALTER TABLE payments ADD COLUMN submission_id INTEGER").run();
+  }
 }
 
 // Lazily creates the installs table on first use — same reasoning as
@@ -607,7 +624,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensurePaymentsTable(env);
   const { results: payments } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -722,6 +739,281 @@ async function handleDeleteCall(request, env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
+// ---- invoices ----------------------------------------------------------
+/* What was billed, when, and for which shed. Lazily created like payments and
+   installs, so no manual D1 migration.
+
+   The AMOUNTS ARE SNAPSHOTTED here rather than recomputed on read. The quote
+   reprices itself from current pricing every time it loads, which is right for
+   a quote and wrong for an invoice: edit a price next month and an invoice a
+   customer already received would quietly show a different number than the one
+   they agreed to. Stripe freezes its side on finalize; this is our copy of the
+   same fact.
+
+   status mirrors Stripe's (open / paid / void / uncollectible) and is updated
+   by the webhook, not guessed at here. */
+async function ensureInvoicesTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS invoices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      submission_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      stripe_invoice_id TEXT,
+      hosted_url TEXT,
+      amount REAL NOT NULL,
+      status TEXT NOT NULL,
+      lines TEXT,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      paid_at TEXT
+    )`
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_invoices_submission ON invoices (submission_id)"
+  ).run();
+
+  /* Stripe's customer id, so a second invoice reuses the first customer rather
+     than creating a duplicate — which is how a business ends up with four of
+     the same person and a payment history split across all of them. */
+  const have = await env.DB.prepare("PRAGMA table_info(customers)").all();
+  const names = (have.results || []).map((r) => r.name);
+  if (names.length && names.indexOf("stripe_customer_id") === -1) {
+    await env.DB.prepare("ALTER TABLE customers ADD COLUMN stripe_customer_id TEXT").run();
+  }
+}
+
+/* Everything an invoice needs, gathered and priced, without sending anything.
+   Shared by the preview and the send so the figures a person approves are the
+   figures that go out — computing them twice would let the two drift. */
+async function invoiceContext(env, submissionId, kind) {
+  await ensurePaymentsTable(env);
+  await ensureInvoicesTable(env);
+
+  const sub = await env.DB.prepare(
+    "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+  ).bind(submissionId).first();
+  if (!sub) throw Object.assign(new Error("no such submission"), { status: 404 });
+
+  const customer = await env.DB.prepare(
+    "SELECT * FROM customers WHERE id = ?"
+  ).bind(sub.customer_id).first();
+  if (!customer) throw Object.assign(new Error("that submission has no customer"), { status: 404 });
+
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+  const breakdown = quoteLines(details.redline, adjustmentsOf(sub));
+  if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
+
+  const { results: payRows } = await env.DB.prepare(
+    "SELECT id, amount, method, note, paid_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+  ).bind(sub.customer_id).all();
+  const split = splitPayments(payRows || [], sub.id);
+
+  const invoice = buildInvoice(breakdown, kind, split.applied);
+  return { sub, customer, breakdown, split, invoice };
+}
+
+/* POST /stripe/webhook — public, and the only thing standing between it and a
+ * stranger marking an $11,000 shed paid is the signature check.
+ *
+ * The body is read as TEXT and verified before it is parsed. Parsing first and
+ * re-serialising for the check would change key order and whitespace, and the
+ * signature is over the bytes.
+ */
+async function handleStripeWebhook(request, env, origin) {
+  const raw = await request.text();
+  const verdict = await verifyStripeSignature(
+    raw, request.headers.get("Stripe-Signature"), env.STRIPE_WEBHOOK_SECRET);
+  if (!verdict.ok) {
+    /* 400 with nothing useful in it. Telling a caller WHICH part of their
+       forgery failed is a hint they can work with; the reason stays here. */
+    console.log("stripe webhook rejected:", verdict.reason);
+    return json({ error: "bad signature" }, 400, origin);
+  }
+
+  let event = {};
+  try { event = JSON.parse(raw); } catch (e) {
+    return json({ error: "bad payload" }, 400, origin);
+  }
+
+  /* Anything not handled is acknowledged, not retried. Stripe backs off for
+     three days on a non-2xx, and a queue of events we were never going to act
+     on is noise that hides the ones we would. */
+  if (event.type !== "invoice.paid") return json({ ok: true, ignored: event.type }, 200, origin);
+
+  const inv = (event.data && event.data.object) || {};
+  if (!inv.id) return json({ ok: true, ignored: "no invoice id" }, 200, origin);
+
+  await ensureInvoicesTable(env);
+  await ensurePaymentsTable(env);
+
+  const row = await env.DB.prepare(
+    "SELECT id, customer_id, submission_id, kind, status, amount FROM invoices WHERE stripe_invoice_id = ?"
+  ).bind(inv.id).first();
+  /* An invoice raised somewhere other than here — the Stripe dashboard, say.
+     Acknowledged rather than errored: it is a real event, just not ours. */
+  if (!row) return json({ ok: true, ignored: "unknown invoice " + inv.id }, 200, origin);
+
+  /* Stripe retries, and resends can be triggered by hand for 30 days. Without
+     this, one payment is recorded as several and the balance invoice then
+     under-bills by the difference. The invoice status IS the guard — no
+     separate ledger of processed event ids to keep in step. */
+  if (row.status === "paid") return json({ ok: true, already: true }, 200, origin);
+
+  /* amount_paid is in cents and is what actually cleared, which is not always
+     what was billed — a partial payment or a credit note changes it. Record
+     what arrived, not what was asked for. */
+  const paid = Number(inv.amount_paid);
+  const amount = Number.isFinite(paid) && paid > 0 ? paid / 100 : Number(row.amount);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+  ).bind(row.customer_id, amount, "stripe",
+         row.kind === "deposit" ? "Deposit paid on Stripe" : "Balance paid on Stripe",
+         now, now, row.submission_id).run();
+
+  await env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?")
+    .bind(now, row.id).run();
+
+  return json({ ok: true, recorded: amount }, 200, origin);
+}
+
+/* POST /admin/invoices — {submission_id, kind, preview?}
+ *
+ * preview computes and returns without touching Stripe. Worth having: this is
+ * the one button in the system that asks a customer for money, and sending it
+ * blind is how a wrong figure reaches someone who then has to be apologised to.
+ */
+async function handleCreateInvoice(request, env, origin, actor) {
+  const body = await request.json().catch(() => ({}));
+  const submissionId = Number(body.submission_id);
+  const kind = String(body.kind || "").toLowerCase();
+  if (!submissionId) return json({ error: "submission_id required" }, 400, origin);
+
+  let ctx;
+  try {
+    ctx = await invoiceContext(env, submissionId, kind);
+  } catch (e) {
+    return json({ error: e.message }, e.status || 400, origin);
+  }
+  const { sub, customer, split, invoice } = ctx;
+
+  /* Payments nobody attributed to a job. Not applied and not ignored — both
+     are wrong in a way that costs a customer money — so they ride along on
+     every response and the person sending decides. */
+  const warnings = [];
+  if (split.unassigned.length) {
+    warnings.push({
+      code: "unassigned_payments",
+      count: split.unassigned.length,
+      total: split.unassigned.reduce((t, p) => t + Number(p.amount || 0), 0),
+      message: "This customer has payments not assigned to a job. They are NOT " +
+               "credited on this invoice. Assign them first if they belong to this shed."
+    });
+  }
+
+  const shape = {
+    kind, submission_id: sub.id, customer_id: customer.id,
+    lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+    amount: fromCents(invoice.totalCents),
+    job_total: fromCents(invoice.jobTotalCents),
+    already_paid: fromCents(invoice.paidCents),
+    warnings
+  };
+  if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
+
+  /* One live invoice of a kind per shed. Voiding is how you replace one, and
+     requiring that makes "I pressed it twice last week" impossible to do by
+     accident — Stripe's idempotency only covers a 24 hour window. */
+  const existing = await env.DB.prepare(
+    "SELECT id, status, hosted_url FROM invoices WHERE submission_id = ? AND kind = ? AND status NOT IN ('void','draft_failed')"
+  ).bind(sub.id, kind).first();
+  if (existing && !body.replace_voided) {
+    return json({ error: "a " + kind + " invoice for this shed already exists (" + existing.status + "). Void it first.",
+                  existing_id: existing.id, hosted_url: existing.hosted_url }, 409, origin);
+  }
+
+  /* Counts every attempt including voided ones, so reissuing after a void gets
+     a fresh key while a double-tapped button inside one attempt does not. */
+  const prior = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM invoices WHERE submission_id = ? AND kind = ?"
+  ).bind(sub.id, kind).first();
+  const idempotencyKey = `sub${sub.id}:${kind}:${(prior && prior.n) || 0}`;
+
+  let stripeCustomerId = customer.stripe_customer_id || null;
+  let sent;
+  try {
+    const cust = await ensureCustomer(env, {
+      stripeCustomerId,
+      name: customer.name || customer.contact_name || undefined,
+      email: customer.email, phone: customer.phone || undefined,
+    });
+    if (cust.created) {
+      stripeCustomerId = cust.id;
+      await env.DB.prepare("UPDATE customers SET stripe_customer_id = ? WHERE id = ?")
+        .bind(cust.id, customer.id).run();
+    }
+    sent = await createAndSendInvoice(env, {
+      customerId: cust.id, lines: invoice.lines, kind,
+      description: `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+      idempotencyKey,
+      metadata: { submission_id: String(sub.id), customer_id: String(customer.id), kind },
+    });
+  } catch (e) {
+    return json({ error: e.message || "Stripe would not accept this invoice" }, 502, origin);
+  }
+
+  const now = new Date().toISOString();
+  const row = await env.DB.prepare(
+    `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
+       amount, status, lines, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).bind(customer.id, sub.id, kind, sent.id, sent.hosted_invoice_page || null,
+         fromCents(invoice.totalCents), sent.status || "open",
+         JSON.stringify(shape.lines), now, (actor && actor.name) || null).run();
+
+  return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
+                hosted_url: sent.hosted_invoice_page || null, status: sent.status || "open",
+                ...shape }, 200, origin);
+}
+
+async function handleListInvoices(request, env, origin, customerId) {
+  await ensureInvoicesTable(env);
+  const { results } = await env.DB.prepare(
+    `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
+            lines, created_at, created_by, paid_at
+     FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
+  ).bind(customerId).all();
+  const invoices = (results || []).map((r) => {
+    let lines = [];
+    try { lines = JSON.parse(r.lines) || []; } catch (e) {}
+    return { ...r, lines };
+  });
+  return json({ invoices }, 200, origin);
+}
+
+/* Void, because a sent invoice cannot be edited — Stripe treats a finalized
+   invoice as a legal document. Voiding here and in Stripe together, so the CRM
+   never shows one state while the customer's copy shows another. */
+async function handleVoidInvoice(request, env, origin, id) {
+  await ensureInvoicesTable(env);
+  const row = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "no such invoice" }, 404, origin);
+  if (row.status === "paid") {
+    return json({ error: "this invoice is already paid — refund it in Stripe instead of voiding" }, 409, origin);
+  }
+  if (row.stripe_invoice_id) {
+    try {
+      await voidInvoice(env, row.stripe_invoice_id);
+    } catch (e) {
+      return json({ error: e.message || "Stripe would not void it" }, 502, origin);
+    }
+  }
+  await env.DB.prepare("UPDATE invoices SET status = 'void' WHERE id = ?").bind(id).run();
+  return json({ ok: true, id, status: "void" }, 200, origin);
+}
+
 // ---- /admin/customers/:id/payments ----
 // A single collection is sometimes split across two methods (e.g. part cash,
 // part Venmo) — the UI handles that by just logging two separate entries
@@ -737,13 +1029,56 @@ async function handleAddPayment(request, env, origin, customerId) {
   if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
 
   await ensurePaymentsTable(env);
+
+  /* Which shed this paid for. Optional, because a payment can arrive before
+     anyone knows, and refusing it would push someone into not recording it at
+     all — an unrecorded payment is worse than an unattributed one. But it is
+     checked when given: a typo'd id would attach money to another customer's
+     job, and the balance invoice would then credit the wrong person. */
+  let submissionId = null;
+  if (body.submission_id !== undefined && body.submission_id !== null && body.submission_id !== "") {
+    submissionId = Number(body.submission_id);
+    if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+    const owns = await env.DB.prepare(
+      "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+    ).bind(submissionId, customerId).first();
+    if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+  }
+
   const now = new Date().toISOString();
   const res = await env.DB.prepare(
-    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at) VALUES (?,?,?,?,?,?)"
+    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
   )
-    .bind(customerId, amount, method, note || null, paidAt, now)
+    .bind(customerId, amount, method, note || null, paidAt, now, submissionId)
     .run();
   return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+/* PUT the shed onto a payment that has none — or move one that went on the
+   wrong job. Every payment taken before this existed is unattributed, and
+   without a way to place them the invoice warning never clears and the balance
+   is wrong forever. */
+async function handleSetPaymentSubmission(request, env, origin, paymentId) {
+  const body = await request.json().catch(() => ({}));
+  await ensurePaymentsTable(env);
+
+  const pay = await env.DB.prepare("SELECT id, customer_id FROM payments WHERE id = ?")
+    .bind(paymentId).first();
+  if (!pay) return json({ error: "no such payment" }, 404, origin);
+
+  let submissionId = null;
+  if (body.submission_id !== undefined && body.submission_id !== null && body.submission_id !== "") {
+    submissionId = Number(body.submission_id);
+    if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+    const owns = await env.DB.prepare(
+      "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+    ).bind(submissionId, pay.customer_id).first();
+    if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+  }
+
+  await env.DB.prepare("UPDATE payments SET submission_id = ? WHERE id = ?")
+    .bind(submissionId, paymentId).run();
+  return json({ ok: true, id: paymentId, submission_id: submissionId }, 200, origin);
 }
 
 async function handleDeletePayment(request, env, origin, id) {
@@ -3390,6 +3725,35 @@ export default {
         const id = Number(path.slice("/admin/calls/".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleDeleteCall(request, env, origin, id);
+      }
+      /* Public by necessity — Stripe cannot log in. The signature is the
+         auth, and there is no rate limit because a flood of unsigned posts is
+         rejected before any database work happens. */
+      if (path === "/stripe/webhook" && request.method === "POST") {
+        return await handleStripeWebhook(request, env, origin);
+      }
+      if (path === "/admin/invoices" && request.method === "POST") {
+        const who = await requireAuth(request, env);
+        if (!who) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleCreateInvoice(request, env, origin, who);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/invoices") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const cid = Number(path.split("/")[3]);
+        if (!cid) return json({ error: "bad customer id" }, 400, origin);
+        return await handleListInvoices(request, env, origin, cid);
+      }
+      if (path.startsWith("/admin/invoices/") && path.endsWith("/void") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const iid = Number(path.split("/")[3]);
+        if (!iid) return json({ error: "bad invoice id" }, 400, origin);
+        return await handleVoidInvoice(request, env, origin, iid);
+      }
+      if (path.startsWith("/admin/payments/") && path.endsWith("/submission") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.split("/")[3]);
+        if (!pid) return json({ error: "bad payment id" }, 400, origin);
+        return await handleSetPaymentSubmission(request, env, origin, pid);
       }
       if (path.startsWith("/admin/customers/") && path.endsWith("/payments") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

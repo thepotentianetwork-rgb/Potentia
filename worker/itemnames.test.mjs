@@ -194,7 +194,8 @@ test('nothing anywhere still says "Horizontal Lap"', () => {
 
 test('a comp on a window still matches after the rename', async () => {
   /* compItemsFromRedline (worker) offers the picker its names, and
-     compItemPrices (quote.html) looks the chosen name back up. Both read the
+     compItemPrices (quotelines.js, reaching the page as quotelines.browser.js)
+     looks the chosen name back up. Both read the
      SAME stored redline, which is the only reason renaming a label is safe:
      an old quote keeps its old labels on both sides, a new one gets new
      labels on both sides, and neither can half-rename. If one of those two
@@ -220,6 +221,10 @@ test('a comp on a window still matches after the rename', async () => {
     fetch: () => new Promise(() => {}), setTimeout, clearTimeout };
   ctx.window = ctx;
   vm.createContext(ctx);
+  /* The page loads this before its own script; compItemPrices and nameList
+     live in it now, not in the inline script. */
+  vm.runInContext(readFileSync(join(REPO, 'quotelines.browser.js'), 'utf8'), ctx,
+    { filename: 'quotelines.browser.js' });
   vm.runInContext(script[1], ctx, { filename: 'quote.html' });
 
   const prices = ctx.compItemPrices(redline);

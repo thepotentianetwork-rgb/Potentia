@@ -141,6 +141,10 @@ select:focus{border-color:var(--sp-blue)}
 .payment-form #pay-amount{width:110px}
 .payment-form #pay-method{width:140px;font-family:'DM Mono',monospace;font-size:12px}
 .payment-form #pay-date{width:150px;font-family:'DM Mono',monospace;font-size:12px}
+.payment-form #pay-submission{width:190px;font-family:'DM Mono',monospace;font-size:12px}
+.payment-job{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--silver)}
+.payment-job.unset{color:#ffd970}
+.payment-assign{font-family:'DM Mono',monospace;font-size:10px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);padding:4px 6px;margin-top:4px}
 .payment-form #pay-note{flex:1;min-width:160px}
 .payment-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--dim)}
 .payment-row:first-child{padding-top:0}
@@ -323,6 +327,9 @@ select:focus{border-color:var(--sp-blue)}
         <option value="invoice2go">Invoice2Go</option>
         <option value="card">Card</option>
         <option value="other">Other</option>
+      </select>
+      <select id="pay-submission" title="Which build this paid for">
+        <option value="">Which build? (recommended)</option>
       </select>
       <input id="pay-date" type="date">
       <input id="pay-note" type="text" placeholder="Note (optional) — e.g. Phase 1 deposit">
@@ -1204,6 +1211,35 @@ var PAYMENT_METHOD_LABELS = {
   invoice2go: 'Invoice2Go', card: 'Card', other: 'Other'
 };
 
+/* The customer's builds, for the picker and for naming a build on a payment
+   row. Filled by loadCustomer from the submissions it already fetched, so
+   there is no extra request. */
+var SUBMISSIONS = [];
+function buildLabel(id) {
+  var sub = SUBMISSIONS.filter(function (x) { return Number(x.id) === Number(id); })[0];
+  if (!sub) return 'Build #' + id;
+  var when = sub.created_at ? new Date(sub.created_at).toLocaleDateString() : '';
+  return 'Build #' + sub.id + (when ? ' · ' + when : '');
+}
+function fillSubmissionPicker() {
+  var sel = document.getElementById('pay-submission');
+  if (!sel) return;
+  sel.innerHTML = '';
+  var first = document.createElement('option');
+  first.value = '';
+  first.textContent = SUBMISSIONS.length > 1 ? 'Which build? (pick one)' : 'Which build? (recommended)';
+  sel.appendChild(first);
+  SUBMISSIONS.forEach(function (sub) {
+    var o = document.createElement('option');
+    o.value = sub.id;
+    o.textContent = buildLabel(sub.id);
+    sel.appendChild(o);
+  });
+  /* One build means there is nothing to choose — preselect it, because the
+     whole problem this solves is payments going in unattributed. */
+  if (SUBMISSIONS.length === 1) sel.value = SUBMISSIONS[0].id;
+}
+
 function renderPayments(payments) {
   var wrap = document.getElementById('payments-list');
   wrap.innerHTML = '';
@@ -1237,6 +1273,39 @@ function renderPayments(payments) {
       note.className = 'payment-note';
       note.textContent = p.note;
       main.appendChild(note);
+    }
+
+    /* Which build this paid for, said out loud on every row. A payment with no
+       build is not credited on any balance invoice, so it has to look wrong
+       here rather than quietly go missing there. */
+    var job = document.createElement('div');
+    job.className = 'payment-job' + (p.submission_id ? '' : ' unset');
+    job.textContent = p.submission_id ? buildLabel(p.submission_id) : 'No build \u2014 not counted on any invoice';
+    main.appendChild(job);
+
+    if (!p.submission_id && SUBMISSIONS.length) {
+      var assign = document.createElement('select');
+      assign.className = 'payment-assign';
+      var blank = document.createElement('option');
+      blank.value = ''; blank.textContent = 'Assign to a build\u2026';
+      assign.appendChild(blank);
+      SUBMISSIONS.forEach(function (sub) {
+        var o = document.createElement('option');
+        o.value = sub.id; o.textContent = buildLabel(sub.id);
+        assign.appendChild(o);
+      });
+      assign.addEventListener('change', function () {
+        if (!assign.value) return;
+        assign.disabled = true;
+        authFetch('/admin/payments/' + p.id + '/submission', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ submission_id: Number(assign.value) })
+        }).then(function (r) {
+          if (r.ok) loadCustomer();
+          else { assign.disabled = false; alert((r.data && r.data.error) || 'Could not assign it.'); }
+        }).catch(function () { assign.disabled = false; });
+      });
+      main.appendChild(assign);
     }
 
     var delBtn = document.createElement('button');
@@ -1418,6 +1487,9 @@ function loadCustomer() {
     document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
 
     var submissions = r.data.submissions || [], notes = r.data.notes || [], payments = r.data.payments || [], installs = r.data.installs || [];
+    /* Before renderPayments, which names a build on every payment row. */
+    SUBMISSIONS = submissions;
+    fillSubmissionPicker();
     renderOrders(submissions, installs);
     renderCalls(r.data.calls || []);
     renderNotes(notes);
@@ -1508,6 +1580,7 @@ document.getElementById('payment-form').addEventListener('submit', function (e) 
     body: JSON.stringify({
       amount: amount,
       method: method,
+      submission_id: (document.getElementById('pay-submission') || {}).value || undefined,
       note: noteInput.value.trim(),
       paid_at: dateInput.value ? new Date(dateInput.value).toISOString() : undefined
     })
@@ -1517,6 +1590,7 @@ document.getElementById('payment-form').addEventListener('submit', function (e) 
       methodInput.value = '';
       noteInput.value = '';
       dateInput.value = new Date().toISOString().slice(0, 10);
+      fillSubmissionPicker();
       loadCustomer();
     }
   });

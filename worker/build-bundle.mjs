@@ -17,8 +17,14 @@ import { fileURLToPath } from "url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
 // Add a module here when index.js starts importing one. Nothing else to change.
-const MODULES = ["pricing.js", "leadpipeline.js"];
+export const MODULES = ["pricing.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js", "stripewebhook.js"];
 
+/* The concatenation, as a function of the files on disk, so a test can build
+   one in memory and check it without writing over dist/. dist/ is deliberately
+   NOT kept current: it holds whatever was last pasted into Cloudflare, which
+   is what /version reports, and rebuilding it on every commit would lose the
+   only record of what is actually running. */
+export function assemble() {
 let indexSrc = fs.readFileSync(path.join(dir, "index.js"), "utf8");
 let inlined = "";
 
@@ -66,10 +72,16 @@ const stamp =
   "const WORKER_BUILD = " + JSON.stringify(gitDesc()) + ";\n" +
   "const WORKER_BUILT_AT = " + JSON.stringify(new Date().toISOString()) + ";\n\n";
 
-const bundled = stamp + inlined + indexSrc;
+return stamp + inlined + indexSrc;
+}
 
-const outDir = path.join(dir, "dist");
-fs.mkdirSync(outDir, { recursive: true });
-const outPath = path.join(outDir, "index.bundle.js");
-fs.writeFileSync(outPath, bundled);
-console.log("Wrote " + outPath + " (" + bundled.split("\n").length + " lines, " + MODULES.length + " modules inlined, build " + gitDesc() + ")");
+/* Writing only happens when the file is run, never on import, so a test can
+   call assemble() without touching what is deployed. */
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const bundled = assemble();
+  const outDir = path.join(dir, "dist");
+  fs.mkdirSync(outDir, { recursive: true });
+  const outPath = path.join(outDir, "index.bundle.js");
+  fs.writeFileSync(outPath, bundled);
+  console.log("Wrote " + outPath + " (" + bundled.split("\n").length + " lines, " + MODULES.length + " modules inlined, build " + gitDesc() + ")");
+}

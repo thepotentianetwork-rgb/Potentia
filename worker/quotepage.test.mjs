@@ -20,6 +20,7 @@ import { computePricing } from './pricing.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PAGE = path.join(HERE, '..', 'quote.html');
+const BROWSER_MATH = path.join(HERE, '..', 'quotelines.browser.js');
 
 function loadQuotePage() {
   const html = fs.readFileSync(PAGE, 'utf8');
@@ -51,6 +52,11 @@ function loadQuotePage() {
   };
   ctx.window = ctx;
   vm.createContext(ctx);
+  /* The page loads this before its own script, and its arithmetic now comes
+     from it. Loading only the inline script would leave taxBreakdown calling a
+     quoteLines that isn't there — which is the same class of failure this file
+     was written to catch, so the harness has to load what the browser loads. */
+  vm.runInContext(fs.readFileSync(BROWSER_MATH, 'utf8'), ctx, { filename: 'quotelines.browser.js' });
   vm.runInContext(m[1], ctx, { filename: 'quote.html' });
   return ctx;
 }
