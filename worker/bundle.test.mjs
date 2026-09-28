@@ -18,6 +18,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import { assemble, MODULES } from './build-bundle.mjs';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -36,12 +38,7 @@ function topLevelNames(file) {
   return out;
 }
 
-function modules() {
-  const src = fs.readFileSync(path.join(HERE, 'build-bundle.mjs'), 'utf8');
-  const m = src.match(/const MODULES = \[([^\]]*)\]/);
-  assert.ok(m, 'build-bundle.mjs still declares MODULES');
-  return m[1].split(',').map((s) => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
-}
+const modules = () => MODULES;
 
 test('no two bundled files declare the same top-level name', () => {
   const files = ['index.js', ...modules()];
@@ -68,13 +65,25 @@ test('every module the worker imports is in MODULES', () => {
   }
 });
 
-test('the committed bundle is valid JavaScript', () => {
+/* dist/ holds whatever was last PASTED into Cloudflare, which is what /version
+   reports. It is deliberately not rebuilt on every commit — that would lose the
+   only record of what is actually running. So the committed file is checked for
+   being valid, and everything about the CURRENT sources is checked against a
+   bundle assembled in memory. */
+test('the committed bundle — whatever is deployed — is valid JavaScript', () => {
   assert.ok(fs.existsSync(BUNDLE), 'dist/index.bundle.js is missing');
-  execFileSync(process.execPath, ['--check', BUNDLE]);   // throws on a syntax error
+  execFileSync(process.execPath, ['--check', BUNDLE]);
 });
 
-test('the bundle carries every module, and no import statements survive', () => {
-  const out = fs.readFileSync(BUNDLE, 'utf8');
+test('a bundle built from the sources as they stand now parses', () => {
+  const tmp = path.join(os.tmpdir(), 'bundle-check-' + process.pid + '.js');
+  fs.writeFileSync(tmp, assemble());
+  try { execFileSync(process.execPath, ['--check', tmp]); }
+  finally { fs.unlinkSync(tmp); }
+});
+
+test('that bundle carries every module, and no import statements survive', () => {
+  const out = assemble();
   for (const f of modules()) {
     assert.ok(!new RegExp(`from ["']\\./${f.replace('.', '\\.')}["']`).test(out),
       `the bundle still imports ./${f} — the dashboard has no such file`);

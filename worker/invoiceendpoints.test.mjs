@@ -221,3 +221,94 @@ test('the list shows what was billed and links back to each one', async () => {
   assert.ok(Array.isArray(r.data.invoices[0].lines) && r.data.invoices[0].lines.length >= 2,
     'the lines are stored, so the invoice reads the same later even if pricing moves');
 });
+
+/* ── WHICH SHED DID THIS PAY FOR ─────────────────────────────────────────────
+ * Recording a payment without a build is what created the unassigned pile in
+ * the first place. These cover putting one on, and putting one on afterwards.
+ */
+function withPayments() {
+  const s = setup();
+  s.db.exec(`CREATE TABLE payments (id INTEGER PRIMARY KEY, customer_id INTEGER, amount REAL,
+             method TEXT, note TEXT, paid_at TEXT, created_at TEXT, submission_id INTEGER)`);
+  /* The full customer endpoint reads notes too, and there is no
+     ensureNotesTable — it predates the lazy-creation pattern. */
+  s.db.exec('CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, customer_id INTEGER, text TEXT, created_at TEXT)');
+  s.db.prepare("INSERT INTO customers (id,name,email) VALUES (2,'Someone Else','x@y.test')").run();
+  s.db.prepare("INSERT INTO submissions (id,customer_id,details,created_at) VALUES (99,2,'{}','2026-01-01')").run();
+  return s;
+}
+
+test('a payment can say which build it paid for', async () => {
+  const { db, env } = withPayments();
+  const t = await token(env);
+  const r = await api(env, 'POST', '/admin/customers/1/payments',
+    { amount: 5000, method: 'check', submission_id: 7 }, t);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(db.prepare('SELECT submission_id FROM payments WHERE id=?').get(r.data.id).submission_id, 7);
+});
+
+/* Money attached to another customer's job would be credited to a stranger's
+   balance invoice. */
+test("a build belonging to another customer is refused", async () => {
+  const { db, env } = withPayments();
+  const t = await token(env);
+  const r = await api(env, 'POST', '/admin/customers/1/payments',
+    { amount: 5000, method: 'check', submission_id: 99 }, t);
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /does not belong/);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM payments').get().n, 0, 'and nothing was written');
+});
+
+/* A payment can arrive before anyone knows which shed it is for. Refusing it
+   pushes someone into not recording it at all, which is worse. */
+test('a payment with no build is still accepted', async () => {
+  const { db, env } = withPayments();
+  const t = await token(env);
+  const r = await api(env, 'POST', '/admin/customers/1/payments', { amount: 5000, method: 'cash' }, t);
+  assert.equal(r.status, 200);
+  assert.equal(db.prepare('SELECT submission_id FROM payments WHERE id=?').get(r.data.id).submission_id, null);
+});
+
+test('an old unassigned payment can be placed afterwards', async () => {
+  const { db, env } = withPayments();
+  const t = await token(env);
+  db.prepare("INSERT INTO payments (id,customer_id,amount,method,paid_at,created_at,submission_id) VALUES (50,1,2500,'cash','2026-08-01','2026-08-01',NULL)").run();
+
+  const r = await api(env, 'POST', '/admin/payments/50/submission', { submission_id: 8 }, t);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(db.prepare('SELECT submission_id FROM payments WHERE id=50').get().submission_id, 8);
+
+  /* And it now counts against that shed's balance, which is the point. */
+  const prev = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'balance', preview: true }, t);
+  assert.equal(prev.data.already_paid, 2500);
+  assert.ok(!(prev.data.warnings || []).some((w) => w.code === 'unassigned_payments'),
+    'the warning should clear once it is placed');
+});
+
+test('it can be moved off a build again, and cannot be moved to a stranger’s', async () => {
+  const { db, env } = withPayments();
+  const t = await token(env);
+  db.prepare("INSERT INTO payments (id,customer_id,amount,method,paid_at,created_at,submission_id) VALUES (51,1,900,'card','2026-08-01','2026-08-01',7)").run();
+
+  const off = await api(env, 'POST', '/admin/payments/51/submission', { submission_id: '' }, t);
+  assert.equal(off.status, 200);
+  assert.equal(db.prepare('SELECT submission_id FROM payments WHERE id=51').get().submission_id, null);
+
+  const bad = await api(env, 'POST', '/admin/payments/51/submission', { submission_id: 99 }, t);
+  assert.equal(bad.status, 400, 'another customer’s build must be refused here too');
+});
+
+test('assigning a payment needs the admin token', async () => {
+  const { env } = withPayments();
+  const r = await api(env, 'POST', '/admin/payments/50/submission', { submission_id: 7 });
+  assert.equal(r.status, 401);
+});
+
+test('the payments list carries the build, so the page can show it', async () => {
+  const { db, env } = withPayments();
+  const t = await token(env);
+  db.prepare("INSERT INTO payments (id,customer_id,amount,method,paid_at,created_at,submission_id) VALUES (52,1,900,'card','2026-08-01','2026-08-01',7)").run();
+  const r = await api(env, 'GET', '/admin/customers/1', null, t);
+  assert.equal(r.status, 200);
+  assert.equal((r.data.payments || [])[0].submission_id, 7);
+});

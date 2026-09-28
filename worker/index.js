@@ -630,7 +630,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensurePaymentsTable(env);
   const { results: payments } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -969,13 +969,56 @@ async function handleAddPayment(request, env, origin, customerId) {
   if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
 
   await ensurePaymentsTable(env);
+
+  /* Which shed this paid for. Optional, because a payment can arrive before
+     anyone knows, and refusing it would push someone into not recording it at
+     all — an unrecorded payment is worse than an unattributed one. But it is
+     checked when given: a typo'd id would attach money to another customer's
+     job, and the balance invoice would then credit the wrong person. */
+  let submissionId = null;
+  if (body.submission_id !== undefined && body.submission_id !== null && body.submission_id !== "") {
+    submissionId = Number(body.submission_id);
+    if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+    const owns = await env.DB.prepare(
+      "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+    ).bind(submissionId, customerId).first();
+    if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+  }
+
   const now = new Date().toISOString();
   const res = await env.DB.prepare(
-    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at) VALUES (?,?,?,?,?,?)"
+    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
   )
-    .bind(customerId, amount, method, note || null, paidAt, now)
+    .bind(customerId, amount, method, note || null, paidAt, now, submissionId)
     .run();
   return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+/* PUT the shed onto a payment that has none — or move one that went on the
+   wrong job. Every payment taken before this existed is unattributed, and
+   without a way to place them the invoice warning never clears and the balance
+   is wrong forever. */
+async function handleSetPaymentSubmission(request, env, origin, paymentId) {
+  const body = await request.json().catch(() => ({}));
+  await ensurePaymentsTable(env);
+
+  const pay = await env.DB.prepare("SELECT id, customer_id FROM payments WHERE id = ?")
+    .bind(paymentId).first();
+  if (!pay) return json({ error: "no such payment" }, 404, origin);
+
+  let submissionId = null;
+  if (body.submission_id !== undefined && body.submission_id !== null && body.submission_id !== "") {
+    submissionId = Number(body.submission_id);
+    if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+    const owns = await env.DB.prepare(
+      "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+    ).bind(submissionId, pay.customer_id).first();
+    if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+  }
+
+  await env.DB.prepare("UPDATE payments SET submission_id = ? WHERE id = ?")
+    .bind(submissionId, paymentId).run();
+  return json({ ok: true, id: paymentId, submission_id: submissionId }, 200, origin);
 }
 
 async function handleDeletePayment(request, env, origin, id) {
@@ -3639,6 +3682,12 @@ export default {
         const iid = Number(path.split("/")[3]);
         if (!iid) return json({ error: "bad invoice id" }, 400, origin);
         return await handleVoidInvoice(request, env, origin, iid);
+      }
+      if (path.startsWith("/admin/payments/") && path.endsWith("/submission") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.split("/")[3]);
+        if (!pid) return json({ error: "bad payment id" }, 400, origin);
+        return await handleSetPaymentSubmission(request, env, origin, pid);
       }
       if (path.startsWith("/admin/customers/") && path.endsWith("/payments") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
