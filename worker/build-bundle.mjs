@@ -17,7 +17,7 @@ import { fileURLToPath } from "url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
 // Add a module here when index.js starts importing one. Nothing else to change.
-export const MODULES = ["pricing.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js"];
+export const MODULES = ["pricing.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js", "stripewebhook.js"];
 
 /* The concatenation, as a function of the files on disk, so a test can build
    one in memory and check it without writing over dist/. dist/ is deliberately

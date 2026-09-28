@@ -312,3 +312,131 @@ test('the payments list carries the build, so the page can show it', async () =>
   assert.equal(r.status, 200);
   assert.equal((r.data.payments || [])[0].submission_id, 7);
 });
+
+/* ── THE WEBHOOK, END TO END ─────────────────────────────────────────────────
+ * Signature verification has its own file. These are about what a verified
+ * event does to the database.
+ */
+import { computeSignature } from './stripewebhook.js';
+
+const WH_SECRET = 'whsec_test_secret';
+
+async function postEvent(env, event, opts = {}) {
+  const raw = JSON.stringify(event);
+  const t = opts.t || Math.floor(Date.now() / 1000);
+  const sig = opts.badSignature
+    ? 'deadbeef'
+    : await computeSignature(opts.secret || WH_SECRET, `${t}.${raw}`);
+  const r = await worker.fetch(new Request('https://local/stripe/webhook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${t},v1=${sig}` },
+    body: raw,
+  }), env);
+  return { status: r.status, data: await r.json().catch(() => null) };
+}
+
+const paidEvent = (stripeId, cents) => ({
+  id: 'evt_' + stripeId, type: 'invoice.paid',
+  data: { object: { id: stripeId, amount_paid: cents } },
+});
+
+async function issued(env, t, kind = 'deposit', submission = 7) {
+  const s = stubStripe();
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: submission, kind }, t);
+  s.restore();
+  return r;
+}
+
+function whEnv() {
+  const s = withPayments();
+  s.env.STRIPE_WEBHOOK_SECRET = WH_SECRET;
+  return s;
+}
+
+test('a paid invoice records the payment against the right shed', async () => {
+  const { db, env } = whEnv();
+  const t = await token(env);
+  const made = await issued(env, t);
+
+  const r = await postEvent(env, paidEvent('in_1', 250000));
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+
+  const pay = db.prepare("SELECT * FROM payments WHERE method='stripe'").get();
+  assert.ok(pay, 'no payment was recorded');
+  assert.equal(pay.amount, 2500, 'amount_paid is in cents');
+  assert.equal(pay.submission_id, 7, 'and it belongs to the shed that was invoiced');
+  assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(made.data.id).status, 'paid');
+});
+
+/* Stripe retries for three days, and a resend can be triggered by hand for 30.
+   One payment recorded several times makes the balance invoice under-bill. */
+test('the same event arriving repeatedly records one payment', async () => {
+  const { db, env } = whEnv();
+  const t = await token(env);
+  await issued(env, t);
+  for (let i = 0; i < 4; i++) {
+    const r = await postEvent(env, paidEvent('in_1', 250000));
+    assert.equal(r.status, 200);
+  }
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM payments WHERE method='stripe'").get().n, 1);
+});
+
+test('an unsigned event changes nothing', async () => {
+  const { db, env } = whEnv();
+  const t = await token(env);
+  await issued(env, t);
+  const r = await postEvent(env, paidEvent('in_1', 250000), { badSignature: true });
+  assert.equal(r.status, 400);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM payments").get().n, 0, 'nothing was written');
+  assert.equal(r.data.error, 'bad signature');
+  assert.ok(!JSON.stringify(r.data).includes('match'), 'the reason must not leak to the caller');
+});
+
+test('an event signed with the wrong secret changes nothing', async () => {
+  const { db, env } = whEnv();
+  const t = await token(env);
+  await issued(env, t);
+  const r = await postEvent(env, paidEvent('in_1', 250000), { secret: 'whsec_attacker' });
+  assert.equal(r.status, 400);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM payments").get().n, 0);
+});
+
+test('an invoice raised outside the CRM is acknowledged, not errored', async () => {
+  const { db, env } = whEnv();
+  const r = await postEvent(env, paidEvent('in_from_dashboard', 5000));
+  assert.equal(r.status, 200, 'a non-2xx would make Stripe retry it for three days');
+  assert.match(String(r.data.ignored), /unknown invoice/);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM payments").get().n, 0);
+});
+
+test('event types we do not handle are acknowledged', async () => {
+  const { env } = whEnv();
+  const r = await postEvent(env, { id: 'evt_x', type: 'customer.created', data: { object: { id: 'cus_1' } } });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.ignored, 'customer.created');
+});
+
+/* What cleared is not always what was billed — a partial payment or a credit
+   note changes it. */
+test('a part payment records what actually arrived', async () => {
+  const { db, env } = whEnv();
+  const t = await token(env);
+  await issued(env, t);
+  await postEvent(env, paidEvent('in_1', 100000));
+  assert.equal(db.prepare("SELECT amount FROM payments WHERE method='stripe'").get().amount, 1000);
+});
+
+/* The point of the whole thing: the balance invoice knows what Stripe collected
+   without anyone re-typing it. */
+test('the payment it records comes off the balance invoice by itself', async () => {
+  const { env } = whEnv();
+  const t = await token(env);
+  await issued(env, t, 'deposit', 7);
+  await postEvent(env, paidEvent('in_1', 250000));
+
+  const prev = await api(env, 'POST', '/admin/invoices',
+    { submission_id: 7, kind: 'balance', preview: true }, t);
+  assert.equal(prev.data.already_paid, 2500);
+  assert.ok(!(prev.data.warnings || []).some((w) => w.code === 'unassigned_payments'),
+    'a Stripe payment is never unassigned — it knows its shed');
+});

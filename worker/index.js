@@ -23,6 +23,7 @@ import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnab
 import { quoteLines } from "./quotelines.js";
 import { buildInvoice, splitPayments, fromCents } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice } from "./stripe.js";
+import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -257,15 +258,8 @@ async function verifyToken(secret, token) {
     return null;
   }
 }
-function timingSafeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  const len = Math.max(a.length, b.length);
-  let mismatch = a.length === b.length ? 0 : 1;
-  for (let i = 0; i < len; i++) {
-    mismatch |= (i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0);
-  }
-  return mismatch === 0;
-}
+/* timingSafeEqual now lives in stripewebhook.js, imported above — the
+   webhook needs the same comparison and two of them is one too many. */
 function bearerToken(request) {
   const auth = request.headers.get("Authorization") || "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -818,6 +812,72 @@ async function invoiceContext(env, submissionId, kind) {
 
   const invoice = buildInvoice(breakdown, kind, split.applied);
   return { sub, customer, breakdown, split, invoice };
+}
+
+/* POST /stripe/webhook — public, and the only thing standing between it and a
+ * stranger marking an $11,000 shed paid is the signature check.
+ *
+ * The body is read as TEXT and verified before it is parsed. Parsing first and
+ * re-serialising for the check would change key order and whitespace, and the
+ * signature is over the bytes.
+ */
+async function handleStripeWebhook(request, env, origin) {
+  const raw = await request.text();
+  const verdict = await verifyStripeSignature(
+    raw, request.headers.get("Stripe-Signature"), env.STRIPE_WEBHOOK_SECRET);
+  if (!verdict.ok) {
+    /* 400 with nothing useful in it. Telling a caller WHICH part of their
+       forgery failed is a hint they can work with; the reason stays here. */
+    console.log("stripe webhook rejected:", verdict.reason);
+    return json({ error: "bad signature" }, 400, origin);
+  }
+
+  let event = {};
+  try { event = JSON.parse(raw); } catch (e) {
+    return json({ error: "bad payload" }, 400, origin);
+  }
+
+  /* Anything not handled is acknowledged, not retried. Stripe backs off for
+     three days on a non-2xx, and a queue of events we were never going to act
+     on is noise that hides the ones we would. */
+  if (event.type !== "invoice.paid") return json({ ok: true, ignored: event.type }, 200, origin);
+
+  const inv = (event.data && event.data.object) || {};
+  if (!inv.id) return json({ ok: true, ignored: "no invoice id" }, 200, origin);
+
+  await ensureInvoicesTable(env);
+  await ensurePaymentsTable(env);
+
+  const row = await env.DB.prepare(
+    "SELECT id, customer_id, submission_id, kind, status, amount FROM invoices WHERE stripe_invoice_id = ?"
+  ).bind(inv.id).first();
+  /* An invoice raised somewhere other than here — the Stripe dashboard, say.
+     Acknowledged rather than errored: it is a real event, just not ours. */
+  if (!row) return json({ ok: true, ignored: "unknown invoice " + inv.id }, 200, origin);
+
+  /* Stripe retries, and resends can be triggered by hand for 30 days. Without
+     this, one payment is recorded as several and the balance invoice then
+     under-bills by the difference. The invoice status IS the guard — no
+     separate ledger of processed event ids to keep in step. */
+  if (row.status === "paid") return json({ ok: true, already: true }, 200, origin);
+
+  /* amount_paid is in cents and is what actually cleared, which is not always
+     what was billed — a partial payment or a credit note changes it. Record
+     what arrived, not what was asked for. */
+  const paid = Number(inv.amount_paid);
+  const amount = Number.isFinite(paid) && paid > 0 ? paid / 100 : Number(row.amount);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+  ).bind(row.customer_id, amount, "stripe",
+         row.kind === "deposit" ? "Deposit paid on Stripe" : "Balance paid on Stripe",
+         now, now, row.submission_id).run();
+
+  await env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?")
+    .bind(now, row.id).run();
+
+  return json({ ok: true, recorded: amount }, 200, origin);
 }
 
 /* POST /admin/invoices — {submission_id, kind, preview?}
@@ -3665,6 +3725,12 @@ export default {
         const id = Number(path.slice("/admin/calls/".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleDeleteCall(request, env, origin, id);
+      }
+      /* Public by necessity — Stripe cannot log in. The signature is the
+         auth, and there is no rate limit because a flood of unsigned posts is
+         rejected before any database work happens. */
+      if (path === "/stripe/webhook" && request.method === "POST") {
+        return await handleStripeWebhook(request, env, origin);
       }
       if (path === "/admin/invoices" && request.method === "POST") {
         const who = await requireAuth(request, env);
