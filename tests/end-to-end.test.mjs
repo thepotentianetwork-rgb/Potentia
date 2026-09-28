@@ -63,7 +63,20 @@ const env = { DB: makeD1(new DatabaseSync(':memory:')), CRM_DB: makeD1(new Datab
    a test that writes a junk client into the live CRM is not a test anyone
    wants to run twice. */
 const LIVE = process.argv.includes('--live');
-const LIVE_URL = 'https://www.potentianetwork.com/contractorform.html';
+
+/* Two sheets share this journey: the contractor one and the universal
+   business one. They are the same page with different questions, so they get
+   the same run rather than a second copy of this file that drifts.
+   --form=business picks the other. */
+const WHICH = (process.argv.find((a) => a.startsWith('--form=')) || '--form=contractor').slice(7);
+const FORMS = {
+  contractor: { file: 'contractorform.html', type: 'contractor' },
+  business:   { file: 'businessform.html',   type: 'business' }
+};
+const FORM = FORMS[WHICH];
+if (!FORM) { console.log('unknown --form=' + WHICH + ' (contractor | business)'); process.exit(1); }
+const LIVE_URL = 'https://www.potentianetwork.com/' + FORM.file;
+
 let page;
 if (LIVE) {
   const r = await fetch(LIVE_URL);
@@ -71,8 +84,8 @@ if (LIVE) {
   page = await r.text();
   console.log('page under test: ' + LIVE_URL + ' (' + page.length + ' bytes)');
 } else {
-  page = readFileSync(path.join(here, '..', 'contractorform.html'), 'utf8');
-  console.log('page under test: working copy');
+  page = readFileSync(path.join(here, '..', FORM.file), 'utf8');
+  console.log('page under test: ' + FORM.file + ' (working copy)');
 }
 const formspree = [];
 
@@ -146,6 +159,20 @@ page = page
         var bn = f.querySelector('[name=business_name]'); if (bn) bn.value = 'Hank Roofing';
         var pd = document.getElementById('f_project_description');
         if (pd) pd.value = 'Full tear-off and re-roof, cedar shake, 1920s bungalow.';
+        /* Nothing in the business sheet's website or trust sections is
+           required, so filling only [required] would have proved that empty
+           sections post empty. Tick and type one of each. Absent on the
+           contractor sheet, where these all come back null and are skipped. */
+        ['site_goal', 'features', 'credentials'].forEach(function (n) {
+          var c = f.querySelector('[name=' + n + ']');
+          if (c) c.checked = true;
+        });
+        [['domain', 'hankroofing.com'],
+         ['guarantee', '1-year workmanship guarantee'],
+         ['description', 'We re-roof houses across the north valley.']].forEach(function (kv) {
+          var e = f.querySelector('[name=' + kv[0] + ']');
+          if (e) e.value = kv[1];
+        });
         f.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
         await new Promise(function (r) { setTimeout(r, 3000); });
         out.successShown = document.getElementById('successScreen').classList.contains('visible');
@@ -168,7 +195,7 @@ srv.on('request', (req, res) => {
   return origHandler(req, res);
 });
 
-console.log('\n-- a contractor fills the form in, with three photos --');
+console.log('\n-- someone fills the ' + WHICH + ' sheet in, with three photos --');
 const child = spawn(CHROME, ['--headless=new', '--no-sandbox', '--disable-gpu-sandbox',
   '--disable-dev-shm-usage', BASE + '/'], { stdio: 'ignore' });
 const deadline = Date.now() + 90000;
@@ -194,15 +221,17 @@ const api = async (m, p, body, tok) => {
 const tok = (await api('POST', '/crm/login', { password: 'cpw' })).data.token;
 const list = await api('GET', '/crm/clients', null, tok);
 const client = (list.data.clients || list.data || []).find((c) => (c.email || '') === 'hank@roofing.test');
-check('the contractor became a client', !!client, list.data);
+check('they became a client', !!client, list.data);
 
 if (client) {
   const sheets = await api('GET', '/crm/clients/' + client.id + '/intake', null, tok);
   const sheet = (sheets.data.sheets || [])[0];
-  check('his onboarding sheet is readable', !!sheet, sheets.data);
+  check('the onboarding sheet is readable', !!sheet, sheets.data);
   if (sheet) {
     check('the answers survived the photos', sheet.answers && sheet.answers.email === 'hank@roofing.test',
       sheet.answers && Object.keys(sheet.answers).length);
+    check('the sheet knows which form it came from', (sheet.answers || {}).form_type === FORM.type,
+      (sheet.answers || {}).form_type);
     check('the project description is there',
       /cedar shake/.test((sheet.answers || {}).project_description || ''),
       (sheet.answers || {}).project_description);
@@ -213,6 +242,21 @@ if (client) {
 
     const img = await api('GET', '/crm/intake/photo/' + sheet.photos[0].id, null, tok);
     check('a photo can be opened', /^data:image\/jpeg;base64,/.test((img.data || {}).data || ''), img.status);
+
+    if (WHICH === 'business') {
+      /* The two fields this sheet makes mandatory, and one from each of the
+         sections that only exist here — a section that silently posts nothing
+         looks exactly like a section nobody filled in. */
+      const a = sheet.answers || {};
+      check('the industry came through', !!a.industry, a.industry);
+      check('the description came through', !!a.description, a.description);
+      check('the website section posted', !!(a.site_goal || a.features || a.domain),
+        { site_goal: a.site_goal, features: a.features, domain: a.domain });
+      check('the trust section posted', !!(a.credentials || a.guarantee || a.license_state),
+        { credentials: a.credentials, guarantee: a.guarantee });
+      check('and no contractor-only field rode along', !a.trade && !a.other_trade,
+        { trade: a.trade, other_trade: a.other_trade });
+    }
 
     console.log('\n-- and the deposit can be marked --');
     check('it starts unmarked', sheet.deposit.received === false, sheet.deposit);
