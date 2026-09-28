@@ -65,11 +65,14 @@ export async function stripeCall(env, path, body, opts = {}) {
   return data;
 }
 
-/* ACH first, card second. On an eleven thousand dollar shed the difference is
-   about $360 — ACH is capped at $5, a card is 2.9% plus the invoicing fee. The
-   order is the order they appear to the customer, so the cheaper one is the
-   one they see first. Card stays because some people will always reach for it,
-   and a deposit that does not get paid is worse than one that costs more. */
+/* ACH and card. On an eleven thousand dollar shed the difference is about
+   $360 — ACH is capped at $5, a card is 2.9% plus the invoicing fee. Card
+   stays offered because some people will always reach for it, and a deposit
+   that does not get paid is worse than one that costs more.
+
+   The array order is NOT a display order: Stripe decides how the hosted
+   invoice page presents them. An earlier version of this comment claimed
+   otherwise. Listing ACH first is harmless but buys nothing. */
 /* STRIPE_ prefixed, not PAYMENT_METHODS: index.js already has a constant by
    that name for the ways a human can record a payment, and the bundler
    inlines every module at top level. A duplicate const there is a
@@ -111,7 +114,14 @@ export async function createAndSendInvoice(env, {
     customer: customerId,
     collection_method: 'send_invoice',
     days_until_due: days,
-    payment_method_types: STRIPE_PAYMENT_METHODS,
+    /* NESTED, not top level. On the Invoice API a top-level
+       payment_method_types is rejected outright — "Received unknown
+       parameter: payment_method_types. Did you mean payment_settings?" — and
+       it was, by Stripe, on the first real invoice anyone tried to send. It
+       belongs under payment_settings. (payment_method_types IS top level on
+       PaymentIntents and Checkout Sessions, which is where the wrong shape
+       came from.) */
+    payment_settings: { payment_method_types: STRIPE_PAYMENT_METHODS },
     auto_advance: false,
     automatic_tax: { enabled: false },
     currency: 'usd',

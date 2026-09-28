@@ -828,10 +828,14 @@ is public, and what it does is mark an $11,000 shed paid.
 
 Stripe → **Settings → Payment methods** → enable **ACH Direct Debit**.
 
-Invoices offer ACH *before* card, deliberately. On an $11,000 shed that is
-**$5 instead of about $363**. The trade-off is real and worth knowing: ACH
-takes a few days to settle, and an ACH dispute is final — there is no appeal
-the way there is with a card chargeback.
+Invoices offer ACH **and** card. On an $11,000 shed that is **$5 instead of
+about $363**, so it is worth mentioning to a customer. Stripe decides how the
+two are laid out on the payment page — listing ACH first in the code does not
+make it appear first.
+
+The trade-off is real and worth knowing: ACH takes a few days to settle, and
+an ACH dispute is final — there is no appeal the way there is with a card
+chargeback.
 
 ## How a job runs
 
