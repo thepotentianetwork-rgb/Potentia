@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "03c2586";
-const WORKER_BUILT_AT = "2026-09-22T19:52:04.065Z";
+const WORKER_BUILD = "9c2e75a";
+const WORKER_BUILT_AT = "2026-09-28T23:26:16.527Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3187,6 +3187,715 @@ function safeParse(s) { try { return JSON.parse(s); } catch (e) { return null; }
 
 // ---- end inlined leadpipeline.js ----
 
+// ---- inlined from worker/quotelines.js by build-bundle.mjs — do not edit below by hand ----
+/* THE QUOTE'S OWN ARITHMETIC, LIFTED OUT OF THE PAGE.
+ *
+ * Every figure a customer is billed — the phase rows, the 7.25% tax, the 30%
+ * deposit against each phase, and the way a discount scales through those
+ * deposits — was computed in quote.html and nowhere else. That was fine while
+ * the only thing that needed it was the page rendering it. It stops being fine
+ * the moment a Stripe invoice has to carry the same numbers: the server cannot
+ * ask a browser what to charge someone.
+ *
+ * So this is a PORT, not a rewrite. It is quote.html's taxBreakdown() with the
+ * two module-level globals it read (ADJUSTMENTS, COMPED) turned into arguments
+ * and the DOM left behind. Same order of operations, same rounding, same
+ * clamps. tests/quotelines.test.mjs runs this and the page's own copy against
+ * the same redlines and fails on any difference, because a port that is merely
+ * close would bill a customer a different number than the quote they agreed to.
+ *
+ * Why it matters that there is now ONE of these: this repo has been bitten
+ * repeatedly by a value living in two places with only one of them reachable —
+ * addVent vs ventCyIn, the lighting rig, the rail heights, the Google Voice
+ * URLs. quote.html's own comment says the adjustment arithmetic "mirrors
+ * applyAdjustments() in worker/index.js ... if you change one, change the
+ * other". A deposit figure is the worst candidate in the codebase for that
+ * arrangement.
+ */
+
+/* Utah sales tax — applied to the shed and to each separately-billed item
+   (concrete, interior finishing) since each is invoiced as its own sale. */
+const TAX_RATE = 0.0725;
+/* Each item is invoiced as its own stage of work, and a 30% deposit is
+   collected against that item's tax-included price when its stage starts. */
+const DEPOSIT_RATE = 0.30;
+
+/* What the base shed price covers, named under the Base Shed line. NAMES ONLY,
+   no figures: the shed line is a SELL price and the money behind these headings
+   is cost, so printing both would let a customer read the margin off the page. */
+const BASE_SHED_INCLUDES = [
+  'Materials & lumber',
+  'Shop labor',
+  'Build labor & assembly',
+  'Fuel & delivery'
+];
+
+const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
+
+function num(n) { return Number(n) || 0; }
+
+function sumLines(lines, amtKey) {
+  return (lines || []).reduce(function (t, l) { return t + num(l[amtKey]); }, 0);
+}
+
+/* Mirrors compItemsFromRedline() in the worker: the individually-priced lines
+   this quote actually sums, which is exactly the set that can be given away. */
+function compItemPrices(redline) {
+  const out = {};
+  if (!redline || typeof redline !== 'object') return out;
+  function push(name, amt) {
+    const n = Number(amt);
+    if (!name || !isFinite(n) || n <= 0) return;
+    out[name] = (out[name] || 0) + Math.round(n * 100) / 100;
+  }
+  (redline.addonLines || []).forEach((l) => push(l && l.name, l && l.amt));
+  (redline.doorUpLines || []).forEach((l) => push(l && l.label, l && l.up));
+  (redline.windowSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  (redline.dormerSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  (redline.shelfSellLines || []).forEach((l) => push(l && l.label, l && l.price));
+  push(redline.porchSellName, redline.porchSell);
+  push(redline.porchDeckSellName, redline.porchDeckSell);
+  push(redline.sidingSellName, redline.sidingSell);
+  push(redline.heightSellName, redline.heightSell);
+  push(redline.elecSellName, redline.elecSell);
+  push(redline.loftSellName, redline.loftSell);
+  push(redline.intSellName, redline.intSell);
+  push(redline.foundName, redline.foundSell);
+  return out;
+}
+
+/* Which comp-able names belong to which quote row. Interior finishing and the
+   foundation are their own phases; everything else rolls into the shed. */
+function nameList(redline, which) {
+  if (!redline) return [];
+  if (which === 'interior') return [redline.intSellName].filter(Boolean);
+  if (which === 'foundation') return [redline.foundName].filter(Boolean);
+  const out = [];
+  (redline.addonLines || []).forEach(function (l) {
+    if (l && l.name && REMOVAL_NAMES.indexOf(l.name) === -1) out.push(l.name);
+  });
+  (redline.doorUpLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.windowSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.dormerSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  (redline.shelfSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
+  [redline.porchSellName, redline.porchDeckSellName, redline.sidingSellName,
+   redline.heightSellName, redline.elecSellName, redline.loftSellName]
+    .forEach(function (n) { if (n) out.push(n); });
+  return out;
+}
+
+/* The comped lines for this submission, as name -> amount. quote.html builds
+   this in render() before calling taxBreakdown; here it is derived inside, so
+   a caller cannot forget to. */
+function compedMap(redline, adjustments) {
+  const prices = compItemPrices(redline);
+  const out = {};
+  (adjustments || []).forEach(function (a) {
+    if (a && a.kind === 'comp' && prices[a.item] != null) out[a.item] = prices[a.item];
+  });
+  return out;
+}
+
+function removalLines(redline) {
+  if (!redline || !Array.isArray(redline.addonLines)) return [];
+  return redline.addonLines.filter((l) => l && REMOVAL_NAMES.indexOf(l.name) !== -1);
+}
+function removalTotal(redline) {
+  return removalLines(redline).reduce((t, l) => t + num(l.amt), 0);
+}
+
+/* The phase rows and every total on the quote.
+   Returns null for a redline it cannot read, exactly as taxBreakdown does — a
+   caller that treats null as "no charge" would be a bug either way, but this
+   keeps the two identical. */
+function quoteLines(redline, adjustments) {
+  if (!redline || typeof redline !== 'object') return null;
+  const COMPED = compedMap(redline, adjustments);
+  const ADJUSTMENTS = adjustments || [];
+
+  /* How much of a given row is being comped, so the reduction lands on the
+     phase the item actually belongs to rather than being lopped off the
+     bottom line. */
+  function compedIn(names) {
+    let t = 0;
+    names.forEach(function (n) { if (n && COMPED[n] != null) t += COMPED[n]; });
+    return t;
+  }
+
+  /* Everything about the shed itself is rolled into one "Shed" line; only
+     foundation and interior finishing are broken out.
+
+     This sum has to account for EVERY sell field the engine adds into
+     customerPrice. A field the engine charges for and this list omits is money
+     the quote silently fails to bill — paintSell was missing here for exactly
+     that reason, and it is on almost every shed. worker/quotepage.test.mjs
+     checks this sum against the engine. */
+  const shedTotal = num(redline.marginPrice)
+    + sumLines(redline.doorUpLines, 'up')
+    + sumLines(redline.windowSellLines, 'price')
+    + sumLines(redline.dormerSellLines, 'price')
+    + num(redline.porchSell)
+    + num(redline.porchDeckSell)
+    + num(redline.sidingSell)
+    + num(redline.paintSell)
+    + num(redline.laborSell)
+    + num(redline.heightSell)
+    + num(redline.elecSell)
+    + num(redline.floorSell)
+    + num(redline.loftSell)
+    + sumLines(redline.shelfSellLines, 'price')
+    + sumLines(redline.addonLines, 'amt')
+    - removalTotal(redline)
+    - compedIn(nameList(redline, 'shed'));
+
+  /* Build order matches how the job is actually run and billed: concrete goes
+     in first, then the shed, then interior finishing — each its own phase.
+     Phase numbers are assigned from position after the rows are built, because
+     removal is added at the FRONT when it applies. */
+  const rows = [];
+  function add(label, amt) {
+    if (!label || !amt) return null;
+    const row = { label: label, amt: Number(amt) };
+    rows.push(row);
+    return row;
+  }
+
+  const removal = removalLines(redline);
+  if (removal.length) {
+    const rTotal = removalTotal(redline) - compedIn(REMOVAL_NAMES);
+    const rRow = add(removal.length > 1 ? 'Site Clearance' : removal[0].name, rTotal);
+    if (rRow && removal.length > 1) {
+      rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) }));
+    }
+  }
+
+  /* The pad spec (4" poured slab) belongs on every quote regardless of when its
+     redline snapshot was taken, so it is added at display time rather than
+     depending on redline.foundName having been generated with it baked in. */
+  let foundLabel = redline.foundName || 'Concrete';
+  if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
+    foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
+  }
+  add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
+  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
+  add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
+
+  /* Electrical and flooring are still billed and deposited as part of the Shed
+     phase (their dollars stay inside shedTotal) — these just break them out so
+     the customer can see what the package costs, without changing the
+     invoicing or deposit schedule. Appended rather than assigned: electrical
+     used to claim this slot outright, so anything added alongside it silently
+     replaced it. */
+  function shedSubLine(amt, label, includes) {
+    if (!shedRow || !amt) return;
+    (shedRow.subLines = shedRow.subLines || []).push({
+      label: label, amt: num(amt),
+      includes: Array.isArray(includes) ? includes : null
+    });
+  }
+  /* Each is net of anything comped on it, because a comped line is already
+     listed under "Included at No Charge" — charging for it here and crediting
+     it there would show the customer the same item twice at two prices. */
+  function shedItem(label, amt) {
+    if (!label) return;
+    shedSubLine(num(amt) - (COMPED[label] || 0), label);
+  }
+  function shedItemsFrom(lines, nameKey, amtKey) {
+    (lines || []).forEach(function (l) {
+      if (!l || REMOVAL_NAMES.indexOf(l[nameKey]) > -1) return;   // its own phase
+      shedItem(l[nameKey], l[amtKey]);
+    });
+  }
+
+  /* Build labour is INSIDE this number, not a line of its own. Added whole,
+     with no comp subtracted, deliberately: labour is not in the compable set,
+     and shedTotal above adds laborSell with no comp handling either. Netting a
+     comp off here alone would drop Base Shed without dropping the phase total
+     it has to add up to. */
+  shedSubLine(num(redline.marginPrice) + num(redline.laborSell), 'Base Shed', BASE_SHED_INCLUDES);
+  shedItem(redline.heightSellName, redline.heightSell);
+  shedItem(redline.sidingSellName, redline.sidingSell);
+  shedItem(redline.paintSellName, redline.paintSell);
+  shedItem(redline.porchSellName, redline.porchSell);
+  shedItem(redline.porchDeckSellName, redline.porchDeckSell);
+  shedItemsFrom(redline.doorUpLines, 'label', 'up');
+  shedItemsFrom(redline.windowSellLines, 'label', 'price');
+  shedItemsFrom(redline.dormerSellLines, 'label', 'price');
+  shedItem(redline.loftSellName, redline.loftSell);
+  shedItemsFrom(redline.shelfSellLines, 'label', 'price');
+  shedItemsFrom(redline.addonLines, 'name', 'amt');
+
+  shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical', redline.elecIncludes);
+  shedSubLine(redline.floorSell, redline.floorSellName || 'Flooring');
+
+  if (!rows.length) return null;
+  rows.forEach(function (r, i) {
+    r.phase = i + 1;
+    r.label = 'Phase ' + r.phase + ' — ' + r.label;
+  });
+  rows.forEach(function (r) {
+    r.tax = r.amt * TAX_RATE;
+    r.total = r.amt + r.tax;
+    r.deposit = r.total * DEPOSIT_RATE;
+  });
+  const subtotal = rows.reduce((t, r) => t + r.amt, 0);
+
+  /* Percentages and flat amounts, applied BEFORE tax because tax is owed on
+     what they actually pay, and scaled through the per-phase deposits by the
+     same ratio — a discount that reduced the total but not the deposits would
+     have them paying a bigger share up front for a cheaper shed.
+     Comps are already gone by this point: they were removed from their own
+     phase rows above, which is what makes the percentage land on the post-comp
+     figure without any extra arithmetic here. */
+  let percentAdjust = 0, amountAdjust = 0;
+  ADJUSTMENTS.forEach(function (a) {
+    if (!a) return;
+    const v = Number(a.value);
+    if (a.kind === 'percent' && isFinite(v)) percentAdjust += subtotal * (v / 100);
+    else if (a.kind === 'amount' && isFinite(v)) amountAdjust += v;
+  });
+  const adjust = percentAdjust + amountAdjust;
+  let adjustedSubtotal = subtotal + adjust;
+  if (adjustedSubtotal < 0) adjustedSubtotal = 0;
+  const ratio = subtotal > 0 ? (adjustedSubtotal / subtotal) : 1;
+  if (adjust) {
+    rows.forEach(function (r) {
+      r.tax = r.amt * ratio * TAX_RATE;
+      r.total = r.amt * ratio + r.tax;
+      r.deposit = r.total * DEPOSIT_RATE;
+    });
+  }
+
+  const tax = adjustedSubtotal * TAX_RATE;
+  const depositTotal = rows.reduce((t, r) => t + r.deposit, 0);
+  return {
+    rows: rows,
+    subtotal: subtotal,
+    adjust: adjust,
+    percentAdjust: percentAdjust,
+    amountAdjust: amountAdjust,
+    adjustedSubtotal: adjustedSubtotal,
+    tax: tax,
+    total: adjustedSubtotal + tax,
+    /* Tax-inclusive so they sit beside the Total Due figure and subtract to it
+       exactly. Derived from adjustedSubtotal rather than from `adjust`, because
+       adjustedSubtotal is clamped at zero — a discount bigger than the shed
+       would otherwise report a saving larger than the price. */
+    totalBefore: subtotal * (1 + TAX_RATE),
+    savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
+    depositTotal: depositTotal
+  };
+}
+
+// ---- end inlined quotelines.js ----
+
+// ---- inlined from worker/invoices.js by build-bundle.mjs — do not edit below by hand ----
+/* WHAT AN INVOICE ACTUALLY CHARGES, WORKED OUT BEFORE STRIPE IS INVOLVED.
+ *
+ * Kept apart from the Stripe calls on purpose: this is the half that decides
+ * how much money to ask a customer for, and it should be runnable — and wrong
+ * in an obvious way — without a network, an API key or a sandbox.
+ *
+ * Everything here comes from quoteLines(), so the invoice cannot disagree with
+ * the quote the customer already saw. Nothing is re-derived.
+ *
+ * TWO THINGS THAT WOULD OTHERWISE BITE:
+ *
+ * 1. Stripe takes integer CENTS. Rounding each line independently and letting
+ *    them fall where they may is how an invoice ends up a penny off its own
+ *    total — which looks like sloppiness on a document about money, and on a
+ *    balance invoice means the job never quite reaches zero. The lines here are
+ *    reconciled against the total, and a test asserts they sum to it exactly.
+ *
+ * 2. The amounts are TAX-INCLUSIVE. The quote computes Utah sales tax itself,
+ *    and a phase's deposit is 30% of its tax-included figure. So Stripe must
+ *    not add tax on top — no tax rates on the items, Stripe Tax off for these
+ *    invoices. Sending a tax-inclusive amount to a tax-computing invoice is a
+ *    7.25% overcharge that nothing in the code would flag.
+ */
+
+const KINDS = ['deposit', 'balance'];
+
+/* Money in, money out, in the unit Stripe speaks. Rounded half away from zero
+   rather than JS's default half-up, so a credit of -0.005 and a charge of
+   0.005 land symmetrically instead of both rounding upward. */
+function toCents(n) {
+  const v = Number(n) || 0;
+  return Math.sign(v) * Math.round(Math.abs(v) * 100);
+}
+
+function fromCents(c) { return (Number(c) || 0) / 100; }
+
+/* Reconcile a set of line amounts so they sum to exactly `totalCents`.
+   The residue lands on the LARGEST line, where a penny is least visible, not
+   on the last one, which on a balance invoice is a credit — adjusting a credit
+   to fix a rounding error would misstate what the customer has paid. */
+function reconcile(lines, totalCents) {
+  if (!lines.length) return lines;
+  const sum = lines.reduce((t, l) => t + l.amountCents, 0);
+  const drift = totalCents - sum;
+  if (!drift) return lines;
+  let target = 0;
+  for (let i = 1; i < lines.length; i++) {
+    if (Math.abs(lines[i].amountCents) > Math.abs(lines[target].amountCents)) target = i;
+  }
+  lines[target].amountCents += drift;
+  return lines;
+}
+
+/* The deposit: 30% of each phase's tax-included total, one line per phase, so
+   the customer sees the same phases the quote showed them rather than a single
+   unexplained number. */
+function depositInvoice(bd) {
+  const lines = bd.rows.map((r) => ({
+    label: r.label + ' — 30% deposit (tax included)',
+    amountCents: toCents(r.deposit)
+  })).filter((l) => l.amountCents !== 0);
+  const totalCents = toCents(bd.depositTotal);
+  return { lines: reconcile(lines, totalCents), totalCents };
+}
+
+/* The balance: the whole job, less what has already been paid.
+ *
+ * NOT "the other 70%". A customer who paid a round number, or paid twice, or
+ * whose deposit was taken by check before any of this existed, would be
+ * overcharged by a flat 70% — and the error grows with how unusual the
+ * payment history is, which is exactly when nobody is checking.
+ *
+ * Payments arrive as [{amount, method, paid_at}] and are listed individually
+ * as credits rather than netted into one figure, so the invoice shows its own
+ * arithmetic and a wrongly-applied payment is visible on the document instead
+ * of buried in a subtraction. */
+function balanceInvoice(bd, payments) {
+  const lines = bd.rows.map((r) => ({
+    label: r.label + ' (tax included)',
+    amountCents: toCents(r.total)
+  })).filter((l) => l.amountCents !== 0);
+
+  (payments || []).forEach((p) => {
+    const c = toCents(p.amount);
+    if (!c) return;
+    const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
+    const how = p.method ? ' by ' + p.method : '';
+    lines.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c) });
+  });
+
+  const jobCents = toCents(bd.total);
+  const paidCents = (payments || []).reduce((t, p) => t + Math.abs(toCents(p.amount)), 0);
+  const totalCents = jobCents - paidCents;
+  return { lines: reconcile(lines, totalCents), totalCents };
+}
+
+/* WHICH PAYMENTS BELONG TO THIS JOB.
+ *
+ * payments is keyed to the CUSTOMER, not the job — it predates anyone buying a
+ * second shed, and a few customers have. Subtracting every payment a customer
+ * ever made from the balance on their second shed would credit them for the
+ * first one.
+ *
+ * So rows now carry submission_id, and they sort into three:
+ *
+ *   applied    — this job's. These come off the balance.
+ *   unassigned — recorded before the column existed, or entered without a job
+ *                picked. NOT guessed at in either direction: silently counting
+ *                them credits the wrong shed, silently ignoring them bills a
+ *                customer for money they already paid. The caller surfaces
+ *                them so a person decides.
+ *   other      — another job's. Excluded, and counted only so the UI can say
+ *                so rather than leaving someone wondering where a payment went.
+ */
+function splitPayments(payments, submissionId) {
+  const applied = [], unassigned = [], other = [];
+  const want = Number(submissionId);
+  (payments || []).forEach((p) => {
+    const sid = p && p.submission_id;
+    if (sid == null || sid === '') unassigned.push(p);
+    else if (Number(sid) === want) applied.push(p);
+    else other.push(p);
+  });
+  return { applied, unassigned, other };
+}
+
+/* Build one invoice.
+ *
+ * Returns { kind, lines, totalCents, jobTotalCents, paidCents } — or throws.
+ * Throwing rather than returning a zero invoice is deliberate: every caller
+ * here is a button someone pressed meaning "bill this person", and silently
+ * billing nothing is worse than an error they can read. */
+function buildInvoice(breakdown, kind, payments) {
+  if (!KINDS.includes(kind)) throw new Error(`unknown invoice kind: ${kind}`);
+  if (!breakdown || !Array.isArray(breakdown.rows) || !breakdown.rows.length) {
+    throw new Error('this submission has no priced phases to invoice');
+  }
+  const paid = payments || [];
+  const out = kind === 'deposit' ? depositInvoice(breakdown) : balanceInvoice(breakdown, paid);
+
+  if (out.totalCents <= 0) {
+    throw new Error(kind === 'balance'
+      ? 'nothing left to invoice — payments already cover this job'
+      : 'the deposit for this job works out to nothing');
+  }
+  return {
+    kind,
+    lines: out.lines,
+    totalCents: out.totalCents,
+    jobTotalCents: toCents(breakdown.total),
+    paidCents: paid.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0)
+  };
+}
+
+// ---- end inlined invoices.js ----
+
+// ---- inlined from worker/stripe.js by build-bundle.mjs — do not edit below by hand ----
+/* A SMALL STRIPE CLIENT, BECAUSE THE WORKER HAS NO DEPENDENCIES.
+ *
+ * worker/index.js is pasted into the Cloudflare dashboard as one file. There is
+ * no npm install, so no stripe SDK. This is the slice of the REST API this
+ * feature uses, written against the documented wire format.
+ *
+ * The Stripe API is FORM-ENCODED, not JSON, with a bracket syntax for nested
+ * values — payment_method_types[0]=us_bank_account, not a JSON array. Getting
+ * that wrong does not error usefully: Stripe ignores what it cannot parse, so
+ * an invoice quietly comes out with the default payment methods and the
+ * default tax behaviour instead of the ones asked for. That is why the encoder
+ * is its own function with its own tests.
+ */
+
+const STRIPE_API = 'https://api.stripe.com/v1';
+
+/* Stripe's form encoding. Nested objects become a[b], arrays become a[0].
+   Null and undefined are dropped rather than sent as the string "null", which
+   Stripe would take literally. false and 0 are kept — automatic_tax[enabled]
+   being false is the whole point of sending it. */
+function stripeForm(obj, prefix = '', out = []) {
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (v === null || v === undefined) continue;
+    const key = prefix ? `${prefix}[${k}]` : k;
+    if (Array.isArray(v)) {
+      v.forEach((item, i) => {
+        if (item !== null && typeof item === 'object') stripeForm(item, `${key}[${i}]`, out);
+        else out.push([`${key}[${i}]`, String(item)]);
+      });
+    } else if (typeof v === 'object') {
+      stripeForm(v, key, out);
+    } else {
+      out.push([key, String(v)]);
+    }
+  }
+  return prefix ? out : out.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+}
+
+/* One call. Errors come back from Stripe as JSON with an error.message worth
+   showing whoever pressed the button — "Your card was declined" or "No such
+   customer" is far more use than "Stripe 400". */
+async function stripeCall(env, path, body, opts = {}) {
+  if (!env.STRIPE_SECRET_KEY) throw new Error('Stripe is not configured on this worker');
+  const headers = {
+    Authorization: 'Bearer ' + env.STRIPE_SECRET_KEY,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  };
+  /* Stripe deduplicates on this key for 24 hours. Without it, a double-tapped
+     button is two invoices to the same customer for the same shed. */
+  if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
+
+  const res = await fetch(STRIPE_API + path, {
+    method: opts.method || 'POST',
+    headers,
+    body: body === undefined ? undefined : stripeForm(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = (data && data.error && data.error.message) || `Stripe returned ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.stripeCode = data && data.error && data.error.code;
+    throw err;
+  }
+  return data;
+}
+
+/* ACH first, card second. On an eleven thousand dollar shed the difference is
+   about $360 — ACH is capped at $5, a card is 2.9% plus the invoicing fee. The
+   order is the order they appear to the customer, so the cheaper one is the
+   one they see first. Card stays because some people will always reach for it,
+   and a deposit that does not get paid is worse than one that costs more. */
+/* STRIPE_ prefixed, not PAYMENT_METHODS: index.js already has a constant by
+   that name for the ways a human can record a payment, and the bundler
+   inlines every module at top level. A duplicate const there is a
+   SyntaxError that takes down the whole worker, not just this feature. */
+const STRIPE_PAYMENT_METHODS = ['us_bank_account', 'card'];
+
+/* Days until due, per kind. A deposit gates the build starting, so it is due
+   when it arrives; the balance is billed against work already done. */
+const DAYS_UNTIL_DUE = { deposit: 0, balance: 7 };
+
+/* Create a customer, or reuse one we already recorded.
+   Stripe will happily create a second customer with the same email, which is
+   how a business ends up with four Jenny Rosens and a payment history split
+   across all of them. */
+async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
+  if (stripeCustomerId) return { id: stripeCustomerId, created: false };
+  if (!email) throw new Error('this customer has no email address to invoice');
+  const c = await stripeCall(env, '/customers', { name, email, phone });
+  return { id: c.id, created: true };
+}
+
+/* The documented sequence: create the invoice, add its items, then send.
+ *
+ * auto_advance is false so the invoice stays a draft while the lines go on —
+ * otherwise Stripe can finalize it the moment it is created and the items
+ * arrive on a document that is already legally frozen.
+ *
+ * automatic_tax is explicitly OFF. The quote already computed Utah sales tax
+ * and every amount here is tax-inclusive; letting Stripe add its own would
+ * overcharge by 7.25% and nothing in this code would notice.
+ */
+async function createAndSendInvoice(env, {
+  customerId, lines, kind, description, footer, idempotencyKey, metadata
+}) {
+  const days = DAYS_UNTIL_DUE[kind];
+  if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
+
+  const invoice = await stripeCall(env, '/invoices', {
+    customer: customerId,
+    collection_method: 'send_invoice',
+    days_until_due: days,
+    payment_method_types: STRIPE_PAYMENT_METHODS,
+    auto_advance: false,
+    automatic_tax: { enabled: false },
+    currency: 'usd',
+    description: description || undefined,
+    footer: footer || undefined,
+    metadata: metadata || undefined,
+  }, { idempotencyKey: idempotencyKey ? idempotencyKey + ':invoice' : undefined });
+
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    await stripeCall(env, '/invoiceitems', {
+      customer: customerId,
+      invoice: invoice.id,
+      amount: l.amountCents,
+      currency: 'usd',
+      description: l.label,
+    }, { idempotencyKey: idempotencyKey ? `${idempotencyKey}:item:${i}` : undefined });
+  }
+
+  /* Sending finalizes it. From here the monetary values cannot be edited —
+     which is the behaviour we want, and why a mistake is fixed by voiding and
+     reissuing rather than by editing. */
+  const sent = await stripeCall(env, `/invoices/${invoice.id}/send`, {},
+    { idempotencyKey: idempotencyKey ? idempotencyKey + ':send' : undefined });
+
+  return sent;
+}
+
+async function voidInvoice(env, stripeInvoiceId) {
+  return stripeCall(env, `/invoices/${stripeInvoiceId}/void`, {});
+}
+
+// ---- end inlined stripe.js ----
+
+// ---- inlined from worker/stripewebhook.js by build-bundle.mjs — do not edit below by hand ----
+/* VERIFYING THAT AN EVENT REALLY CAME FROM STRIPE.
+ *
+ * This endpoint is public and it marks sheds as paid. Unverified, anyone who
+ * learns the URL can post {"type":"invoice.paid"} and clear an $11,000 balance.
+ * There is no second check downstream — the CRM believes what lands here.
+ *
+ * Implemented from Stripe's documented scheme rather than their SDK, because
+ * the worker is pasted into a dashboard as one file and has no dependencies.
+ *
+ * Three things here are load-bearing, and each is a real vulnerability if got
+ * wrong rather than a style preference:
+ *
+ *   1. ONLY the v1 scheme is accepted. Stripe deliberately sends a bogus v0
+ *      signature alongside real ones. Accepting any scheme that verifies is a
+ *      downgrade attack: an attacker picks the weak one.
+ *
+ *   2. The comparison is constant time. A byte-by-byte compare that returns
+ *      early leaks, through timing, how much of a guessed signature was right,
+ *      which is enough to forge one a byte at a time.
+ *
+ *   3. The timestamp is checked against a tolerance. Without it a valid event
+ *      captured once can be replayed forever — the same "paid" event posted
+ *      again next month still verifies.
+ */
+
+/* Stripe's default, and their explicit advice: never 0, which disables the
+   recency check entirely rather than tightening it. */
+const DEFAULT_TOLERANCE_SECONDS = 300;
+
+/* t=1492774577,v1=5257a8...,v0=6ffbb5...  — one line, comma separated. */
+function parseSignatureHeader(header) {
+  const out = { timestamp: null, v1: [] };
+  String(header || '').split(',').forEach((part) => {
+    const i = part.indexOf('=');
+    if (i < 0) return;
+    const key = part.slice(0, i).trim();
+    const value = part.slice(i + 1).trim();
+    if (key === 't') out.timestamp = Number(value);
+    /* v0 is Stripe's deliberately fake test signature. Anything that is not
+       v1 is ignored outright — not tried and rejected, never looked at. */
+    else if (key === 'v1') out.v1.push(value);
+  });
+  return out;
+}
+
+function hex(buf) {
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* Compares every byte regardless of where it first differs. Length is folded
+   in through the accumulator rather than returned on early, so a wrong-length
+   guess is not distinguishable by timing either. */
+function timingSafeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  const len = Math.max(a.length, b.length);
+  /* The length is folded in rather than returned on early, so a wrong-length
+     guess is not distinguishable by timing either. Out of range reads as 0
+     instead of wrapping the index: an earlier version used modulo, which made
+     "ab" and "abab" compare equal the moment the length term came out. */
+  let mismatch = a.length === b.length ? 0 : 1;
+  for (let i = 0; i < len; i++) {
+    mismatch |= (i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0);
+  }
+  return mismatch === 0;
+}
+
+async function computeSignature(secret, signedPayload) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return hex(await crypto.subtle.sign('HMAC', key, enc.encode(signedPayload)));
+}
+
+/* rawBody must be the body EXACTLY as it arrived. Parsing and re-serialising
+   changes key order and whitespace, and the signature is over the bytes.
+   Returns { ok } or { ok: false, reason } — the reason is for a log, never for
+   the response: telling a caller which part of their forgery failed helps them. */
+async function verifyStripeSignature(rawBody, header, secret, opts = {}) {
+  if (!secret) return { ok: false, reason: 'no signing secret configured' };
+  const { timestamp, v1 } = parseSignatureHeader(header);
+  if (!timestamp || !isFinite(timestamp)) return { ok: false, reason: 'no timestamp in the signature header' };
+  if (!v1.length) return { ok: false, reason: 'no v1 signature in the header' };
+
+  const tolerance = opts.toleranceSeconds === undefined ? DEFAULT_TOLERANCE_SECONDS : opts.toleranceSeconds;
+  const now = opts.nowSeconds === undefined ? Math.floor(Date.now() / 1000) : opts.nowSeconds;
+  if (tolerance > 0 && Math.abs(now - timestamp) > tolerance) {
+    return { ok: false, reason: 'timestamp outside the tolerance window' };
+  }
+
+  const expected = await computeSignature(secret, `${timestamp}.${rawBody}`);
+  /* Several v1 signatures arrive while a secret is being rolled — one per
+     active secret — so any match is a match. Every candidate is compared, with
+     no early exit on success either. */
+  let matched = false;
+  for (const candidate of v1) if (timingSafeEqual(expected, candidate)) matched = true;
+  return matched ? { ok: true } : { ok: false, reason: 'signature did not match' };
+}
+
+// ---- end inlined stripewebhook.js ----
+
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
 //  2. /admin/*          — password-gated dashboard for the shed company
@@ -3441,15 +4150,8 @@ async function verifyToken(secret, token) {
     return null;
   }
 }
-function timingSafeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  const len = Math.max(a.length, b.length);
-  let mismatch = a.length === b.length ? 0 : 1;
-  for (let i = 0; i < len; i++) {
-    mismatch |= (i < a.length ? a.charCodeAt(i) : 0) ^ (i < b.length ? b.charCodeAt(i) : 0);
-  }
-  return mismatch === 0;
-}
+/* timingSafeEqual now lives in stripewebhook.js, imported above — the
+   webhook needs the same comparison and two of them is one too many. */
 function bearerToken(request) {
   const auth = request.headers.get("Authorization") || "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
@@ -3732,6 +4434,26 @@ async function ensurePaymentsTable(env) {
       created_at TEXT NOT NULL
     )`
   ).run();
+
+  /* submission_id came later. This table was written when a payment only had
+     to say which CUSTOMER paid; a few customers have since bought a second
+     shed, and "what is still owed" is a question about a JOB. Without it, the
+     balance invoice on a second shed would credit the customer for the first.
+     The CRM side reached the same conclusion about its own deposits - see the
+     note on client_intake in ensureCrmTables.
+
+     Nullable, and left null on every existing row: those payments are real but
+     unattributed, and inventing a job for them would be worse than admitting
+     it. splitPayments() hands them back for a person to place.
+
+     CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, and
+     D1 has no ADD COLUMN IF NOT EXISTS, so read the table and add what is
+     missing. */
+  const have = await env.DB.prepare("PRAGMA table_info(payments)").all();
+  const names = (have.results || []).map((r) => r.name);
+  if (names.indexOf("submission_id") === -1) {
+    await env.DB.prepare("ALTER TABLE payments ADD COLUMN submission_id INTEGER").run();
+  }
 }
 
 // Lazily creates the installs table on first use — same reasoning as
@@ -3794,7 +4516,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensurePaymentsTable(env);
   const { results: payments } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -3909,6 +4631,281 @@ async function handleDeleteCall(request, env, origin, id) {
   return json({ ok: true }, 200, origin);
 }
 
+// ---- invoices ----------------------------------------------------------
+/* What was billed, when, and for which shed. Lazily created like payments and
+   installs, so no manual D1 migration.
+
+   The AMOUNTS ARE SNAPSHOTTED here rather than recomputed on read. The quote
+   reprices itself from current pricing every time it loads, which is right for
+   a quote and wrong for an invoice: edit a price next month and an invoice a
+   customer already received would quietly show a different number than the one
+   they agreed to. Stripe freezes its side on finalize; this is our copy of the
+   same fact.
+
+   status mirrors Stripe's (open / paid / void / uncollectible) and is updated
+   by the webhook, not guessed at here. */
+async function ensureInvoicesTable(env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS invoices (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      submission_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      stripe_invoice_id TEXT,
+      hosted_url TEXT,
+      amount REAL NOT NULL,
+      status TEXT NOT NULL,
+      lines TEXT,
+      created_at TEXT NOT NULL,
+      created_by TEXT,
+      paid_at TEXT
+    )`
+  ).run();
+  await env.DB.prepare(
+    "CREATE INDEX IF NOT EXISTS idx_invoices_submission ON invoices (submission_id)"
+  ).run();
+
+  /* Stripe's customer id, so a second invoice reuses the first customer rather
+     than creating a duplicate — which is how a business ends up with four of
+     the same person and a payment history split across all of them. */
+  const have = await env.DB.prepare("PRAGMA table_info(customers)").all();
+  const names = (have.results || []).map((r) => r.name);
+  if (names.length && names.indexOf("stripe_customer_id") === -1) {
+    await env.DB.prepare("ALTER TABLE customers ADD COLUMN stripe_customer_id TEXT").run();
+  }
+}
+
+/* Everything an invoice needs, gathered and priced, without sending anything.
+   Shared by the preview and the send so the figures a person approves are the
+   figures that go out — computing them twice would let the two drift. */
+async function invoiceContext(env, submissionId, kind) {
+  await ensurePaymentsTable(env);
+  await ensureInvoicesTable(env);
+
+  const sub = await env.DB.prepare(
+    "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+  ).bind(submissionId).first();
+  if (!sub) throw Object.assign(new Error("no such submission"), { status: 404 });
+
+  const customer = await env.DB.prepare(
+    "SELECT * FROM customers WHERE id = ?"
+  ).bind(sub.customer_id).first();
+  if (!customer) throw Object.assign(new Error("that submission has no customer"), { status: 404 });
+
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+  const breakdown = quoteLines(details.redline, adjustmentsOf(sub));
+  if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
+
+  const { results: payRows } = await env.DB.prepare(
+    "SELECT id, amount, method, note, paid_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+  ).bind(sub.customer_id).all();
+  const split = splitPayments(payRows || [], sub.id);
+
+  const invoice = buildInvoice(breakdown, kind, split.applied);
+  return { sub, customer, breakdown, split, invoice };
+}
+
+/* POST /stripe/webhook — public, and the only thing standing between it and a
+ * stranger marking an $11,000 shed paid is the signature check.
+ *
+ * The body is read as TEXT and verified before it is parsed. Parsing first and
+ * re-serialising for the check would change key order and whitespace, and the
+ * signature is over the bytes.
+ */
+async function handleStripeWebhook(request, env, origin) {
+  const raw = await request.text();
+  const verdict = await verifyStripeSignature(
+    raw, request.headers.get("Stripe-Signature"), env.STRIPE_WEBHOOK_SECRET);
+  if (!verdict.ok) {
+    /* 400 with nothing useful in it. Telling a caller WHICH part of their
+       forgery failed is a hint they can work with; the reason stays here. */
+    console.log("stripe webhook rejected:", verdict.reason);
+    return json({ error: "bad signature" }, 400, origin);
+  }
+
+  let event = {};
+  try { event = JSON.parse(raw); } catch (e) {
+    return json({ error: "bad payload" }, 400, origin);
+  }
+
+  /* Anything not handled is acknowledged, not retried. Stripe backs off for
+     three days on a non-2xx, and a queue of events we were never going to act
+     on is noise that hides the ones we would. */
+  if (event.type !== "invoice.paid") return json({ ok: true, ignored: event.type }, 200, origin);
+
+  const inv = (event.data && event.data.object) || {};
+  if (!inv.id) return json({ ok: true, ignored: "no invoice id" }, 200, origin);
+
+  await ensureInvoicesTable(env);
+  await ensurePaymentsTable(env);
+
+  const row = await env.DB.prepare(
+    "SELECT id, customer_id, submission_id, kind, status, amount FROM invoices WHERE stripe_invoice_id = ?"
+  ).bind(inv.id).first();
+  /* An invoice raised somewhere other than here — the Stripe dashboard, say.
+     Acknowledged rather than errored: it is a real event, just not ours. */
+  if (!row) return json({ ok: true, ignored: "unknown invoice " + inv.id }, 200, origin);
+
+  /* Stripe retries, and resends can be triggered by hand for 30 days. Without
+     this, one payment is recorded as several and the balance invoice then
+     under-bills by the difference. The invoice status IS the guard — no
+     separate ledger of processed event ids to keep in step. */
+  if (row.status === "paid") return json({ ok: true, already: true }, 200, origin);
+
+  /* amount_paid is in cents and is what actually cleared, which is not always
+     what was billed — a partial payment or a credit note changes it. Record
+     what arrived, not what was asked for. */
+  const paid = Number(inv.amount_paid);
+  const amount = Number.isFinite(paid) && paid > 0 ? paid / 100 : Number(row.amount);
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(
+    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+  ).bind(row.customer_id, amount, "stripe",
+         row.kind === "deposit" ? "Deposit paid on Stripe" : "Balance paid on Stripe",
+         now, now, row.submission_id).run();
+
+  await env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?")
+    .bind(now, row.id).run();
+
+  return json({ ok: true, recorded: amount }, 200, origin);
+}
+
+/* POST /admin/invoices — {submission_id, kind, preview?}
+ *
+ * preview computes and returns without touching Stripe. Worth having: this is
+ * the one button in the system that asks a customer for money, and sending it
+ * blind is how a wrong figure reaches someone who then has to be apologised to.
+ */
+async function handleCreateInvoice(request, env, origin, actor) {
+  const body = await request.json().catch(() => ({}));
+  const submissionId = Number(body.submission_id);
+  const kind = String(body.kind || "").toLowerCase();
+  if (!submissionId) return json({ error: "submission_id required" }, 400, origin);
+
+  let ctx;
+  try {
+    ctx = await invoiceContext(env, submissionId, kind);
+  } catch (e) {
+    return json({ error: e.message }, e.status || 400, origin);
+  }
+  const { sub, customer, split, invoice } = ctx;
+
+  /* Payments nobody attributed to a job. Not applied and not ignored — both
+     are wrong in a way that costs a customer money — so they ride along on
+     every response and the person sending decides. */
+  const warnings = [];
+  if (split.unassigned.length) {
+    warnings.push({
+      code: "unassigned_payments",
+      count: split.unassigned.length,
+      total: split.unassigned.reduce((t, p) => t + Number(p.amount || 0), 0),
+      message: "This customer has payments not assigned to a job. They are NOT " +
+               "credited on this invoice. Assign them first if they belong to this shed."
+    });
+  }
+
+  const shape = {
+    kind, submission_id: sub.id, customer_id: customer.id,
+    lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+    amount: fromCents(invoice.totalCents),
+    job_total: fromCents(invoice.jobTotalCents),
+    already_paid: fromCents(invoice.paidCents),
+    warnings
+  };
+  if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
+
+  /* One live invoice of a kind per shed. Voiding is how you replace one, and
+     requiring that makes "I pressed it twice last week" impossible to do by
+     accident — Stripe's idempotency only covers a 24 hour window. */
+  const existing = await env.DB.prepare(
+    "SELECT id, status, hosted_url FROM invoices WHERE submission_id = ? AND kind = ? AND status NOT IN ('void','draft_failed')"
+  ).bind(sub.id, kind).first();
+  if (existing && !body.replace_voided) {
+    return json({ error: "a " + kind + " invoice for this shed already exists (" + existing.status + "). Void it first.",
+                  existing_id: existing.id, hosted_url: existing.hosted_url }, 409, origin);
+  }
+
+  /* Counts every attempt including voided ones, so reissuing after a void gets
+     a fresh key while a double-tapped button inside one attempt does not. */
+  const prior = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM invoices WHERE submission_id = ? AND kind = ?"
+  ).bind(sub.id, kind).first();
+  const idempotencyKey = `sub${sub.id}:${kind}:${(prior && prior.n) || 0}`;
+
+  let stripeCustomerId = customer.stripe_customer_id || null;
+  let sent;
+  try {
+    const cust = await ensureCustomer(env, {
+      stripeCustomerId,
+      name: customer.name || customer.contact_name || undefined,
+      email: customer.email, phone: customer.phone || undefined,
+    });
+    if (cust.created) {
+      stripeCustomerId = cust.id;
+      await env.DB.prepare("UPDATE customers SET stripe_customer_id = ? WHERE id = ?")
+        .bind(cust.id, customer.id).run();
+    }
+    sent = await createAndSendInvoice(env, {
+      customerId: cust.id, lines: invoice.lines, kind,
+      description: `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+      idempotencyKey,
+      metadata: { submission_id: String(sub.id), customer_id: String(customer.id), kind },
+    });
+  } catch (e) {
+    return json({ error: e.message || "Stripe would not accept this invoice" }, 502, origin);
+  }
+
+  const now = new Date().toISOString();
+  const row = await env.DB.prepare(
+    `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
+       amount, status, lines, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).bind(customer.id, sub.id, kind, sent.id, sent.hosted_invoice_page || null,
+         fromCents(invoice.totalCents), sent.status || "open",
+         JSON.stringify(shape.lines), now, (actor && actor.name) || null).run();
+
+  return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
+                hosted_url: sent.hosted_invoice_page || null, status: sent.status || "open",
+                ...shape }, 200, origin);
+}
+
+async function handleListInvoices(request, env, origin, customerId) {
+  await ensureInvoicesTable(env);
+  const { results } = await env.DB.prepare(
+    `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
+            lines, created_at, created_by, paid_at
+     FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
+  ).bind(customerId).all();
+  const invoices = (results || []).map((r) => {
+    let lines = [];
+    try { lines = JSON.parse(r.lines) || []; } catch (e) {}
+    return { ...r, lines };
+  });
+  return json({ invoices }, 200, origin);
+}
+
+/* Void, because a sent invoice cannot be edited — Stripe treats a finalized
+   invoice as a legal document. Voiding here and in Stripe together, so the CRM
+   never shows one state while the customer's copy shows another. */
+async function handleVoidInvoice(request, env, origin, id) {
+  await ensureInvoicesTable(env);
+  const row = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "no such invoice" }, 404, origin);
+  if (row.status === "paid") {
+    return json({ error: "this invoice is already paid — refund it in Stripe instead of voiding" }, 409, origin);
+  }
+  if (row.stripe_invoice_id) {
+    try {
+      await voidInvoice(env, row.stripe_invoice_id);
+    } catch (e) {
+      return json({ error: e.message || "Stripe would not void it" }, 502, origin);
+    }
+  }
+  await env.DB.prepare("UPDATE invoices SET status = 'void' WHERE id = ?").bind(id).run();
+  return json({ ok: true, id, status: "void" }, 200, origin);
+}
+
 // ---- /admin/customers/:id/payments ----
 // A single collection is sometimes split across two methods (e.g. part cash,
 // part Venmo) — the UI handles that by just logging two separate entries
@@ -3924,13 +4921,56 @@ async function handleAddPayment(request, env, origin, customerId) {
   if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
 
   await ensurePaymentsTable(env);
+
+  /* Which shed this paid for. Optional, because a payment can arrive before
+     anyone knows, and refusing it would push someone into not recording it at
+     all — an unrecorded payment is worse than an unattributed one. But it is
+     checked when given: a typo'd id would attach money to another customer's
+     job, and the balance invoice would then credit the wrong person. */
+  let submissionId = null;
+  if (body.submission_id !== undefined && body.submission_id !== null && body.submission_id !== "") {
+    submissionId = Number(body.submission_id);
+    if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+    const owns = await env.DB.prepare(
+      "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+    ).bind(submissionId, customerId).first();
+    if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+  }
+
   const now = new Date().toISOString();
   const res = await env.DB.prepare(
-    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at) VALUES (?,?,?,?,?,?)"
+    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
   )
-    .bind(customerId, amount, method, note || null, paidAt, now)
+    .bind(customerId, amount, method, note || null, paidAt, now, submissionId)
     .run();
   return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+}
+
+/* PUT the shed onto a payment that has none — or move one that went on the
+   wrong job. Every payment taken before this existed is unattributed, and
+   without a way to place them the invoice warning never clears and the balance
+   is wrong forever. */
+async function handleSetPaymentSubmission(request, env, origin, paymentId) {
+  const body = await request.json().catch(() => ({}));
+  await ensurePaymentsTable(env);
+
+  const pay = await env.DB.prepare("SELECT id, customer_id FROM payments WHERE id = ?")
+    .bind(paymentId).first();
+  if (!pay) return json({ error: "no such payment" }, 404, origin);
+
+  let submissionId = null;
+  if (body.submission_id !== undefined && body.submission_id !== null && body.submission_id !== "") {
+    submissionId = Number(body.submission_id);
+    if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+    const owns = await env.DB.prepare(
+      "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+    ).bind(submissionId, pay.customer_id).first();
+    if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+  }
+
+  await env.DB.prepare("UPDATE payments SET submission_id = ? WHERE id = ?")
+    .bind(submissionId, paymentId).run();
+  return json({ ok: true, id: paymentId, submission_id: submissionId }, 200, origin);
 }
 
 async function handleDeletePayment(request, env, origin, id) {
@@ -6577,6 +7617,35 @@ export default {
         const id = Number(path.slice("/admin/calls/".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleDeleteCall(request, env, origin, id);
+      }
+      /* Public by necessity — Stripe cannot log in. The signature is the
+         auth, and there is no rate limit because a flood of unsigned posts is
+         rejected before any database work happens. */
+      if (path === "/stripe/webhook" && request.method === "POST") {
+        return await handleStripeWebhook(request, env, origin);
+      }
+      if (path === "/admin/invoices" && request.method === "POST") {
+        const who = await requireAuth(request, env);
+        if (!who) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleCreateInvoice(request, env, origin, who);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/invoices") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const cid = Number(path.split("/")[3]);
+        if (!cid) return json({ error: "bad customer id" }, 400, origin);
+        return await handleListInvoices(request, env, origin, cid);
+      }
+      if (path.startsWith("/admin/invoices/") && path.endsWith("/void") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const iid = Number(path.split("/")[3]);
+        if (!iid) return json({ error: "bad invoice id" }, 400, origin);
+        return await handleVoidInvoice(request, env, origin, iid);
+      }
+      if (path.startsWith("/admin/payments/") && path.endsWith("/submission") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.split("/")[3]);
+        if (!pid) return json({ error: "bad payment id" }, 400, origin);
+        return await handleSetPaymentSubmission(request, env, origin, pid);
       }
       if (path.startsWith("/admin/customers/") && path.endsWith("/payments") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
