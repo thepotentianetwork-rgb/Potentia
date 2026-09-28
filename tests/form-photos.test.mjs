@@ -218,6 +218,13 @@ if (haveChrome) {
   /* The number has to be on the page before anyone hits the cap, too — most
      people will just upload four and never see the message. */
   check('the number is on the page from the start', /435-291-0979/.test(form), false);
+  /* Tappable, not just printed. This gets filled in on a phone, and a number
+     you have to memorise and retype is a number nobody texts. */
+  check('and it is a tappable sms: link', /href="sms:\+14352910979"/.test(form), false);
+  /* setLang writes textContent into every [data-en], so an anchor inside one
+     is wiped the first time somebody switches to Spanish. */
+  check('the link is not inside a translated element',
+    !/data-en="[^"]*<a /.test(form) && !/<a href="sms:[^>]*>[^<]*<\/a>[^<]*"/.test(form), false);
 }
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nall passed');

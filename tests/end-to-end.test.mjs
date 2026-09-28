@@ -148,6 +148,18 @@ page = page
         /* Three fit under the cap. The rest of his jobs come in by text, so
            the number has to be on the page whether or not he hits it. */
         out.tellsThemWhere = /435-291-0979/.test(document.body.textContent);
+        /* The number sits in an <a> between two translated spans. setLang
+           writes textContent into every [data-en], so if the anchor ever moves
+           inside one, switching language deletes it. Switch and look. */
+        function smsHref() {
+          var a = document.querySelector('a[href^="sms:"]');
+          return a ? a.getAttribute('href') + '|' + a.textContent : null;
+        }
+        out.smsEN = smsHref();
+        if (typeof setLang === 'function') setLang('es');
+        out.smsES = smsHref();
+        out.spanishAround = /env\u00ede el resto por mensaje al/.test(document.body.textContent);
+        if (typeof setLang === 'function') setLang('en');
 
         var f = document.getElementById('onboardingForm');
         f.querySelectorAll('[required]').forEach(function (el) {
@@ -207,6 +219,10 @@ check('the browser got through it', !!report && !rep.threw, rep.threw || '(no re
 check('three photos were accepted', rep.thumbs === 3, rep.thumbs);
 check('with nothing reported as wrong', !rep.note, rep.note);
 check('and the page says where to text the rest', rep.tellsThemWhere === true, rep.tellsThemWhere);
+check('the number is a tappable sms: link', rep.smsEN === 'sms:+14352910979|435-291-0979', rep.smsEN);
+check('and switching to Spanish does not wipe it',
+  !!rep.smsES && rep.smsES === rep.smsEN, { en: rep.smsEN, es: rep.smsES });
+check('with the Spanish sentence around it', rep.spanishAround === true, rep.spanishAround);
 check('and the form showed its success screen', rep.successShown === true, rep.successShown);
 check('Formspree got the sheet too', formspree.length >= 1, formspree.length);
 
