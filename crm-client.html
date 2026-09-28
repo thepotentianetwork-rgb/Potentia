@@ -665,10 +665,25 @@ var INTAKE_LABELS = {
   business_name: 'Business', owner_name: 'Owner', email: 'Email', phone: 'Phone',
   trade: 'Trade', other_trade: 'Other trade', service_area: 'Service area',
   story: 'Their story', project_description: 'Projects', credentials: 'Credentials',
-  project_type: 'Project types', contact_method: 'Best contact', heard: 'Heard about us'
+  project_type: 'Project types', contact_method: 'Best contact', heard: 'Heard about us',
+  /* the universal business sheet */
+  form_type: 'Sheet', industry: 'Industry', other_industry: 'Other industry',
+  description: 'What they do', customers: 'Customers', busiest: 'Busiest season',
+  why_us: 'Why them', location_type: 'Where work happens', team_size: 'Team size',
+  years_exp: 'Years in business', hours: 'Hours', show_prices: 'Show prices?',
+  guarantee: 'Guarantee', site_goal: 'Site should get', features: 'Site needs',
+  domain: 'Domain', current_site: 'Current site', google_profile: 'Google profile',
+  brand: 'Logo & colors', website_ref: 'Reference site', avoid: 'Does not want'
 };
+/* Eighteen svc_* keys would otherwise render as "Svc name 1", "Svc price 1" and
+   so on down the panel. Fold each row into one readable line instead. */
+var SVC_KEY = /^svc_(name|price|included)_(\d+)$/;
+var SVC_PART = { name: 'name', price: 'price', included: 'details' };
 function intakeLabel(k) {
-  return INTAKE_LABELS[k] || k.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
+  if (INTAKE_LABELS[k]) return INTAKE_LABELS[k];
+  var m = SVC_KEY.exec(k);
+  if (m) return 'Service ' + m[2] + ' \u2014 ' + SVC_PART[m[1]];
+  return k.replace(/_/g, ' ').replace(/^./, function (c) { return c.toUpperCase(); });
 }
 function money(n) {
   return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });

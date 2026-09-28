@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Contractor Intake — Potentia</title>
+<title>Business Intake — Potentia</title>
 <meta name="description" content="Everything Potentia needs to build your contracting website.">
 <!-- An intake sheet a client is sent a link to. It has no business turning up
      in search results. -->
@@ -164,13 +164,13 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
 
   <div class="intro">
     <h1 data-en="Tell us about your business." data-es="Cuéntenos sobre su negocio."></h1>
-    <p data-en="This is everything we need to build your website. The more detail you give us here, the better your site will represent what you actually do — and the faster we can get it live."
-       data-es="Esto es todo lo que necesitamos para construir su sitio web. Cuanto más detalle nos dé aquí, mejor representará su sitio lo que usted hace — y más rápido lo ponemos en línea."></p>
+    <p data-en="This is everything we need to build your website, whatever line of work you are in. Answer what applies and skip what does not — only a few fields are required. The more you give us, the better the site represents what you actually do."
+       data-es="Esto es todo lo que necesitamos para construir su sitio web, sea cual sea su giro. Responda lo que aplique y omita lo demás — solo unos pocos campos son obligatorios. Mientras más nos dé, mejor representará el sitio lo que usted hace."></p>
   </div>
 
   <form id="onboardingForm" action="https://formspree.io/f/mredlobr" method="POST">
-    <input type="hidden" name="_subject" value="New Potentia Website Intake">
-    <input type="hidden" name="form_type" value="contractor">
+    <input type="hidden" name="_subject" value="New Potentia Business Intake">
+    <input type="hidden" name="form_type" value="business">
 
     <!-- 01 · Business Basics -->
     <div class="section">
@@ -186,7 +186,7 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
           <input id="f_business_name" type="text" name="business_name" required autocomplete="organization">
         </div>
         <div class="field">
-          <label for="f_owner_name" data-en="Owner name *" data-es="Nombre del dueño *"></label>
+          <label for="f_owner_name" data-en="Your name *" data-es="Su nombre *"></label>
           <input id="f_owner_name" type="text" name="owner_name" required autocomplete="name">
         </div>
         <div class="field">
@@ -202,81 +202,102 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
           <input id="f_years_exp" type="text" name="years_exp" data-ph-en="e.g. 12 years, since 2011" data-ph-es="ej. 12 años, desde 2011">
         </div>
         <div class="field">
-          <label for="f_service_area" data-en="Service area *" data-es="Área de servicio *"></label>
+          <label for="f_team_size" data-en="How many people work there" data-es="Cuántas personas trabajan ahí"></label>
+          <input id="f_team_size" type="text" name="team_size" data-ph-en="Just me, 3, 12…" data-ph-es="Solo yo, 3, 12…">
+        </div>
+        <div class="field">
+          <label for="f_location_type" data-en="Where does the work happen?" data-es="¿Dónde ocurre el trabajo?"></label>
+          <select id="f_location_type" name="location_type">
+            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
+            <option data-en="Customers come to us" data-es="Los clientes vienen a nosotros"></option>
+            <option data-en="We go to the customer" data-es="Vamos donde el cliente"></option>
+            <option data-en="Both" data-es="Ambos"></option>
+            <option data-en="Online only" data-es="Solo en línea"></option>
+          </select>
+        </div>
+        <div class="field col-full">
+          <label for="f_address" data-en="Street address" data-es="Dirección"></label>
+          <input id="f_address" type="text" name="address" autocomplete="street-address"
+                 data-ph-en="Only if customers visit you — it goes on the map and helps you show up locally"
+                 data-ph-es="Solo si los clientes lo visitan — aparece en el mapa y ayuda a que lo encuentren localmente">
+        </div>
+        <div class="field col-full">
+          <label for="f_service_area" data-en="Area you serve *" data-es="Área que atiende *"></label>
           <input id="f_service_area" type="text" name="service_area" required data-ph-en="Cities, counties, or zip codes" data-ph-es="Ciudades, condados o códigos postales">
         </div>
         <div class="field col-full">
+          <label for="f_hours" data-en="Hours" data-es="Horario"></label>
+          <input id="f_hours" type="text" name="hours" data-ph-en="Mon–Fri 8–5, Sat by appointment" data-ph-es="Lun–Vie 8–5, Sáb con cita">
+        </div>
+        <div class="field col-full">
           <label for="f_tagline" data-en="Tagline or slogan" data-es="Eslogan o frase del negocio"></label>
-          <input id="f_tagline" type="text" name="tagline" data-ph-en="e.g. 'Built right the first time'" data-ph-es="ej. 'Hecho bien desde la primera vez'">
+          <input id="f_tagline" type="text" name="tagline" data-ph-en="e.g. 'Done right the first time'" data-ph-es="ej. 'Hecho bien desde la primera vez'">
           <span class="hint" data-en="Leave blank if you don't have one — we can suggest one" data-es="Déjelo en blanco si no tiene uno — podemos sugerirle uno"></span>
         </div>
       </div>
     </div>
 
-    <!-- 02 · Trade & Credentials -->
+    <!-- 02 · What You Do -->
     <div class="section">
       <div class="section-header">
         <span class="section-num">02</span>
         <div>
-          <div class="section-title" data-en="Trade & Credentials" data-es="Oficio y Credenciales"></div>
-          <div class="section-sub" data-en="This builds trust with GCs and homeowners immediately" data-es="Esto genera confianza con contratistas y propietarios de inmediato"></div>
+          <div class="section-title" data-en="What You Do" data-es="Lo Que Hace"></div>
+          <div class="section-sub" data-en="In your own words, not industry language" data-es="En sus propias palabras, no en lenguaje técnico"></div>
         </div>
       </div>
       <div class="grid-2">
-        <div class="field col-full">
-          <label data-en="Trade(s)" data-es="Oficio(s)"></label>
-          <div class="checkbox-group">
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Drywall"> <span>Drywall</span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Framing"> <span data-en="Framing" data-es="Armado / Estructura"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Concrete"> <span data-en="Concrete" data-es="Concreto"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Roofing"> <span data-en="Roofing" data-es="Techos"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Painting"> <span data-en="Painting" data-es="Pintura"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Flooring"> <span data-en="Flooring" data-es="Pisos"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Plumbing"> <span data-en="Plumbing" data-es="Plomería"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Electrical"> <span data-en="Electrical" data-es="Electricidad"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="HVAC"> <span>HVAC</span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Landscaping"> <span data-en="Landscaping" data-es="Jardinería"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Gutters"> <span data-en="Gutters" data-es="Canaletas"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Fencing"> <span data-en="Fencing" data-es="Cercas"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="Insulation"> <span data-en="Insulation" data-es="Aislamiento"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="trade" value="General Contracting"> <span data-en="General Contracting" data-es="Contratación General"></span></label>
-          </div>
-        </div>
-        <div class="field col-full">
-          <label for="f_other_trade" data-en="Other trade not listed" data-es="Otro oficio no listado"></label>
-          <input id="f_other_trade" type="text" name="other_trade" data-ph-en="Describe your trade" data-ph-es="Describa su oficio">
-        </div>
-        <div class="field col-full">
-          <label data-en="Project types" data-es="Tipos de proyectos"></label>
-          <div class="checkbox-group">
-            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Residential"> <span data-en="Residential" data-es="Residencial"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Commercial"> <span data-en="Commercial" data-es="Comercial"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Industrial"> <span data-en="Industrial" data-es="Industrial"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="project_type" value="New Construction"> <span data-en="New Construction" data-es="Construcción Nueva"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Remodels / Renovations"> <span data-en="Remodels / Renovations" data-es="Remodelaciones"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="project_type" value="Repairs"> <span data-en="Repairs" data-es="Reparaciones"></span></label>
-          </div>
+        <div class="field">
+          <label for="f_industry" data-en="Type of business *" data-es="Tipo de negocio *"></label>
+          <select id="f_industry" name="industry" required>
+            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
+            <option data-en="Home services / trades" data-es="Servicios para el hogar / oficios"></option>
+            <option data-en="Construction / remodeling" data-es="Construcción / remodelación"></option>
+            <option data-en="Cleaning" data-es="Limpieza"></option>
+            <option data-en="Landscaping / lawn care" data-es="Jardinería / césped"></option>
+            <option data-en="Auto repair / detailing" data-es="Reparación / detallado de autos"></option>
+            <option data-en="Beauty / barber / salon" data-es="Belleza / barbería / salón"></option>
+            <option data-en="Health / wellness" data-es="Salud / bienestar"></option>
+            <option data-en="Fitness / training" data-es="Acondicionamiento / entrenamiento"></option>
+            <option data-en="Food / drink / catering" data-es="Comida / bebida / catering"></option>
+            <option data-en="Retail / online store" data-es="Tienda / tienda en línea"></option>
+            <option data-en="Professional services" data-es="Servicios profesionales"></option>
+            <option data-en="Real estate" data-es="Bienes raíces"></option>
+            <option data-en="Photography / events" data-es="Fotografía / eventos"></option>
+            <option data-en="Pet services" data-es="Servicios para mascotas"></option>
+            <option data-en="Tutoring / instruction" data-es="Tutoría / instrucción"></option>
+            <option data-en="Moving / hauling / transport" data-es="Mudanzas / acarreo / transporte"></option>
+            <option data-en="Other" data-es="Otro"></option>
+          </select>
         </div>
         <div class="field">
-          <label for="f_license_number" data-en="License number" data-es="Número de licencia"></label>
-          <input id="f_license_number" type="text" name="license_number" data-ph-en="State license #" data-ph-es="# de licencia estatal">
-          <span class="hint" data-en="Displayed on site to build trust with GCs" data-es="Se muestra en el sitio para generar confianza con contratistas"></span>
+          <label for="f_other_industry" data-en="If other, what is it?" data-es="Si es otro, ¿cuál es?"></label>
+          <input id="f_other_industry" type="text" name="other_industry" data-ph-en="Describe your business" data-ph-es="Describa su negocio">
+        </div>
+        <div class="field col-full">
+          <label for="f_description" data-en="What does the business do? *" data-es="¿Qué hace el negocio? *"></label>
+          <textarea id="f_description" name="description" required style="min-height:90px"
+            data-ph-en="One or two sentences, the way you would say it to someone at a barbecue."
+            data-ph-es="Una o dos frases, como se lo diría a alguien en una reunión."></textarea>
         </div>
         <div class="field">
-          <label for="f_license_state" data-en="Licensed in which state(s)" data-es="Licenciado en qué estado(s)"></label>
-          <input id="f_license_state" type="text" name="license_state" data-ph-en="e.g. Utah, Idaho" data-ph-es="ej. Utah, Idaho">
+          <label for="f_customers" data-en="Who are your customers?" data-es="¿Quiénes son sus clientes?"></label>
+          <select id="f_customers" name="customers">
+            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
+            <option data-en="Homeowners / the public" data-es="Propietarios / el público"></option>
+            <option data-en="Other businesses" data-es="Otros negocios"></option>
+            <option data-en="Both" data-es="Ambos"></option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f_busiest" data-en="Busiest time of year" data-es="Época más ocupada del año"></label>
+          <input id="f_busiest" type="text" name="busiest" data-ph-en="Spring, holidays, year-round…" data-ph-es="Primavera, fiestas, todo el año…">
         </div>
         <div class="field col-full">
-          <label data-en="Insurance & bonding" data-es="Seguro y fianza"></label>
-          <div class="checkbox-group">
-            <label class="checkbox-item"><input type="checkbox" name="credentials" value="General Liability Insured"> <span data-en="General Liability Insured" data-es="Seguro de Responsabilidad General"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Workers Comp"> <span data-en="Workers Comp" data-es="Compensación de Trabajadores"></span></label>
-            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Bonded"> <span data-en="Bonded" data-es="Afianzado"></span></label>
-          </div>
-        </div>
-        <div class="field col-full">
-          <label for="f_certifications" data-en="Certifications or specialties" data-es="Certificaciones o especialidades"></label>
-          <input id="f_certifications" type="text" name="certifications" data-ph-en="e.g. OSHA 30, lead-safe certified, Level 5 finish specialist" data-ph-es="ej. OSHA 30, certificado libre de plomo, especialista en acabado Nivel 5">
+          <label for="f_why_us" data-en="Why do people pick you over the next guy?" data-es="¿Por qué lo eligen a usted y no al siguiente?"></label>
+          <textarea id="f_why_us" name="why_us"
+            data-ph-en="The real reason. Cheaper, faster, you actually answer the phone, you have done it for 20 years — whatever it is."
+            data-ph-es="La razón real. Más barato, más rápido, usted sí contesta el teléfono, lleva 20 años haciéndolo — lo que sea."></textarea>
         </div>
       </div>
     </div>
@@ -286,114 +307,132 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
       <div class="section-header">
         <span class="section-num">03</span>
         <div>
-          <div class="section-title" data-en="Services & Pricing" data-es="Servicios y Precios"></div>
-          <div class="section-sub" data-en="List your main services — add pricing if you want it on the site" data-es="Liste sus servicios principales — agregue precios si desea mostrarlos"></div>
+          <div class="section-title" data-en="Services &amp; Pricing" data-es="Servicios y Precios"></div>
+          <div class="section-sub" data-en="Your main services or products — add pricing only if you want it public" data-es="Sus servicios o productos principales — agregue precios solo si desea mostrarlos"></div>
         </div>
       </div>
       <div class="services-table">
         <div class="services-table-header">
-          <span data-en="Service / Package" data-es="Servicio / Paquete"></span>
-          <span data-en="Starting Price" data-es="Precio Inicial"></span>
+          <span data-en="Service / Product" data-es="Servicio / Producto"></span>
+          <span data-en="Price" data-es="Precio"></span>
           <span data-en="Details / What's Included" data-es="Detalles / Qué Incluye"></span>
         </div>
         <div class="service-row">
-          <input type="text" name="svc_name_1" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_name_1" data-ph-en="Service or product" data-ph-es="Servicio o producto">
           <input type="text" name="svc_price_1" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
           <input type="text" name="svc_included_1" data-ph-en="Brief description" data-ph-es="Descripción breve">
         </div>
         <div class="service-row">
-          <input type="text" name="svc_name_2" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_name_2" data-ph-en="Service or product" data-ph-es="Servicio o producto">
           <input type="text" name="svc_price_2" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
           <input type="text" name="svc_included_2" data-ph-en="Brief description" data-ph-es="Descripción breve">
         </div>
         <div class="service-row">
-          <input type="text" name="svc_name_3" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_name_3" data-ph-en="Service or product" data-ph-es="Servicio o producto">
           <input type="text" name="svc_price_3" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
           <input type="text" name="svc_included_3" data-ph-en="Brief description" data-ph-es="Descripción breve">
         </div>
         <div class="service-row">
-          <input type="text" name="svc_name_4" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_name_4" data-ph-en="Service or product" data-ph-es="Servicio o producto">
           <input type="text" name="svc_price_4" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
           <input type="text" name="svc_included_4" data-ph-en="Brief description" data-ph-es="Descripción breve">
         </div>
         <div class="service-row">
-          <input type="text" name="svc_name_5" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_name_5" data-ph-en="Service or product" data-ph-es="Servicio o producto">
           <input type="text" name="svc_price_5" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
           <input type="text" name="svc_included_5" data-ph-en="Brief description" data-ph-es="Descripción breve">
         </div>
         <div class="service-row">
-          <input type="text" name="svc_name_6" data-ph-en="Service name" data-ph-es="Nombre del servicio">
+          <input type="text" name="svc_name_6" data-ph-en="Service or product" data-ph-es="Servicio o producto">
           <input type="text" name="svc_price_6" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
           <input type="text" name="svc_included_6" data-ph-en="Brief description" data-ph-es="Descripción breve">
         </div>
       </div>
+      <div class="grid-2" style="margin-top:18px">
+        <div class="field col-full">
+          <label for="f_show_prices" data-en="Should prices show on the site?" data-es="¿Deben aparecer los precios en el sitio?"></label>
+          <select id="f_show_prices" name="show_prices">
+            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
+            <option data-en="Yes, show the prices" data-es="Sí, mostrar los precios"></option>
+            <option data-en="Show 'starting at' prices only" data-es="Mostrar solo precios 'desde'"></option>
+            <option data-en="No — quote only" data-es="No — solo cotización"></option>
+          </select>
+          <span class="hint" data-en="You can change this later without rebuilding the site" data-es="Puede cambiar esto después sin reconstruir el sitio"></span>
+        </div>
+      </div>
     </div>
 
-    <!-- 04 · About -->
+    <!-- 04 · Proof & Trust -->
     <div class="section">
       <div class="section-header">
         <span class="section-num">04</span>
         <div>
-          <div class="section-title" data-en="About the Business" data-es="Acerca del Negocio"></div>
-          <div class="section-sub" data-en="What goes on your About page" data-es="Lo que va en su página Acerca de"></div>
+          <div class="section-title" data-en="Proof &amp; Trust" data-es="Prueba y Confianza"></div>
+          <div class="section-sub" data-en="The things that make a stranger comfortable calling you" data-es="Lo que hace que un desconocido se sienta seguro de llamarle"></div>
         </div>
       </div>
       <div class="grid-2">
         <div class="field col-full">
-          <label for="f_story" data-en="Your story *" data-es="Su historia *"></label>
-          <textarea id="f_story" name="story" required style="min-height:110px"
-            data-ph-en="How did you get started? What drives you? What makes your work different from the next crew? Write it like you're talking to a homeowner."
-            data-ph-es="¿Cómo empezó? ¿Qué lo motiva? ¿Qué hace que su trabajo sea diferente al de otros? Escríbalo como si le hablara directamente a un propietario."></textarea>
+          <label data-en="Which of these apply?" data-es="¿Cuáles aplican?"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Licensed"> <span data-en="Licensed" data-es="Con licencia"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Insured"> <span data-en="Insured" data-es="Asegurado"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Bonded"> <span data-en="Bonded" data-es="Con fianza"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Certified"> <span data-en="Certified" data-es="Certificado"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Background checked"> <span data-en="Background checked" data-es="Antecedentes verificados"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Family owned"> <span data-en="Family owned" data-es="Negocio familiar"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Locally owned"> <span data-en="Locally owned" data-es="De dueños locales"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Veteran owned"> <span data-en="Veteran owned" data-es="De veterano"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Woman owned"> <span data-en="Woman owned" data-es="De mujer"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Minority owned"> <span data-en="Minority owned" data-es="De minoría"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Free estimates"> <span data-en="Free estimates" data-es="Estimados gratis"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="credentials" value="Emergency service"> <span data-en="Emergency service" data-es="Servicio de emergencia"></span></label>
+          </div>
         </div>
         <div class="field">
-          <label for="f_crew_size" data-en="Team / crew size" data-es="Tamaño del equipo / cuadrilla"></label>
-          <select id="f_crew_size" name="crew_size">
-            <option value="" disabled selected data-en="Select one" data-es="Seleccione uno"></option>
-            <option data-en="Solo operator" data-es="Trabajador independiente"></option>
-            <option data-en="2–5 crew" data-es="2–5 trabajadores"></option>
-            <option data-en="6–10 crew" data-es="6–10 trabajadores"></option>
-            <option data-en="10+ crew" data-es="10+ trabajadores"></option>
-            <option data-en="Multiple crews" data-es="Múltiples cuadrillas"></option>
-          </select>
+          <label for="f_license_number" data-en="License number" data-es="Número de licencia"></label>
+          <input id="f_license_number" type="text" name="license_number" data-ph-en="If you have one" data-ph-es="Si tiene uno">
         </div>
         <div class="field">
-          <label for="f_languages" data-en="Languages spoken" data-es="Idiomas hablados"></label>
-          <input id="f_languages" type="text" name="languages" data-ph-en="e.g. English, Spanish" data-ph-es="ej. Inglés, Español">
+          <label for="f_license_state" data-en="State it is issued in" data-es="Estado donde se emitió"></label>
+          <input id="f_license_state" type="text" name="license_state" data-ph-en="e.g. Utah" data-ph-es="ej. Utah">
         </div>
         <div class="field col-full">
-          <label for="f_why_us" data-en="Why should someone hire you over a competitor?" data-es="¿Por qué deberían contratarle a usted y no a un competidor?"></label>
-          <textarea id="f_why_us" name="why_us"
-            data-ph-en="Quality of work, reliability, communication, price, speed — be specific"
-            data-ph-es="Calidad del trabajo, confiabilidad, comunicación, precio, rapidez — sea específico"></textarea>
+          <label for="f_certifications" data-en="Certifications, memberships or awards" data-es="Certificaciones, membresías o premios"></label>
+          <input id="f_certifications" type="text" name="certifications" data-ph-en="Manufacturer certs, trade associations, 'Best of' awards…" data-ph-es="Certificaciones, asociaciones, premios 'Best of'…">
         </div>
         <div class="field col-full">
-          <label for="f_testimonials" data-en="Testimonials or reviews to feature" data-es="Testimonios o reseñas para mostrar"></label>
+          <label for="f_guarantee" data-en="Guarantee or warranty you offer" data-es="Garantía que ofrece"></label>
+          <input id="f_guarantee" type="text" name="guarantee" data-ph-en="e.g. 1-year workmanship, satisfaction guaranteed, 30-day returns" data-ph-es="ej. 1 año de mano de obra, satisfacción garantizada, devoluciones en 30 días">
+        </div>
+        <div class="field col-full">
+          <label for="f_testimonials" data-en="Reviews or things customers have said" data-es="Reseñas o cosas que han dicho sus clientes"></label>
           <textarea id="f_testimonials" name="testimonials"
-            data-ph-en="Paste any reviews or quotes from happy customers you want on the site"
-            data-ph-es="Pegue aquí reseñas o citas de clientes satisfechos que desee mostrar en el sitio"></textarea>
+            data-ph-en="Paste a few. A Google or Facebook link works too — we will pull them from there."
+            data-ph-es="Pegue algunas. Un enlace de Google o Facebook también sirve — las sacamos de ahí."></textarea>
         </div>
       </div>
     </div>
 
-    <!-- 05 · Your work -->
+    <!-- 05 · Your Work -->
     <div class="section">
       <div class="section-header">
         <span class="section-num">05</span>
         <div>
           <div class="section-title" data-en="Your Work" data-es="Su Trabajo"></div>
-          <div class="section-sub" data-en="Photos of jobs you have done" data-es="Fotos de trabajos que ha hecho"></div>
+          <div class="section-sub" data-en="What you have actually done" data-es="Lo que realmente ha hecho"></div>
         </div>
       </div>
       <div class="grid-2">
         <div class="field col-full">
-          <label for="f_project_description" data-en="Tell us about a project or two"
-                 data-es="Cuéntenos sobre uno o dos proyectos"></label>
+          <label for="f_project_description" data-en="Tell us about a job or two you are proud of"
+                 data-es="Cuéntenos sobre uno o dos trabajos de los que esté orgulloso"></label>
           <textarea id="f_project_description" name="project_description" style="min-height:100px"
             data-ph-en="What was the job, what was hard about it, and what did the customer end up with? A couple of real jobs beats a list of services."
             data-ph-es="¿Cuál fue el trabajo, qué fue lo difícil y qué obtuvo el cliente al final? Un par de trabajos reales vale más que una lista de servicios."></textarea>
         </div>
         <div class="field col-full">
-          <label data-en="Project photos" data-es="Fotos de proyectos"></label>
+          <label data-en="Photos" data-es="Fotos"></label>
           <div class="section-sub" style="margin:0 0 8px"
                data-en="Up to 4 here — text the rest to 435-291-0979. Before-and-after shots are worth the most. They are resized on your phone before sending, so this works on cell data."
                data-es="Hasta 4 aquí — envíe el resto por mensaje al 435-291-0979. Las fotos de antes y después son las más valiosas. Se redimensionan en su teléfono antes de enviarse, así que funciona con datos móviles."></div>
@@ -413,12 +452,78 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
       </div>
     </div>
 
-    <!-- 06 · Contact -->
+    <!-- 06 · The Website -->
     <div class="section">
       <div class="section-header">
         <span class="section-num">06</span>
         <div>
-          <div class="section-title" data-en="Contact & Preferences" data-es="Contacto y Preferencias"></div>
+          <div class="section-title" data-en="The Website" data-es="El Sitio Web"></div>
+          <div class="section-sub" data-en="What it needs to do for you" data-es="Lo que necesita hacer por usted"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field col-full">
+          <label data-en="What should the site actually get you?" data-es="¿Qué debe conseguirle el sitio?"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="site_goal" value="Phone calls"> <span data-en="Phone calls" data-es="Llamadas"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="site_goal" value="Quote requests"> <span data-en="Quote requests" data-es="Solicitudes de cotización"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="site_goal" value="Booked appointments"> <span data-en="Booked appointments" data-es="Citas agendadas"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="site_goal" value="Online sales"> <span data-en="Online sales" data-es="Ventas en línea"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="site_goal" value="Show my work"> <span data-en="Show my work" data-es="Mostrar mi trabajo"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="site_goal" value="Look established"> <span data-en="Look established" data-es="Verse establecido"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="site_goal" value="Hire people"> <span data-en="Hire people" data-es="Contratar personal"></span></label>
+          </div>
+        </div>
+        <div class="field col-full">
+          <label data-en="Anything the site needs to have?" data-es="¿Algo que el sitio deba tener?"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Contact form"> <span data-en="Contact form" data-es="Formulario de contacto"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Online booking"> <span data-en="Online booking" data-es="Reservas en línea"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Take payments"> <span data-en="Take payments" data-es="Aceptar pagos"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Map and directions"> <span data-en="Map and directions" data-es="Mapa y direcciones"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Photo gallery"> <span data-en="Photo gallery" data-es="Galería de fotos"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Price list or menu"> <span data-en="Price list or menu" data-es="Lista de precios o menú"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Reviews on the page"> <span data-en="Reviews on the page" data-es="Reseñas en la página"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Blog or news"> <span data-en="Blog or news" data-es="Blog o noticias"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Spanish version"> <span data-en="Spanish version" data-es="Versión en español"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="features" value="Job application form"> <span data-en="Job application form" data-es="Formulario de empleo"></span></label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f_domain" data-en="Do you own a domain name?" data-es="¿Tiene un nombre de dominio?"></label>
+          <input id="f_domain" type="text" name="domain" data-ph-en="yourbusiness.com, or 'no'" data-ph-es="sunegocio.com, o 'no'">
+        </div>
+        <div class="field">
+          <label for="f_current_site" data-en="Current website, if any" data-es="Sitio web actual, si tiene"></label>
+          <input id="f_current_site" type="text" name="current_site" data-ph-en="Even an old one we are replacing" data-ph-es="Incluso uno viejo que vamos a reemplazar">
+        </div>
+        <div class="field col-full">
+          <label for="f_google_profile" data-en="Google Business Profile" data-es="Perfil de Negocio de Google"></label>
+          <input id="f_google_profile" type="text" name="google_profile" data-ph-en="Link to it, or 'not set up yet'" data-ph-es="Enlace, o 'aún no lo tengo'">
+          <span class="hint" data-en="This is most of how people find a local business — we will set one up if you do not have it" data-es="Así es como la gente encuentra un negocio local — se lo configuramos si no lo tiene"></span>
+        </div>
+        <div class="field col-full">
+          <label for="f_brand" data-en="Logo, colors, or a look you want" data-es="Logo, colores o un estilo que quiera"></label>
+          <input id="f_brand" type="text" name="brand" data-ph-en="Have a logo? Colors off your truck or sign? Tell us — or say 'you pick'" data-ph-es="¿Tiene logo? ¿Colores de su camioneta o letrero? Díganos — o diga 'ustedes eligen'">
+        </div>
+        <div class="field col-full">
+          <label for="f_website_ref" data-en="A website you like the look of" data-es="Un sitio web cuyo diseño le guste"></label>
+          <input id="f_website_ref" type="text" name="website_ref" data-ph-en="Any site, any industry" data-ph-es="Cualquier sitio, cualquier industria">
+          <span class="hint" data-en="Helps us match the vibe you're going for" data-es="Nos ayuda a entender el estilo que busca"></span>
+        </div>
+        <div class="field col-full">
+          <label for="f_avoid" data-en="Anything you definitely do NOT want" data-es="Algo que definitivamente NO quiere"></label>
+          <input id="f_avoid" type="text" name="avoid" data-ph-en="A color, a style, a competitor's site, stock photos of people in hard hats…" data-ph-es="Un color, un estilo, el sitio de un competidor, fotos de archivo…">
+        </div>
+      </div>
+    </div>
+
+    <!-- 07 · Contact & Preferences -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">07</span>
+        <div>
+          <div class="section-title" data-en="Contact &amp; Preferences" data-es="Contacto y Preferencias"></div>
         </div>
       </div>
       <div class="grid-2">
@@ -431,6 +536,7 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
             <option data-en="Call or text" data-es="Llamada o mensaje"></option>
             <option data-en="Email only" data-es="Solo correo electrónico"></option>
             <option data-en="Fill out a contact form" data-es="Llenar un formulario de contacto"></option>
+            <option data-en="Book online" data-es="Reservar en línea"></option>
           </select>
         </div>
         <div class="field">
@@ -445,18 +551,17 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
         </div>
         <div class="field">
           <label for="f_social" data-en="Social media handles" data-es="Redes sociales"></label>
-          <input id="f_social" type="text" name="social" data-ph-en="@yourhandle — Instagram, Facebook, etc." data-ph-es="@suusuario — Instagram, Facebook, etc.">
+          <input id="f_social" type="text" name="social" data-ph-en="@yourhandle — Instagram, Facebook, TikTok, etc." data-ph-es="@suusuario — Instagram, Facebook, TikTok, etc.">
         </div>
         <div class="field">
-          <label for="f_website_ref" data-en="Website you like the look of" data-es="Sitio web cuyo diseño le gusta"></label>
-          <input id="f_website_ref" type="text" name="website_ref" data-ph-en="URL of any site you like" data-ph-es="URL de algún sitio que le guste">
-          <span class="hint" data-en="Helps us match the vibe you're going for" data-es="Nos ayuda a entender el estilo que busca"></span>
+          <label for="f_languages" data-en="Languages you do business in" data-es="Idiomas en los que atiende"></label>
+          <input id="f_languages" type="text" name="languages" data-ph-en="English, Spanish…" data-ph-es="Inglés, español…">
         </div>
         <div class="field col-full">
           <label for="f_notes" data-en="Anything else we should know" data-es="¿Algo más que debamos saber?"></label>
           <textarea id="f_notes" name="notes"
-            data-ph-en="Seasonal availability, special equipment, types of jobs you don't take, anything that sets you apart"
-            data-ph-es="Disponibilidad por temporada, equipo especial, tipos de trabajos que no acepta, lo que lo distingue"></textarea>
+            data-ph-en="Seasonal hours, work you do not take, a deadline you are working to, anything that sets you apart"
+            data-ph-es="Horario por temporada, trabajos que no acepta, una fecha límite, cualquier cosa que lo distinga"></textarea>
         </div>
       </div>
     </div>

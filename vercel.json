@@ -1,5 +1,12 @@
 {
   "rewrites": [
-    { "source": "/contractorform", "destination": "/contractorform.html" }
+    {
+      "source": "/contractorform",
+      "destination": "/contractorform.html"
+    },
+    {
+      "source": "/businessform",
+      "destination": "/businessform.html"
+    }
   ]
 }
