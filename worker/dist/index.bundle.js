@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "dc4d9be";
-const WORKER_BUILT_AT = "2026-09-29T15:42:14.901Z";
+const WORKER_BUILD = "d69cfa6";
+const WORKER_BUILT_AT = "2026-09-29T15:52:47.924Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -5136,6 +5136,84 @@ function configSummary(config) {
   return parts.join(" \u00b7 ");
 }
 
+/* GET /admin/schedule — every install, across every customer, by date.
+ *
+ * The same rows the customer page shows one job at a time. They were only
+ * ever reachable by opening a customer and finding the right order card,
+ * which answers "when is Hank's shed going in" and is no use at all for
+ * "what is happening this week" — the question you actually have on a Sunday
+ * night.
+ *
+ * ?from / ?to bound it by install date, inclusive, as plain YYYY-MM-DD. The
+ * default is deliberately not "everything": a yard with two seasons of
+ * history behind it would load a list nobody reads.
+ */
+async function handleSchedule(request, env, origin) {
+  await ensureInstallsTable(env);
+  await ensureSubmissionAdjustColumns(env);
+
+  const url = new URL(request.url);
+  const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
+  const from = day(url.searchParams.get("from"));
+  const to = day(url.searchParams.get("to"));
+
+  const where = [];
+  const args = [];
+  if (from) { where.push("i.install_date >= ?"); args.push(from); }
+  if (to) { where.push("i.install_date <= ?"); args.push(to); }
+
+  const sql =
+    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at,
+            c.id AS customer_id, c.name AS customer_name, c.email AS customer_email,
+            c.phone AS customer_phone, c.address, c.city, c.state,
+            s.details, s.status AS order_status
+     FROM installs i
+     JOIN submissions s ON i.submission_id = s.id
+     JOIN customers c ON s.customer_id = c.id` +
+    (where.length ? " WHERE " + where.join(" AND ") : "") +
+    " ORDER BY i.install_date ASC, i.id ASC";
+
+  const { results } = await env.DB.prepare(sql).bind(...args).all();
+
+  const calGuests = String(env.INSTALL_CALENDAR_GUESTS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+
+  const installs = (results || []).map((r) => {
+    let details = {};
+    try { details = JSON.parse(r.details) || {}; } catch (e) {}
+    const summary = configSummary(details.config);
+    const location = [r.address, r.city, r.state].filter(Boolean).join(", ");
+    return {
+      id: r.id,
+      submission_id: r.submission_id,
+      item: r.item,
+      install_date: r.install_date,
+      days: r.days,
+      note: r.note,
+      order_status: r.order_status,
+      customer_id: r.customer_id,
+      customer_name: r.customer_name,
+      customer_phone: r.customer_phone,
+      address: location,
+      summary,
+      /* The build's own price, not the customer's running total — this is a
+         list of jobs, and what each one is worth is the useful figure. */
+      quoted_price: details.quotedPrice != null ? Number(details.quotedPrice) : null,
+      calendar_url: googleCalendarUrl({
+        title: installTitle(r.item, r.customer_name),
+        installDate: r.install_date,
+        days: r.days,
+        details: installDetails({ summary, phone: r.customer_phone, note: r.note,
+                                  days: r.days, orderId: r.submission_id }),
+        location,
+        guests: r.customer_email ? [r.customer_email].concat(calGuests) : calGuests,
+      }),
+    };
+  });
+
+  return json({ installs }, 200, origin);
+}
+
 /* Everything an invoice needs, gathered and priced, without sending anything.
    Shared by the preview and the send so the figures a person approves are the
    figures that go out — computing them twice would let the two drift. */
@@ -8221,6 +8299,10 @@ export default {
          rejected before any database work happens. */
       if (path === "/stripe/webhook" && request.method === "POST") {
         return await handleStripeWebhook(request, env, origin);
+      }
+      if (path === "/admin/schedule" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleSchedule(request, env, origin);
       }
       if (path === "/admin/invoices" && request.method === "POST") {
         const who = await requireAuth(request, env);
