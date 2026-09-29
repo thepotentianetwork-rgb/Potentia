@@ -870,6 +870,24 @@ the customer never has to check one document against the other.
 Press **Work out the deposit** and open *What the customer sees* in the
 preview to read the whole thing before it goes.
 
+## Which address it went to
+
+The invoice row shows **to <address>** — where Stripe says it sent it, not
+where we asked it to. Those differ when Stripe's copy of the customer is out
+of step, and the whole point of the field is that case.
+
+The CRM is the source of truth for the address: the name, email and phone are
+pushed to Stripe on **every** invoice, not just the first. Correcting a typo
+in the CRM now fixes the next invoice. It did not used to — Stripe's copy was
+written once and never touched again, so every later invoice went to the old
+address, with Stripe reporting each send as successful.
+
+**In test mode, Stripe does not email customers at all.** It only delivers to
+addresses belonging to your Stripe team or a verified domain, so a test cannot
+reach a real person. To see a test invoice actually arrive, use the address you
+log into Stripe with, or add the one you want under **Settings → Team and
+security**. Live mode emails customers normally.
+
 ## When an invoice says unpaid and you think it isn't
 
 Press **Check Stripe** on the invoice row. It asks Stripe what actually

@@ -781,6 +781,15 @@ async function ensureInvoicesTable(env) {
   if (names.length && names.indexOf("stripe_customer_id") === -1) {
     await env.DB.prepare("ALTER TABLE customers ADD COLUMN stripe_customer_id TEXT").run();
   }
+
+  /* The address Stripe says it sent to. Stored rather than read back off the
+     customer record, because that record can be edited afterwards and this has
+     to stay the answer to "where did THIS invoice actually go?" */
+  const inv = await env.DB.prepare("PRAGMA table_info(invoices)").all();
+  const invNames = (inv.results || []).map((r) => r.name);
+  if (invNames.length && invNames.indexOf("sent_to") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN sent_to TEXT").run();
+  }
 }
 
 /* The one-line description of the build, in the same words and the same order
@@ -944,6 +953,12 @@ async function handleSyncInvoice(request, env, origin, id) {
     await env.DB.prepare("UPDATE invoices SET hosted_url = ? WHERE id = ?")
       .bind(live.hostedUrl, row.id).run();
   }
+  /* Same for the recipient: invoices raised before the column existed have
+     none recorded, and Stripe has known all along. */
+  if (live.customerEmail && live.customerEmail !== row.sent_to) {
+    await env.DB.prepare("UPDATE invoices SET sent_to = ? WHERE id = ?")
+      .bind(live.customerEmail, row.id).run();
+  }
 
   if (live.status === "paid") {
     const done = await recordInvoicePaid(env, row, live.amountPaidCents);
@@ -1087,15 +1102,17 @@ async function handleCreateInvoice(request, env, origin, actor) {
   }
 
   const now = new Date().toISOString();
+  const sentTo = sent.customerEmail || customer.email || null;
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
-       amount, status, lines, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`
+       amount, status, lines, created_at, created_by, sent_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
-         JSON.stringify(shape.lines), now, (actor && actor.name) || null).run();
+         JSON.stringify(shape.lines), now, (actor && actor.name) || null, sentTo).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
+                sent_to: sentTo,
                 ...shape }, 200, origin);
 }
 
@@ -1103,7 +1120,7 @@ async function handleListInvoices(request, env, origin, customerId) {
   await ensureInvoicesTable(env);
   const { results } = await env.DB.prepare(
     `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
-            lines, created_at, created_by, paid_at
+            lines, created_at, created_by, paid_at, sent_to
      FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
   ).bind(customerId).all();
   const invoices = (results || []).map((r) => {
