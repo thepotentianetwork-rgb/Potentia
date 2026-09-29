@@ -888,6 +888,39 @@ reach a real person. To see a test invoice actually arrive, use the address you
 log into Stripe with, or add the one you want under **Settings → Team and
 security**. Live mode emails customers normally.
 
+## Texting the link instead of emailing it
+
+Every unpaid invoice row has **Copy pay link** beside **Open ↗**. It copies the
+payment page so you can paste it into a text message. Same page the email
+links to.
+
+Worth preferring: email is the part of this nobody controls — spam folders,
+a wrong address, a provider having a bad day — and these customers text
+already. The button disappears once an invoice is paid or voided, because
+there is nothing left to pay.
+
+## Going live
+
+Three things change together, and the third is easy to miss:
+
+1. Replace `STRIPE_SECRET_KEY` with the `sk_live_` key.
+2. Create a **second** webhook endpoint in live mode — same URL, same
+   `invoice.paid` event — and replace `STRIPE_WEBHOOK_SECRET` with its
+   signing secret. Test and live webhooks are separate. Skipping this is the
+   classic mistake: invoices send fine and never flip to Paid.
+3. Nothing, as it happens — but only because the code now handles it. Stripe
+   customer ids are per-environment, so every customer invoiced in test mode
+   has a test-mode `cus_...` stored against them that a live key cannot see.
+   That used to mean the first real invoice of every existing customer would
+   fail. Now a customer id Stripe reports as missing is replaced with a fresh
+   one and the new id stored. Any other Stripe refusal still stops, so a bad
+   key or an outage cannot quietly produce a duplicate customer.
+
+To prove email works on live without spending anything: invoice yourself,
+confirm it arrives, then **Void** it. Voiding an unpaid invoice is free.
+Do not pay it — a live payment is a real charge, and Stripe keeps its
+processing fee even after a refund.
+
 ## When an invoice says unpaid and you think it isn't
 
 Press **Check Stripe** on the invoice row. It asks Stripe what actually
