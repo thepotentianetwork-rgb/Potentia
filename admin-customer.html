@@ -209,6 +209,9 @@ select:focus{border-color:var(--sp-blue)}
 .inv-pline{display:flex;justify-content:space-between;gap:14px;font-size:13px;color:var(--fg);margin-bottom:4px}
 .inv-ptotal{display:flex;justify-content:space-between;gap:14px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(43,181,232,0.35);font-size:15px;color:var(--bright)}
 .inv-note{font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5}
+.inv-doc{margin-top:10px;border-top:1px solid rgba(43,181,232,0.25);padding-top:8px}
+.inv-doc summary{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);cursor:pointer}
+.inv-memo{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);white-space:pre-wrap;margin:8px 0 0;line-height:1.6;overflow-x:auto}
 .inv-warn{margin-top:10px;padding:9px 11px;border:1px solid rgba(224,180,79,0.5);background:rgba(224,180,79,0.08);color:#e0b44f;font-size:12px;line-height:1.5;border-radius:6px}
 .inv-err{margin-top:8px;color:#e0684f;font-size:12px;line-height:1.5}
 .payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
@@ -1087,6 +1090,39 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
   note.textContent = 'Job total ' + money(data.job_total) + ' · already paid ' + money(data.already_paid) +
     '. Sent from Stripe by email, payable by bank transfer or card.';
   box.appendChild(note);
+
+  /* What the customer will actually read, not just what they will be charged.
+     Shown collapsed: on a normal send you want the total and the lines, and
+     on the one send where something looks wrong you want all of it. */
+  if (data.memo || data.footer) {
+    var more = document.createElement('details');
+    more.className = 'inv-doc';
+    var sum = document.createElement('summary');
+    sum.textContent = 'What the customer sees';
+    more.appendChild(sum);
+
+    (data.custom_fields || []).forEach(function (f) {
+      var row = document.createElement('div');
+      row.className = 'inv-pline';
+      var n = document.createElement('span'); n.textContent = f.name;
+      var v = document.createElement('span'); v.textContent = f.value;
+      row.appendChild(n); row.appendChild(v);
+      more.appendChild(row);
+    });
+    if (data.memo) {
+      var memo = document.createElement('pre');
+      memo.className = 'inv-memo';
+      memo.textContent = data.memo;
+      more.appendChild(memo);
+    }
+    if (data.footer) {
+      var foot = document.createElement('div');
+      foot.className = 'inv-note';
+      foot.textContent = data.footer;
+      more.appendChild(foot);
+    }
+    box.appendChild(more);
+  }
 
   (data.warnings || []).forEach(function (w) {
     var warn = document.createElement('div');

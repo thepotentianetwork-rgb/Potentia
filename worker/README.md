@@ -849,6 +849,27 @@ chargeback.
 5. **Work out the balance** later. It credits what has actually been paid,
    so the balance is the rest of the job.
 
+## What the invoice says
+
+The invoice is the quote, in the quote's own words — nothing gets retyped and
+the customer never has to check one document against the other.
+
+- **Across the top:** order number, the build (`10x16 ft · barn · vertical`),
+  whether this is the deposit or the balance, and the job total.
+- **Line items:** each phase at its pre-tax price, then each adjustment with
+  the note you wrote for it, then sales tax — the same lines, in the same
+  order, as the quote's price breakdown. A deposit invoice then shows the
+  whole job and takes 70% back off as "balance due on completion", so the
+  customer can see what they are *not* being asked for yet. A balance invoice
+  credits each payment separately instead.
+- **Memo:** the build itemised — every phase, what makes it up, and what a
+  package like Essential Electrical actually contains.
+- **Footer:** anything thrown in free, what they saved, how the two payments
+  work, and that the amounts already include tax.
+
+Press **Work out the deposit** and open *What the customer sees* in the
+preview to read the whole thing before it goes.
+
 ## The things that will bite, and what stops them
 
 - **A sent invoice cannot be edited.** Stripe treats a finalized invoice as a
@@ -868,6 +889,11 @@ chargeback.
   until the first is voided, so a double-tap a week apart cannot bill twice.
 - **A paid invoice has no Void button.** The money has moved — that is a
   refund, done in Stripe.
+- **The detail shrinks before it breaks.** Stripe documents a limit on the
+  header fields and not on the memo or footer, and an undocumented limit is
+  still a limit — exceeding one means the invoice does not send at all. So a
+  build too detailed to fit drops the package contents first, then the
+  sub-items, keeping the phases. It never sends a truncated invoice.
 - **Tax is not recalculated by Stripe.** `automatic_tax` is off on purpose:
   the quote already applied Utah's 7.25% and the line amounts are
   tax-inclusive. Turning it on in Stripe would tax the tax.

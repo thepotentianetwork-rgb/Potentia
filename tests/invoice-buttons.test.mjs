@@ -202,6 +202,16 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
     R.previewTotal = txt(panel.querySelector('.inv-ptotal'));
     R.previewNote = txt(panel.querySelector('.inv-note'));
     R.previewButtons = [].slice.call(panel.querySelectorAll('.inv-btn')).map(txt);
+    /* The whole document, not just the total: phases, tax, the build detail
+       and the footer the customer reads. */
+    R.previewLabels = [].slice.call(panel.querySelectorAll('.inv-pline'))
+      .map(function (l) { return txt(l.children[0]); });
+    var doc = panel.querySelector('.inv-doc');
+    R.docShown = !!doc;
+    R.memo = doc && doc.querySelector('.inv-memo') ? doc.querySelector('.inv-memo').textContent : null;
+    R.footer = doc ? txt(doc.querySelector('.inv-note')) : null;
+    R.fields = doc ? [].slice.call(doc.querySelectorAll('.inv-pline'))
+      .map(function (l) { return txt(l.children[0]) + '=' + txt(l.children[1]); }) : [];
     R.warnings = [].slice.call(panel.querySelectorAll('.inv-warn')).map(txt);
 
     // ---- cancel puts it back, unsent ----------------------------------
@@ -374,6 +384,30 @@ check('and saying no sends nothing',
   R.stillOnPreview === true &&
   invoicePosts.filter((p) => !p.preview).length === 1,
   invoicePosts.map((p) => (p.preview ? 'preview' : 'SEND') + ':' + p.kind));
+
+console.log('\n-- the whole quote, on the invoice --');
+/* The point of all of it: nothing gets retyped, and the customer reads one
+   document rather than checking the invoice against the quote. */
+check('the phases are listed by name',
+  BREAKDOWN.rows.every((r) => (R.previewLabels || []).indexOf(r.label) !== -1),
+  { shown: R.previewLabels, phases: BREAKDOWN.rows.map((r) => r.label) });
+check('sales tax is its own line, named with the rate',
+  (R.previewLabels || []).some((l) => /^Sales Tax \(7\.25%\)$/.test(l)), R.previewLabels);
+check('and the deferral explains what is NOT being collected yet',
+  (R.previewLabels || []).some((l) => /Less balance due on completion/.test(l)), R.previewLabels);
+check('the build detail is there to read', R.docShown === true);
+check('the memo itemises what is in the shed',
+  !!R.memo && BREAKDOWN.rows.every((r) => R.memo.indexOf(r.label) !== -1), R.memo);
+check('including the parts that make up the shed phase',
+  !!R.memo && BREAKDOWN.rows.some((r) => (r.subLines || []).length &&
+    r.subLines.every((s) => R.memo.indexOf(s.label) !== -1)), R.memo);
+check('the footer explains the two payments',
+  /balance is invoiced on completion/.test(R.footer || ''), R.footer);
+check('and says the amounts already include tax',
+  /include Utah sales tax/i.test(R.footer || ''), R.footer);
+check('the header fields carry the order and the build',
+  (R.fields || []).some((f) => /^Order=#/.test(f)) &&
+  (R.fields || []).some((f) => /^Job total=/.test(f)), R.fields);
 
 console.log('\n-- and once the deposit clears --');
 check('the row flips to paid', R.paidPill === 'Paid', R.paidPill);
