@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "d69cfa6";
-const WORKER_BUILT_AT = "2026-09-29T15:52:47.924Z";
+const WORKER_BUILD = "2dda230";
+const WORKER_BUILT_AT = "2026-09-29T16:16:27.555Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -5136,6 +5136,118 @@ function configSummary(config) {
   return parts.join(" \u00b7 ");
 }
 
+/* GET /admin/activity — what has happened lately, newest first.
+ *
+ * Three things a person actually wants to be told about, in one list:
+ * money arriving, invoices going out, and someone new turning up. Each is
+ * already recorded somewhere; what was missing was anywhere to see them
+ * together. Without this, a Stripe payment lands in the CRM silently and the
+ * only way to find out is to open the right customer and look.
+ *
+ * ?since — an ISO timestamp. Rows at or before it are still returned, but
+ * flagged `unseen: false`, so the page can show a marker without a second
+ * request and without the server keeping per-person read state.
+ * ?limit — capped, because "everything since we started" is not a feed.
+ */
+async function handleActivity(request, env, origin) {
+  await ensurePaymentsTable(env);
+  await ensureInvoicesTable(env);
+
+  const url = new URL(request.url);
+  const since = String(url.searchParams.get("since") || "");
+  const asked = Number(url.searchParams.get("limit"));
+  const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, 200) : 60;
+
+  const [pays, invs, subs] = await Promise.all([
+    env.DB.prepare(
+      `SELECT p.id, p.amount, p.method, p.note, p.paid_at, p.created_at, p.submission_id,
+              c.id AS customer_id, c.name AS customer_name
+       FROM payments p JOIN customers c ON p.customer_id = c.id
+       ORDER BY p.paid_at DESC, p.id DESC LIMIT ?`
+    ).bind(limit).all(),
+    env.DB.prepare(
+      `SELECT i.id, i.kind, i.amount, i.status, i.created_at, i.paid_at, i.hosted_url,
+              i.submission_id, c.id AS customer_id, c.name AS customer_name
+       FROM invoices i JOIN customers c ON i.customer_id = c.id
+       ORDER BY i.created_at DESC, i.id DESC LIMIT ?`
+    ).bind(limit).all(),
+    env.DB.prepare(
+      `SELECT s.id, s.details, s.created_at, s.status,
+              c.id AS customer_id, c.name AS customer_name
+       FROM submissions s JOIN customers c ON s.customer_id = c.id
+       ORDER BY s.created_at DESC, s.id DESC LIMIT ?`
+    ).bind(limit).all(),
+  ]);
+
+  const events = [];
+  const at = (t) => String(t || "");
+
+  (pays.results || []).forEach((p) => {
+    events.push({
+      kind: "payment",
+      /* paid_at is when the money moved, which is what this feed is about —
+         created_at is when someone got round to typing it in. */
+      at: at(p.paid_at || p.created_at),
+      id: "pay:" + p.id,
+      customer_id: p.customer_id,
+      customer_name: p.customer_name,
+      submission_id: p.submission_id,
+      amount: Number(p.amount),
+      method: p.method,
+      note: p.note || null,
+    });
+  });
+
+  (invs.results || []).forEach((i) => {
+    events.push({
+      kind: "invoice_sent",
+      at: at(i.created_at),
+      id: "inv:" + i.id,
+      customer_id: i.customer_id,
+      customer_name: i.customer_name,
+      submission_id: i.submission_id,
+      amount: Number(i.amount),
+      invoice_kind: i.kind,
+      status: i.status,
+      hosted_url: i.hosted_url || null,
+    });
+  });
+
+  (subs.results || []).forEach((s) => {
+    let details = {};
+    try { details = JSON.parse(s.details) || {}; } catch (e) {}
+    events.push({
+      /* A consult is someone asking to be called, which needs a different
+         reaction from a finished design — so they are not the same event. */
+      kind: details.consult ? "consult" : "order",
+      at: at(s.created_at),
+      id: "sub:" + s.id,
+      customer_id: s.customer_id,
+      customer_name: s.customer_name,
+      submission_id: s.id,
+      summary: configSummary(details.config),
+      amount: details.quotedPrice != null ? Number(details.quotedPrice) : null,
+      best_time: details.bestTime || null,
+      question: details.question || null,
+      status: s.status,
+    });
+  });
+
+  /* One merged stream. Sorting in JS rather than in SQL because these are
+     three tables with no sensible UNION — and the lists are already capped. */
+  events.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  const out = events.slice(0, limit).map((e) => ({ ...e, unseen: since ? e.at > since : false }));
+
+  return json({
+    events: out,
+    unseen: out.filter((e) => e.unseen).length,
+    /* The newest timestamp in this batch, for the page to store as "seen".
+       Taken from the data rather than from the clock, so an event written a
+       moment after this query cannot be skipped over. */
+    latest: out.length ? out[0].at : since || null,
+  }, 200, origin);
+}
+
 /* GET /admin/schedule — every install, across every customer, by date.
  *
  * The same rows the customer page shows one job at a time. They were only
@@ -8299,6 +8411,10 @@ export default {
          rejected before any database work happens. */
       if (path === "/stripe/webhook" && request.method === "POST") {
         return await handleStripeWebhook(request, env, origin);
+      }
+      if (path === "/admin/activity" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleActivity(request, env, origin);
       }
       if (path === "/admin/schedule" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
