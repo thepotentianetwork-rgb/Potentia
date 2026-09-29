@@ -147,8 +147,25 @@ export async function createAndSendInvoice(env, {
   const sent = await stripeCall(env, `/invoices/${invoice.id}/send`, {},
     { idempotencyKey: idempotencyKey ? idempotencyKey + ':send' : undefined });
 
-  return sent;
+  /* Normalised, so nothing downstream has to know Stripe's spelling.
+     RESPONSE_FIELDS below is the list this reads from the invoice object, and
+     a test checks nothing outside it is touched — because reading a field
+     Stripe does not return is NOT an error. It is undefined, it is stored as
+     null, and the first sign of trouble is a missing link in the CRM a week
+     later. That is exactly how this function came to read
+     `hosted_invoice_page`, which is not a field on the invoice object at all;
+     the real one is `hosted_invoice_url`. */
+  return {
+    id: sent.id,
+    status: sent.status || 'open',
+    hostedUrl: sent.hosted_invoice_url || null,
+  };
 }
+
+/* Fields this module reads off a Stripe invoice object, checked against the
+   API reference. Kept beside the code that reads them so the test below has
+   something to compare against. */
+export const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url'];
 
 export async function voidInvoice(env, stripeInvoiceId) {
   return stripeCall(env, `/invoices/${stripeInvoiceId}/void`, {});

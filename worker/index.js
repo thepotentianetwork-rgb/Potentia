@@ -999,12 +999,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
        amount, status, lines, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).bind(customer.id, sub.id, kind, sent.id, sent.hosted_invoice_page || null,
+  ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
          JSON.stringify(shape.lines), now, (actor && actor.name) || null).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
-                hosted_url: sent.hosted_invoice_page || null, status: sent.status || "open",
+                hosted_url: sent.hostedUrl, status: sent.status || "open",
                 ...shape }, 200, origin);
 }
 
