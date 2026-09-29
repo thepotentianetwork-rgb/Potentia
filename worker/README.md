@@ -899,6 +899,36 @@ a wrong address, a provider having a bad day — and these customers text
 already. The button disappears once an invoice is paid or voided, because
 there is nothing left to pay.
 
+## Activity — knowing a customer paid
+
+`admin-activity.html`, with a count in the header of every admin page.
+
+One stream, newest first: money in, invoices out, new designs and call-back
+requests. Filters for each. Every row opens the customer; an invoice row also
+links to the invoice.
+
+**Seen** is a timestamp in `localStorage`, not a flag in the database. Per
+device, deliberately — marking something read on the phone in the truck should
+not hide it from the laptop in the shop — and the server keeps no per-person
+state.
+
+The **first load anywhere in the admin draws the line** and flags nothing.
+Flagging sixty rows of existing history as new is noise on day one and teaches
+you to ignore the dot; leaving the badge dark until you press "mark all as
+seen" is a notification that only works after you acknowledge the ones you
+never got. Everything after that line is genuinely new.
+
+### Getting told on your phone
+
+The CRM badge only shows when you open it. For an actual push notification the
+moment a customer pays, use Stripe — it already does this and needs no code:
+
+- **Stripe iOS app** → sign in → push notifications for successful payments.
+- **Dashboard → Settings → Notifications** → email on successful payments.
+
+Stripe knows before the CRM does, so this is the faster signal as well as the
+free one. The Activity page is for what happened while you were not watching.
+
 ## The schedule page
 
 `admin-schedule.html`, linked from the header on every admin page. Every
