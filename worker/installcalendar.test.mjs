@@ -184,3 +184,80 @@ test('an unreadable install date yields no link at all', async () => {
   const i = await firstInstall(env, t);
   assert.equal(i.calendar_url, null);
 });
+
+/* ---- the schedule page's data ------------------------------------------ */
+
+test('the schedule lists installs across every customer, by date', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  db.prepare(`INSERT INTO customers (id,name,email,phone,address,city,state,created_at)
+              VALUES (2,'Dana Reed','dana@reed.test','4355551111','9 Oak Ave','Lehi','UT','2026-08-02')`).run();
+  db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
+              VALUES (9,2,?,'won','2026-09-02')`)
+    .run(JSON.stringify({ redline, config: { w: 12, l: 20, style: 'gable' } }));
+
+  await schedule(env, t, { install_date: '2026-10-20', days: 1 });
+  await api(env, 'POST', '/admin/submissions/9/installs',
+    { item: 'concrete', install_date: '2026-10-05', days: 1 }, t);
+
+  const r = await api(env, 'GET', '/admin/schedule', null, t);
+  assert.equal(r.status, 200);
+  const rows = r.data.installs;
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((i) => i.install_date), ['2026-10-05', '2026-10-20'],
+    'soonest first — this is a schedule, not a log');
+  assert.deepEqual(rows.map((i) => i.customer_name), ['Dana Reed', 'Hank Ellis']);
+  assert.equal(rows[0].item, 'concrete');
+  assert.equal(rows[0].address, '9 Oak Ave, Lehi, UT');
+  assert.equal(rows[1].summary, '10x16 ft · barn · vertical');
+  assert.ok(rows[0].calendar_url && rows[1].calendar_url, 'each row can be invited from here too');
+});
+
+test('it can be bounded to a date range, inclusive at both ends', async () => {
+  const { env } = setup();
+  const t = await token(env);
+  for (const d of ['2026-10-01', '2026-10-15', '2026-10-31', '2026-11-05']) {
+    await schedule(env, t, { install_date: d, days: 1 });
+  }
+  const within = await api(env, 'GET', '/admin/schedule?from=2026-10-15&to=2026-10-31', null, t);
+  assert.deepEqual(within.data.installs.map((i) => i.install_date),
+    ['2026-10-15', '2026-10-31'], 'both ends are included');
+
+  const after = await api(env, 'GET', '/admin/schedule?from=2026-11-01', null, t);
+  assert.deepEqual(after.data.installs.map((i) => i.install_date), ['2026-11-05']);
+
+  const before = await api(env, 'GET', '/admin/schedule?to=2026-10-01', null, t);
+  assert.deepEqual(before.data.installs.map((i) => i.install_date), ['2026-10-01']);
+});
+
+/* A range the page did not send, or a hand-typed one, must not quietly become
+   a filter on something else — or open the door to anything being pasted into
+   the query. */
+test('a range it cannot read is ignored, not obeyed', async () => {
+  const { env } = setup();
+  const t = await token(env);
+  await schedule(env, t);
+  for (const q of ['?from=lastweek', '?to=2026/10/15', "?from=' OR 1=1 --", '?from=&to=']) {
+    const r = await api(env, 'GET', '/admin/schedule' + q, null, t);
+    assert.equal(r.status, 200, q);
+    assert.equal(r.data.installs.length, 1, q + ' changed what came back');
+  }
+});
+
+test('the schedule needs an admin token', async () => {
+  const { env } = setup();
+  assert.equal((await api(env, 'GET', '/admin/schedule')).status, 401);
+});
+
+test('it carries the phone and the price, so the page needs no second call', async () => {
+  const { env } = setup();
+  const t = await token(env);
+  await schedule(env, t, { note: 'gate code 1234' });
+  const r = await api(env, 'GET', '/admin/schedule', null, t);
+  const i = r.data.installs[0];
+  assert.equal(i.customer_phone, '4355550000');
+  assert.equal(i.note, 'gate code 1234');
+  assert.equal(i.order_status, 'won');
+  assert.equal(i.customer_id, 1);
+  assert.equal(i.submission_id, 7);
+});

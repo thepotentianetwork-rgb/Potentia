@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Schedule — ShedPro</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:20px;align-items:center}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--sp-blue)}
+.back-link.here{color:var(--sp-blue)}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:9px 18px;cursor:pointer;transition:all 0.3s}
+.logout:hover{border-color:var(--sp-blue);color:var(--bright)}
+
+main{max-width:1000px;margin:0 auto;padding:48px 40px 100px}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
+.lede{font-size:15px;color:var(--silver);margin-bottom:26px;line-height:1.6;max-width:62ch}
+
+/* ---- range ---- */
+.ranges{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.range-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--silver);background:none;border:1px solid var(--dim);padding:8px 13px;cursor:pointer;transition:all 0.2s}
+.range-btn:hover{border-color:var(--sp-blue);color:var(--bright)}
+.range-btn.on{border-color:var(--sp-blue);color:var(--sp-blue);background:rgba(44,192,253,0.08)}
+.count{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);letter-spacing:0.08em;margin:14px 0 26px}
+
+/* ---- a day ---- */
+.day{margin-bottom:34px}
+.day-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding-bottom:8px;border-bottom:1px solid var(--dim);margin-bottom:14px}
+.day-date{font-size:21px;font-weight:300;color:var(--bright)}
+.day-when{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid}
+.when-today{color:#5fd08a;border-color:rgba(95,208,138,0.5);background:rgba(95,208,138,0.12)}
+.when-soon{color:var(--sp-orange);border-color:rgba(246,148,31,0.45);background:rgba(246,148,31,0.1)}
+.when-later{color:var(--silver);border-color:var(--dim)}
+.when-past{color:var(--dim);border-color:var(--dim)}
+
+/* ---- a job ---- */
+.job{display:flex;gap:16px;align-items:flex-start;padding:14px 0;border-bottom:1px solid rgba(42,45,56,0.55)}
+.job:last-child{border-bottom:none}
+.job-item{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;padding:4px 9px;border-radius:20px;flex-shrink:0;margin-top:3px;white-space:nowrap}
+.item-shed{color:var(--sp-blue);border:1px solid rgba(44,192,253,0.45);background:rgba(44,192,253,0.08)}
+.item-concrete{color:var(--silver);border:1px solid var(--dim)}
+.job-body{flex:1;min-width:0}
+.job-name{font-size:19px;color:var(--bright);text-decoration:none}
+.job-name:hover{color:var(--sp-blue)}
+.job-line{font-size:14px;color:var(--silver);margin-top:3px;line-height:1.55}
+.job-note{font-size:14px;color:var(--chrome);margin-top:6px;padding-left:11px;border-left:2px solid var(--dim);line-height:1.5}
+.job-meta{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;color:var(--dim);text-transform:uppercase;margin-top:7px}
+.job-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.act{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border:1px solid rgba(44,192,253,0.45);padding:6px 10px;white-space:nowrap}
+.act:hover{background:rgba(44,192,253,0.12)}
+.act.quiet{color:var(--silver);border-color:var(--dim)}
+.act.quiet:hover{border-color:var(--sp-blue);color:var(--bright);background:none}
+
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:40px 0;line-height:1.8}
+
+@media (max-width:760px){
+  header{padding:16px 20px}
+  .h-actions{gap:10px}
+  main{padding:30px 18px 80px}
+  h2{font-size:24px}
+  .job{flex-direction:column;gap:8px}
+  .job-item{margin-top:0}
+  .act{flex:1;text-align:center}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="shedpro-logo.png" alt="ShedPro">
+    <div class="h-brand-text">
+      <span class="h-title">SHEDPRO ADMIN</span>
+      <span class="h-sub">Built &amp; managed by Potentia</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <a href="admin.html" class="back-link">← Customers</a>
+    <a href="admin-schedule.html" class="back-link here">Schedule</a>
+    <a href="admin-data.html" class="back-link">Data →</a>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <p class="sec-label">ShedPro Partner</p>
+  <h2>Schedule</h2>
+  <p class="lede">Every concrete pour and shed install, by date. Tap a name to open the job, or Invite to put it on Google Calendar with the customer as a guest.</p>
+
+  <div class="ranges" id="ranges"></div>
+  <div class="count" id="count"></div>
+  <div id="list"><p class="empty">Loading…</p></div>
+</main>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_admin_token');
+
+if (!token) {
+  window.location.href = 'admin-login.html';
+}
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      localStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html';
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('potentia_admin_token');
+  window.location.href = 'admin-login.html';
+});
+
+/* A stored install_date is a calendar day with no time in it. new Date('2026-10-15')
+   parses that as UTC MIDNIGHT, which in Utah is the evening of the 14th — so the
+   whole page would head a day early, every day, and nobody would think to
+   question a date. Built from the parts in local time instead. */
+function localDay(s) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || ''));
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+function todayLocal() {
+  var n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+function isoDay(d) {
+  function p(n) { return (n < 10 ? '0' : '') + n; }
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+function addDays(d, n) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+}
+/* Whole days between two local midnights. Done on the calendar dates rather
+   than by dividing milliseconds, which is off by an hour across a daylight
+   saving change and can round "tomorrow" into "today". */
+function daysBetween(a, b) {
+  return Math.round((b - a) / 86400000);
+}
+
+var ITEM_LABEL = { concrete: 'Concrete', shed: 'Shed' };
+
+var RANGES = [
+  { key: 'week',  label: 'Next 7 days',  from: 0,    to: 7 },
+  { key: 'month', label: 'Next 30 days', from: 0,    to: 30 },
+  { key: 'all',   label: 'Everything',   from: null, to: null },
+  { key: 'past',  label: 'Past',         from: -3650, to: -1 }
+];
+var current = 'month';
+
+function rangeParams(r) {
+  if (r.from === null) return '';
+  var t = todayLocal();
+  return '?from=' + isoDay(addDays(t, r.from)) + '&to=' + isoDay(addDays(t, r.to));
+}
+
+function renderRanges() {
+  var wrap = document.getElementById('ranges');
+  wrap.innerHTML = '';
+  RANGES.forEach(function (r) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'range-btn' + (r.key === current ? ' on' : '');
+    b.textContent = r.label;
+    b.addEventListener('click', function () {
+      current = r.key;
+      renderRanges();
+      load();
+    });
+    wrap.appendChild(b);
+  });
+}
+
+function whenLabel(day, today) {
+  var n = daysBetween(today, day);
+  if (n === 0) return { text: 'Today', cls: 'when-today' };
+  if (n === 1) return { text: 'Tomorrow', cls: 'when-soon' };
+  if (n < 0) return { text: (-n) + (n === -1 ? ' day ago' : ' days ago'), cls: 'when-past' };
+  if (n <= 7) return { text: 'In ' + n + ' days', cls: 'when-soon' };
+  return { text: 'In ' + n + ' days', cls: 'when-later' };
+}
+
+function dayHeading(day) {
+  return day.toLocaleDateString(undefined,
+    { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function jobRow(i) {
+  var job = document.createElement('div');
+  job.className = 'job';
+
+  var tag = document.createElement('span');
+  tag.className = 'job-item item-' + (i.item === 'concrete' ? 'concrete' : 'shed');
+  tag.textContent = ITEM_LABEL[i.item] || i.item;
+  job.appendChild(tag);
+
+  var body = document.createElement('div');
+  body.className = 'job-body';
+
+  var name = document.createElement('a');
+  name.className = 'job-name';
+  name.href = 'admin-customer.html?id=' + i.customer_id;
+  name.textContent = i.customer_name || 'Unnamed customer';
+  body.appendChild(name);
+
+  if (i.summary) {
+    var sum = document.createElement('div');
+    sum.className = 'job-line';
+    sum.textContent = i.summary;
+    body.appendChild(sum);
+  }
+  if (i.address) {
+    var addr = document.createElement('div');
+    addr.className = 'job-line';
+    addr.textContent = i.address;
+    body.appendChild(addr);
+  }
+  if (i.note) {
+    var note = document.createElement('div');
+    note.className = 'job-note';
+    note.textContent = i.note;
+    body.appendChild(note);
+  }
+
+  var bits = [];
+  var n = Number(i.days);
+  if (isFinite(n) && n > 0) bits.push(n + (n === 1 ? ' day' : ' days'));
+  bits.push('Order #' + i.submission_id);
+  if (i.order_status && i.order_status !== 'won') bits.push(i.order_status);
+  var meta = document.createElement('div');
+  meta.className = 'job-meta';
+  meta.textContent = bits.join(' · ');
+  body.appendChild(meta);
+
+  var acts = document.createElement('div');
+  acts.className = 'job-acts';
+  if (i.customer_phone) {
+    var call = document.createElement('a');
+    call.className = 'act';
+    call.href = 'tel:' + i.customer_phone;
+    call.textContent = 'Call';
+    acts.appendChild(call);
+
+    var text = document.createElement('a');
+    text.className = 'act';
+    text.href = 'sms:' + i.customer_phone;
+    text.textContent = 'Text';
+    acts.appendChild(text);
+  }
+  if (i.address) {
+    var map = document.createElement('a');
+    map.className = 'act quiet';
+    map.href = 'https://maps.apple.com/?q=' + encodeURIComponent(i.address);
+    map.target = '_blank';
+    map.rel = 'noopener';
+    map.textContent = 'Map ↗';
+    acts.appendChild(map);
+  }
+  /* Absent when the worker could not build a link from the stored date. A
+     button that opens an empty calendar entry looks like it worked. */
+  if (i.calendar_url) {
+    var cal = document.createElement('a');
+    cal.className = 'act';
+    cal.href = i.calendar_url;
+    cal.target = '_blank';
+    cal.rel = 'noopener';
+    cal.textContent = 'Invite ↗';
+    acts.appendChild(cal);
+  }
+  body.appendChild(acts);
+
+  job.appendChild(body);
+  return job;
+}
+
+function render(installs, newestFirst) {
+  var list = document.getElementById('list');
+  var count = document.getElementById('count');
+  list.innerHTML = '';
+
+  if (!installs.length) {
+    count.textContent = '';
+    list.innerHTML = '<p class="empty">Nothing booked in this range.<br>' +
+      'Install dates are set on a customer’s order, once it is marked won.</p>';
+    return;
+  }
+
+  count.textContent = installs.length + (installs.length === 1 ? ' job' : ' jobs');
+
+  var today = todayLocal();
+  /* Grouped by date rather than listed flat: the question this page answers
+     is "what is happening on the 15th", and a flat list makes you count. */
+  var days = [];
+  var byDay = {};
+  installs.forEach(function (i) {
+    var d = localDay(i.install_date);
+    if (!d) return;
+    var key = isoDay(d);
+    if (!byDay[key]) { byDay[key] = { date: d, jobs: [] }; days.push(key); }
+    byDay[key].jobs.push(i);
+  });
+  /* Looking back, the useful order is newest first; looking forward it is
+     soonest first. Sorting the KEYS is what decides this — reversing the
+     install list before grouping did nothing, because the groups get sorted
+     here afterwards either way. */
+  days.sort();
+  if (newestFirst) days.reverse();
+
+  days.forEach(function (key) {
+    var group = byDay[key];
+    var sec = document.createElement('div');
+    sec.className = 'day';
+
+    var head = document.createElement('div');
+    head.className = 'day-head';
+    var date = document.createElement('span');
+    date.className = 'day-date';
+    date.textContent = dayHeading(group.date);
+    head.appendChild(date);
+
+    var w = whenLabel(group.date, today);
+    var when = document.createElement('span');
+    when.className = 'day-when ' + w.cls;
+    when.textContent = w.text;
+    head.appendChild(when);
+    sec.appendChild(head);
+
+    group.jobs.forEach(function (i) { sec.appendChild(jobRow(i)); });
+    list.appendChild(sec);
+  });
+}
+
+function load() {
+  var r = RANGES.filter(function (x) { return x.key === current; })[0];
+  document.getElementById('list').innerHTML = '<p class="empty">Loading…</p>';
+  authFetch('/admin/schedule' + rangeParams(r)).then(function (res) {
+    if (!res.ok) {
+      document.getElementById('list').innerHTML =
+        '<p class="empty">Could not load the schedule.</p>';
+      return;
+    }
+    render(res.data.installs || [], current === 'past');
+  }).catch(function () {
+    document.getElementById('list').innerHTML =
+      '<p class="empty">Could not reach the server.</p>';
+  });
+}
+
+renderRanges();
+load();
+</script>
+</body>
+</html>
