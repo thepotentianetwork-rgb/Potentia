@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "f20c055";
-const WORKER_BUILT_AT = "2026-09-28T23:59:33.568Z";
+const WORKER_BUILD = "ee4f69e";
+const WORKER_BUILT_AT = "2026-09-29T06:00:19.280Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3796,8 +3796,25 @@ async function createAndSendInvoice(env, {
   const sent = await stripeCall(env, `/invoices/${invoice.id}/send`, {},
     { idempotencyKey: idempotencyKey ? idempotencyKey + ':send' : undefined });
 
-  return sent;
+  /* Normalised, so nothing downstream has to know Stripe's spelling.
+     RESPONSE_FIELDS below is the list this reads from the invoice object, and
+     a test checks nothing outside it is touched — because reading a field
+     Stripe does not return is NOT an error. It is undefined, it is stored as
+     null, and the first sign of trouble is a missing link in the CRM a week
+     later. That is exactly how this function came to read
+     `hosted_invoice_page`, which is not a field on the invoice object at all;
+     the real one is `hosted_invoice_url`. */
+  return {
+    id: sent.id,
+    status: sent.status || 'open',
+    hostedUrl: sent.hosted_invoice_url || null,
+  };
 }
+
+/* Fields this module reads off a Stripe invoice object, checked against the
+   API reference. Kept beside the code that reads them so the test below has
+   something to compare against. */
+const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url'];
 
 async function voidInvoice(env, stripeInvoiceId) {
   return stripeCall(env, `/invoices/${stripeInvoiceId}/void`, {});
@@ -4901,12 +4918,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
        amount, status, lines, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`
-  ).bind(customer.id, sub.id, kind, sent.id, sent.hosted_invoice_page || null,
+  ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
          JSON.stringify(shape.lines), now, (actor && actor.name) || null).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
-                hosted_url: sent.hosted_invoice_page || null, status: sent.status || "open",
+                hosted_url: sent.hostedUrl, status: sent.status || "open",
                 ...shape }, 200, origin);
 }
 
