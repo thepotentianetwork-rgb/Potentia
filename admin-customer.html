@@ -1225,6 +1225,31 @@ function renderInvoiceBlock(card, s, details) {
         open.textContent = 'Open ↗';
         open.title = 'The page the customer sees and pays on.';
         row.appendChild(open);
+
+        /* The same page, as something you can paste into a text message.
+           Email is the part of this nobody controls — spam folders, wrong
+           addresses, a provider having a bad day — and these customers text
+           already. A link in a message gets paid faster than one that has to
+           survive an inbox. */
+        if (existing.status !== 'paid' && existing.status !== 'void') {
+          var copyBtn = document.createElement('button');
+          copyBtn.type = 'button';
+          copyBtn.className = 'inv-btn';
+          copyBtn.textContent = 'Copy pay link';
+          copyBtn.title = 'Copies the payment page link so you can text it to them.';
+          copyBtn.addEventListener('click', function () {
+            copyText(existing.hosted_url).then(function () {
+              copyBtn.textContent = 'Copied';
+              setTimeout(function () { copyBtn.textContent = 'Copy pay link'; }, 2000);
+            }).catch(function () {
+              /* Clipboard refused — on iOS that happens outside a trusted
+                 gesture. Select the link rather than leave them with nothing. */
+              copyBtn.textContent = 'Press and hold Open ↗ to copy';
+              setTimeout(function () { copyBtn.textContent = 'Copy pay link'; }, 3500);
+            });
+          });
+          row.appendChild(copyBtn);
+        }
       }
 
       /* The webhook is what normally flips this row to Paid. Webhooks get

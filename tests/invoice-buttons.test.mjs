@@ -265,6 +265,23 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
     R.payLink = link ? link.href : null;
     R.payLinkOpensNewTab = link ? link.target : null;
     R.voidOffered = [].slice.call(after.querySelectorAll('.inv-btn')).map(txt);
+      /* The link as something you can paste into a text. Clipboard access is
+         blocked in headless Chrome, so the write is stubbed — what is being
+         checked is that the button copies the PAYMENT page and nothing else. */
+      var copyBtn = [].slice.call(after.querySelectorAll('.inv-btn'))
+        .filter(function (b) { return /copy pay link/i.test(txt(b)); })[0];
+      R.copyOffered = !!copyBtn;
+      if (copyBtn) {
+        var copied = null;
+        try {
+          Object.defineProperty(navigator, 'clipboard', { configurable: true,
+            value: { writeText: function (t) { copied = t; return Promise.resolve(); } } });
+        } catch (e) { R.clipStubFailed = String(e); }
+        copyBtn.click();
+        await sleep(250);
+        R.copiedText = copied;
+        R.copyLabel = txt(copyBtn);
+      }
     /* The deposit is sent; the balance must still be offered, and it must now
        net off the deposit rather than bill the whole shed again. */
     var balanceBtn = [].slice.call(after.querySelectorAll('.inv-btn'))
@@ -461,6 +478,12 @@ check('the header fields carry the order and the build',
   (R.fields || []).some((f) => /^Order=#/.test(f)) &&
   (R.fields || []).some((f) => /^Job total=/.test(f)), R.fields);
 
+console.log('\n-- the link, as something you can text --');
+check('Copy pay link is offered on an unpaid invoice', R.copyOffered === true);
+check('it copies the payment page, not something else',
+  R.copiedText === 'https://pay.stripe.test/hank', { copied: R.copiedText, stub: R.clipStubFailed });
+check('and confirms it copied', R.copyLabel === 'Copied', R.copyLabel);
+
 console.log('\n-- Check Stripe, for when the webhook never came --');
 check('the button is on the row', R.checkOffered === true);
 check('when Stripe agrees, it says so and moves nothing',
@@ -475,6 +498,8 @@ check('the row flips to paid', R.paidPill === 'Paid', R.paidPill);
    refund, done in Stripe, not a button here. */
 check('void is NOT offered on it',
   (R.buttonsWhenPaid || []).indexOf('Void') === -1, R.buttonsWhenPaid);
+check('and neither is Copy pay link — there is nothing left to pay',
+  !(R.buttonsWhenPaid || []).some((t) => /copy pay link/i.test(t)), R.buttonsWhenPaid);
 check('the balance is the rest of the job now',
   (R.balanceAfterPaidTotal || '').indexOf(money(balanceUncredited - depositDue)) !== -1,
   { shown: R.balanceAfterPaidTotal, expected: money(balanceUncredited - depositDue) });

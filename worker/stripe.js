@@ -90,16 +90,35 @@ export const DAYS_UNTIL_DUE = { deposit: 0, balance: 7 };
 export async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
   if (!email) throw new Error('this customer has no email address to invoice');
   if (stripeCustomerId) {
-    /* UPDATED, not just reused. The email was previously read from the CRM
-       only on the FIRST invoice; after that Stripe's copy was never touched
-       again. Fix a typo in the CRM, or a customer changes address, and every
-       later invoice still goes to the old one — silently, because Stripe
-       reports the send as successful either way. For a repeat customer six
-       months on, that is a bill delivered to a dead inbox and a job that
-       looks unpaid. */
-    const c = await stripeCall(env, '/customers/' + encodeURIComponent(stripeCustomerId),
-      { name, email, phone });
-    return { id: c.id, created: false, email: c.email || email };
+    try {
+      /* UPDATED, not just reused. The email was previously read from the CRM
+         only on the FIRST invoice; after that Stripe's copy was never touched
+         again. Fix a typo in the CRM, or a customer changes address, and every
+         later invoice still goes to the old one — silently, because Stripe
+         reports the send as successful either way. For a repeat customer six
+         months on, that is a bill delivered to a dead inbox and a job that
+         looks unpaid. */
+      const c = await stripeCall(env, '/customers/' + encodeURIComponent(stripeCustomerId),
+        { name, email, phone });
+      return { id: c.id, created: false, email: c.email || email };
+    } catch (e) {
+      /* THE SWITCH TO LIVE KEYS.
+       *
+       * Customer ids are per-environment. Every customer invoiced in test mode
+       * has a test-mode `cus_...` saved against them, and the day the live key
+       * goes in, Stripe answers "No such customer" for every one of them. That
+       * would make the first real invoice of every existing customer fail, on
+       * the day it matters most, for a reason that reads like a bug rather
+       * than a migration.
+       *
+       * A customer id that is simply gone — deleted in the dashboard, or from
+       * the other environment — is not an error worth stopping for. Make a new
+       * one; the caller stores it over the stale one. Anything else (a bad
+       * key, Stripe down, a rate limit) still throws, because those must not
+       * quietly produce a duplicate customer. */
+      const missing = e.status === 404 || e.stripeCode === 'resource_missing';
+      if (!missing) throw e;
+    }
   }
   const c = await stripeCall(env, '/customers', { name, email, phone });
   return { id: c.id, created: true, email: c.email || email };

@@ -284,6 +284,42 @@ test('a stored customer id does not excuse a missing email', async () => {
   f.restore();
 });
 
+/* THE DAY THE LIVE KEY GOES IN.
+ *
+ * Customer ids are per-environment. Every customer invoiced in test mode has a
+ * test-mode cus_... stored against them, and a live key answers "No such
+ * customer" for all of them. Without this, the first real invoice of every
+ * existing customer fails — on the day it matters most, with an error that
+ * reads like a bug rather than a migration. */
+test('a customer id from the other environment is replaced, not fatal', async () => {
+  const f = stubFetch([
+    { ok: false, status: 404, json: { error: { message: 'No such customer: cus_test_only',
+                                               code: 'resource_missing' } } },
+    { json: { id: 'cus_live_new', email: 'a@b.test' } },
+  ]);
+  const r = await ensureCustomer(ENV, { stripeCustomerId: 'cus_test_only',
+    name: 'Hank', email: 'a@b.test' });
+  assert.equal(r.id, 'cus_live_new');
+  assert.equal(r.created, true, 'created must be true so the CRM stores the new id');
+  assert.deepEqual(f.calls.map((c) => new URL(c.url).pathname),
+    ['/v1/customers/cus_test_only', '/v1/customers'],
+    'it tries the stored one first, then makes a new one');
+  f.restore();
+});
+
+/* Any other refusal still stops. A bad key or a Stripe outage that quietly
+   produced a second customer would split a real customer's payment history
+   across two records, and nothing would say so. */
+test('any other Stripe refusal still stops, rather than duplicating the customer', async () => {
+  for (const [status, code] of [[401, 'api_key_invalid'], [429, 'rate_limit'], [500, null]]) {
+    const f = stubFetch([{ ok: false, status, json: { error: { message: 'nope', code } } }]);
+    await assert.rejects(() => ensureCustomer(ENV, { stripeCustomerId: 'cus_old', email: 'a@b.test' }),
+      /nope/, 'status ' + status + ' should have thrown');
+    assert.equal(f.calls.length, 1, 'status ' + status + ': it must not have created a customer');
+    f.restore();
+  }
+});
+
 test('a customer with no email is refused, with a reason worth reading', async () => {
   const f = stubFetch([]);
   await assert.rejects(() => ensureCustomer(ENV, { name: 'Hank' }), /no email address/);
