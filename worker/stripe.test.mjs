@@ -164,6 +164,7 @@ const INVOICE_OBJECT_FIELDS = [
   'id', 'object', 'status', 'hosted_invoice_url', 'invoice_pdf', 'amount_due',
   'amount_paid', 'amount_remaining', 'currency', 'customer', 'number', 'total',
   'subtotal', 'due_date', 'created', 'livemode', 'metadata', 'payment_settings',
+  'customer_email', 'email',
   'collection_method', 'description', 'footer', 'auto_advance', 'automatic_tax',
 ];
 test('every field read off a Stripe invoice is one the API documents', () => {
@@ -249,10 +250,37 @@ test('an unknown kind is refused before anything reaches Stripe', async () => {
 // ── customers ──────────────────────────────────────────────────────────────
 
 test('an existing Stripe customer is reused, not duplicated', async () => {
-  const f = stubFetch([]);
+  const f = stubFetch([{ json: { id: 'cus_old', email: 'a@b.test' } }]);
   const r = await ensureCustomer(ENV, { stripeCustomerId: 'cus_old', email: 'a@b.test' });
-  assert.deepEqual(r, { id: 'cus_old', created: false });
-  assert.equal(f.calls.length, 0, 'it should not have called Stripe at all');
+  assert.equal(r.id, 'cus_old');
+  assert.equal(r.created, false, 'a second invoice must not make a second customer');
+  assert.equal(new URL(f.calls[0].url).pathname, '/v1/customers/cus_old',
+    'reuse means updating that customer, never POSTing a new one');
+  f.restore();
+});
+
+/* The address was previously read from the CRM only on the FIRST invoice, and
+   Stripe's copy never touched again — so correcting a typo in the CRM changed
+   nothing, and every later invoice still went to the old address. Stripe
+   reports the send as successful either way, so nothing surfaces it. */
+test('the email is pushed to Stripe every time, not just the first', async () => {
+  const f = stubFetch([{ json: { id: 'cus_old', email: 'new@b.test' } }]);
+  const r = await ensureCustomer(ENV, { stripeCustomerId: 'cus_old',
+    name: 'Hank Ellis', email: 'new@b.test', phone: '4355550000' });
+  assert.equal(f.calls[0].params.email, 'new@b.test', 'the corrected address must reach Stripe');
+  assert.equal(f.calls[0].params.name, 'Hank Ellis');
+  assert.equal(r.email, 'new@b.test');
+  f.restore();
+});
+
+/* Even with a stored customer id: no address, no invoice. Previously the id
+   short-circuited this check, so a customer whose email had been cleared in
+   the CRM produced an invoice that went nowhere. */
+test('a stored customer id does not excuse a missing email', async () => {
+  const f = stubFetch([]);
+  await assert.rejects(() => ensureCustomer(ENV, { stripeCustomerId: 'cus_old' }),
+    /no email address/);
+  assert.equal(f.calls.length, 0);
   f.restore();
 });
 

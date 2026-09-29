@@ -628,3 +628,81 @@ test('sync needs an admin token, and a real invoice', async () => {
   assert.equal((await api(env, 'POST', '/admin/invoices/1/sync', {})).status, 401);
   assert.equal((await api(env, 'POST', '/admin/invoices/99999/sync', {}, t)).status, 404);
 });
+
+/* ---- where the invoice actually went ----------------------------------- */
+
+test('the address Stripe sent to is recorded on the invoice', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const p = new URL(url).pathname;
+    const id = p === '/v1/customers' ? 'cus_new' : p.includes('invoiceitems') ? 'ii_1' : 'in_1';
+    return { ok: true, status: 200, json: async () => ({ id, status: 'open',
+      hosted_invoice_url: 'https://pay.stripe/x',
+      /* Stripe reports where it went; that is what gets stored, not what we
+         asked for — the two differ when the customer record says otherwise. */
+      customer_email: 'where-it-went@roof.test', email: 'where-it-went@roof.test' }) };
+  };
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  globalThis.fetch = orig;
+
+  /* Deliberately NOT the address in the CRM (hank@roof.test). Storing what we
+     asked for rather than what Stripe reports passes every test where the two
+     agree, and the whole point of the field is the case where they do not. */
+  assert.notEqual(db.prepare('SELECT email FROM customers WHERE id=1').get().email,
+    'where-it-went@roof.test', 'fixture must make the two differ');
+  assert.equal(r.data.sent_to, 'where-it-went@roof.test');
+  assert.equal(db.prepare('SELECT sent_to FROM invoices').get().sent_to, 'where-it-went@roof.test');
+
+  const list = await api(env, 'GET', '/admin/customers/1/invoices', null, t);
+  assert.equal(list.data.invoices[0].sent_to, 'where-it-went@roof.test',
+    'the CRM must be able to show where it went');
+});
+
+/* The email was read from the CRM on the first invoice only. Correcting it
+   afterwards changed nothing, and every later invoice went to the old
+   address — with Stripe reporting each send as successful. */
+test('a corrected email reaches Stripe on the next invoice, not just the first', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const calls = [];
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const p = new URL(url).pathname;
+    calls.push({ path: p, params: Object.fromEntries(new URLSearchParams((init && init.body) || '')) });
+    const id = p.startsWith('/v1/customers') ? 'cus_new'
+      : p.includes('invoiceitems') ? 'ii_1' : 'in_1';
+    const email = p.startsWith('/v1/customers')
+      ? (Object.fromEntries(new URLSearchParams((init && init.body) || '')).email || null) : null;
+    return { ok: true, status: 200, json: async () => ({ id, status: 'open',
+      hosted_invoice_url: 'https://pay.stripe/x', email,
+      customer_email: 'typo@roof.test' }) };
+  };
+
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  assert.equal(db.prepare('SELECT stripe_customer_id FROM customers WHERE id=1').get()
+    .stripe_customer_id, 'cus_new');
+
+  /* Someone fixes the address in the CRM. */
+  db.prepare("UPDATE customers SET email = 'fixed@roof.test' WHERE id = 1").run();
+  calls.length = 0;
+  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit' }, t);
+  globalThis.fetch = orig;
+
+  const cust = calls.find((c) => c.path.startsWith('/v1/customers'));
+  assert.ok(cust, 'Stripe was never told: ' + JSON.stringify(calls.map((c) => c.path)));
+  assert.equal(cust.path, '/v1/customers/cus_new', 'it must update, not duplicate');
+  assert.equal(cust.params.email, 'fixed@roof.test', 'the corrected address must reach Stripe');
+});
+
+test('Check Stripe backfills a recipient that was never recorded', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  db.prepare('UPDATE invoices SET sent_to = NULL WHERE id = ?').run(row.id);
+  const s = stubGet({ id: row.stripe_invoice_id, status: 'open',
+    customer_email: 'hank@roof.test' });
+  await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  s.restore();
+  assert.equal(db.prepare('SELECT sent_to FROM invoices WHERE id=?').get(row.id).sent_to,
+    'hank@roof.test');
+});

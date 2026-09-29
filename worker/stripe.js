@@ -88,10 +88,21 @@ export const DAYS_UNTIL_DUE = { deposit: 0, balance: 7 };
    how a business ends up with four Jenny Rosens and a payment history split
    across all of them. */
 export async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
-  if (stripeCustomerId) return { id: stripeCustomerId, created: false };
   if (!email) throw new Error('this customer has no email address to invoice');
+  if (stripeCustomerId) {
+    /* UPDATED, not just reused. The email was previously read from the CRM
+       only on the FIRST invoice; after that Stripe's copy was never touched
+       again. Fix a typo in the CRM, or a customer changes address, and every
+       later invoice still goes to the old one — silently, because Stripe
+       reports the send as successful either way. For a repeat customer six
+       months on, that is a bill delivered to a dead inbox and a job that
+       looks unpaid. */
+    const c = await stripeCall(env, '/customers/' + encodeURIComponent(stripeCustomerId),
+      { name, email, phone });
+    return { id: c.id, created: false, email: c.email || email };
+  }
   const c = await stripeCall(env, '/customers', { name, email, phone });
-  return { id: c.id, created: true };
+  return { id: c.id, created: true, email: c.email || email };
 }
 
 /* The documented sequence: create the invoice, add its items, then send.
@@ -163,13 +174,18 @@ export async function createAndSendInvoice(env, {
     id: sent.id,
     status: sent.status || 'open',
     hostedUrl: sent.hosted_invoice_url || null,
+    /* Where Stripe says it sent it, not where we asked it to. The whole point
+       is to be able to answer "which address did this actually go to?" from
+       the CRM, and only Stripe's own answer can do that. */
+    customerEmail: sent.customer_email || null,
   };
 }
 
 /* Fields this module reads off a Stripe invoice object, checked against the
    API reference. Kept beside the code that reads them so the test below has
    something to compare against. */
-export const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url', 'amount_paid'];
+export const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url', 'amount_paid',
+  'customer_email', 'email'];
 
 /* Ask Stripe what actually happened, instead of waiting to be told.
  *
@@ -184,6 +200,7 @@ export async function getInvoice(env, stripeInvoiceId) {
     id: inv.id,
     status: inv.status || null,
     hostedUrl: inv.hosted_invoice_url || null,
+    customerEmail: inv.customer_email || null,
     amountPaidCents: Number(inv.amount_paid) || 0,
   };
 }

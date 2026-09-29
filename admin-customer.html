@@ -1204,6 +1204,18 @@ function renderInvoiceBlock(card, s, details) {
       row.appendChild(amt);
       row.appendChild(invStatePill(existing.status));
 
+      /* Where it actually went, straight from Stripe. "I sent it" and "it
+         reached them" are different claims, and the address is the only part
+         of the difference the CRM can show. */
+      if (existing.sent_to) {
+        var to = document.createElement('span');
+        to.className = 'inv-note';
+        to.style.margin = '0';
+        to.textContent = 'to ' + existing.sent_to;
+        to.title = 'The address Stripe emailed this invoice to.';
+        row.appendChild(to);
+      }
+
       if (existing.hosted_url) {
         var open = document.createElement('a');
         open.className = 'inv-link';
