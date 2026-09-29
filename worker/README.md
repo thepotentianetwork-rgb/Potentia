@@ -899,6 +899,40 @@ a wrong address, a provider having a bad day — and these customers text
 already. The button disappears once an invoice is paid or voided, because
 there is nothing left to pay.
 
+## Install invites
+
+Once an order is **won** and an install date is booked, that install row has an
+**Invite ↗** button. It opens Google Calendar with the event already filled in:
+
+- Title — *Shed install — Hank Ellis* (or *Concrete pour —*)
+- Dates — the install date, spanning the number of days booked
+- Location — the customer's address, so it opens in maps from the phone
+- Description — the build, order number, customer's phone, and the install note
+- **Guests — the customer**
+
+Press **Save** in Google Calendar and Google emails them the invite. That is
+what makes it an invite rather than a note to yourself.
+
+No API key, no OAuth, nothing to set up. The whole event travels in the link.
+
+To add crew to every invite, set `INSTALL_CALENDAR_GUESTS` as a Worker
+variable (not a secret — it is just addresses), comma separated. They are
+added after the customer.
+
+The two things that would quietly go wrong, both tested:
+
+- **An all-day event's end date is EXCLUSIVE.** A one-day install on the 15th
+  is `20261015/20261016`. Off by one here is not a crash — it is a customer
+  told the wrong day.
+- **The date is built in UTC.** Local-time arithmetic shifts the day for
+  anyone east of UTC, and since both this machine and Cloudflare run in UTC,
+  the wrong version looks identical here. The test runs the date logic in a
+  child process under six timezones, from Kiritimati to Midway.
+
+An install date the link builder cannot read produces no link, so the button
+is simply absent — rather than opening an empty calendar entry that looks like
+it worked.
+
 ## Going live
 
 Three things change together, and the third is easy to miss:

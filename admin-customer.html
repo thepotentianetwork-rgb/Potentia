@@ -164,6 +164,8 @@ select:focus{border-color:var(--sp-blue)}
 .install-done{font-size:14px;color:var(--bright);flex:1}
 .install-del{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--dim);text-transform:uppercase;background:none;border:1px solid var(--dim);padding:5px 9px;cursor:pointer;flex-shrink:0}
 .install-del:hover{border-color:#e0684f;color:#e0684f}
+.install-cal{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border:1px solid rgba(43,181,232,0.5);padding:5px 9px;flex-shrink:0}
+.install-cal:hover{background:rgba(43,181,232,0.12)}
 .install-form{display:flex;gap:8px;align-items:center;flex:1;flex-wrap:wrap}
 .install-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 9px;outline:none}
 .install-form input:focus{border-color:var(--sp-blue)}
@@ -754,6 +756,27 @@ function renderInstallBlock(card, s, details, installs) {
         });
       });
       row.appendChild(done);
+
+      /* One tap opens Google Calendar with the whole event filled in — dates,
+         address, phone, and the customer already on the guest list. Pressing
+         Save there is what sends them the invite; Google does the emailing,
+         so there is no mail server or token in any of this.
+         Hidden when the worker could not build a link (an install date it
+         could not read): a button that opens an empty event looks like it
+         worked. */
+      if (latest.calendar_url) {
+        var cal = document.createElement('a');
+        cal.className = 'install-cal';
+        cal.href = latest.calendar_url;
+        cal.target = '_blank';
+        cal.rel = 'noopener';
+        cal.textContent = 'Invite ↗';
+        cal.title = 'Opens Google Calendar with this install filled in and ' +
+          (CUSTOMER_EMAIL ? CUSTOMER_EMAIL + ' invited. Press Save there to send it.'
+                          : 'ready to send. This customer has no email on file, so add their address as a guest.');
+        row.appendChild(cal);
+      }
+
       row.appendChild(del);
     } else {
       var form = document.createElement('div');
@@ -1725,6 +1748,7 @@ function renderPayments(payments) {
 }
 
 var CUSTOMER_NAME = '';
+var CUSTOMER_EMAIL = '';
 
 function el(id) { return document.getElementById(id); }
 
@@ -1885,6 +1909,7 @@ function loadCustomer() {
     }
     var c = r.data.customer;
     CUSTOMER_NAME = c.name || '';
+    CUSTOMER_EMAIL = c.email || '';
     document.getElementById('customer-name').textContent = c.name || 'Unnamed customer';
     document.title = (c.name || 'Customer') + ' — ShedPro Admin';
     document.getElementById('c-email').textContent = c.email || '—';

@@ -21,6 +21,7 @@
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap } from "./quotelines.js";
+import { googleCalendarUrl, installTitle, installDetails } from "./calendar.js";
 import { buildInvoice, splitPayments, fromCents, usd } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
@@ -646,6 +647,34 @@ async function handleGetCustomer(request, env, origin, id) {
   )
     .bind(id)
     .all();
+
+  /* Each scheduled install carries a ready-made Google Calendar link, built
+     here rather than in the browser so the date arithmetic — where an all-day
+     event's end date is EXCLUSIVE — lives in one tested place. The customer
+     is on the guest list, so whoever opens the link and presses Save has
+     Google send them the invite. */
+  const calGuests = String(env.INSTALL_CALENDAR_GUESTS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  const subById = {};
+  submissions.forEach((s) => { subById[s.id] = s; });
+  installs.forEach((i) => {
+    let details = {};
+    try { details = JSON.parse((subById[i.submission_id] || {}).details) || {}; } catch (e) {}
+    i.calendar_url = googleCalendarUrl({
+      title: installTitle(i.item, customer.name),
+      installDate: i.install_date,
+      days: i.days,
+      details: installDetails({
+        summary: configSummary(details.config),
+        phone: customer.phone,
+        note: i.note,
+        days: i.days,
+        orderId: i.submission_id,
+      }),
+      location: [customer.address, customer.city, customer.state].filter(Boolean).join(", "),
+      guests: customer.email ? [customer.email].concat(calGuests) : calGuests,
+    });
+  });
 
   return json({ customer, submissions, notes, payments, installs, calls }, 200, origin);
 }

@@ -76,7 +76,13 @@ db.prepare(`INSERT INTO customers (id,name,email,phone,created_at)
 db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
             VALUES (?,?,?,?,?)`)
   .run(7, 1, JSON.stringify({ redline, quotedPrice: BREAKDOWN.total,
-                              config: { style: 'gable', w: 10, l: 16, h: 9 } }), 'quoted', '2026-09-01');
+                              config: { style: 'gable', w: 10, l: 16, h: 9 } }), 'won', '2026-09-01');
+/* Won, with an install booked — that is the only state where the calendar
+   invite appears, and the install block is hidden on anything else. */
+db.exec(`CREATE TABLE installs (id INTEGER PRIMARY KEY AUTOINCREMENT, submission_id INTEGER NOT NULL,
+           item TEXT NOT NULL, install_date TEXT NOT NULL, days REAL, note TEXT, created_at TEXT NOT NULL)`);
+db.prepare(`INSERT INTO installs (submission_id,item,install_date,days,note,created_at)
+            VALUES (7,'shed','2026-10-15',2,'gate code 1234','2026-09-25')`).run();
 /* A consult request on the same customer: no price, so it must get no invoice
    buttons at all. Offering to bill a job that has not been priced is how a
    $0 invoice reaches someone. */
@@ -215,6 +221,13 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
 
     var btns = [].slice.call(quoted.querySelectorAll('.inv-btn'));
     R.buttonLabels = btns.map(txt);
+
+    // ---- the install invite --------------------------------------------
+    var invite = document.querySelector('.install-cal');
+    R.inviteOffered = !!invite;
+    R.inviteHref = invite ? invite.href : null;
+    R.inviteTitle = invite ? invite.title : null;
+    R.inviteTab = invite ? invite.target : null;
 
     // ---- press the deposit button -------------------------------------
     var deposit = btns.filter(function (b) { return /deposit/i.test(txt(b)); })[0];
@@ -453,6 +466,20 @@ check('and saying no sends nothing',
   R.stillOnPreview === true &&
   invoicePosts.filter((p) => !p.preview).length === 1,
   invoicePosts.map((p) => (p.preview ? 'preview' : 'SEND') + ':' + p.kind));
+
+console.log('\n-- the install invite --');
+check('a scheduled install offers an invite', R.inviteOffered === true);
+check('it opens Google Calendar',
+  (R.inviteHref || '').indexOf('https://calendar.google.com/calendar/render?') === 0, R.inviteHref);
+/* Two days from the 15th: the 17th, because the end date is exclusive. */
+check('with the right dates, exclusive end',
+  (R.inviteHref || '').indexOf('dates=20261015/20261017') !== -1, R.inviteHref);
+check('and the customer already on the guest list',
+  (R.inviteHref || '').indexOf('add=hank%40roof.test') !== -1, R.inviteHref);
+check('the note rides along for the crew',
+  decodeURIComponent(R.inviteHref || '').indexOf('gate code 1234') !== -1, R.inviteHref);
+check('it opens in a new tab, not over the CRM', R.inviteTab === '_blank', R.inviteTab);
+check('and says who it will invite', /hank@roof\.test/.test(R.inviteTitle || ''), R.inviteTitle);
 
 console.log('\n-- the whole quote, on the invoice --');
 /* The point of all of it: nothing gets retyped, and the customer reads one
