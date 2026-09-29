@@ -97,7 +97,7 @@ globalThis.fetch = async (url, init) => {
   stripeCalls.push({ path: p, params: Object.fromEntries(new URLSearchParams((init && init.body) || '')) });
   const id = p === '/v1/customers' ? 'cus_test' : p.includes('invoiceitems') ? 'ii_test' : 'in_test';
   return { ok: true, status: 200, json: async () => ({
-    id, status: 'open', hosted_invoice_page: 'https://pay.stripe.test/hank' }) };
+    id, status: 'open', hosted_invoice_url: 'https://pay.stripe.test/hank' }) };
 };
 
 // ---- the page and the worker, over real HTTP -----------------------------

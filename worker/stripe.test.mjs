@@ -11,8 +11,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { stripeForm, stripeCall, createAndSendInvoice, ensureCustomer,
-         STRIPE_PAYMENT_METHODS, DAYS_UNTIL_DUE } from './stripe.js';
+         STRIPE_PAYMENT_METHODS, DAYS_UNTIL_DUE, RESPONSE_FIELDS } from './stripe.js';
 
 const ENV = { STRIPE_SECRET_KEY: 'sk_test_fake' };
 
@@ -99,7 +100,7 @@ async function sendOne(extra = {}) {
   const f = stubFetch([
     { json: { id: 'in_123' } },                       // create invoice
     { json: { id: 'ii_1' } }, { json: { id: 'ii_2' } }, // items
-    { json: { id: 'in_123', status: 'open', hosted_invoice_page: 'https://pay/x' } },
+    { json: { id: 'in_123', status: 'open', hosted_invoice_url: 'https://pay/x' } },
   ]);
   const sent = await createAndSendInvoice(ENV, {
     customerId: 'cus_1', lines: LINES, kind: 'deposit',
@@ -114,7 +115,7 @@ test('create, one call per line, then send', async () => {
   assert.deepEqual(calls.map((c) => new URL(c.url).pathname), [
     '/v1/invoices', '/v1/invoiceitems', '/v1/invoiceitems', '/v1/invoices/in_123/send',
   ]);
-  assert.equal(sent.hosted_invoice_page, 'https://pay/x');
+  assert.equal(sent.hostedUrl, 'https://pay/x');
 });
 
 /* THE SHAPE STRIPE ACTUALLY ACCEPTS.
@@ -147,6 +148,39 @@ test('the payment methods go under payment_settings, where the Invoice API wants
    — and the parameter that is right on one endpoint is wrong on another, which
    is exactly how the last one got in. Each list below is what the API
    reference documents for that endpoint. */
+/* THE SAME BUG, ON THE WAY BACK.
+ *
+ * Sending a wrong parameter name at least gets rejected. READING a wrong
+ * field name does not: Stripe returns the invoice, the missing field is
+ * undefined, it is stored as null, and the CRM quietly shows an invoice with
+ * no link to pay it. That shipped — the field is `hosted_invoice_url` and
+ * this module read `hosted_invoice_page`, which does not exist. Every test
+ * passed, because every stub here invented the field the code asked for.
+ *
+ * A stub cannot catch that, so this reads the source instead: every field
+ * pulled off a Stripe invoice response must be one the API reference
+ * documents. */
+const INVOICE_OBJECT_FIELDS = [
+  'id', 'object', 'status', 'hosted_invoice_url', 'invoice_pdf', 'amount_due',
+  'amount_paid', 'amount_remaining', 'currency', 'customer', 'number', 'total',
+  'subtotal', 'due_date', 'created', 'livemode', 'metadata', 'payment_settings',
+  'collection_method', 'description', 'footer', 'auto_advance', 'automatic_tax',
+];
+test('every field read off a Stripe invoice is one the API documents', () => {
+  const src = readFileSync(new URL('./stripe.js', import.meta.url), 'utf8');
+  /* The three names createAndSendInvoice binds Stripe responses to. */
+  const read = [...src.matchAll(/\b(?:sent|invoice|c)\.([a-z_][a-z0-9_]*)\b/g)]
+    .map((m) => m[1]);
+  const bogus = [...new Set(read)].filter((f) => !INVOICE_OBJECT_FIELDS.includes(f));
+  assert.deepEqual(bogus, [], 'not fields on a Stripe invoice object: ' + bogus.join(', '));
+});
+
+test('the declared response fields match what the code actually reads', () => {
+  for (const f of RESPONSE_FIELDS) {
+    assert.ok(INVOICE_OBJECT_FIELDS.includes(f), f + ' is not a documented invoice field');
+  }
+});
+
 const DOCUMENTED = {
   '/v1/invoices': ['customer', 'collection_method', 'days_until_due', 'auto_advance',
     'automatic_tax', 'currency', 'description', 'footer', 'metadata', 'payment_settings'],

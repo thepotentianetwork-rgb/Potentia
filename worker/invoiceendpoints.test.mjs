@@ -56,7 +56,7 @@ function stubStripe(overrides = {}) {
     if (overrides[p]) return overrides[p];
     const id = p === '/v1/customers' ? 'cus_new' : p.includes('invoiceitems') ? 'ii_1' : 'in_1';
     return { ok: true, status: 200, json: async () => ({
-      id, status: 'open', hosted_invoice_page: 'https://pay.stripe/x' }) };
+      id, status: 'open', hosted_invoice_url: 'https://pay.stripe/x' }) };
   };
   return { calls, restore: () => { globalThis.fetch = orig; } };
 }
