@@ -169,7 +169,7 @@ const INVOICE_OBJECT_FIELDS = [
 test('every field read off a Stripe invoice is one the API documents', () => {
   const src = readFileSync(new URL('./stripe.js', import.meta.url), 'utf8');
   /* The three names createAndSendInvoice binds Stripe responses to. */
-  const read = [...src.matchAll(/\b(?:sent|invoice|c)\.([a-z_][a-z0-9_]*)\b/g)]
+  const read = [...src.matchAll(/\b(?:sent|invoice|inv|c)\.([a-z_][a-z0-9_]*)\b/g)]
     .map((m) => m[1]);
   const bogus = [...new Set(read)].filter((f) => !INVOICE_OBJECT_FIELDS.includes(f));
   assert.deepEqual(bogus, [], 'not fields on a Stripe invoice object: ' + bogus.join(', '));

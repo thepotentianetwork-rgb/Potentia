@@ -504,3 +504,127 @@ test('an unpaid invoice on a DIFFERENT shed is not warned about here', async () 
   assert.equal((r.data.warnings || []).filter((w) => w.code === 'unpaid_invoice').length, 0,
     JSON.stringify(r.data.warnings));
 });
+
+/* ---- Check Stripe: the path for when the webhook did not arrive --------- */
+
+function stubGet(invoice) {
+  const orig = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    const u = new URL(url);
+    calls.push({ path: u.pathname, method: (init && init.method) || 'POST' });
+    if (/^\/v1\/invoices\/in_/.test(u.pathname) && (init && init.method) === 'GET') {
+      return { ok: true, status: 200, json: async () => invoice };
+    }
+    const id = u.pathname === '/v1/customers' ? 'cus_new'
+      : u.pathname.includes('invoiceitems') ? 'ii_1' : 'in_1';
+    return { ok: true, status: 200, json: async () => ({
+      id, status: 'open', hosted_invoice_url: 'https://pay.stripe/x' }) };
+  };
+  return { calls, restore: () => { globalThis.fetch = orig; } };
+}
+
+async function sentInvoice() {
+  const { db, env } = setup();
+  const t = await token(env);
+  const s = stubGet({});
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  s.restore();
+  const row = db.prepare("SELECT * FROM invoices WHERE kind='deposit'").get();
+  return { db, env, t, row };
+}
+
+test('Check Stripe records a payment the webhook never delivered', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  assert.equal(row.status, 'open', 'starts unpaid');
+
+  const s = stubGet({ id: row.stripe_invoice_id, status: 'paid',
+    amount_paid: Math.round(row.amount * 100), hosted_invoice_url: 'https://pay.stripe/x' });
+  const r = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  s.restore();
+
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.status, 'paid');
+  assert.equal(r.data.changed, true);
+  assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'paid');
+  const pay = db.prepare('SELECT * FROM payments').all();
+  assert.equal(pay.length, 1, 'exactly one payment recorded');
+  assert.equal(pay[0].submission_id, 7, 'against the right shed');
+  assert.equal(pay[0].method, 'stripe');
+  assert.ok(Math.abs(pay[0].amount - row.amount) < 0.005);
+});
+
+/* THE ONE THAT MATTERS. Pressing the button after the webhook already worked
+   must not record the payment twice — a double-counted deposit makes the
+   balance invoice under-bill by that amount, and nothing would flag it. */
+test('the button and the webhook cannot both record the same payment', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  const paid = { id: row.stripe_invoice_id, status: 'paid',
+    amount_paid: Math.round(row.amount * 100) };
+
+  let s = stubGet(paid);
+  await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  const second = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  const third = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  s.restore();
+
+  assert.equal(second.data.changed, false, 'the second press changed nothing');
+  assert.equal(third.data.changed, false);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM payments').get().n, 1,
+    'one payment, however many times the button is pressed');
+});
+
+test('it backfills a pay link that was never stored', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  db.prepare('UPDATE invoices SET hosted_url = NULL WHERE id = ?').run(row.id);
+
+  const s = stubGet({ id: row.stripe_invoice_id, status: 'open',
+    hosted_invoice_url: 'https://pay.stripe/recovered' });
+  const r = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  s.restore();
+
+  assert.equal(r.data.changed, false, 'the status did not move');
+  assert.equal(db.prepare('SELECT hosted_url FROM invoices WHERE id=?').get(row.id).hosted_url,
+    'https://pay.stripe/recovered', 'but the missing link came back');
+});
+
+test('a voided or written-off invoice stops showing as money owed', async () => {
+  for (const status of ['void', 'uncollectible']) {
+    const { db, env, t, row } = await sentInvoice();
+    const s = stubGet({ id: row.stripe_invoice_id, status });
+    const r = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+    s.restore();
+    assert.equal(r.data.status, status);
+    assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, status);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM payments').get().n, 0,
+      status + ' must not record a payment');
+  }
+});
+
+test('it asks Stripe and does not change anything there', async () => {
+  const { env, t, row } = await sentInvoice();
+  const s = stubGet({ id: row.stripe_invoice_id, status: 'open' });
+  await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  s.restore();
+  assert.deepEqual(s.calls, [{ path: '/v1/invoices/' + row.stripe_invoice_id, method: 'GET' }],
+    'one GET, nothing else: ' + JSON.stringify(s.calls));
+});
+
+test('Check Stripe reports a refusal instead of guessing', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  const orig = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 404,
+    json: async () => ({ error: { message: 'No such invoice' } }) });
+  const r = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  globalThis.fetch = orig;
+  assert.equal(r.status, 502);
+  assert.match(r.data.error, /No such invoice/);
+  assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'open',
+    'a failed check leaves the row alone');
+});
+
+test('sync needs an admin token, and a real invoice', async () => {
+  const { env, t } = await sentInvoice();
+  assert.equal((await api(env, 'POST', '/admin/invoices/1/sync', {})).status, 401);
+  assert.equal((await api(env, 'POST', '/admin/invoices/99999/sync', {}, t)).status, 404);
+});

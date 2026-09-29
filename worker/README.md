@@ -870,6 +870,29 @@ the customer never has to check one document against the other.
 Press **Work out the deposit** and open *What the customer sees* in the
 preview to read the whole thing before it goes.
 
+## When an invoice says unpaid and you think it isn't
+
+Press **Check Stripe** on the invoice row. It asks Stripe what actually
+happened and updates the CRM from the answer — records the payment if it
+cleared, marks it voided or written off if that is what Stripe says, and
+restores the pay link if one was missing.
+
+It reads from Stripe and writes only to our own records. Nothing on the
+customer's invoice changes, and pressing it repeatedly cannot record the same
+payment twice: both it and the webhook go through one function that stops at
+an invoice already marked paid.
+
+Why it exists: the webhook is the normal path and webhooks get missed. The
+failure mode is the CRM insisting a customer has not paid when they have,
+which costs you chasing someone who already sent you money — and nothing about
+it looks broken.
+
+If Check Stripe says the invoice is still unpaid, the payment genuinely has
+not reached Stripe. If it flips the row, the webhook is the thing to look at:
+**Developers → Webhooks → your endpoint** shows every delivery and the
+response it got. A `400` there means `STRIPE_WEBHOOK_SECRET` does not match
+that endpoint's signing secret.
+
 ## The things that will bite, and what stops them
 
 - **A sent invoice cannot be edited.** Stripe treats a finalized invoice as a
