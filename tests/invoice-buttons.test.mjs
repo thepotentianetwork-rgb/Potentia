@@ -90,11 +90,22 @@ const env = { DB: makeD1(db), ADMIN_PASSWORD: 'pw', ADMIN_SESSION_SECRET: 'k',
 // ---- Stripe, stubbed -----------------------------------------------------
 const stripeCalls = [];
 const realFetch = globalThis.fetch;
+/* What Stripe will say when ASKED about an invoice. The Check Stripe button
+   exists for the case where the webhook never arrived, so the test has to be
+   able to make Stripe disagree with the CRM — flipped by the harness, never
+   by touching the database, which is what makes it a real test of the path. */
+let stripeSays = { status: 'open', amount_paid: 0 };
 globalThis.fetch = async (url, init) => {
   const u = String(url && url.url ? url.url : url);
   if (!u.startsWith('https://api.stripe.com')) return realFetch(url, init);
   const p = new URL(u).pathname;
-  stripeCalls.push({ path: p, params: Object.fromEntries(new URLSearchParams((init && init.body) || '')) });
+  const method = (init && init.method) || 'POST';
+  stripeCalls.push({ path: p, method,
+    params: Object.fromEntries(new URLSearchParams((init && init.body) || '')) });
+  if (method === 'GET' && /^\/v1\/invoices\/in_/.test(p)) {
+    return { ok: true, status: 200, json: async () => ({
+      id: 'in_test', hosted_invoice_url: 'https://pay.stripe.test/hank', ...stripeSays }) };
+  }
   const id = p === '/v1/customers' ? 'cus_test' : p.includes('invoiceitems') ? 'ii_test' : 'in_test';
   return { ok: true, status: 200, json: async () => ({
     id, status: 'open', hosted_invoice_url: 'https://pay.stripe.test/hank' }) };
@@ -117,11 +128,25 @@ const srv = http.createServer(async (req, res) => {
      the Stripe webhook does when a deposit clears, so the page can be seen
      rendering a PAID invoice. Reaching for the real webhook here would mean
      signing a payload, which stripewebhook.test.mjs already covers. */
+  if (req.method === 'POST' && req.url === '/__stripe-paid') {
+    /* Stripe now says paid. The CRM's own row is untouched — exactly the
+       state a missed webhook leaves behind. */
+    stripeSays = { status: 'paid', amount_paid: Math.round(
+      db.prepare("SELECT amount FROM invoices WHERE kind='deposit'").get().amount * 100) };
+    res.writeHead(204, cors); return res.end();
+  }
   if (req.method === 'POST' && req.url === '/__paid') {
-    db.prepare("UPDATE invoices SET status='paid', paid_at=? WHERE kind='deposit'").run('2026-09-15');
-    const amt = db.prepare("SELECT amount FROM invoices WHERE kind='deposit'").get().amount;
-    db.prepare(`INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id)
-                VALUES (1,?,'stripe','Deposit paid on Stripe',?,?,7)`).run(amt, '2026-09-15', '2026-09-15');
+    /* Idempotent, exactly as the real webhook is: by this point in the run
+       Check Stripe may already have recorded the payment, and a fixture that
+       inserted a second one would report a doubled deposit and look like a
+       bug in the code it is meant to be testing. */
+    const inv = db.prepare("SELECT * FROM invoices WHERE kind='deposit'").get();
+    if (inv.status !== 'paid') {
+      db.prepare("UPDATE invoices SET status='paid', paid_at=? WHERE id=?").run('2026-09-15', inv.id);
+      db.prepare(`INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id)
+                  VALUES (1,?,'stripe','Deposit paid on Stripe',?,?,7)`)
+        .run(inv.amount, '2026-09-15', '2026-09-15');
+    }
     res.writeHead(204, cors); return res.end();
   }
   if (req.method === 'POST' && req.url === '/__result') {
@@ -259,6 +284,33 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
       bp.querySelectorAll('.inv-btn')[0].click();
       await sleep(400);
       R.stillOnPreview = !!after.querySelector('.inv-preview');
+    }
+
+    // ---- the webhook never arrived; press Check Stripe -----------------
+    var beforeCheck = cards().filter(function (x) { return x.querySelector('.inv-block'); })[0];
+    var checkBtn = [].slice.call(beforeCheck.querySelectorAll('.inv-btn'))
+      .filter(function (b) { return /check stripe/i.test(txt(b)); })[0];
+    R.checkOffered = !!checkBtn;
+    if (checkBtn) {
+      /* First press: Stripe agrees it is unpaid. Nothing should move. */
+      checkBtn.click();
+      await until(function () { return /agrees/i.test(txt(beforeCheck.querySelector('.inv-block'))); }, 6000);
+      R.agreesText = txt(beforeCheck.querySelector('.inv-block'));
+      R.stillUnpaidAfterAgree = /Sent . unpaid|Sent — unpaid/.test(txt(beforeCheck.querySelector('.inv-state')));
+
+      /* Now Stripe says paid and the CRM does not know. */
+      await fetch('${BASE}/__stripe-paid', { method: 'POST' });
+      var card2 = cards().filter(function (x) { return x.querySelector('.inv-block'); })[0];
+      [].slice.call(card2.querySelectorAll('.inv-btn'))
+        .filter(function (b) { return /check stripe/i.test(txt(b)); })[0].click();
+      var flipped = await until(function () {
+        var c = cards().filter(function (x) { return x.querySelector('.inv-block'); })[0];
+        var pill = c && c.querySelector('.inv-state');
+        return pill && /^Paid$/.test(txt(pill)) ? pill : null;
+      }, 8000);
+      R.checkFlippedIt = !!flipped;
+      var after = cards().filter(function (x) { return x.querySelector('.inv-block'); })[0];
+      R.buttonsAfterCheck = [].slice.call(after.querySelectorAll('.inv-btn')).map(txt);
     }
 
     // ---- once the deposit actually clears ------------------------------
@@ -408,6 +460,14 @@ check('and says the amounts already include tax',
 check('the header fields carry the order and the build',
   (R.fields || []).some((f) => /^Order=#/.test(f)) &&
   (R.fields || []).some((f) => /^Job total=/.test(f)), R.fields);
+
+console.log('\n-- Check Stripe, for when the webhook never came --');
+check('the button is on the row', R.checkOffered === true);
+check('when Stripe agrees, it says so and moves nothing',
+  /agrees/i.test(R.agreesText || '') && R.stillUnpaidAfterAgree === true,
+  { text: R.agreesText, stillUnpaid: R.stillUnpaidAfterAgree });
+check('and when Stripe knows better, the row catches up',
+  R.checkFlippedIt === true, R.buttonsAfterCheck);
 
 console.log('\n-- and once the deposit clears --');
 check('the row flips to paid', R.paidPill === 'Paid', R.paidPill);

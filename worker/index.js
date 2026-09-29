@@ -22,7 +22,7 @@ import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConf
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap } from "./quotelines.js";
 import { buildInvoice, splitPayments, fromCents, usd } from "./invoices.js";
-import { ensureCustomer, createAndSendInvoice, voidInvoice } from "./stripe.js";
+import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
@@ -878,17 +878,29 @@ async function handleStripeWebhook(request, env, origin) {
      Acknowledged rather than errored: it is a real event, just not ours. */
   if (!row) return json({ ok: true, ignored: "unknown invoice " + inv.id }, 200, origin);
 
-  /* Stripe retries, and resends can be triggered by hand for 30 days. Without
-     this, one payment is recorded as several and the balance invoice then
-     under-bills by the difference. The invoice status IS the guard — no
-     separate ledger of processed event ids to keep in step. */
-  if (row.status === "paid") return json({ ok: true, already: true }, 200, origin);
+  const done = await recordInvoicePaid(env, row, inv.amount_paid);
+  if (done.already) return json({ ok: true, already: true }, 200, origin);
+  return json({ ok: true, recorded: done.amount }, 200, origin);
+}
 
-  /* amount_paid is in cents and is what actually cleared, which is not always
-     what was billed — a partial payment or a credit note changes it. Record
-     what arrived, not what was asked for. */
-  const paid = Number(inv.amount_paid);
-  const amount = Number.isFinite(paid) && paid > 0 ? paid / 100 : Number(row.amount);
+/* MARKING AN INVOICE PAID, IN ONE PLACE.
+ *
+ * Two things arrive here: the webhook Stripe sends, and the Check Stripe
+ * button for when it did not. Two copies of "insert a payment and flip the
+ * status" is how the same payment gets recorded twice, and a double-recorded
+ * deposit makes the balance invoice under-bill by that amount.
+ *
+ * Idempotent on the invoice's own status, which is also what makes Stripe's
+ * retries harmless — resends can be triggered by hand for 30 days. No separate
+ * ledger of processed event ids to keep in step with anything.
+ */
+async function recordInvoicePaid(env, row, amountPaidCents) {
+  if (row.status === "paid") return { already: true, amount: Number(row.amount) };
+
+  /* What actually cleared, which is not always what was billed — a partial
+     payment or a credit note changes it. Record what arrived. */
+  const cents = Number(amountPaidCents);
+  const amount = Number.isFinite(cents) && cents > 0 ? cents / 100 : Number(row.amount);
   const now = new Date().toISOString();
 
   await env.DB.prepare(
@@ -900,7 +912,59 @@ async function handleStripeWebhook(request, env, origin) {
   await env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?")
     .bind(now, row.id).run();
 
-  return json({ ok: true, recorded: amount }, 200, origin);
+  return { already: false, amount };
+}
+
+/* POST /admin/invoices/:id/sync — ask Stripe what it thinks and believe it.
+ *
+ * A missed webhook leaves the CRM saying a customer has not paid when they
+ * have, which is worse than most bugs: nothing looks broken, and the cost is
+ * chasing someone who already sent you money. This is the button for that.
+ * It reads from Stripe and writes only to our own row.
+ */
+async function handleSyncInvoice(request, env, origin, id) {
+  await ensureInvoicesTable(env);
+  await ensurePaymentsTable(env);
+  const row = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "no such invoice" }, 404, origin);
+  if (!row.stripe_invoice_id) {
+    return json({ error: "this invoice was never sent to Stripe" }, 400, origin);
+  }
+
+  let live;
+  try {
+    live = await getInvoice(env, row.stripe_invoice_id);
+  } catch (e) {
+    return json({ error: e.message || "Stripe would not answer" }, 502, origin);
+  }
+
+  /* Backfill the pay link while we are here. Invoices raised before the field
+     name was corrected have none stored, and Stripe has had it all along. */
+  if (live.hostedUrl && live.hostedUrl !== row.hosted_url) {
+    await env.DB.prepare("UPDATE invoices SET hosted_url = ? WHERE id = ?")
+      .bind(live.hostedUrl, row.id).run();
+  }
+
+  if (live.status === "paid") {
+    const done = await recordInvoicePaid(env, row, live.amountPaidCents);
+    return json({ ok: true, status: "paid", changed: !done.already,
+                  recorded: done.amount, stripe_status: live.status }, 200, origin);
+  }
+
+  /* Anything else Stripe reports is copied across as-is, so a voided or
+     written-off invoice stops showing as money still owed. `paid` is handled
+     above and deliberately not reachable here — it is the only status that
+     also has to write a payment row. */
+  const COPY = ["open", "void", "uncollectible", "draft"];
+  if (live.status && live.status !== row.status && COPY.includes(live.status)) {
+    await env.DB.prepare("UPDATE invoices SET status = ? WHERE id = ?")
+      .bind(live.status, row.id).run();
+    return json({ ok: true, status: live.status, changed: true,
+                  stripe_status: live.status }, 200, origin);
+  }
+
+  return json({ ok: true, status: row.status, changed: false,
+                stripe_status: live.status }, 200, origin);
 }
 
 /* POST /admin/invoices — {submission_id, kind, preview?}
@@ -3799,6 +3863,12 @@ export default {
         const cid = Number(path.split("/")[3]);
         if (!cid) return json({ error: "bad customer id" }, 400, origin);
         return await handleListInvoices(request, env, origin, cid);
+      }
+      if (path.startsWith("/admin/invoices/") && path.endsWith("/sync") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const sid = Number(path.split("/")[3]);
+        if (!sid) return json({ error: "bad invoice id" }, 400, origin);
+        return await handleSyncInvoice(request, env, origin, sid);
       }
       if (path.startsWith("/admin/invoices/") && path.endsWith("/void") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

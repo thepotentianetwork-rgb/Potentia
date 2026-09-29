@@ -169,7 +169,24 @@ export async function createAndSendInvoice(env, {
 /* Fields this module reads off a Stripe invoice object, checked against the
    API reference. Kept beside the code that reads them so the test below has
    something to compare against. */
-export const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url'];
+export const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url', 'amount_paid'];
+
+/* Ask Stripe what actually happened, instead of waiting to be told.
+ *
+ * The webhook is the normal path and this is not a replacement for it — it is
+ * the path for when the webhook did not arrive, which happens, and whose
+ * failure mode is the CRM insisting a customer has not paid when they have.
+ * Read-only: it answers a question and changes nothing at Stripe. */
+export async function getInvoice(env, stripeInvoiceId) {
+  const inv = await stripeCall(env, '/invoices/' + encodeURIComponent(stripeInvoiceId),
+    undefined, { method: 'GET' });
+  return {
+    id: inv.id,
+    status: inv.status || null,
+    hostedUrl: inv.hosted_invoice_url || null,
+    amountPaidCents: Number(inv.amount_paid) || 0,
+  };
+}
 
 export async function voidInvoice(env, stripeInvoiceId) {
   return stripeCall(env, `/invoices/${stripeInvoiceId}/void`, {});

@@ -1051,7 +1051,12 @@ function invStatePill(status) {
   var pill = document.createElement('span');
   var known = status === 'paid' || status === 'void' ? status : 'open';
   pill.className = 'inv-state ' + known;
-  pill.textContent = status === 'paid' ? 'Paid' : status === 'void' ? 'Voided' : 'Sent — unpaid';
+  pill.textContent = status === 'paid' ? 'Paid'
+    : status === 'void' ? 'Voided'
+    /* Stripe's word for written off. Shown as itself rather than folded into
+       "unpaid", because it is not money you are still waiting for. */
+    : status === 'uncollectible' ? 'Written off'
+    : 'Sent — unpaid';
   return pill;
 }
 
@@ -1209,6 +1214,46 @@ function renderInvoiceBlock(card, s, details) {
         open.title = 'The page the customer sees and pays on.';
         row.appendChild(open);
       }
+
+      /* The webhook is what normally flips this row to Paid. Webhooks get
+         missed, and the way that shows up is the CRM insisting a customer has
+         not paid when they have — so there is always a way to ask Stripe
+         directly rather than wait. Offered on paid rows too: it costs nothing
+         and confirming is sometimes the whole point. */
+      var sync = document.createElement('button');
+      sync.type = 'button';
+      sync.className = 'inv-btn quiet';
+      sync.textContent = 'Check Stripe';
+      sync.title = 'Asks Stripe what actually happened and updates this row. Changes nothing on the customer\u2019s invoice.';
+      var syncMsg = document.createElement('span');
+      syncMsg.className = 'inv-note';
+      syncMsg.style.margin = '0';
+      sync.addEventListener('click', function () {
+        sync.disabled = true;
+        sync.textContent = 'Asking…';
+        syncMsg.textContent = '';
+        authFetch('/admin/invoices/' + existing.id + '/sync', { method: 'POST' })
+          .then(function (r) {
+            sync.disabled = false;
+            sync.textContent = 'Check Stripe';
+            if (!r.ok) {
+              syncMsg.textContent = (r.data && r.data.error) || 'Stripe would not answer.';
+              return;
+            }
+            /* Only reload when something actually moved — a reload that
+               changes nothing reads as the button having done nothing. */
+            if (r.data.changed) { loadCustomer(); return; }
+            syncMsg.textContent = 'Stripe agrees: ' +
+              (r.data.stripe_status === 'open' ? 'still unpaid.' : r.data.stripe_status + '.');
+          })
+          .catch(function () {
+            sync.disabled = false;
+            sync.textContent = 'Check Stripe';
+            syncMsg.textContent = 'Could not reach the server.';
+          });
+      });
+      row.appendChild(sync);
+      row.appendChild(syncMsg);
 
       /* Paid invoices get no void button: Stripe will not void one, and the
          money has moved — that is a refund, done in Stripe, not here. */
