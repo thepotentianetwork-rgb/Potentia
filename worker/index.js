@@ -944,7 +944,18 @@ async function handleSyncInvoice(request, env, origin, id) {
   try {
     live = await getInvoice(env, row.stripe_invoice_id);
   } catch (e) {
-    return json({ error: e.message || "Stripe would not answer" }, 502, origin);
+    /* Same reasoning as voiding: an invoice this key cannot see is one nobody
+       can pay through it, so it is recorded as void rather than left sitting
+       in the CRM as money owed. Self-correcting — if the key is later put
+       right, the next check copies Stripe's real status back over. */
+    const missing = e.status === 404 || e.stripeCode === "resource_missing";
+    if (!missing) return json({ error: e.message || "Stripe would not answer" }, 502, origin);
+    const changed = row.status !== "void";
+    if (changed) {
+      await env.DB.prepare("UPDATE invoices SET status = 'void' WHERE id = ?").bind(row.id).run();
+    }
+    return json({ ok: true, status: "void", changed, unknown_to_stripe: true,
+                  stripe_status: null }, 200, origin);
   }
 
   /* Backfill the pay link while we are here. Invoices raised before the field
@@ -1141,15 +1152,25 @@ async function handleVoidInvoice(request, env, origin, id) {
   if (row.status === "paid") {
     return json({ error: "this invoice is already paid — refund it in Stripe instead of voiding" }, 409, origin);
   }
+  let gone = false;
   if (row.stripe_invoice_id) {
     try {
       await voidInvoice(env, row.stripe_invoice_id);
     } catch (e) {
-      return json({ error: e.message || "Stripe would not void it" }, 502, origin);
+      /* An invoice Stripe has never heard of cannot be collected, so refusing
+         to void it locally helps nobody — it just leaves a row that blocks
+         reissuing, with no way out of the CRM.
+         This is not hypothetical: invoices are per-environment, so every
+         invoice raised in test mode is missing the moment the live key goes
+         in. The row is marked void; the customer's copy, wherever it is, is
+         untouched. */
+      const missing = e.status === 404 || e.stripeCode === "resource_missing";
+      if (!missing) return json({ error: e.message || "Stripe would not void it" }, 502, origin);
+      gone = true;
     }
   }
   await env.DB.prepare("UPDATE invoices SET status = 'void' WHERE id = ?").bind(id).run();
-  return json({ ok: true, id, status: "void" }, 200, origin);
+  return json({ ok: true, id, status: "void", unknown_to_stripe: gone }, 200, origin);
 }
 
 // ---- /admin/customers/:id/payments ----

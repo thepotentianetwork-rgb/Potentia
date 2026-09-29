@@ -610,15 +610,20 @@ test('it asks Stripe and does not change anything there', async () => {
     'one GET, nothing else: ' + JSON.stringify(s.calls));
 });
 
+/* A refusal that is NOT "this does not exist" is reported, not guessed at.
+   404 has its own meaning now — an invoice this key cannot see is voided
+   locally, tested below — so this uses a failure that means Stripe itself is
+   unhappy. Reading an outage as "the invoice is gone" would void real,
+   payable invoices across the whole CRM. */
 test('Check Stripe reports a refusal instead of guessing', async () => {
   const { db, env, t, row } = await sentInvoice();
   const orig = globalThis.fetch;
-  globalThis.fetch = async () => ({ ok: false, status: 404,
-    json: async () => ({ error: { message: 'No such invoice' } }) });
+  globalThis.fetch = async () => ({ ok: false, status: 500,
+    json: async () => ({ error: { message: 'Something went wrong on our end' } }) });
   const r = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
   globalThis.fetch = orig;
   assert.equal(r.status, 502);
-  assert.match(r.data.error, /No such invoice/);
+  assert.match(r.data.error, /went wrong/);
   assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'open',
     'a failed check leaves the row alone');
 });
@@ -705,4 +710,89 @@ test('Check Stripe backfills a recipient that was never recorded', async () => {
   s.restore();
   assert.equal(db.prepare('SELECT sent_to FROM invoices WHERE id=?').get(row.id).sent_to,
     'hank@roof.test');
+});
+
+/* ---- the switch to live keys, from the invoice side --------------------- */
+
+function stubGone(status = 404, code = 'resource_missing') {
+  const orig = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ path: new URL(url).pathname, method: (init && init.method) || 'POST' });
+    return { ok: false, status,
+      json: async () => ({ error: { message: 'No such invoice: in_test_only', code } }) };
+  };
+  return { calls, restore: () => { globalThis.fetch = orig; } };
+}
+
+/* Invoices are per-environment too. Every invoice raised in test mode is
+   missing the moment the live key goes in — and a row that cannot be voided
+   is a row that blocks reissuing, with no way out of the CRM. */
+test('an invoice the live key cannot see can still be voided', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  const s = stubGone();
+  const r = await api(env, 'POST', `/admin/invoices/${row.id}/void`, {}, t);
+  s.restore();
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.unknown_to_stripe, true);
+  assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'void');
+});
+
+test('and a new one can be raised straight after', async () => {
+  const { env, t, row } = await sentInvoice();
+  let s = stubGone();
+  await api(env, 'POST', `/admin/invoices/${row.id}/void`, {}, t);
+  s.restore();
+  const g = stubGet({});
+  const again = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  g.restore();
+  assert.equal(again.status, 200, 'the voided row must not block a reissue: ' + JSON.stringify(again.data));
+});
+
+test('Check Stripe on an invoice from the other environment voids it too', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  const s = stubGone();
+  const r = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  s.restore();
+  assert.equal(r.data.changed, true);
+  assert.equal(r.data.unknown_to_stripe, true);
+  assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'void');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM payments').get().n, 0,
+    'an invoice nobody can see has certainly not been paid');
+});
+
+/* A bad key or an outage must NOT be read as "this invoice does not exist" —
+   that would void real, payable invoices across the whole CRM. */
+test('any other Stripe refusal leaves the invoice alone', async () => {
+  for (const [code, label] of [[401, 'bad key'], [429, 'rate limited'], [500, 'Stripe down']]) {
+    const { db, env, t, row } = await sentInvoice();
+    let s = stubGone(code, null);
+    const v = await api(env, 'POST', `/admin/invoices/${row.id}/void`, {}, t);
+    s.restore();
+    assert.equal(v.status, 502, label + ' must not void');
+    assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'open', label);
+
+    s = stubGone(code, null);
+    const y = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+    s.restore();
+    assert.equal(y.status, 502, label + ' must not void on sync');
+    assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'open', label);
+  }
+});
+
+/* Self-correcting: if the key was simply wrong, putting it right and checking
+   again brings the real status back. */
+test('a wrongly voided invoice comes back when the key is put right', async () => {
+  const { db, env, t, row } = await sentInvoice();
+  let s = stubGone();
+  await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  s.restore();
+  assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'void');
+
+  const g = stubGet({ id: row.stripe_invoice_id, status: 'open',
+    hosted_invoice_url: 'https://pay.stripe/x' });
+  const back = await api(env, 'POST', `/admin/invoices/${row.id}/sync`, {}, t);
+  g.restore();
+  assert.equal(back.data.status, 'open');
+  assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'open');
 });
