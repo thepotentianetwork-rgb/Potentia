@@ -20,8 +20,8 @@
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
-import { quoteLines } from "./quotelines.js";
-import { buildInvoice, splitPayments, fromCents } from "./invoices.js";
+import { quoteLines, compedMap } from "./quotelines.js";
+import { buildInvoice, splitPayments, fromCents, usd } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
@@ -783,10 +783,17 @@ async function ensureInvoicesTable(env) {
   }
 }
 
-/* Money in a sentence a customer's figures can be checked against. Same form
-   as the rest of the worker uses; kept short because it appears mid-message. */
-function usd(n) {
-  return Number(n || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+/* The one-line description of the build, in the same words and the same order
+   the CRM's order cards use. Duplicated deliberately rather than shared: the
+   CRM copy runs in a browser on details.config, this one runs in the worker,
+   and a test checks the two produce the same string for the same config. */
+function configSummary(config) {
+  if (!config) return "";
+  const parts = [];
+  if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
+  if (config.style) parts.push(config.style);
+  if (config.siding) parts.push(config.siding);
+  return parts.join(" \u00b7 ");
 }
 
 /* Everything an invoice needs, gathered and priced, without sending anything.
@@ -816,7 +823,17 @@ async function invoiceContext(env, submissionId, kind) {
   ).bind(sub.customer_id).all();
   const split = splitPayments(payRows || [], sub.id);
 
-  const invoice = buildInvoice(breakdown, kind, split.applied);
+  /* Everything the quote page puts around the numbers, handed to the invoice
+     so the customer reads one document, not two that have to be compared:
+     the adjustments with the notes written for them, the items thrown in
+     free, and the size-and-style line off the design. */
+  const adjustments = adjustmentsOf(sub);
+  const invoice = buildInvoice(breakdown, kind, split.applied, {
+    adjustments,
+    comped: compedMap(details.redline, adjustments),
+    summary: configSummary(details.config),
+    submissionId: sub.id
+  });
   return { sub, customer, breakdown, split, invoice };
 }
 
@@ -950,6 +967,11 @@ async function handleCreateInvoice(request, env, origin, actor) {
     amount: fromCents(invoice.totalCents),
     job_total: fromCents(invoice.jobTotalCents),
     already_paid: fromCents(invoice.paidCents),
+    /* Returned on the preview too, so what the CRM shows before sending is
+       the whole document and not just its numbers. */
+    memo: invoice.memo,
+    footer: invoice.footer,
+    custom_fields: invoice.customFields,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -987,7 +1009,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
     }
     sent = await createAndSendInvoice(env, {
       customerId: cust.id, lines: invoice.lines, kind,
-      description: `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+      /* The memo is the build itemised the way the quote itemises it. Falls
+         back to the old one-liner only if a submission has nothing to list. */
+      description: invoice.memo ||
+        `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+      footer: invoice.footer,
+      customFields: invoice.customFields,
       idempotencyKey,
       metadata: { submission_id: String(sub.id), customer_id: String(customer.id), kind },
     });

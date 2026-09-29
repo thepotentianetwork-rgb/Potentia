@@ -183,7 +183,8 @@ test('the declared response fields match what the code actually reads', () => {
 
 const DOCUMENTED = {
   '/v1/invoices': ['customer', 'collection_method', 'days_until_due', 'auto_advance',
-    'automatic_tax', 'currency', 'description', 'footer', 'metadata', 'payment_settings'],
+    'automatic_tax', 'currency', 'description', 'footer', 'metadata', 'payment_settings',
+    'custom_fields'],
   '/v1/invoiceitems': ['customer', 'invoice', 'amount', 'currency', 'description'],
 };
 test('every parameter sent is one that endpoint documents', async () => {

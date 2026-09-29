@@ -105,7 +105,7 @@ export async function ensureCustomer(env, { stripeCustomerId, name, email, phone
  * overcharge by 7.25% and nothing in this code would notice.
  */
 export async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, idempotencyKey, metadata
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -127,6 +127,10 @@ export async function createAndSendInvoice(env, {
     currency: 'usd',
     description: description || undefined,
     footer: footer || undefined,
+    /* Up to four, across the top of the invoice. Sent only when there are
+       any: an empty array is not the same as leaving the parameter off, and
+       Stripe reads one as "clear them". */
+    custom_fields: (customFields && customFields.length) ? customFields : undefined,
     metadata: metadata || undefined,
   }, { idempotencyKey: idempotencyKey ? idempotencyKey + ':invoice' : undefined });
 

@@ -9,7 +9,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { computePricing } from './pricing.js';
 import { quoteLines } from './quotelines.js';
-import { buildInvoice, splitPayments, toCents } from './invoices.js';
+import { buildInvoice, splitPayments, toCents, buildMemo, buildFooter,
+         buildCustomFields, LIMITS } from './invoices.js';
 
 const BUILDS = {
   'plain 10x16': { style: 'gable', w: 10, l: 16, h: 9 },
@@ -39,7 +40,7 @@ function cases() {
   const out = [];
   for (const [b, config] of Object.entries(BUILDS)) {
     const { redline } = computePricing(config);
-    for (const [a, adj] of ADJUSTMENTS) out.push([`${b} / ${a}`, quoteLines(redline, adj)]);
+    for (const [a, adj] of ADJUSTMENTS) out.push([`${b} / ${a}`, quoteLines(redline, adj), adj]);
   }
   return out;
 }
@@ -67,14 +68,84 @@ test('the deposit is 30% of the job, tax included', () => {
   }
 });
 
-test('one line per phase, named the way the quote named them', () => {
-  const [, bd] = cases()[0];
-  const inv = buildInvoice(bd, 'deposit', []);
-  assert.equal(inv.lines.length, bd.rows.filter((r) => toCents(r.deposit) !== 0).length);
-  inv.lines.forEach((l, i) => {
-    assert.ok(l.label.startsWith(bd.rows[i].label), `"${l.label}" should lead with the phase name`);
-    assert.match(l.label, /tax included/);
-  });
+/* THE WHOLE QUOTE ON THE FACE OF THE INVOICE.
+ *
+ * The customer read a quote with phases, then adjustments, then tax. If the
+ * invoice restates the same job in a different shape they have to check one
+ * document against the other, and the document asking for money is the worst
+ * possible place to make them do that. So the lines are the quote's lines, in
+ * the quote's order, and only the last line differs by kind. */
+test('the deposit invoice shows the whole quote, then defers the rest', () => {
+  for (const [label, bd, adj] of cases()) {
+    const inv = buildInvoice(bd, 'deposit', [], { adjustments: adj });
+    const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
+
+    phases.forEach((r, i) => {
+      assert.equal(inv.lines[i].label, r.label, `${label}: phase ${i} label`);
+      assert.equal(inv.lines[i].amountCents, toCents(r.amt),
+        `${label}: "${r.label}" should be the quote's pre-tax figure`);
+    });
+
+    const tax = inv.lines.filter((l) => /Sales Tax/.test(l.label));
+    assert.equal(tax.length, 1, `${label}: one tax line`);
+    assert.equal(tax[0].amountCents, toCents(bd.tax), `${label}: tax must match the quote exactly`);
+    assert.match(tax[0].label, /Sales Tax \(7\.25%\)/);
+
+    const adjLines = inv.lines.filter((l) => /Discount|Adjustment/.test(l.label));
+    assert.equal(adjLines.reduce((t, l) => t + l.amountCents, 0), toCents(bd.adjust),
+      `${label}: the adjustment lines must come to what the quote took off`);
+
+    const last = inv.lines[inv.lines.length - 1];
+    assert.match(last.label, /Less balance due on completion/, `${label}: last line`);
+    assert.ok(last.amountCents < 0, `${label}: the deferral is a credit`);
+
+    /* Everything above the deferral is the job in full — which is what makes
+       the subtraction check out in front of the customer. */
+    const job = inv.lines.slice(0, -1).reduce((t, l) => t + l.amountCents, 0);
+    assert.ok(Math.abs(job - toCents(bd.total)) <= 2,
+      `${label}: the face of the invoice shows ${job}, the job is ${toCents(bd.total)}`);
+    assert.equal(inv.totalCents, toCents(bd.depositTotal), `${label}: deposit total`);
+  }
+});
+
+/* The named adjustment lines are a courtesy; the arithmetic is not. A caller
+   that forgets to pass them must still produce an invoice that agrees with the
+   quote — otherwise reconcile() buries the shortfall in a phase line and every
+   phase silently disagrees with what the customer was shown. */
+test('an invoice built without the adjustment list still matches the quote', () => {
+  for (const [label, bd] of cases()) {
+    const inv = buildInvoice(bd, 'deposit', []);              // no opts at all
+    const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
+    phases.forEach((r, i) => {
+      assert.equal(inv.lines[i].amountCents, toCents(r.amt), `${label}: "${r.label}" drifted`);
+    });
+    const adjLines = inv.lines.filter((l) => /Discount|Adjustment/.test(l.label));
+    assert.equal(adjLines.reduce((t, l) => t + l.amountCents, 0), toCents(bd.adjust), label);
+    assert.equal(inv.totalCents, toCents(bd.depositTotal), label);
+  }
+});
+
+/* And when they ARE passed, the customer's own words come through — "Local
+   customer - Honoring price before they increased" explains a $1,089 credit
+   in a way "Discount" never will. */
+test('an adjustment keeps the note that was written for it', () => {
+  const adj = [{ kind: 'amount', value: -1089, note: 'Honoring price before they increased' },
+               { kind: 'percent', value: -10, note: 'Repeat customer' }];
+  const { redline } = computePricing(BUILDS['plain 10x16']);
+  const bd = quoteLines(redline, adj);
+  const inv = buildInvoice(bd, 'deposit', [], { adjustments: adj });
+
+  const flat = inv.lines.find((l) => /Honoring price/.test(l.label));
+  assert.ok(flat, 'the note is not on the invoice: ' + inv.lines.map((l) => l.label).join(' | '));
+  assert.equal(flat.amountCents, -108900);
+
+  const pct = inv.lines.find((l) => /Repeat customer/.test(l.label));
+  assert.ok(pct, 'the percentage note is missing');
+  assert.match(pct.label, /Repeat customer \(10%\)/);
+  assert.equal(pct.amountCents, toCents(bd.subtotal * -0.10));
+
+  /* Both together still come to exactly what the quote took off. */
+  assert.equal(flat.amountCents + pct.amountCents, toCents(bd.adjust));
 });
 
 /* THE FLAT-70% TRAP. A balance of "the other 70%" is right only when the
@@ -101,19 +172,26 @@ test('the balance is the job less what was actually paid, not a flat 70%', () =>
    one — the invoice would still add up, and every phase on it would disagree
    with the customer's quote. Found by deliberately making that change and
    watching this file stay green, so it is checked line by line now. */
-test('each phase line matches that phase on the quote, tax included', () => {
-  for (const [label, bd] of cases()) {
-    const inv = buildInvoice(bd, 'balance', []);
-    const phases = bd.rows.filter((r) => toCents(r.total) !== 0);
-    assert.equal(inv.lines.length, phases.length, `${label}: line count`);
-    inv.lines.forEach((l, i) => {
-      const want = toCents(phases[i].total);
-      assert.ok(Math.abs(l.amountCents - want) <= 2,
-        `${label}: "${l.label}" is ${l.amountCents}, the quote says ${want}`);
-      /* And emphatically not the pre-tax figure. */
-      const pre = toCents(phases[i].amt);
-      if (Math.abs(want - pre) > 5) {
-        assert.notEqual(l.amountCents, pre, `${label}: "${l.label}" is the PRE-TAX amount`);
+test('the balance invoice shows the same quote, then credits what was paid', () => {
+  for (const [label, bd, adj] of cases()) {
+    const inv = buildInvoice(bd, 'balance', [{ amount: 1500, method: 'check' }], { adjustments: adj });
+    const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
+    phases.forEach((r, i) => {
+      assert.equal(inv.lines[i].label, r.label, `${label}: phase ${i} label`);
+      assert.ok(Math.abs(inv.lines[i].amountCents - toCents(r.amt)) <= 2,
+        `${label}: "${r.label}" is ${inv.lines[i].amountCents}, the quote says ${toCents(r.amt)}`);
+    });
+    const tax = inv.lines.find((l) => /Sales Tax/.test(l.label));
+    assert.equal(tax.amountCents, toCents(bd.tax), `${label}: tax`);
+    const credit = inv.lines.find((l) => /Payment received/.test(l.label));
+    assert.equal(credit.amountCents, -150000, `${label}: the payment credit`);
+    assert.equal(inv.totalCents, toCents(bd.total) - 150000, `${label}: balance total`);
+    /* Nothing on a balance invoice may be the tax-inclusive phase figure: that
+       would double-count the separate tax line. */
+    phases.forEach((r, i) => {
+      if (Math.abs(toCents(r.total) - toCents(r.amt)) > 5) {
+        assert.notEqual(inv.lines[i].amountCents, toCents(r.total),
+          `${label}: "${r.label}" is tax-inclusive AND there is a tax line`);
       }
     });
   }
@@ -133,11 +211,41 @@ test('each payment shows on the invoice as its own credit', () => {
 });
 
 /* Rounding never lands on a credit: a penny moved onto "Payment received"
-   would misstate what the customer has paid. */
+   would misstate what the customer has paid.
+ *
+ * SYNTHETIC BREAKDOWN, deliberately. Removing the guard and running every real
+ * fixture through it changes nothing — across ten thousand payment amounts the
+ * credit was the largest line every time and was never once adjusted, because
+ * those cases happen to carry no rounding drift at all. A guard whose test
+ * cannot fail when the guard is deleted is not a test. So the numbers below
+ * are built to produce exactly the collision the guard exists for: a one-cent
+ * drift, and a credit larger than any other line. */
+test('a penny of drift lands on a phase, never on the payment credit', () => {
+  const bd = {
+    rows: [{ label: 'Phase 1 — A', amt: 10.004 }, { label: 'Phase 2 — B', amt: 10.004 }],
+    subtotal: 20.008, adjust: 0, percentAdjust: 0, amountAdjust: 0,
+    adjustedSubtotal: 20.008, tax: 1.45, total: 21.46,
+    totalBefore: 21.46, savings: 0, depositTotal: 6.438
+  };
+  const inv = buildInvoice(bd, 'balance', [{ amount: 20, method: 'check' }]);
+
+  const credit = inv.lines.find((l) => /Payment received/.test(l.label));
+  assert.equal(Math.abs(credit.amountCents), 2000, 'the credit must be exactly what was paid');
+  const biggest = inv.lines.reduce((a, b) =>
+    Math.abs(b.amountCents) > Math.abs(a.amountCents) ? b : a);
+  assert.equal(biggest, credit, 'fixture is wrong: the credit should be the largest line');
+
+  assert.equal(inv.lines.reduce((t, l) => t + l.amountCents, 0), inv.totalCents, 'still adds up');
+  assert.equal(inv.totalCents, 146);
+  /* The penny went to a phase, which is where it is allowed to go. */
+  const phases = inv.lines.filter((l) => /^Phase/.test(l.label));
+  assert.equal(phases.reduce((t, l) => t + l.amountCents, 0), 2001);
+});
+
 test('a rounding penny never lands on a payment credit', () => {
   for (const [label, bd] of cases()) {
     const inv = buildInvoice(bd, 'balance', [{ amount: 1234.567, method: 'check' }]);
-    const credit = inv.lines.find((l) => l.amountCents < 0);
+    const credit = inv.lines.find((l) => /Payment received/.test(l.label));
     assert.equal(credit.amountCents, -toCents(1234.567), `${label}: the credit was adjusted`);
   }
 });
@@ -208,4 +316,95 @@ test('an empty string is as unassigned as a null', () => {
 test('ids compare by value, so a string id from the DB still matches', () => {
   const { applied } = splitPayments([{ id: 9, amount: 100, submission_id: '22' }], 22);
   assert.equal(applied.length, 1);
+});
+
+
+/* ---- what the customer reads around the numbers ------------------------ */
+
+const RICH = computePricing({ style: 'barn', w: 10, l: 16, h: 9, foundation: 'pad',
+  foundationFinish: 'coated', intFinish: 'painted', elec: 'essential', floor: 'lvp',
+  siding: 'vertical', loft: '6-front',
+  doors: [{ wall: 'front', pos: 0.5, w: 36, h: 80, style: 'fairytale', color: 'white' }],
+  windows: [{ wall: 'left', pos: 0.3, w: 24, h: 36, cy: 52, type: 'White Vinyl 24x36' }],
+  addons: { shutters: true, skylight: true } }).redline;
+
+test('the memo lists the build the way the quote lists it', () => {
+  const bd = quoteLines(RICH, []);
+  const memo = buildMemo(bd, { summary: '10x16 ft \u00b7 barn \u00b7 vertical', submissionId: 42 });
+
+  assert.match(memo, /10x16 ft \u00b7 barn \u00b7 vertical/);
+  assert.match(memo, /Order #42/);
+  bd.rows.forEach((r) => assert.ok(memo.includes(r.label), 'missing phase: ' + r.label));
+
+  /* The breakout is the point — "Shed" on its own tells a customer nothing
+     about what they are paying for. */
+  const subs = bd.rows.reduce((t, r) => t + (r.subLines || []).length, 0);
+  assert.ok(subs > 3, 'fixture should have sub-lines to show');
+  bd.rows.forEach((r) => (r.subLines || []).forEach((s) => {
+    assert.ok(memo.includes(s.label), 'missing item: ' + s.label);
+  }));
+  assert.ok(memo.length <= LIMITS.memo, 'memo is ' + memo.length + ' chars');
+});
+
+/* An undocumented limit is still a limit, and on this endpoint exceeding one
+   means the invoice never goes out. The detail has to shed gracefully. */
+test('a build too detailed to fit drops detail, never the phases', () => {
+  const bd = quoteLines(RICH, []);
+  const long = 'X'.repeat(400);
+  const fat = { ...bd, rows: bd.rows.map((r) => ({ ...r,
+    subLines: (r.subLines || []).map((s) => ({ ...s, label: s.label + ' ' + long,
+      includes: [long, long] })) })) };
+
+  const memo = buildMemo(fat, { summary: 'big', submissionId: 1 });
+  assert.ok(memo.length <= LIMITS.memo, 'memo is ' + memo.length + ' chars');
+  /* Phases survive: they are the part that has to be there. */
+  fat.rows.forEach((r) => assert.ok(memo.includes(r.label), 'lost phase: ' + r.label));
+});
+
+test('the footer names what was thrown in free', () => {
+  const bd = quoteLines(RICH, []);
+  const footer = buildFooter(bd, { Shutters: 60, Skylight: 184 }, 'deposit');
+  assert.match(footer, /Included at no charge: Shutters, Skylight\./);
+  assert.match(footer, /balance is invoiced on completion/);
+  assert.match(footer, /include Utah sales tax/i);
+  assert.ok(footer.length <= LIMITS.footer);
+
+  const bal = buildFooter(bd, {}, 'balance');
+  assert.doesNotMatch(bal, /Included at no charge/, 'nothing comped, nothing to say');
+  assert.match(bal, /settles the balance/);
+});
+
+test('the footer states the saving when there is one', () => {
+  const bd = quoteLines(RICH, [{ kind: 'amount', value: -1500 }]);
+  assert.match(buildFooter(bd, {}, 'deposit'), /You save \$1,6\d\d\.\d\d/);
+  assert.doesNotMatch(buildFooter(quoteLines(RICH, []), {}, 'deposit'), /You save/);
+});
+
+test('the header fields stay inside what Stripe accepts', () => {
+  const bd = quoteLines(RICH, []);
+  const fields = buildCustomFields(bd, 'deposit',
+    { summary: 'x'.repeat(300), submissionId: 42 });
+  assert.ok(fields.length <= 4, 'Stripe takes at most four');
+  fields.forEach((f) => {
+    assert.ok(f.name.length <= LIMITS.fieldName, f.name);
+    assert.ok(f.value.length <= LIMITS.fieldValue, f.value.length + ' chars');
+    assert.ok(f.name && f.value, 'both are required by Stripe');
+  });
+  assert.equal(fields.find((f) => f.name === 'Order').value, '#42');
+  assert.match(fields.find((f) => f.name === 'Payment').value, /Deposit/);
+
+  /* No order number and no design summary: the empty ones drop out rather
+     than going up as blanks, which Stripe rejects. */
+  const bare = buildCustomFields(bd, 'balance', {});
+  bare.forEach((f) => assert.ok(f.value.length > 0));
+});
+
+test('buildInvoice hands all three back, ready to send', () => {
+  const bd = quoteLines(RICH, []);
+  const inv = buildInvoice(bd, 'deposit', [], { summary: '10x16 ft', submissionId: 7,
+    comped: { Shutters: 60 } });
+  assert.ok(inv.memo.includes('Order #7'));
+  assert.match(inv.footer, /Shutters/);
+  assert.ok(inv.customFields.length >= 2);
+  inv.lines.forEach((l) => assert.ok(l.label.length <= LIMITS.label, l.label));
 });
