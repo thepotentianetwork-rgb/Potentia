@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "a2b6181";
-const WORKER_BUILT_AT = "2026-09-29T06:27:43.274Z";
+const WORKER_BUILD = "d123727";
+const WORKER_BUILT_AT = "2026-09-29T06:33:05.605Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3944,10 +3944,21 @@ const DAYS_UNTIL_DUE = { deposit: 0, balance: 7 };
    how a business ends up with four Jenny Rosens and a payment history split
    across all of them. */
 async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
-  if (stripeCustomerId) return { id: stripeCustomerId, created: false };
   if (!email) throw new Error('this customer has no email address to invoice');
+  if (stripeCustomerId) {
+    /* UPDATED, not just reused. The email was previously read from the CRM
+       only on the FIRST invoice; after that Stripe's copy was never touched
+       again. Fix a typo in the CRM, or a customer changes address, and every
+       later invoice still goes to the old one — silently, because Stripe
+       reports the send as successful either way. For a repeat customer six
+       months on, that is a bill delivered to a dead inbox and a job that
+       looks unpaid. */
+    const c = await stripeCall(env, '/customers/' + encodeURIComponent(stripeCustomerId),
+      { name, email, phone });
+    return { id: c.id, created: false, email: c.email || email };
+  }
   const c = await stripeCall(env, '/customers', { name, email, phone });
-  return { id: c.id, created: true };
+  return { id: c.id, created: true, email: c.email || email };
 }
 
 /* The documented sequence: create the invoice, add its items, then send.
@@ -4019,13 +4030,18 @@ async function createAndSendInvoice(env, {
     id: sent.id,
     status: sent.status || 'open',
     hostedUrl: sent.hosted_invoice_url || null,
+    /* Where Stripe says it sent it, not where we asked it to. The whole point
+       is to be able to answer "which address did this actually go to?" from
+       the CRM, and only Stripe's own answer can do that. */
+    customerEmail: sent.customer_email || null,
   };
 }
 
 /* Fields this module reads off a Stripe invoice object, checked against the
    API reference. Kept beside the code that reads them so the test below has
    something to compare against. */
-const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url', 'amount_paid'];
+const RESPONSE_FIELDS = ['id', 'status', 'hosted_invoice_url', 'amount_paid',
+  'customer_email', 'email'];
 
 /* Ask Stripe what actually happened, instead of waiting to be told.
  *
@@ -4040,6 +4056,7 @@ async function getInvoice(env, stripeInvoiceId) {
     id: inv.id,
     status: inv.status || null,
     hostedUrl: inv.hosted_invoice_url || null,
+    customerEmail: inv.customer_email || null,
     amountPaidCents: Number(inv.amount_paid) || 0,
   };
 }
@@ -4928,6 +4945,15 @@ async function ensureInvoicesTable(env) {
   if (names.length && names.indexOf("stripe_customer_id") === -1) {
     await env.DB.prepare("ALTER TABLE customers ADD COLUMN stripe_customer_id TEXT").run();
   }
+
+  /* The address Stripe says it sent to. Stored rather than read back off the
+     customer record, because that record can be edited afterwards and this has
+     to stay the answer to "where did THIS invoice actually go?" */
+  const inv = await env.DB.prepare("PRAGMA table_info(invoices)").all();
+  const invNames = (inv.results || []).map((r) => r.name);
+  if (invNames.length && invNames.indexOf("sent_to") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN sent_to TEXT").run();
+  }
 }
 
 /* The one-line description of the build, in the same words and the same order
@@ -5091,6 +5117,12 @@ async function handleSyncInvoice(request, env, origin, id) {
     await env.DB.prepare("UPDATE invoices SET hosted_url = ? WHERE id = ?")
       .bind(live.hostedUrl, row.id).run();
   }
+  /* Same for the recipient: invoices raised before the column existed have
+     none recorded, and Stripe has known all along. */
+  if (live.customerEmail && live.customerEmail !== row.sent_to) {
+    await env.DB.prepare("UPDATE invoices SET sent_to = ? WHERE id = ?")
+      .bind(live.customerEmail, row.id).run();
+  }
 
   if (live.status === "paid") {
     const done = await recordInvoicePaid(env, row, live.amountPaidCents);
@@ -5234,15 +5266,17 @@ async function handleCreateInvoice(request, env, origin, actor) {
   }
 
   const now = new Date().toISOString();
+  const sentTo = sent.customerEmail || customer.email || null;
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
-       amount, status, lines, created_at, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)`
+       amount, status, lines, created_at, created_by, sent_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
-         JSON.stringify(shape.lines), now, (actor && actor.name) || null).run();
+         JSON.stringify(shape.lines), now, (actor && actor.name) || null, sentTo).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
+                sent_to: sentTo,
                 ...shape }, 200, origin);
 }
 
@@ -5250,7 +5284,7 @@ async function handleListInvoices(request, env, origin, customerId) {
   await ensureInvoicesTable(env);
   const { results } = await env.DB.prepare(
     `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
-            lines, created_at, created_by, paid_at
+            lines, created_at, created_by, paid_at, sent_to
      FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
   ).bind(customerId).all();
   const invoices = (results || []).map((r) => {
