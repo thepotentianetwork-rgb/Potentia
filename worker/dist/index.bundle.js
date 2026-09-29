@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "ee4f69e";
-const WORKER_BUILT_AT = "2026-09-29T06:00:19.280Z";
+const WORKER_BUILD = "817b0af";
+const WORKER_BUILT_AT = "2026-09-29T06:20:41.259Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3535,23 +3535,134 @@ function reconcile(lines, totalCents) {
   const sum = lines.reduce((t, l) => t + l.amountCents, 0);
   const drift = totalCents - sum;
   if (!drift) return lines;
-  let target = 0;
-  for (let i = 1; i < lines.length; i++) {
-    if (Math.abs(lines[i].amountCents) > Math.abs(lines[target].amountCents)) target = i;
+  /* `fixed` lines are off limits: a payment credit is a statement of what the
+     customer actually handed over, and a customer who paid $2,091.52 and sees
+     $2,091.51 credited has found a discrepancy in the one document where
+     finding one destroys their confidence in all of it. Only lines we
+     computed get adjusted. Previously this picked the largest line outright,
+     which on a balance invoice could be the deposit credit. */
+  /* A line marked `residue` is the designated place for the odd penny — on a
+     deposit that is the deferral, a figure derived here and printed nowhere
+     else, so a cent on it contradicts nothing the customer can check. */
+  let target = lines.findIndex((l) => l.residue && !l.fixed);
+  if (target < 0) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].fixed) continue;
+      if (target < 0 || Math.abs(lines[i].amountCents) > Math.abs(lines[target].amountCents)) target = i;
+    }
   }
+  if (target < 0) target = 0;
   lines[target].amountCents += drift;
   return lines;
 }
 
-/* The deposit: 30% of each phase's tax-included total, one line per phase, so
-   the customer sees the same phases the quote showed them rather than a single
-   unexplained number. */
-function depositInvoice(bd) {
-  const lines = bd.rows.map((r) => ({
-    label: r.label + ' — 30% deposit (tax included)',
-    amountCents: toCents(r.deposit)
-  })).filter((l) => l.amountCents !== 0);
+/* THE LINES, IN THE SAME ORDER AND THE SAME WORDS AS THE QUOTE.
+ *
+ * The quote a customer already read shows: each phase at its pre-tax price,
+ * then each adjustment on its own line with the note that was written for it,
+ * then sales tax. So that is what the invoice shows. Re-stating the same job
+ * in a different shape — a single "30% deposit" line, say — makes a customer
+ * check one document against the other, and the one place they must never
+ * have to do that is the one asking for money.
+ *
+ * What differs between the two kinds is only the LAST line:
+ *
+ *   deposit — the rest is deferred, so a single credit carries 70% forward
+ *   balance — what has actually been paid comes off, one credit per payment
+ *
+ * Both therefore show the whole job on the face of the invoice, which is also
+ * what makes the second one add up in front of the customer.
+ */
+function pct(rate) {
+  const s = ((Number(rate) || 0) * 100).toFixed(2);
+  return s.replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/* The rates are DERIVED from the breakdown, not restated here. Two reasons,
+   and the second is the hard one: a second copy of TAX_RATE would drift from
+   quotelines.js the day either changes, and the bundler inlines every module
+   at top level, so a second `const TAX_RATE` is a SyntaxError that stops the
+   whole worker. Reading them back out of the numbers quoteLines produced
+   keeps one source of truth and cannot collide. */
+function taxRateOf(bd) {
+  return bd.adjustedSubtotal > 0 ? bd.tax / bd.adjustedSubtotal : 0;
+}
+function depositRateOf(bd) {
+  return bd.total > 0 ? bd.depositTotal / bd.total : 0;
+}
+
+/* One line per adjustment, labelled the way the quote labels it — including
+   the note, which is often the whole explanation ("Honoring price before they
+   increased"). Percentages are resolved against the pre-adjustment subtotal,
+   the same base quoteLines used, so the figures match to the penny.
+
+   Not hardcoded "Discount": an adjustment can go up as well as down, and
+   "Discount (10%)" beside a +$500 figure reads as an error on the whole
+   document. */
+function adjustmentLines(bd, adjustments) {
+  const want = toCents(bd.adjust);
+  const named = [];
+  (adjustments || []).forEach((a) => {
+    if (!a) return;
+    const v = Number(a.value);
+    if (!isFinite(v) || !v) return;
+    if (a.kind === 'percent') {
+      named.push({
+        label: (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)',
+        amountCents: toCents(bd.subtotal * (v / 100))
+      });
+    } else if (a.kind === 'amount') {
+      named.push({ label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v) });
+    }
+  });
+
+  /* The named lines are for the customer's benefit; the ARITHMETIC comes from
+     the breakdown either way. If the two disagree — a caller that did not pass
+     the adjustment list, or one that passed a stale copy — the named lines are
+     dropped and the figures quoteLines already computed are used instead.
+     Without this the shortfall does not surface: reconcile() would quietly
+     pile it onto the largest phase line, and the invoice would still add up
+     while every phase on it disagreed with the customer's quote. */
+  const sum = named.reduce((t, l) => t + l.amountCents, 0);
+  if (named.length && sum === want) return named;
+  if (!want) return [];
+  const out = [];
+  const pctCents = toCents(bd.percentAdjust);
+  const amtCents = toCents(bd.amountAdjust);
+  if (pctCents) out.push({ label: pctCents < 0 ? 'Discount' : 'Adjustment', amountCents: pctCents });
+  if (amtCents) out.push({ label: amtCents < 0 ? 'Discount' : 'Adjustment', amountCents: amtCents });
+  /* Any penny of difference between the two roundings belongs with the
+     adjustment, not smeared onto a phase. */
+  const drift = want - out.reduce((t, l) => t + l.amountCents, 0);
+  if (drift && out.length) out[out.length - 1].amountCents += drift;
+  else if (drift) out.push({ label: 'Adjustment', amountCents: drift });
+  return out;
+}
+
+/* Phases, adjustments and tax — everything above the line that differs by
+   kind. Sums to the job total, which is asserted in the tests rather than
+   assumed here. */
+function jobLines(bd, adjustments) {
+  const lines = bd.rows
+    .map((r) => ({ label: r.label, amountCents: toCents(r.amt) }))
+    .filter((l) => l.amountCents !== 0);
+  adjustmentLines(bd, adjustments).forEach((l) => lines.push({ ...l, fixed: true }));
+  const taxCents = toCents(bd.tax);
+  if (taxCents) lines.push({ label: 'Sales Tax (' + pct(taxRateOf(bd)) + '%)', amountCents: taxCents, fixed: true });
+  return lines;
+}
+
+function depositInvoice(bd, adjustments) {
+  const lines = jobLines(bd, adjustments);
   const totalCents = toCents(bd.depositTotal);
+  const deferred = toCents(bd.total) - totalCents;
+  if (deferred > 0) {
+    lines.push({
+      label: 'Less balance due on completion — ' + pct(1 - depositRateOf(bd)) + '% of each phase',
+      amountCents: -deferred,
+      residue: true
+    });
+  }
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
@@ -3566,18 +3677,15 @@ function depositInvoice(bd) {
  * as credits rather than netted into one figure, so the invoice shows its own
  * arithmetic and a wrongly-applied payment is visible on the document instead
  * of buried in a subtraction. */
-function balanceInvoice(bd, payments) {
-  const lines = bd.rows.map((r) => ({
-    label: r.label + ' (tax included)',
-    amountCents: toCents(r.total)
-  })).filter((l) => l.amountCents !== 0);
+function balanceInvoice(bd, adjustments, payments) {
+  const lines = jobLines(bd, adjustments);
 
   (payments || []).forEach((p) => {
     const c = toCents(p.amount);
     if (!c) return;
     const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
     const how = p.method ? ' by ' + p.method : '';
-    lines.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c) });
+    lines.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c), fixed: true });
   });
 
   const jobCents = toCents(bd.total);
@@ -3622,13 +3730,109 @@ function splitPayments(payments, submissionId) {
  * Throwing rather than returning a zero invoice is deliberate: every caller
  * here is a button someone pressed meaning "bill this person", and silently
  * billing nothing is worse than an error they can read. */
-function buildInvoice(breakdown, kind, payments) {
+/* WHAT THE CUSTOMER READS AROUND THE NUMBERS.
+ *
+ * The line items carry the money. Everything else the quote shows — what is
+ * actually in the shed, what was thrown in free, how the two payments work —
+ * goes in the three places a Stripe invoice has for it: custom fields across
+ * the top, the memo under them, and the footer at the bottom.
+ *
+ * Every one of these is capped. Stripe documents a limit on the custom fields
+ * (40 / 140 characters) and does not document one for the memo or the footer,
+ * and an undocumented limit is still a limit — exceeding it is a hard
+ * rejection, which on this endpoint means the invoice does not go out at all.
+ * So they are trimmed to a conservative length here rather than discovered
+ * the expensive way. The build detail degrades a piece at a time: the package
+ * contents go first, then whole sub-lines, so what survives is always the
+ * most useful part rather than an arbitrary cut mid-word.
+ */
+const LIMITS = { memo: 1200, footer: 1000, fieldName: 40, fieldValue: 140, label: 250 };
+
+function clip(s, max) {
+  const t = String(s == null ? '' : s);
+  return t.length <= max ? t : t.slice(0, Math.max(0, max - 1)).trimEnd() + '\u2026';
+}
+
+/* Exported because index.js needs the same formatter for its warnings, and the
+   bundler inlines every module at TOP LEVEL — a second `function usd` there is
+   a SyntaxError that stops the whole worker, not just this feature. */
+function usd(n) {
+  return Number(n || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+
+/* The build, itemised the way the quote itemises it: each phase, then the
+   parts that make it up, then what a package contains. Rendered at three
+   levels of detail and the longest one that fits is used. */
+function buildMemo(bd, opts = {}) {
+  const head = [];
+  if (opts.summary) head.push(opts.summary);
+  if (opts.submissionId) head.push('Order #' + opts.submissionId);
+  const heading = head.join(' \u00b7 ');
+
+  function render(withIncludes, withSubLines) {
+    const out = [];
+    if (heading) out.push(heading, '');
+    bd.rows.forEach((r) => {
+      out.push(r.label + ' \u2014 ' + usd(r.amt));
+      if (!withSubLines) return;
+      (r.subLines || []).forEach((s) => {
+        out.push('   + ' + s.label + ' \u2014 ' + usd(s.amt));
+        if (!withIncludes) return;
+        (s.includes || []).forEach((item) => out.push('       \u2014 ' + item));
+      });
+    });
+    return out.join('\n').trim();
+  }
+
+  for (const [inc, sub] of [[true, true], [false, true], [false, false]]) {
+    const text = render(inc, sub);
+    if (text.length <= LIMITS.memo) return text;
+  }
+  return clip(render(false, false), LIMITS.memo);
+}
+
+/* Comped items, what they saved, and how the two payments work. The comped
+   block is the reason this is not just a discount line: "Shutters — Included"
+   is something you gave them, where "Discount -$60" reads as the price having
+   been soft in the first place. */
+function buildFooter(bd, comped, kind) {
+  const parts = [];
+  const names = Object.keys(comped || {});
+  if (names.length) parts.push('Included at no charge: ' + names.join(', ') + '.');
+  if (bd.savings > 0.005) parts.push('You save ' + usd(bd.savings) + ' on this build.');
+  parts.push(kind === 'deposit'
+    ? 'This invoice collects the deposit. The balance is invoiced on completion.'
+    : 'This invoice settles the balance. Payments already received are credited above.');
+  parts.push('All amounts include Utah sales tax.');
+  return clip(parts.join(' '), LIMITS.footer);
+}
+
+/* Four fields, across the top of the invoice, answering the questions a
+   customer asks before reading any further: what is this for, which shed,
+   and how much is the whole job. */
+function buildCustomFields(bd, kind, opts = {}) {
+  const fields = [
+    ['Order', opts.submissionId ? '#' + opts.submissionId : null],
+    ['Build', opts.summary || null],
+    ['Payment', kind === 'deposit' ? 'Deposit' : 'Balance on completion'],
+    ['Job total', usd(bd.total)]
+  ];
+  return fields
+    .filter(([, v]) => v)
+    .map(([name, value]) => ({ name: clip(name, LIMITS.fieldName), value: clip(value, LIMITS.fieldValue) }))
+    .slice(0, 4);
+}
+
+function buildInvoice(breakdown, kind, payments, opts = {}) {
   if (!KINDS.includes(kind)) throw new Error(`unknown invoice kind: ${kind}`);
   if (!breakdown || !Array.isArray(breakdown.rows) || !breakdown.rows.length) {
     throw new Error('this submission has no priced phases to invoice');
   }
   const paid = payments || [];
-  const out = kind === 'deposit' ? depositInvoice(breakdown) : balanceInvoice(breakdown, paid);
+  const adjustments = opts.adjustments || [];
+  const out = kind === 'deposit'
+    ? depositInvoice(breakdown, adjustments)
+    : balanceInvoice(breakdown, adjustments, paid);
 
   if (out.totalCents <= 0) {
     throw new Error(kind === 'balance'
@@ -3637,10 +3841,13 @@ function buildInvoice(breakdown, kind, payments) {
   }
   return {
     kind,
-    lines: out.lines,
+    lines: out.lines.map((l) => ({ ...l, label: clip(l.label, LIMITS.label) })),
     totalCents: out.totalCents,
     jobTotalCents: toCents(breakdown.total),
-    paidCents: paid.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0)
+    paidCents: paid.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    memo: buildMemo(breakdown, opts),
+    footer: buildFooter(breakdown, opts.comped, kind),
+    customFields: buildCustomFields(breakdown, kind, opts)
   };
 }
 
@@ -3754,7 +3961,7 @@ async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
  * overcharge by 7.25% and nothing in this code would notice.
  */
 async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, idempotencyKey, metadata
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -3776,6 +3983,10 @@ async function createAndSendInvoice(env, {
     currency: 'usd',
     description: description || undefined,
     footer: footer || undefined,
+    /* Up to four, across the top of the invoice. Sent only when there are
+       any: an empty array is not the same as leaving the parameter off, and
+       Stripe reads one as "clear them". */
+    custom_fields: (customFields && customFields.length) ? customFields : undefined,
     metadata: metadata || undefined,
   }, { idempotencyKey: idempotencyKey ? idempotencyKey + ':invoice' : undefined });
 
@@ -4702,10 +4913,17 @@ async function ensureInvoicesTable(env) {
   }
 }
 
-/* Money in a sentence a customer's figures can be checked against. Same form
-   as the rest of the worker uses; kept short because it appears mid-message. */
-function usd(n) {
-  return Number(n || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+/* The one-line description of the build, in the same words and the same order
+   the CRM's order cards use. Duplicated deliberately rather than shared: the
+   CRM copy runs in a browser on details.config, this one runs in the worker,
+   and a test checks the two produce the same string for the same config. */
+function configSummary(config) {
+  if (!config) return "";
+  const parts = [];
+  if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
+  if (config.style) parts.push(config.style);
+  if (config.siding) parts.push(config.siding);
+  return parts.join(" \u00b7 ");
 }
 
 /* Everything an invoice needs, gathered and priced, without sending anything.
@@ -4735,7 +4953,17 @@ async function invoiceContext(env, submissionId, kind) {
   ).bind(sub.customer_id).all();
   const split = splitPayments(payRows || [], sub.id);
 
-  const invoice = buildInvoice(breakdown, kind, split.applied);
+  /* Everything the quote page puts around the numbers, handed to the invoice
+     so the customer reads one document, not two that have to be compared:
+     the adjustments with the notes written for them, the items thrown in
+     free, and the size-and-style line off the design. */
+  const adjustments = adjustmentsOf(sub);
+  const invoice = buildInvoice(breakdown, kind, split.applied, {
+    adjustments,
+    comped: compedMap(details.redline, adjustments),
+    summary: configSummary(details.config),
+    submissionId: sub.id
+  });
   return { sub, customer, breakdown, split, invoice };
 }
 
@@ -4869,6 +5097,11 @@ async function handleCreateInvoice(request, env, origin, actor) {
     amount: fromCents(invoice.totalCents),
     job_total: fromCents(invoice.jobTotalCents),
     already_paid: fromCents(invoice.paidCents),
+    /* Returned on the preview too, so what the CRM shows before sending is
+       the whole document and not just its numbers. */
+    memo: invoice.memo,
+    footer: invoice.footer,
+    custom_fields: invoice.customFields,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -4906,7 +5139,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
     }
     sent = await createAndSendInvoice(env, {
       customerId: cust.id, lines: invoice.lines, kind,
-      description: `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+      /* The memo is the build itemised the way the quote itemises it. Falls
+         back to the old one-liner only if a submission has nothing to list. */
+      description: invoice.memo ||
+        `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+      footer: invoice.footer,
+      customFields: invoice.customFields,
       idempotencyKey,
       metadata: { submission_id: String(sub.id), customer_id: String(customer.id), kind },
     });
