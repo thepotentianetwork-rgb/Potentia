@@ -899,6 +899,29 @@ a wrong address, a provider having a bad day — and these customers text
 already. The button disappears once an invoice is paid or voided, because
 there is nothing left to pay.
 
+## The schedule page
+
+`admin-schedule.html`, linked from the header on every admin page. Every
+concrete pour and shed install across every customer, grouped by date, with
+**Today** and **Tomorrow** called out.
+
+Each job shows the customer (tap through to their page), the build, the
+address, the note, how many days it takes, and the order it belongs to —
+plus **Call**, **Text**, **Map** and **Invite**. No second page load: the
+endpoint returns everything the page draws.
+
+Range buttons across the top: next 7 days, next 30 (the default), everything,
+and past. `GET /admin/schedule?from=&to=` bounds it by install date, inclusive
+at both ends, plain `YYYY-MM-DD`. Anything else in those parameters is
+ignored rather than obeyed.
+
+The dates are the part that fails silently. `new Date('2026-10-15')` parses as
+UTC midnight, which in Utah is the evening of the 14th — a page built that way
+heads every job a day early and looks completely normal doing it. The page
+builds dates from their parts in local time, and the browser test runs Chrome
+under `TZ=America/Denver` for exactly this reason: in UTC, where this machine
+and Cloudflare both run, the wrong version passes everything.
+
 ## Install invites
 
 Once an order is **won** and an install date is booked, that install row has an
