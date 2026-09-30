@@ -929,6 +929,20 @@ moment a customer pays, use Stripe — it already does this and needs no code:
 Stripe knows before the CRM does, so this is the faster signal as well as the
 free one. The Activity page is for what happened while you were not watching.
 
+## The admin nav
+
+One menu button, top right, on every admin page. It names the page you are on,
+opens the list of the rest, and carries the activity count — on the button and
+beside Activity in the menu, so the two cannot disagree.
+
+Defined once, in `admin-nav.js`. Six pages used to hand-write their own header
+bar and they had drifted: Activity had no link to Data, Pricing appeared on two
+pages out of six, and the same destination was called "Customers" on one and
+"All Customers" on another. `tests/admin-nav.test.mjs` fails if any page starts
+hand-writing links in its header again.
+
+To add a page, put it in `PAGES` at the top of `admin-nav.js`. Nothing else.
+
 ## The schedule page
 
 `admin-schedule.html`, linked from the header on every admin page. Every
@@ -940,8 +954,20 @@ address, the note, how many days it takes, and the order it belongs to —
 plus **Call**, **Text**, **Map** and **Invite**. No second page load: the
 endpoint returns everything the page draws.
 
-Range buttons across the top: next 7 days, next 30 (the default), everything,
-and past. `GET /admin/schedule?from=&to=` bounds it by install date, inclusive
+Two views, **Month** and **List**, remembered per device.
+
+**Month** is a real calendar — six weeks of cells, today outlined, each job a
+chip on its day. A multi-day install occupies every day it runs, not just the
+day it starts; a calendar that marks only start dates tells you the yard is
+free on a day it is not. Continuing days are prefixed with a dot so they do
+not read as a second job. Tap any day to open its jobs in full underneath,
+with Call, Text, Map and Invite. Arrows step the month; Today comes back.
+
+On a phone the chips become dots — a truncated name is worse than no name —
+and tapping the day shows them properly.
+
+**List** is the original: range buttons for next 7 days, next 30 (the
+default), everything, and past. `GET /admin/schedule?from=&to=` bounds it by install date, inclusive
 at both ends, plain `YYYY-MM-DD`. Anything else in those parameters is
 ignored rather than obeyed.
 

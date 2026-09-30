@@ -116,8 +116,6 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
     </div>
   </div>
   <div class="h-actions">
-    <a href="admin.html" class="back-link">← All Customers</a>
-    <a href="admin-data.html" class="back-link">Data →</a>
     <button class="save-btn" id="save-btn">Save Pricing</button>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
@@ -182,6 +180,8 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
   <p class="status-msg" id="save-msg"></p>
 </main>
 
+<script src="admin-activity.js"></script>
+<script src="admin-nav.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_admin_token');
@@ -803,6 +803,18 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
 });
 
 if (token) loadConfig();
+
+AdminNav.render(document.querySelector('.h-actions'));
+
+/* The activity count, on every admin page — a notification you only see on
+   some of them is one you learn to distrust. Fire-and-forget: a feed that
+   will not load must not stop the page it is decorating from working. */
+(function () {
+  if (!window.AdminActivity || !window.AdminNav) return;
+  AdminActivity.load(authFetch, { limit: 80 }).then(function (r) {
+    AdminNav.setCount(r.unseen);
+  }).catch(function () {});
+})();
 </script>
 </body>
 </html>

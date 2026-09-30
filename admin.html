@@ -128,10 +128,6 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
     </div>
   </div>
   <div class="h-actions">
-    <a href="admin-schedule.html" class="back-link">Schedule</a>
-    <a href="admin-activity.html" class="back-link">Activity<span class="act-badge" id="hdr-badge" style="display:none"></span></a>
-    <a href="admin-data.html" class="back-link">Data →</a>
-    <a href="admin-pricing.html" class="back-link">Pricing →</a>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
 </header>
@@ -153,6 +149,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   </section>
 </main>
 
+<script src="admin-nav.js"></script>
 <script src="admin-activity.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
@@ -469,9 +466,11 @@ if (token) {
 (function () {
   if (!window.AdminActivity) return;
   AdminActivity.load(authFetch, { limit: 80 }).then(function (r) {
-    AdminActivity.badge(document.getElementById('hdr-badge'), r.unseen);
+    AdminNav.setCount(r.unseen);
   }).catch(function () {});
 })();
+
+AdminNav.render(document.querySelector('.h-actions'));
 </script>
 </body>
 </html>
