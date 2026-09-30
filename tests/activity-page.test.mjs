@@ -71,6 +71,13 @@ const srv = http.createServer(async (req, res) => {
     req.on('end', () => { try { report = JSON.parse(b); } catch {} res.writeHead(204).end(); });
     return;
   }
+  /* Served because production serves it. Letting this 404 made AdminNav
+     undefined, the page script threw, and every assertion failed for one
+     reason that had nothing to do with what was being tested. */
+  if (req.url === '/admin-nav.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    return res.end(readFileSync(path.join(here, '..', 'admin-nav.js'), 'utf8'));
+  }
   if (req.url === '/admin-activity.js') {
     res.writeHead(200, { 'Content-Type': 'text/javascript' });
     return res.end(helper);

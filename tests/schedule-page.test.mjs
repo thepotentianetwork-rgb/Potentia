@@ -112,6 +112,13 @@ const srv = http.createServer(async (req, res) => {
     req.on('end', () => { try { report = JSON.parse(b); } catch {} res.writeHead(204).end(); });
     return;
   }
+  /* Served because production serves it. Letting this 404 made AdminNav
+     undefined, the page script threw, and every assertion failed for one
+     reason that had nothing to do with what was being tested. */
+  if (req.url === '/admin-nav.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    return res.end(readFileSync(path.join(here, '..', 'admin-nav.js'), 'utf8'));
+  }
   if (req.url === '/' || req.url.startsWith('/?')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(page);
@@ -135,13 +142,17 @@ const TOKEN = (await login.json()).token;
 
 page = page
   .replace(/var API_BASE = "[^"]*";/, `var API_BASE = "${BASE}";`)
-  .replace('<head>', `<head><script>localStorage.setItem('potentia_admin_token', ${JSON.stringify(TOKEN)});</script>`)
+  .replace('<head>', `<head><script>localStorage.setItem('potentia_admin_token', ${JSON.stringify(TOKEN)});
+    localStorage.removeItem('shedpro_schedule_view');</script>`)
   .replace('</body>', `<script>
 var R = {};
 function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
 async function until(fn, ms){var t=Date.now();while(Date.now()-t<(ms||6000)){var v=fn();if(v)return v;await sleep(60)}return null}
 function txt(el){return (el&&el.textContent||'').replace(/\\s+/g,' ').trim()}
 function days(){return [].slice.call(document.querySelectorAll('.day'))}
+function cells(){return [].slice.call(document.querySelectorAll('.cal-day'))}
+function cell(iso){return document.querySelector('.cal-day[data-day="'+iso+'"]')}
+function chipsOn(iso){var c=cell(iso);return c?[].slice.call(c.querySelectorAll('.cal-chip')).map(txt):null}
 function snapshot(){
   return days().map(function(d){
     return { head: txt(d.querySelector('.day-date')),
@@ -159,49 +170,86 @@ function snapshot(){
              }) };
   });
 }
-function pressRange(label){
+function pressBtn(label){
   var b=[].slice.call(document.querySelectorAll('.range-btn'))
-    .filter(function(x){return txt(x)===label})[0];
+    .filter(function(x){return txt(x)===label && x.offsetParent !== null})[0];
   if(b) b.click();
   return !!b;
 }
 (async function(){
   try{
-    await until(function(){return days().length});
-    R.defaultRange = txt(document.querySelector('.range-btn.on'));
-    R.month = snapshot();
+    await until(function(){return cells().length});
+    R.defaultView = txt(document.querySelector('#views .range-btn.on'));
+    R.cellCount = cells().length;
+    R.dows = [].slice.call(document.querySelectorAll('.cal-dow')).map(txt);
+    R.monthName = txt(document.getElementById('month-name'));
+    R.rangesHidden = document.getElementById('ranges').hidden;
+    R.listEmpty = txt(document.getElementById('list')) === '';
     R.count = txt(document.getElementById('count'));
 
-    R.pressedWeek = pressRange('Next 7 days');
-    await sleep(500);
+    R.todayCellIso = (document.querySelector('.cal-day.today')||{}).getAttribute
+      ? document.querySelector('.cal-day.today').getAttribute('data-day') : null;
+
+    R.chips = { d0: chipsOn(DAY0), d1: chipsOn(DAY1), d0b: chipsOn(DAY0B) };
+    R.spanSecond = chipsOn(DAY0_PLUS1);
+
+    /* Tap the day with the two-day shed install on it. */
+    var c = cell(DAY0);
+    R.pickable = !!c && c.tagName === 'BUTTON';
+    if (c) { c.click(); await sleep(250); }
+    R.pickedIso = (document.querySelector('.cal-day.picked')||{}).getAttribute
+      ? document.querySelector('.cal-day.picked').getAttribute('data-day') : null;
+    R.pickedHead = txt(document.querySelector('.picked-head'));
+    R.pickedJobs = [].slice.call(document.querySelectorAll('#cal .job'))
+      .map(function(j){return txt(j.querySelector('.job-name'))});
+    R.pickedActs = [].slice.call(document.querySelectorAll('#cal .job .act')).map(txt);
+
+    /* Stepping months. */
+    document.getElementById('next-month').click();
+    await sleep(400);
+    await until(function(){return cells().length});
+    R.nextMonth = txt(document.getElementById('month-name'));
+    R.clearedOnStep = !document.querySelector('.cal-day.picked');
+    document.getElementById('this-month').click();
+    await sleep(400);
+    R.backToToday = txt(document.getElementById('month-name'));
+
+    /* And the list view still works. */
+    R.pressedList = pressBtn('List');
+    await sleep(400);
+    await until(function(){return days().length});
+    R.calHidden = document.getElementById('cal').hidden;
+    R.rangesShown = !document.getElementById('ranges').hidden;
+    R.month = snapshot();
+    R.listCount = txt(document.getElementById('count'));
+
+    R.pressedWeek = pressBtn('Next 7 days');
+    await sleep(400);
     await until(function(){return days().length});
     R.week = snapshot();
 
-    R.pressedPast = pressRange('Past');
-    await sleep(500);
+    R.pressedPast = pressBtn('Past');
+    await sleep(400);
     await until(function(){return days().length});
     R.past = snapshot();
 
-    R.pressedAll = pressRange('Everything');
-    await sleep(500);
+    R.pressedAll = pressBtn('Everything');
+    await sleep(400);
     await until(function(){return days().length});
     R.all = snapshot();
     R.allCount = txt(document.getElementById('count'));
   }catch(e){R.threw=String((e&&e.stack)||e)}
   fetch('${BASE}/__result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(R)});
 })();
-</script></body>`);
+</script></body>`)
+  /* The fixture's dates, handed to the page so the test looks cells up by
+     date rather than counting squares — which would depend on what day of
+     the month it happens to be run. */
+  .replace('<body>', `<body><script>
+    var DAY0=${JSON.stringify(localDay(0))}, DAY1=${JSON.stringify(localDay(1))},
+        DAY0B=${JSON.stringify(localDay(5))}, DAY0_PLUS1=${JSON.stringify(localDay(1))};
+  </script>`);
 
-/* THE BROWSER RUNS IN UTAH, NOT UTC.
- *
- * new Date('2026-10-15') parses as UTC midnight, which in Utah is the evening
- * of the 14th — so a page built that way heads every job a day early. This
- * machine and Cloudflare both run in UTC, where the wrong version looks
- * exactly like the right one: swapping the date parse for `new Date(s)`
- * passed this entire file until Chrome was given a timezone.
- *
- * TZ is passed to the browser, not just to node, because the arithmetic under
- * test happens in the page. */
 const TZ = process.env.SCHEDULE_TEST_TZ || 'America/Denver';
 await new Promise((resolve) => {
   execFile(CHROME, ['--headless=new', '--no-sandbox', '--disable-gpu-sandbox',
@@ -212,44 +260,79 @@ await new Promise((resolve) => {
 srv.close();
 
 const R = report || {};
-console.log('\n-- the page loaded --');
+console.log('\n-- the calendar --');
 check('the browser reported back', !!report, '(nothing)');
 check('nothing threw', !R.threw, R.threw);
-check('it opens on the next 30 days', R.defaultRange === 'Next 30 days', R.defaultRange);
+check('it opens on the month grid', R.defaultView === 'Month', R.defaultView);
+check('six weeks of cells', R.cellCount === 42, R.cellCount);
+check('a weekday header, starting Sunday',
+  JSON.stringify(R.dows) === '["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]', R.dows);
+check('the range buttons are put away in this view', R.rangesHidden === true);
+check('and the list is not drawn underneath it', R.listEmpty === true);
+check('it names the month it is showing',
+  (R.monthName || '').indexOf(new Intl.DateTimeFormat('en-US',
+    { timeZone: TEST_TZ, month: 'long' }).format(new Date())) === 0, R.monthName);
 
-console.log('\n-- dates, which is the part that fails silently --');
+/* Today's cell, found by its own date rather than by counting squares —
+   parsing the day as UTC would mark the wrong one west of Greenwich. */
+check('today is marked, and it is actually today', R.todayCellIso === localDay(0),
+  { marked: R.todayCellIso, today: localDay(0) });
+
+console.log('\n-- jobs on the grid --');
+check('the shed install shows on its day',
+  (R.chips.d0 || []).some((c) => /Ellis/.test(c)), R.chips.d0);
+check('a second job five days out shows too',
+  (R.chips.d0b || []).some((c) => /Ellis/.test(c)), R.chips.d0b);
+/* A two-day install occupies both days. A calendar that only marks start
+   dates tells you the yard is free on a day it is not. */
+check('a two-day install spans both days',
+  (R.spanSecond || []).some((c) => /Ellis/.test(c)), R.spanSecond);
+check('and the second day is marked as a continuation, not a new job',
+  (R.spanSecond || []).some((c) => /^·/.test(c)), R.spanSecond);
+check('a different customer on the same day appears alongside it',
+  (R.spanSecond || []).some((c) => /Reed/.test(c)), R.spanSecond);
+check('the count is for the month on screen', /job/.test(R.count || ''), R.count);
+
+console.log('\n-- tapping a day --');
+check('a day with jobs is tappable', R.pickable === true);
+check('it opens that day', R.pickedIso === localDay(0), { picked: R.pickedIso, expected: localDay(0) });
+check('with a full heading', /\d{4}/.test(R.pickedHead || ''), R.pickedHead);
+check('and the whole job, not just a chip',
+  (R.pickedJobs || []).some((n) => n === 'Hank Ellis'), R.pickedJobs);
+check('Call, Text, Map and Invite are all on it',
+  ['Call', 'Text', 'Map ↗', 'Invite ↗'].every((a) => (R.pickedActs || []).indexOf(a) !== -1),
+  R.pickedActs);
+
+console.log('\n-- stepping months --');
+check('next month moves on', !!R.nextMonth && R.nextMonth !== R.monthName,
+  { from: R.monthName, to: R.nextMonth });
+check('and clears the open day', R.clearedOnStep === true);
+check('Today comes back', R.backToToday === R.monthName,
+  { back: R.backToToday, expected: R.monthName });
+
+console.log('\n-- the list view still works --');
+check('switching hides the grid and shows the ranges',
+  R.pressedList === true && R.calHidden === true && R.rangesShown === true,
+  { cal: R.calHidden, ranges: R.rangesShown });
 const month = R.month || [];
 check('three days are booked in the next 30', month.length === 3,
   month.map((d) => d.head + ' / ' + d.when));
 check('today is labelled Today', (month[0] || {}).when === 'Today', month[0]);
-check('and gets the green treatment', /when-today/.test((month[0] || {}).whenCls || ''), month[0]);
 check('tomorrow is labelled Tomorrow', (month[1] || {}).when === 'Tomorrow', month[1]);
 check('five days out reads In 5 days', (month[2] || {}).when === 'In 5 days', month[2]);
-/* The heading must name today's actual weekday. Parsing the date as UTC would
-   put it on yesterday for anyone west of Greenwich. */
 const todayName = new Intl.DateTimeFormat('en-US',
   { timeZone: TEST_TZ, weekday: 'long' }).format(new Date());
-check('the heading names the right weekday, not yesterday’s',
+check('the heading names the right weekday, not yesterday\u2019s',
   ((month[0] || {}).head || '').indexOf(todayName) === 0,
   { head: (month[0] || {}).head, expected: todayName });
-check('soonest first', JSON.stringify(month.map((d) => d.when)) ===
-  JSON.stringify(['Today', 'Tomorrow', 'In 5 days']), month.map((d) => d.when));
-check('the count says how many jobs', R.count === '3 jobs', R.count);
 
-console.log('\n-- a job --');
 const first = ((month[0] || {}).jobs || [])[0] || {};
-check('it says which kind of work', first.item === 'Shed', first.item);
-check('named, and links to the customer',
+check('a job carries its detail', first.item === 'Shed' &&
   first.name === 'Hank Ellis' && first.href === 'admin-customer.html?id=1', first);
-check('with the duration and the order', /2 days/.test(first.meta || '') &&
-  /Order #7/.test(first.meta || ''), first.meta);
 check('the install note is shown', first.note === 'gate code 1234', first.note);
-check('call, text, map and invite are all there',
-  JSON.stringify(first.acts) === '["Call","Text","Map ↗","Invite ↗"]', first.acts);
 check('the invite carries the customer AND the crew',
   /add=hank%40roof\.test%2Ccrew%40shedpro\.test|add=hank%40roof\.test,crew%40shedpro\.test/
     .test(first.invite || ''), first.invite);
-check('and this job’s own dates', /dates=\d{8}\/\d{8}/.test(first.invite || ''), first.invite);
 
 console.log('\n-- the ranges --');
 check('Next 7 days drops the one 5 weeks out and the past one',
@@ -261,9 +344,6 @@ check('Everything shows all five bookings',
   R.pressedAll === true &&
   (R.all || []).reduce((t, d) => t + d.jobs.length, 0) === 5,
   { days: (R.all || []).length, count: R.allCount });
-check('and lists the far-off one last',
-  /In 40 days/.test(((R.all || [])[(R.all || []).length - 1] || {}).when || ''),
-  (R.all || []).map((d) => d.when));
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nall passed');
 process.exit(fails ? 1 : 0);

@@ -89,9 +89,6 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
     </div>
   </div>
   <div class="h-actions">
-    <a href="admin.html" class="back-link">← Customers</a>
-    <a href="admin-schedule.html" class="back-link">Schedule</a>
-    <a href="admin-activity.html" class="back-link here">Activity<span class="act-badge" id="hdr-badge" style="display:none"></span></a>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
 </header>
@@ -109,6 +106,7 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
   <div id="list"><p class="empty">Loading…</p></div>
 </main>
 
+<script src="admin-nav.js"></script>
 <script src="admin-activity.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
@@ -240,7 +238,10 @@ function renderList() {
   list.innerHTML = '';
 
   var unseen = EVENTS.filter(function (e) { return e.unseen; }).length;
-  AdminActivity.badge(document.getElementById('hdr-badge'), unseen);
+  /* Guarded: the count is a decoration, and a decoration must not be able
+     to take the list down with it. admin-nav.js failing to load once turned
+     a missing badge into a blank page. */
+  if (window.AdminNav) AdminNav.setCount(unseen);
   document.getElementById('mark-read').disabled = unseen === 0;
 
   if (!shown.length) {
@@ -272,6 +273,8 @@ function load() {
 
 renderFilters();
 load();
+
+AdminNav.render(document.querySelector('.h-actions'));
 </script>
 </body>
 </html>

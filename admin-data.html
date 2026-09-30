@@ -124,8 +124,6 @@ section{margin-bottom:56px}
     </div>
   </div>
   <div class="h-actions">
-    <a href="admin.html" class="back-link">← All Customers</a>
-    <a href="admin-pricing.html" class="back-link">Pricing →</a>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
 </header>
@@ -254,6 +252,8 @@ section{margin-bottom:56px}
   </div>
 </main>
 
+<script src="admin-activity.js"></script>
+<script src="admin-nav.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
 <script>
@@ -551,6 +551,18 @@ authFetch('/admin/analytics').then(function (r) {
   renderBars('bar-siding', d.sidingCounts, { vertical: 'Vertical', horizontal: 'Horizontal', 'board-batten': 'Board & Batten', pine: 'Pine T&G' });
   renderBars('bar-size', d.sizeCounts, null);
 });
+
+AdminNav.render(document.querySelector('.h-actions'));
+
+/* The activity count, on every admin page — a notification you only see on
+   some of them is one you learn to distrust. Fire-and-forget: a feed that
+   will not load must not stop the page it is decorating from working. */
+(function () {
+  if (!window.AdminActivity || !window.AdminNav) return;
+  AdminActivity.load(authFetch, { limit: 80 }).then(function (r) {
+    AdminNav.setCount(r.unseen);
+  }).catch(function () {});
+})();
 </script>
 </body>
 </html>

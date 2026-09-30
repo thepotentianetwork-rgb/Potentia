@@ -42,6 +42,37 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 .range-btn.on{border-color:var(--sp-blue);color:var(--sp-blue);background:rgba(44,192,253,0.08)}
 .count{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);letter-spacing:0.08em;margin:14px 0 26px}
 
+/* ---- month grid ---- */
+.monthbar{display:flex;align-items:center;gap:10px;margin-top:12px}
+.month-name{font-size:21px;font-weight:300;color:var(--bright);min-width:200px}
+.cal-head{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:6px}
+.cal-dow{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--dim);text-align:center;padding:4px 0}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.cal-day{min-height:96px;border:1px solid var(--dim);padding:7px 7px 8px;display:flex;flex-direction:column;gap:5px;background:none;color:inherit;font:inherit;text-align:left;cursor:default}
+.cal-day.has{cursor:pointer}
+.cal-day.has:hover{border-color:var(--sp-blue)}
+.cal-day.out{opacity:0.32}
+.cal-day.today{border-color:#5fd08a;box-shadow:inset 0 0 0 1px rgba(95,208,138,0.35)}
+.cal-day.picked{border-color:var(--sp-blue);background:rgba(44,192,253,0.07)}
+.cal-num{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);letter-spacing:0.06em}
+.cal-day.today .cal-num{color:#5fd08a}
+.cal-chip{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.06em;padding:3px 5px;border-radius:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid}
+.chip-shed{color:var(--sp-blue);border-color:rgba(44,192,253,0.45);background:rgba(44,192,253,0.1)}
+.chip-concrete{color:var(--silver);border-color:var(--dim);background:rgba(255,255,255,0.03)}
+.cal-more{font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
+.picked-head{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--dim);margin:28px 0 10px}
+
+@media (max-width:760px){
+  .month-name{font-size:17px;min-width:135px}
+  .cal-grid{gap:3px}
+  .cal-day{min-height:56px;padding:4px 3px;gap:3px;align-items:center}
+  /* The chips cannot fit at this width, so each job becomes a dot and the
+     day opens to show them. A truncated name is worse than no name. */
+  .cal-chip{width:6px;height:6px;padding:0;border-radius:50%;font-size:0;line-height:0}
+  .cal-dots{display:flex;gap:3px;flex-wrap:wrap;justify-content:center}
+  .cal-more{display:none}
+}
+
 /* ---- a day ---- */
 .day{margin-bottom:34px}
 .day-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding-bottom:8px;border-bottom:1px solid var(--dim);margin-bottom:14px}
@@ -94,10 +125,6 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
     </div>
   </div>
   <div class="h-actions">
-    <a href="admin.html" class="back-link">← Customers</a>
-    <a href="admin-schedule.html" class="back-link here">Schedule</a>
-    <a href="admin-activity.html" class="back-link">Activity<span class="act-badge" id="hdr-badge" style="display:none"></span></a>
-    <a href="admin-data.html" class="back-link">Data →</a>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
 </header>
@@ -107,11 +134,20 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
   <h2>Schedule</h2>
   <p class="lede">Every concrete pour and shed install, by date. Tap a name to open the job, or Invite to put it on Google Calendar with the customer as a guest.</p>
 
+  <div class="ranges" id="views"></div>
   <div class="ranges" id="ranges"></div>
+  <div class="monthbar" id="monthbar" hidden>
+    <button class="range-btn" id="prev-month" type="button" aria-label="Previous month">‹</button>
+    <span class="month-name" id="month-name"></span>
+    <button class="range-btn" id="next-month" type="button" aria-label="Next month">›</button>
+    <button class="range-btn" id="this-month" type="button">Today</button>
+  </div>
   <div class="count" id="count"></div>
+  <div id="cal" hidden></div>
   <div id="list"><p class="empty">Loading…</p></div>
 </main>
 
+<script src="admin-nav.js"></script>
 <script src="admin-activity.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
@@ -176,10 +212,75 @@ var RANGES = [
 ];
 var current = 'month';
 
+/* Month grid or plain list. The grid answers "what does October look like",
+   the list answers "what is next" — both are asked, neither replaces the
+   other. Remembered per device, because whichever you prefer you will prefer
+   it every time. */
+var VIEWS = [{ key: 'cal', label: 'Month' }, { key: 'list', label: 'List' }];
+var VIEW_KEY = 'shedpro_schedule_view';
+var view = 'cal';
+try { view = localStorage.getItem(VIEW_KEY) || 'cal'; } catch (e) {}
+if (view !== 'cal' && view !== 'list') view = 'cal';
+
+var today = todayLocal();
+var viewY = today.getFullYear();
+var viewM = today.getMonth();
+var picked = null;          // iso day the user tapped in the grid
+var LOADED = [];
+
 function rangeParams(r) {
   if (r.from === null) return '';
   var t = todayLocal();
   return '?from=' + isoDay(addDays(t, r.from)) + '&to=' + isoDay(addDays(t, r.to));
+}
+
+/* The 42 cells a month grid shows, starting on the Sunday on or before the
+   1st. Fetching exactly this range means the leading and trailing days of the
+   neighbouring months are populated too — an install on the 1st of next month
+   is visible in this month's last row, which is where you would look for it. */
+function gridStart(y, m) {
+  var first = new Date(y, m, 1);
+  return addDays(first, -first.getDay());
+}
+function gridDays(y, m) {
+  var s = gridStart(y, m);
+  var out = [];
+  for (var i = 0; i < 42; i++) out.push(addDays(s, i));
+  return out;
+}
+function monthParams() {
+  var d = gridDays(viewY, viewM);
+  return '?from=' + isoDay(d[0]) + '&to=' + isoDay(d[41]);
+}
+
+function renderViews() {
+  var wrap = document.getElementById('views');
+  wrap.innerHTML = '';
+  VIEWS.forEach(function (v) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'range-btn' + (v.key === view ? ' on' : '');
+    b.textContent = v.label;
+    b.addEventListener('click', function () {
+      if (view === v.key) return;
+      view = v.key;
+      try { localStorage.setItem(VIEW_KEY, view); } catch (e) {}
+      picked = null;
+      renderViews();
+      applyView();
+      load();
+    });
+    wrap.appendChild(b);
+  });
+}
+
+/* Which controls belong to which view. The range buttons are meaningless in a
+   month grid, and the month stepper is meaningless in a list. */
+function applyView() {
+  var cal = view === 'cal';
+  document.getElementById('ranges').hidden = cal;
+  document.getElementById('monthbar').hidden = !cal;
+  document.getElementById('cal').hidden = !cal;
 }
 
 function renderRanges() {
@@ -199,8 +300,8 @@ function renderRanges() {
   });
 }
 
-function whenLabel(day, today) {
-  var n = daysBetween(today, day);
+function whenLabel(day, ref) {
+  var n = daysBetween(ref, day);
   if (n === 0) return { text: 'Today', cls: 'when-today' };
   if (n === 1) return { text: 'Tomorrow', cls: 'when-soon' };
   if (n < 0) return { text: (-n) + (n === -1 ? ' day ago' : ' days ago'), cls: 'when-past' };
@@ -301,7 +402,115 @@ function jobRow(i) {
   return job;
 }
 
-function render(installs, newestFirst) {
+/* A job spans its whole booked length, so a three-day install shows on all
+   three days rather than only the day it starts — which is the difference
+   between a calendar and a list of start dates. */
+function daysOf(i) {
+  var d = localDay(i.install_date);
+  if (!d) return [];
+  var n = Number(i.days);
+  var span = (isFinite(n) && n > 0) ? Math.max(1, Math.ceil(n)) : 1;
+  var out = [];
+  for (var k = 0; k < span; k++) out.push(isoDay(addDays(d, k)));
+  return out;
+}
+
+function byDay(installs) {
+  var map = {};
+  installs.forEach(function (i) {
+    daysOf(i).forEach(function (key, idx) {
+      (map[key] = map[key] || []).push({ job: i, first: idx === 0 });
+    });
+  });
+  return map;
+}
+
+function renderCalendar(installs) {
+  var host = document.getElementById('cal');
+  host.innerHTML = '';
+  var map = byDay(installs);
+  var t = todayLocal();
+
+  document.getElementById('month-name').textContent =
+    new Date(viewY, viewM, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  var head = document.createElement('div');
+  head.className = 'cal-head';
+  ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(function (d) {
+    var c = document.createElement('div');
+    c.className = 'cal-dow';
+    c.textContent = d;
+    head.appendChild(c);
+  });
+  host.appendChild(head);
+
+  var grid = document.createElement('div');
+  grid.className = 'cal-grid';
+
+  gridDays(viewY, viewM).forEach(function (d) {
+    var key = isoDay(d);
+    var jobs = map[key] || [];
+    var cell = document.createElement(jobs.length ? 'button' : 'div');
+    if (jobs.length) cell.type = 'button';
+    cell.className = 'cal-day' +
+      (d.getMonth() === viewM ? '' : ' out') +
+      (key === isoDay(t) ? ' today' : '') +
+      (jobs.length ? ' has' : '') +
+      (key === picked ? ' picked' : '');
+
+    /* The cell's own date, so what is rendered can be checked against what
+       was booked without counting squares. */
+    cell.setAttribute('data-day', key);
+
+    var num = document.createElement('span');
+    num.className = 'cal-num';
+    num.textContent = d.getDate();
+    cell.appendChild(num);
+
+    var dots = document.createElement('div');
+    dots.className = 'cal-dots';
+    jobs.slice(0, 3).forEach(function (entry) {
+      var chip = document.createElement('span');
+      chip.className = 'cal-chip chip-' + (entry.job.item === 'concrete' ? 'concrete' : 'shed');
+      var who = (entry.job.customer_name || '').split(' ').slice(-1)[0] || '';
+      /* A continuing day says so, rather than repeating the name as though a
+         second job started. */
+      chip.textContent = entry.first ? who : '· ' + who;
+      chip.title = (ITEM_LABEL[entry.job.item] || '') + ' — ' + (entry.job.customer_name || '');
+      dots.appendChild(chip);
+    });
+    if (jobs.length > 3) {
+      var more = document.createElement('span');
+      more.className = 'cal-more';
+      more.textContent = '+' + (jobs.length - 3) + ' more';
+      dots.appendChild(more);
+    }
+    cell.appendChild(dots);
+
+    if (jobs.length) {
+      cell.addEventListener('click', function () {
+        picked = (picked === key) ? null : key;
+        renderCalendar(LOADED);
+      });
+    }
+    grid.appendChild(cell);
+  });
+  host.appendChild(grid);
+
+  if (picked && map[picked]) {
+    var head2 = document.createElement('div');
+    head2.className = 'picked-head';
+    head2.textContent = dayHeading(localDay(picked));
+    host.appendChild(head2);
+    map[picked].forEach(function (entry) { host.appendChild(jobRow(entry.job)); });
+  }
+
+  var n = installs.length;
+  document.getElementById('count').textContent =
+    n ? n + (n === 1 ? ' job this month' : ' jobs this month') : 'Nothing booked this month';
+}
+
+function renderList(installs, newestFirst) {
   var list = document.getElementById('list');
   var count = document.getElementById('count');
   list.innerHTML = '';
@@ -309,82 +518,107 @@ function render(installs, newestFirst) {
   if (!installs.length) {
     count.textContent = '';
     list.innerHTML = '<p class="empty">Nothing booked in this range.<br>' +
-      'Install dates are set on a customer’s order, once it is marked won.</p>';
+      'Install dates are set on a customer\u2019s order, once it is marked won.</p>';
     return;
   }
 
   count.textContent = installs.length + (installs.length === 1 ? ' job' : ' jobs');
 
-  var today = todayLocal();
-  /* Grouped by date rather than listed flat: the question this page answers
-     is "what is happening on the 15th", and a flat list makes you count. */
+  var t = todayLocal();
   var days = [];
-  var byDay = {};
+  var map = {};
   installs.forEach(function (i) {
     var d = localDay(i.install_date);
     if (!d) return;
     var key = isoDay(d);
-    if (!byDay[key]) { byDay[key] = { date: d, jobs: [] }; days.push(key); }
-    byDay[key].jobs.push(i);
+    if (!map[key]) { map[key] = { date: d, jobs: [] }; days.push(key); }
+    map[key].jobs.push(i);
   });
-  /* Looking back, the useful order is newest first; looking forward it is
-     soonest first. Sorting the KEYS is what decides this — reversing the
-     install list before grouping did nothing, because the groups get sorted
-     here afterwards either way. */
   days.sort();
   if (newestFirst) days.reverse();
 
   days.forEach(function (key) {
-    var group = byDay[key];
+    var group = map[key];
     var sec = document.createElement('div');
     sec.className = 'day';
 
-    var head = document.createElement('div');
-    head.className = 'day-head';
+    var h = document.createElement('div');
+    h.className = 'day-head';
     var date = document.createElement('span');
     date.className = 'day-date';
     date.textContent = dayHeading(group.date);
-    head.appendChild(date);
+    h.appendChild(date);
 
-    var w = whenLabel(group.date, today);
+    var w = whenLabel(group.date, t);
     var when = document.createElement('span');
     when.className = 'day-when ' + w.cls;
     when.textContent = w.text;
-    head.appendChild(when);
-    sec.appendChild(head);
+    h.appendChild(when);
+    sec.appendChild(h);
 
     group.jobs.forEach(function (i) { sec.appendChild(jobRow(i)); });
     list.appendChild(sec);
   });
 }
 
+function stepMonth(n) {
+  var d = new Date(viewY, viewM + n, 1);
+  viewY = d.getFullYear();
+  viewM = d.getMonth();
+  picked = null;
+  load();
+}
+document.getElementById('prev-month').addEventListener('click', function () { stepMonth(-1); });
+document.getElementById('next-month').addEventListener('click', function () { stepMonth(1); });
+document.getElementById('this-month').addEventListener('click', function () {
+  var t = todayLocal();
+  viewY = t.getFullYear();
+  viewM = t.getMonth();
+  picked = null;
+  load();
+});
+
 function load() {
-  var r = RANGES.filter(function (x) { return x.key === current; })[0];
-  document.getElementById('list').innerHTML = '<p class="empty">Loading…</p>';
-  authFetch('/admin/schedule' + rangeParams(r)).then(function (res) {
+  var cal = view === 'cal';
+  var q = cal ? monthParams()
+              : rangeParams(RANGES.filter(function (x) { return x.key === current; })[0]);
+  if (!cal) document.getElementById('list').innerHTML = '<p class="empty">Loading…</p>';
+  authFetch('/admin/schedule' + q).then(function (res) {
     if (!res.ok) {
-      document.getElementById('list').innerHTML =
+      document.getElementById(cal ? 'cal' : 'list').innerHTML =
         '<p class="empty">Could not load the schedule.</p>';
       return;
     }
-    render(res.data.installs || [], current === 'past');
+    LOADED = res.data.installs || [];
+    if (cal) {
+      document.getElementById('list').innerHTML = '';
+      renderCalendar(LOADED);
+    } else {
+      document.getElementById('cal').innerHTML = '';
+      renderList(LOADED, current === 'past');
+    }
   }).catch(function () {
-    document.getElementById('list').innerHTML =
+    document.getElementById(cal ? 'cal' : 'list').innerHTML =
       '<p class="empty">Could not reach the server.</p>';
   });
 }
 
+renderViews();
+applyView();
 renderRanges();
 load();
+
 
 /* The dot in the header. Fire-and-forget: a feed that will not load must not
    stop the page it is decorating from working. */
 (function () {
   if (!window.AdminActivity) return;
   AdminActivity.load(authFetch, { limit: 80 }).then(function (r) {
-    AdminActivity.badge(document.getElementById('hdr-badge'), r.unseen);
+    AdminNav.setCount(r.unseen);
   }).catch(function () {});
 })();
+
+AdminNav.render(document.querySelector('.h-actions'));
 </script>
 </body>
 </html>
