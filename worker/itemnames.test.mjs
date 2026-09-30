@@ -23,7 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computePricing, windowDisplayName, sidingDisplayName,
-  WINDOW_CATALOG, SELL, sellWindowPrice
+  WINDOW_CATALOG, SELL, sellWindowPrice, VENT_SIZE_IN
 } from './pricing.js';
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -38,7 +38,71 @@ test('a window line says it is a window', () => {
   assert.equal(windowDisplayName('Black Vinyl 36x36'), 'Black Vinyl Window 36x36');
   assert.equal(windowDisplayName('White Vinyl 18x24'), 'White Vinyl Window 18x24');
   assert.equal(windowDisplayName('Brown Aluminum 24x36'), 'Brown Aluminum Window 24x36');
-  assert.equal(windowDisplayName('White Transom 3x10'), 'White Transom Window 3x10');
+  // NOT 'White Transom Window 3x10'. See the next test.
+  assert.equal(windowDisplayName('White Transom 3x10'), 'White Transom Window 36x10');
+});
+
+/* EVERY WINDOW SIZE ON A QUOTE IS IN INCHES.
+ *
+ * The digits in a key are not reliably inches and cannot be made so: the
+ * horizontal transoms are keyed "3x10" and "5x10", which are FEET by inches,
+ * and those keys index SELL.windows and sit inside every saved design, so
+ * renaming them would miss every price entry. A 36in window therefore went on
+ * the quote as "White Transom Window 3x10", sitting in a list beside a 12x24
+ * that really was inches. Nobody reads that as three feet.
+ *
+ * So the line is built from the CATALOG's own w/h. This checks every entry,
+ * which is the only way to catch the next key whose digits do not match its
+ * dimensions — and that the keys themselves are untouched. */
+test('every window line states the catalog size, in inches', () => {
+  for (const e of WINDOW_CATALOG) {
+    const shown = windowDisplayName(e.key);
+    assert.ok(shown.endsWith(' ' + e.w + 'x' + e.h),
+      `"${e.key}" (really ${e.w}x${e.h}) shows as "${shown}"`);
+    // The key keeps its own spelling, and still prices.
+    assert.ok(SELL.windows[e.key] == null || SELL.windows[e.key] > 0);
+  }
+  // The six keys whose digits are NOT their size — the reason this exists.
+  const mismatched = WINDOW_CATALOG.filter((e) => !e.key.endsWith(e.w + 'x' + e.h));
+  assert.equal(mismatched.length, 6,
+    'expected the six horizontal transoms to be the only keys whose digits differ from their size');
+  for (const e of mismatched) {
+    assert.match(e.key, /Transom [35]x10$/);
+    assert.equal(windowDisplayName(e.key), e.key.replace(/ [35]x10$/, '') + ' Window ' + e.w + 'x' + e.h);
+  }
+});
+
+test('the tile label states inches too, not feet', () => {
+  /* The quote line and the tile are built from different strings — the line
+     from the key, the tile from `label` — so a fix to one says nothing about
+     the other. The premium windows were labelled in feet ("Bi-Fold Bar Window
+     6'") while their keys were already inches, so the two disagreed. */
+  for (const e of WINDOW_CATALOG) {
+    if (!e.label) continue;
+    assert.ok(e.label.includes(e.w + 'x' + e.h),
+      `"${e.label}" does not state its ${e.w}x${e.h} size`);
+    assert.ok(!/\d\s*'/.test(e.label), `"${e.label}" states a size in feet`);
+  }
+});
+
+/* THE VENT IS AN OPENING TOO, and it was the only one on the quote that said
+   nothing about how big it is — just "Gable/Wall Vent x2". It also carries a
+   trap: the PRICE key is spelled "8x16 Gable/Wall Vent", which is height by
+   width, the opposite order to every window in the file. So the line is built
+   from VENT_SIZE_IN and not from that name. */
+test('the vent line states its size, in inches, width first', () => {
+  const { redline } = computePricing({
+    style: 'gable', w: 10, l: 16, h: 9,
+    vents: [{ wall: 'front', pos: 0.5 }, { wall: 'back', pos: 0.5 }]
+  });
+  const line = (redline.addonLines || []).find((l) => /Vent/.test(l.name));
+  assert.ok(line, 'no vent line on the quote');
+  assert.ok(line.name.includes(VENT_SIZE_IN.w + 'x' + VENT_SIZE_IN.h),
+    `"${line.name}" does not say how big the vent is`);
+  // Width first, like every window — not the price key's 8x16.
+  assert.ok(!/\b8x16\b/.test(line.name), `"${line.name}" states the size height-first`);
+  assert.ok(VENT_SIZE_IN.w > VENT_SIZE_IN.h, 'the louvre is wider than it is tall');
+  assert.ok(/\u00d72/.test(line.name), `"${line.name}" lost its count`);
 });
 
 test('the size stays last, so it reads like the door lines do', () => {

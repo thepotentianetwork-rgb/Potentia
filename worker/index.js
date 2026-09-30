@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
@@ -42,6 +42,7 @@ const DOOR_PRICE_ENTRIES = [
   ["slideglass", 70], ["slideglassB", 70],
   ["rollup", 72], ["rollup", 84], ["rollup", 96],
   ["cedar", 60], ["cedar", 72], ["cedar", 84], ["cedar", 96],
+  ["cedarSingle", 36], ["cedarSingle", 42],
   ["fairytale", 36]
 ];
 function computeDoorPrices() {
@@ -2796,13 +2797,38 @@ function capArray(a, max) {
 // designer.html (width/length/height ranges) and the style/siding/etc.
 // option lists. A request outside these isn't a build the designer could
 // actually produce, so it's clamped rather than trusted.
+/* THE SHED'S OWN DIMENSIONS, and the ONLY place they are written down.
+   These were three literals inside the clamp below, and the designer's size
+   sliders were three more in another repo's markup. Raising the sliders to
+   22x34 without touching the clamp did not fail anywhere: the server quietly
+   shrank every request to 20x32 and quoted THAT, so a customer configuring a
+   22x34 was shown the price of a shed two feet smaller in each direction, with
+   nothing on the page or in the response to say so.
+   They are served to the client now (computeOptionPrices returns `limits`) and
+   the designer sets its sliders from them, so this file is the one source and
+   the two cannot drift apart again. */
+const SHED_LIMITS = {
+  w: { min: 6,  max: 26, def: 8,  step: 2 },
+  l: { min: 6,  max: 34, def: 12, step: 2 },
+  h: { min: 6,  max: 12, def: 8,  step: 1 }
+};
+/* THE PORCH DEPTHS OFFERED, and the only place they are written down.
+   Exactly the trap SHED_LIMITS was written for, and it had already been
+   sprung: the designer's depth ladder went to 10ft with the size bump while
+   the two loops below still ran [4, 6, 8]. Nothing failed. A 10ft porch
+   prices correctly in the TOTAL — that is computed per square foot — but the
+   depth tile the customer taps had no price on it at all, because nothing
+   ever computed one for a depth the server did not know was on offer.
+   Served with the limits, and the designer renders exactly these. */
+const PORCH_DEPTHS_FT = [4, 6, 8, 10];
 function validateShedConfig(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
+  const lim = (k) => [SHED_LIMITS[k].min, SHED_LIMITS[k].max, SHED_LIMITS[k].def];
   return {
     style: enumOr(raw.style, SHED_STYLES, "gable"),
-    w: clampNum(raw.w, 6, 20, 8),
-    l: clampNum(raw.l, 6, 32, 12),
-    h: clampNum(raw.h, 6, 12, 8),
+    w: clampNum(raw.w, ...lim("w")),
+    l: clampNum(raw.l, ...lim("l")),
+    h: clampNum(raw.h, ...lim("h")),
     pitch: clampNum(raw.pitch, 3, 12, 6),
     siding: enumOr(raw.siding, SHED_SIDING, "vertical"),
     roofType: enumOr(raw.roofType, SHED_ROOFTYPE, "shingle"),
@@ -2876,12 +2902,12 @@ function computeOptionPrices(cfg) {
   const maxPorchFront = Math.max(0, cfg.l - 6);
   const maxPorchSide = Math.max(0, cfg.w - 6);
   const frontDepths = {};
-  [4, 6, 8].filter((ft) => ft <= maxPorchFront).forEach((ft) => {
+  PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchFront).forEach((ft) => {
     const line = porchLineFor("front", ft, curTier, cfg.w);
     if (line) frontDepths[ft] = line.price;
   });
   const sideDepths = {};
-  [4, 6, 8].filter((ft) => ft <= maxPorchSide).forEach((ft) => {
+  PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchSide).forEach((ft) => {
     const line = porchLineFor("side", ft, "standard", cfg.l);
     if (line) sideDepths[ft] = line.price;
   });
@@ -2969,9 +2995,23 @@ function computeOptionPrices(cfg) {
     return { 16: lenFt * shelfRate16, 24: lenFt * shelfRate24 };
   });
 
+  /* WHAT THE BAR LEDGE WOULD COST on each placed window, one entry per
+     cfg.windows index, in dollars. Computed with the ledge forced ON so the
+     On/Off control can price BOTH states — a tile that only knows the cost
+     when the option is already selected cannot say what selecting it costs.
+     A dollar amount per window, not the $/ft rate, for the same reason the
+     shelving block above hands over amounts: the rate is ours. */
+  const barLedge = (cfg.windows || []).map((wd) =>
+    sellBarLedge(Object.assign({}, wd, { ledge: true })));
+
   return {
+    /* The sizes the client is allowed to build, and the porch depths it may
+       offer. Served rather than duplicated in the designer — see SHED_LIMITS
+       and PORCH_DEPTHS_FT. */
+    limits: Object.assign({ porchDepths: PORCH_DEPTHS_FT.slice() }, SHED_LIMITS),
     dormers: Object.assign({}, SELL.dormers),
     windows: windows,
+    barLedge: barLedge,
     doors: computeDoorPrices(),
     interior: interior,
     flooring: flooring,

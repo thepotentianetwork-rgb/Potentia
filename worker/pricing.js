@@ -439,6 +439,14 @@ export let SELL = {
     "36\" Residential 6 Panel (Black)": 565, "36\" Residential Half Lite (Black)": 620,
     "36\" Residential Full Lite (Black)": 670,
     "5' Cedar Double": 700, "6' Cedar Double": 1000, "7' Cedar Double": 1100, "8' Cedar Double": 1100,
+    /* The cedar SINGLE is the same product as the double — same cedar leaf,
+       same rails and stiles, same transom lites and cedar casing — with one
+       leaf instead of two. Priced as its own pair of entries rather than as
+       a fraction of a double: the casing, transom and hardware cost the same
+       whatever the leaf count, so half the width is nowhere near half the
+       price — $500 and $600 against the 5' double's $700, ShedPro's own
+       numbers. Admin \u2192 Pricing \u2192 Doors overrides this table if they move. */
+    "3' Cedar Single": 500, "3'6\" Cedar Single": 600,
     "Fairytale Entry": 700, "9' Garage Door": 600,
 
     // Home-Depot-sourced doors — cost × 1.3, computed from COST.doorHomeDepot
@@ -537,7 +545,24 @@ export let SELL = {
     "White Transom 3x10": 80, "White Transom 5x10": 120,
     "Brown Transom 3x10": 80, "Brown Transom 5x10": 120,
     "Black Transom 3x10": 105, "Black Transom 5x10": 140,
-    "24x48 Insulated": 45, "Transom 87x10": 200
+    "24x48 Insulated": 45, "Transom 87x10": 200,
+
+    /* PREMIUM \u2014 ShedPro's own numbers, replacing the placeholders these
+       shipped with. Same four sizes for both products, so the two ladders read
+       against each other: the lift-up is the dearer of the two at every size,
+       by roughly $1,200 to $1,700.
+       They must never be left blank. An unpriced window does NOT quote as TBD
+       \u2014 sellWindowPrice falls through to the nearest WHITE VINYL by area,
+       so a blank entry would put a 96x48 on a quote at $310 with only a note
+       to say otherwise. Admin \u2192 Pricing \u2192 Windows overrides all eight. */
+    "Black Bi-Fold Bar 48x36": 2495,
+    "Black Bi-Fold Bar 60x42": 3495,
+    "Black Bi-Fold Bar 72x42": 3995,
+    "Black Bi-Fold Bar 96x48": 5795,
+    "Black Lift-Up Bar 48x36": 3695,
+    "Black Lift-Up Bar 60x42": 4995,
+    "Black Lift-Up Bar 72x42": 5995,
+    "Black Lift-Up Bar 96x48": 7495
   },
 
   // ── SIDING (upcharge, per sqft of WALL AREA) ──
@@ -588,7 +613,13 @@ export let SELL = {
       // Both $1,000 as of Sep 2026 — breaking up and hauling a slab is the same
       // day's work as taking an old shed away, so it stopped being the cheaper
       // of the two.
-      "Shed Removal": 1000, "Concrete Removal": 1000
+      "Shed Removal": 1000, "Concrete Removal": 1000,
+      /* THE EXTERIOR BAR LEDGE. ONE price per ledge, whatever the window is —
+         ShedPro quotes it that way, so it lives in `flat` rather than being
+         computed per foot. It was built per-linear-foot first, which charged a
+         4ft bar less than an 8ft one; the number below replaces that MODEL,
+         not just its rate. Admin → Pricing → options.flat overrides it. */
+      "Exterior Bar Ledge": 695
     },
     perLinFt: { // × linear feet the customer specifies
       "16\" Deep Shelving": 15, "24\" Deep Shelving": 17
@@ -918,6 +949,15 @@ function sellDoorName(dd){
   // Cedar, Fairytale, and the 36" Residential styles are their own SELL.doors
   // entries (not width/trim variants of a plain door) — map them directly so
   // they don't fall through to the cheap plain-door price below.
+  // The cedar single is its own style id, not a narrow 'cedar'. Width alone
+  // can't tell the two apart safely: the ladders would have to meet at some
+  // inch, and a door that lands on the wrong side of it prices as the wrong
+  // product silently. Two ids, two ladders, no seam.
+  if(st==='cedarSingle'){
+    var sl=(w<=38)?"3'":"3'6\"";
+    var sk=sl+" Cedar Single";
+    return { base: sk, key: sk, panel4:false };
+  }
   if(st==='cedar'){
     var cl=(w<=64)?"5'":(w<=78)?"6'":(w<=90)?"7'":"8'";
     var ck=cl+" Cedar Double";
@@ -1052,12 +1092,41 @@ export const WINDOW_CATALOG = [
   {grp:"Black Aluminum", key:"Black Aluminum 12x12", w:12,h:12},
   {grp:"Black Aluminum", key:"Black Aluminum 18x27", w:18,h:27},
   {grp:"Black Aluminum", key:"Black Aluminum 24x36", w:24,h:36},
-  {grp:"Transom", key:"White Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 White", w:36,h:10},
-  {grp:"Transom", key:"White Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 White", w:60,h:10},
-  {grp:"Transom", key:"Brown Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 Brown", w:36,h:10},
-  {grp:"Transom", key:"Brown Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 Brown", w:60,h:10},
-  {grp:"Transom", key:"Black Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 Black", w:36,h:10},
-  {grp:"Transom", key:"Black Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 Black", w:60,h:10}
+  {grp:"Transom", key:"White Transom 3x10", label:"Horizontal Transom 36x10 \u00b7 White", w:36,h:10},
+  {grp:"Transom", key:"White Transom 5x10", label:"Horizontal Transom 60x10 \u00b7 White", w:60,h:10},
+  {grp:"Transom", key:"Brown Transom 3x10", label:"Horizontal Transom 36x10 \u00b7 Brown", w:36,h:10},
+  {grp:"Transom", key:"Brown Transom 5x10", label:"Horizontal Transom 60x10 \u00b7 Brown", w:60,h:10},
+  {grp:"Transom", key:"Black Transom 3x10", label:"Horizontal Transom 36x10 \u00b7 Black", w:36,h:10},
+  {grp:"Transom", key:"Black Transom 5x10", label:"Horizontal Transom 60x10 \u00b7 Black", w:60,h:10},
+  /* ── PREMIUM ──
+     Its own group, not a size of an existing one, because these are bought-in
+     architectural units rather than a stock shed window: a different supplier,
+     a different lead time, and a price an order of magnitude above the vinyl.
+     Keeping them in "Black Aluminum" would have put a $4,000 unit in the same
+     list as a $155 one, sorted by size, with nothing to tell them apart.
+
+     Both products are offered at the SAME four sizes, so a customer choosing
+     between them is choosing a mechanism and not a size chart, and the two
+     price lists compare line for line.
+     The BI-FOLD BAR WINDOW is three panels on vertical hinges that accordion
+     back against one jamb, over an exterior serving ledge. Every width divides
+     by three exactly (16"/20"/24"/32" panels) so the closed window reads as
+     three equal lights rather than two and a remainder. */
+  {grp:"Premium", key:"Black Bi-Fold Bar 48x36", label:"Bi-Fold Bar Window 48x36 \u00b7 Black", w:48,h:36},
+  {grp:"Premium", key:"Black Bi-Fold Bar 60x42", label:"Bi-Fold Bar Window 60x42 \u00b7 Black", w:60,h:42},
+  {grp:"Premium", key:"Black Bi-Fold Bar 72x42", label:"Bi-Fold Bar Window 72x42 \u00b7 Black", w:72,h:42},
+  {grp:"Premium", key:"Black Bi-Fold Bar 96x48", label:"Bi-Fold Bar Window 96x48 \u00b7 Black", w:96,h:48},
+  /* The LIFT-UP is the other half of the premium pair and a different product,
+     not a variant: one large sash hinged along its TOP edge, lifting to nearly
+     horizontal on two gas struts to make a canopy over the bar. The bi-fold is
+     three vertically hinged panels folding to one side. Nothing is shared but
+     the serving ledge, so they are separate keys, separate geometry and
+     separate prices — a customer who says "the lift-up one" means one of
+     these, and there is no size at which the two meet. */
+  {grp:"Premium", key:"Black Lift-Up Bar 48x36", label:"Lift-Up Bar Window 48x36 \u00b7 Black", w:48,h:36},
+  {grp:"Premium", key:"Black Lift-Up Bar 60x42", label:"Lift-Up Bar Window 60x42 \u00b7 Black", w:60,h:42},
+  {grp:"Premium", key:"Black Lift-Up Bar 72x42", label:"Lift-Up Bar Window 72x42 \u00b7 Black", w:72,h:42},
+  {grp:"Premium", key:"Black Lift-Up Bar 96x48", label:"Lift-Up Bar Window 96x48 \u00b7 Black", w:96,h:48}
 ];
 function windowCatEntry(key){
   for(var i=0;i<WINDOW_CATALOG.length;i++) if(WINDOW_CATALOG[i].key===key) return WINDOW_CATALOG[i];
@@ -1077,10 +1146,29 @@ function windowCatEntry(key){
    The noun lands before the size rather than after it so the size stays last,
    matching the doors ("6' Roll-Up Garage Door" keeps its 6' out front). A key
    with no WxH in it — the area-fallback "Window" — is returned untouched. */
+/* THE GABLE/WALL VENT'S SIZE, in inches, stated once.
+   The louvre is 16 wide by 8 tall. That was written down in three places and
+   named in a fourth — the price key is spelled "8x16 Gable/Wall Vent", which
+   is HEIGHT BY WIDTH, the opposite order to every window in this file. So the
+   line the customer reads is built from these two numbers rather than from
+   that key, and it comes out 16x8 like everything else. */
+export const VENT_SIZE_IN = { w: 16, h: 8 };
+
 export function windowDisplayName(key){
   var k = String(key || '').trim();
   if(!k) return 'Window';
   if(/\bwindows?\b/i.test(k)) return k;
+  /* EVERY WINDOW SIZE IS STATED IN INCHES, and the digits in the key cannot be
+     trusted to be. The horizontal transoms are keyed "3x10" and "5x10" — those
+     are FEET by inches, so a 36in wide window went onto a quote reading
+     "White Transom Window 3x10". Nobody reads that as three feet; they read a
+     window three inches wide, next to a 12x24 that really is inches.
+     The catalog carries the true w/h, so the line is built from those. The KEY
+     is left exactly as it is: it indexes SELL.windows and sits inside every
+     saved design, and renaming it there would miss every price entry — the
+     same trap doorDisplayName was written around. */
+  var e = windowCatEntry(k);
+  if(e) return k.replace(/\s*\d+\s*x\s*\d+\s*$/, '') + ' Window ' + e.w + 'x' + e.h;
   return /\d+\s*x\s*\d+\s*$/.test(k) ? k.replace(/(\d+\s*x\s*\d+)\s*$/, 'Window $1') : k;
 }
 // Customer price for a placed window. Uses wd.type if set; else nearest by area.
@@ -1101,6 +1189,26 @@ export function sellWindowPrice(wd){
 // they'd fall through the area buckets and quote as white vinyl.
 export function sellWindowPriced(wd){
   return !!(wd && wd.type && SELL.windows[wd.type]!=null);
+}
+
+/* ── THE BAR WINDOWS ──
+   Premium serving windows: one folds to the side, one lifts overhead, both
+   open onto a counter. Recognised through the CATALOG, not by a regex on the
+   key alone — a bare /bar/ test would one day catch a "Barn Sash" and quietly
+   start charging it for a countertop. The group has to say Premium too. */
+export function isBarWindowKey(key){
+  var e = windowCatEntry(String(key||''));
+  return !!e && e.grp==='Premium' && /\bBar\b/.test(e.key);
+}
+/* What the optional exterior ledge costs on a placed window. Zero unless this
+   is a bar window AND the ledge is on. Default ON: the ledge is the reason
+   these windows exist, so only an explicit false removes it — the same rule
+   the 3D builder uses, and it is itemised either way so nobody pays for one
+   without seeing it on the quote.
+   ONE flat price per ledge, not per foot: that is how ShedPro quotes it. */
+export function sellBarLedge(wd){
+  if(!wd || !isBarWindowKey(wd.type) || wd.ledge===false) return 0;
+  return SELL.options.flat["Exterior Bar Ledge"] || 0;
 }
 
 /* What the CUSTOMER reads on the siding line.
@@ -1411,6 +1519,17 @@ export function computePricing(cfgIn, opts){
         windowSellLines.push({label:windowDisplayName(wd.type), price:p, est:!priced});
         if(!priced) unpriced.push((wd.type?windowDisplayName(wd.type):'Untyped window')+' — no workbook price, estimated by area');
       }
+      /* The bar ledge is its own line, right after the window it hangs on.
+         Folded into the window's price it would be invisible: a customer
+         turning the ledge off would watch the total drop with nothing on the
+         quote to say what left. */
+      var ledge = sellBarLedge(wd);
+      if(ledge>0){
+        windowSell += ledge;
+        /* No footage on the line. The fee is flat, and a length printed
+           beside a single number invites dividing one by the other. */
+        windowSellLines.push({label:'Exterior Bar Ledge', price:ledge});
+      }
     });
   }
   customerPrice += windowSell;
@@ -1520,7 +1639,10 @@ export function computePricing(cfgIn, opts){
       var _vp=(flat['8x16 Gable/Wall Vent']||0)*_ventCt;
       if(_vp>0){
         addonSell+=_vp;
-        addonLines.push({name:'Gable/Wall Vent \u00d7'+_ventCt, amt:_vp});
+        // Sized on the line like every window, in inches. It was the one
+        // opening on the quote that said nothing about how big it is.
+        addonLines.push({name:'Gable/Wall Vent '+VENT_SIZE_IN.w+'x'+VENT_SIZE_IN.h+
+                              ' \u00d7'+_ventCt, amt:_vp});
       }
     }
     if(ADDONS.cupola==='black')  _flat(true,'Cupola 16" Black Roof','Cupola (Black Roof)');
