@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "a986881";
-const WORKER_BUILT_AT = "2026-09-30T05:04:35.022Z";
+const WORKER_BUILD = "3ec144a";
+const WORKER_BUILT_AT = "2026-09-30T05:11:23.931Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3851,6 +3851,34 @@ function buildCustomFields(bd, kind, opts = {}) {
     .slice(0, 4);
 }
 
+/* A SHORT, STABLE FINGERPRINT OF WHAT IS ABOUT TO BE SENT.
+ *
+ * Stripe remembers an idempotency key for 24 hours and refuses to reuse one
+ * with different parameters. The key used to be built from the shed, the kind
+ * and how many invoices had been raised — nothing about the CONTENT. So an
+ * attempt that failed, followed by anything that changed the request, came
+ * back "Keys for idempotent requests can only be used with the same
+ * parameters they were first used with" and stayed stuck for a day. Which is
+ * exactly what happened after the memo was shortened to fit Stripe's limit.
+ *
+ * Folding the content in makes the key identify THIS request: a double-tapped
+ * button still sends one invoice, because nothing about it changed, while a
+ * corrected one gets a fresh key immediately.
+ *
+ * Not a security hash — it is a cache key, and a collision would only
+ * deduplicate two invoices that were identical anyway. */
+function fingerprint(parts) {
+  const s = JSON.stringify(parts === undefined ? null : parts);
+  let a = 0x811c9dc5, b = 0x01000193;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = Math.imul(a ^ c, 16777619) >>> 0;
+    b = Math.imul(b + c, 2246822519) >>> 0;
+    b = ((b << 13) | (b >>> 19)) >>> 0;
+  }
+  return (a.toString(36) + b.toString(36)).slice(0, 12);
+}
+
 function buildInvoice(breakdown, kind, payments, opts = {}) {
   if (!KINDS.includes(kind)) throw new Error(`unknown invoice kind: ${kind}`);
   if (!breakdown || !Array.isArray(breakdown.rows) || !breakdown.rows.length) {
@@ -5639,7 +5667,19 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const prior = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM invoices WHERE submission_id = ? AND kind = ?"
   ).bind(sub.id, kind).first();
-  const idempotencyKey = `sub${sub.id}:${kind}:${(prior && prior.n) || 0}`;
+  /* The content goes in the key. Without it a failed attempt locked the shed
+     out for 24 hours the moment anything about the request changed — Stripe
+     refuses a reused key with different parameters, and "different" includes
+     a bug fix. A genuine double-tap still collapses to one invoice, because
+     an unchanged request fingerprints the same. */
+  const idempotencyKey = `sub${sub.id}:${kind}:${(prior && prior.n) || 0}:` + fingerprint({
+    customer: customer.stripe_customer_id || customer.email || null,
+    lines: shape.lines,
+    amount: shape.amount,
+    memo: invoice.memo,
+    footer: invoice.footer,
+    fields: invoice.customFields,
+  });
 
   let stripeCustomerId = customer.stripe_customer_id || null;
   let sent;
