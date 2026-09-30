@@ -856,14 +856,16 @@ the customer never has to check one document against the other.
 
 - **Across the top:** order number, the build (`10x16 ft · barn · vertical`),
   whether this is the deposit or the balance, and the job total.
-- **Line items:** each phase at its pre-tax price, then each adjustment with
-  the note you wrote for it, then sales tax — the same lines, in the same
+- **Line items:** each phase at its pre-tax price — followed by what is in
+  that phase — then each adjustment with the note you wrote for it, then sales
+  tax — the same lines, in the same
   order, as the quote's price breakdown. A deposit invoice then shows the
   whole job and takes 70% back off as "balance due on completion", so the
   customer can see what they are *not* being asked for yet. A balance invoice
   credits each payment separately instead.
-- **Memo:** the build itemised — every phase, what makes it up, and what a
-  package like Essential Electrical actually contains.
+- **Memo:** the build, phase by phase with prices, as far as 500 characters
+  allows — it sheds the package contents first, then the sub-items, keeping
+  the phases. It never sends a truncated invoice.
 - **Footer:** anything thrown in free, what they saved, how the two payments
   work, and that the amounts already include tax.
 
@@ -1076,11 +1078,18 @@ that endpoint's signing secret.
   until the first is voided, so a double-tap a week apart cannot bill twice.
 - **A paid invoice has no Void button.** The money has moved — that is a
   refund, done in Stripe.
-- **The detail shrinks before it breaks.** Stripe documents a limit on the
-  header fields and not on the memo or footer, and an undocumented limit is
-  still a limit — exceeding one means the invoice does not send at all. So a
-  build too detailed to fit drops the package contents first, then the
-  sub-items, keeping the phases. It never sends a truncated invoice.
+- **Stripe's string limit is 500, and it is enforced.** Stripe documents the
+  header-field limits (40 / 140) and not the memo's, so the memo was first
+  capped at a "conservative" 1200 — until a real invoice came back *"must be
+  at most 500 characters"* and did not send. Everything is capped at 500 now,
+  measured rather than guessed, and `worker/invoices.test.mjs` checks every
+  string against that figure written out on its own. The old cap test could
+  not have caught it: it compared the memo to the same wrong constant the code
+  was using.
+- **What is in a phase is named on the phase's line**, not in the memo — 500
+  characters does not fit a real shed's itemisation, and beside the money is
+  where it is most use anyway. Names only: the sub-items add up to the figure
+  on the same line, and printing both invites a check that will not balance.
 - **Tax is not recalculated by Stripe.** `automatic_tax` is off on purpose:
   the quote already applied Utah's 7.25% and the line amounts are
   tax-inclusive. Turning it on in Stripe would tax the tax.
