@@ -76,7 +76,8 @@ db.prepare(`INSERT INTO customers (id,name,email,phone,created_at)
 db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
             VALUES (?,?,?,?,?)`)
   .run(7, 1, JSON.stringify({ redline, quotedPrice: BREAKDOWN.total,
-                              config: { style: 'gable', w: 10, l: 16, h: 9 } }), 'won', '2026-09-01');
+                              config: { style: 'gable', w: 10, l: 16, h: 9, foundation: 'pad' } }),
+       'won', '2026-09-01');
 /* Won, with an install booked — that is the only state where the calendar
    invite appears, and the install block is hidden on anything else. */
 db.exec(`CREATE TABLE installs (id INTEGER PRIMARY KEY AUTOINCREMENT, submission_id INTEGER NOT NULL,
@@ -233,6 +234,26 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
 
     var btns = [].slice.call(quoted.querySelectorAll('.inv-btn'));
     R.buttonLabels = btns.map(txt);
+
+    // ---- planning a build from one date --------------------------------
+    var won = cards().filter(function (c) { return c.querySelector('.plan-wrap'); })[0];
+    R.plannerShown = !!won;
+    if (won) {
+      R.anchorLabel = txt(won.querySelector('.plan-wrap .install-item'));
+      var dateIn = won.querySelector('.plan-wrap input[type="date"]');
+      var daysIn = won.querySelector('.plan-wrap input[type="number"]');
+      R.defaultDays = daysIn ? daysIn.value : null;
+      dateIn.value = '2026-10-07';                      // a Wednesday
+      [].slice.call(won.querySelectorAll('.plan-wrap button'))
+        .filter(function (b) { return /plan|re-plan/i.test(txt(b)); })[0].click();
+      await until(function () { return won.querySelector('.plan-row'); }, 6000);
+      R.planRows = [].slice.call(won.querySelectorAll('.plan-row'))
+        .map(function (r) { return txt(r.querySelector('.plan-what')) + ' | ' +
+                                   txt(r.querySelector('.plan-when')); });
+      R.planWarn = txt(won.querySelector('.plan-warn'));
+      R.planButtons = [].slice.call(won.querySelectorAll('.plan-out button')).map(txt);
+      R.installsBeforeBooking = won.querySelectorAll('.install-row .install-del').length;
+    }
 
     // ---- a booking stranded by an un-won order --------------------------
     var last = cards()[cards().length - 1];
@@ -485,6 +506,29 @@ check('and saying no sends nothing',
   R.stillOnPreview === true &&
   invoicePosts.filter((p) => !p.preview).length === 1,
   invoicePosts.map((p) => (p.preview ? 'preview' : 'SEND') + ':' + p.kind));
+
+console.log('\n-- planning a build from one date --');
+check('the won order offers a planner', R.plannerShown === true);
+check('the field is named for a concrete job', R.anchorLabel === 'Pour date', R.anchorLabel);
+check('two days on site by default', R.defaultDays === '2', R.defaultDays);
+/* 2026-10-07 is a Wednesday: prep Tue, pour Wed, then a week, shop Tue,
+   install Wed. The shop day must never be a Sunday. */
+check('it lays out the whole build',
+  JSON.stringify(R.planRows) === JSON.stringify([
+    'Site prep | Tue, Oct 6',
+    'Concrete pour | Wed, Oct 7',
+    'Shop build | Tue, Oct 13',
+    'Shed install | Wed, Oct 14 · 2 days',
+  ]), R.planRows);
+/* This order already has an install booked, so the planner is replacing
+   rather than filling in — and it has to say so on the button as well as in
+   the warning, because the button is what gets pressed. */
+check('the button says it will replace, not just book',
+  JSON.stringify(R.planButtons) === '["Replace and book","Cancel"]', R.planButtons);
+check('and it says how much is about to be lost',
+  /replaces 1 booking/.test(R.planWarn || ''), R.planWarn);
+check('nothing has been replaced yet — the preview writes nothing',
+  R.installsBeforeBooking === 1, R.installsBeforeBooking);
 
 console.log('\n-- a booking left behind by an un-won order --');
 check('the card says why it is not on the schedule',
