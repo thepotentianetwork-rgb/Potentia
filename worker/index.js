@@ -2797,13 +2797,29 @@ function capArray(a, max) {
 // designer.html (width/length/height ranges) and the style/siding/etc.
 // option lists. A request outside these isn't a build the designer could
 // actually produce, so it's clamped rather than trusted.
+/* THE SHED'S OWN DIMENSIONS, and the ONLY place they are written down.
+   These were three literals inside the clamp below, and the designer's size
+   sliders were three more in another repo's markup. Raising the sliders to
+   22x34 without touching the clamp did not fail anywhere: the server quietly
+   shrank every request to 20x32 and quoted THAT, so a customer configuring a
+   22x34 was shown the price of a shed two feet smaller in each direction, with
+   nothing on the page or in the response to say so.
+   They are served to the client now (computeOptionPrices returns `limits`) and
+   the designer sets its sliders from them, so this file is the one source and
+   the two cannot drift apart again. */
+const SHED_LIMITS = {
+  w: { min: 6,  max: 26, def: 8,  step: 2 },
+  l: { min: 6,  max: 34, def: 12, step: 2 },
+  h: { min: 6,  max: 12, def: 8,  step: 1 }
+};
 function validateShedConfig(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
+  const lim = (k) => [SHED_LIMITS[k].min, SHED_LIMITS[k].max, SHED_LIMITS[k].def];
   return {
     style: enumOr(raw.style, SHED_STYLES, "gable"),
-    w: clampNum(raw.w, 6, 20, 8),
-    l: clampNum(raw.l, 6, 32, 12),
-    h: clampNum(raw.h, 6, 12, 8),
+    w: clampNum(raw.w, ...lim("w")),
+    l: clampNum(raw.l, ...lim("l")),
+    h: clampNum(raw.h, ...lim("h")),
     pitch: clampNum(raw.pitch, 3, 12, 6),
     siding: enumOr(raw.siding, SHED_SIDING, "vertical"),
     roofType: enumOr(raw.roofType, SHED_ROOFTYPE, "shingle"),
@@ -2980,6 +2996,9 @@ function computeOptionPrices(cfg) {
     sellBarLedge(Object.assign({}, wd, { ledge: true })));
 
   return {
+    /* The size the client is allowed to build. Served rather than duplicated
+       in the designer's markup — see SHED_LIMITS. */
+    limits: SHED_LIMITS,
     dormers: Object.assign({}, SELL.dormers),
     windows: windows,
     barLedge: barLedge,
