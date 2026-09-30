@@ -444,9 +444,9 @@ export let SELL = {
        leaf instead of two. Priced as its own pair of entries rather than as
        a fraction of a double: the casing, transom and hardware cost the same
        whatever the leaf count, so half the width is nowhere near half the
-       price. These two numbers are a starting point — set the real ones in
-       Admin \u2192 Pricing \u2192 Doors, which overrides this table. */
-    "3' Cedar Single": 450, "3'6\" Cedar Single": 500,
+       price — $500 and $600 against the 5' double's $700, ShedPro's own
+       numbers. Admin \u2192 Pricing \u2192 Doors overrides this table if they move. */
+    "3' Cedar Single": 500, "3'6\" Cedar Single": 600,
     "Fairytale Entry": 700, "9' Garage Door": 600,
 
     // Home-Depot-sourced doors — cost × 1.3, computed from COST.doorHomeDepot
