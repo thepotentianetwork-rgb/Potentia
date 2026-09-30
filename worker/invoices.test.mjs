@@ -7,6 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { computePricing } from './pricing.js';
 import { quoteLines } from './quotelines.js';
 import { buildInvoice, splitPayments, toCents, buildMemo, buildFooter,
@@ -407,4 +408,56 @@ test('buildInvoice hands all three back, ready to send', () => {
   assert.match(inv.footer, /Shutters/);
   assert.ok(inv.customFields.length >= 2);
   inv.lines.forEach((l) => assert.ok(l.label.length <= LIMITS.label, l.label));
+});
+
+/* ---- the quote and the invoice must say the same thing ------------------ */
+
+/* THE PROMISE ON EVERY QUOTE.
+ *
+ * The quote used to tell customers "each item is invoiced separately as its
+ * stage of work begins — a 30% deposit is collected per item". The invoicing
+ * never did that: it bills every phase at once, before anything starts. Two
+ * documents, one of them wrong, and nothing in the code connected them — the
+ * wording sat in a template string and the behaviour sat here.
+ *
+ * Whichever way that is settled, it has to be settled in BOTH places. This
+ * fails if the quote starts promising per-stage billing again while the
+ * deposit invoice still covers the lot. */
+test('the quote describes the deposit the code actually sends', () => {
+  const quote = readFileSync(new URL('../quote.html', import.meta.url), 'utf8');
+  const note = (/<div class="br-note">([^<]*)<\/div>/.exec(quote) || [])[1] || '';
+  assert.ok(note, 'the deposit note has gone missing from the quote');
+
+  assert.doesNotMatch(note, /invoiced separately|per item|as its stage/i,
+    'the quote promises per-stage billing that buildInvoice does not do: "' + note + '"');
+  assert.match(note, /before work begins/i,
+    'the quote should say when the deposit is collected: "' + note + '"');
+
+  /* And the behaviour it now describes: one invoice, covering every phase. */
+  const bd = quoteLines(RICH, []);
+  assert.ok(bd.rows.length > 1, 'fixture needs several phases to be worth checking');
+  const inv = buildInvoice(bd, 'deposit', []);
+  assert.equal(inv.totalCents, toCents(bd.depositTotal));
+  const everyPhase = bd.rows.reduce((t, r) => t + toCents(r.deposit), 0);
+  assert.ok(Math.abs(inv.totalCents - everyPhase) <= 2,
+    'the deposit invoice must cover EVERY phase, not just the first: ' +
+    inv.totalCents + ' vs ' + everyPhase);
+});
+
+/* A gravel pad is its own phase, and the question that prompted all this was
+   whether it gets billed on its own. It does not — it rides on the one
+   deposit with everything else. */
+test('a foundation phase is billed on the same deposit as the shed', () => {
+  const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 8, foundation: 'gravel' });
+  const bd = quoteLines(redline, []);
+  const phases = bd.rows.map((r) => r.label);
+  assert.ok(phases.some((l) => /Gravel Pad/i.test(l)), phases.join(' | '));
+  assert.ok(phases.some((l) => /Shed/i.test(l)), phases.join(' | '));
+
+  const inv = buildInvoice(bd, 'deposit', []);
+  const labels = inv.lines.map((l) => l.label);
+  assert.ok(labels.some((l) => /Gravel Pad/i.test(l)), labels.join(' | '));
+  assert.ok(labels.some((l) => /Shed/i.test(l)), labels.join(' | '));
+  assert.equal(inv.totalCents, toCents(bd.depositTotal),
+    'one invoice, both phases');
 });
