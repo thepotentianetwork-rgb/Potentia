@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "d5f6337";
-const WORKER_BUILT_AT = "2026-09-30T05:26:03.404Z";
+const WORKER_BUILD = "0fa2c32";
+const WORKER_BUILT_AT = "2026-09-30T14:11:20.951Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -444,6 +444,14 @@ let SELL = {
     "36\" Residential 6 Panel (Black)": 565, "36\" Residential Half Lite (Black)": 620,
     "36\" Residential Full Lite (Black)": 670,
     "5' Cedar Double": 700, "6' Cedar Double": 1000, "7' Cedar Double": 1100, "8' Cedar Double": 1100,
+    /* The cedar SINGLE is the same product as the double — same cedar leaf,
+       same rails and stiles, same transom lites and cedar casing — with one
+       leaf instead of two. Priced as its own pair of entries rather than as
+       a fraction of a double: the casing, transom and hardware cost the same
+       whatever the leaf count, so half the width is nowhere near half the
+       price. These two numbers are a starting point — set the real ones in
+       Admin \u2192 Pricing \u2192 Doors, which overrides this table. */
+    "3' Cedar Single": 450, "3'6\" Cedar Single": 500,
     "Fairytale Entry": 700, "9' Garage Door": 600,
 
     // Home-Depot-sourced doors — cost × 1.3, computed from COST.doorHomeDepot
@@ -923,6 +931,15 @@ function sellDoorName(dd){
   // Cedar, Fairytale, and the 36" Residential styles are their own SELL.doors
   // entries (not width/trim variants of a plain door) — map them directly so
   // they don't fall through to the cheap plain-door price below.
+  // The cedar single is its own style id, not a narrow 'cedar'. Width alone
+  // can't tell the two apart safely: the ladders would have to meet at some
+  // inch, and a door that lands on the wrong side of it prices as the wrong
+  // product silently. Two ids, two ladders, no seam.
+  if(st==='cedarSingle'){
+    var sl=(w<=38)?"3'":"3'6\"";
+    var sk=sl+" Cedar Single";
+    return { base: sk, key: sk, panel4:false };
+  }
   if(st==='cedar'){
     var cl=(w<=64)?"5'":(w<=78)?"6'":(w<=90)?"7'":"8'";
     var ck=cl+" Cedar Double";
@@ -4591,6 +4608,7 @@ const DOOR_PRICE_ENTRIES = [
   ["slideglass", 70], ["slideglassB", 70],
   ["rollup", 72], ["rollup", 84], ["rollup", 96],
   ["cedar", 60], ["cedar", 72], ["cedar", 84], ["cedar", 96],
+  ["cedarSingle", 36], ["cedarSingle", 42],
   ["fairytale", 36]
 ];
 function computeDoorPrices() {
