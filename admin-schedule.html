@@ -58,7 +58,8 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 .cal-day.today .cal-num{color:#5fd08a}
 .cal-chip{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.06em;padding:3px 5px;border-radius:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:1px solid}
 .chip-shed{color:var(--sp-blue);border-color:rgba(44,192,253,0.45);background:rgba(44,192,253,0.1)}
-.chip-concrete{color:var(--silver);border-color:var(--dim);background:rgba(255,255,255,0.03)}
+.chip-ground{color:var(--silver);border-color:var(--dim);background:rgba(255,255,255,0.03)}
+.chip-shop{color:var(--sp-orange);border-color:rgba(246,148,31,0.45);background:rgba(246,148,31,0.1)}
 .cal-more{font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
 .picked-head{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--dim);margin:28px 0 10px}
 
@@ -88,7 +89,8 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 .job:last-child{border-bottom:none}
 .job-item{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;padding:4px 9px;border-radius:20px;flex-shrink:0;margin-top:3px;white-space:nowrap}
 .item-shed{color:var(--sp-blue);border:1px solid rgba(44,192,253,0.45);background:rgba(44,192,253,0.08)}
-.item-concrete{color:var(--silver);border:1px solid var(--dim)}
+.item-ground{color:var(--silver);border:1px solid var(--dim)}
+.item-shop{color:var(--sp-orange);border:1px solid rgba(246,148,31,0.45);background:rgba(246,148,31,0.08)}
 .job-body{flex:1;min-width:0}
 .job-name{font-size:19px;color:var(--bright);text-decoration:none}
 .job-name:hover{color:var(--sp-blue)}
@@ -202,7 +204,18 @@ function daysBetween(a, b) {
   return Math.round((b - a) / 86400000);
 }
 
-var ITEM_LABEL = { concrete: 'Concrete', shed: 'Shed' };
+/* Every stage a build can have. 'concrete' is the older single entry,
+   kept so rows booked before the planner existed still read properly. */
+var ITEM_LABEL = { prep: 'Site prep', pour: 'Pour', gravel: 'Gravel pad', shop: 'Shop build',
+  shed: 'Install', concrete: 'Concrete' };
+/* Which colour a stage wears. Shop days are deliberately a different
+   colour from site days: one is a day in the shop and one is a drive. */
+function itemClass(item) {
+  if (item === 'shed') return 'shed';
+  if (item === 'shop') return 'shop';
+  if (item === 'prep' || item === 'pour' || item === 'gravel' || item === 'concrete') return 'ground';
+  return 'shed';
+}
 
 var RANGES = [
   { key: 'week',  label: 'Next 7 days',  from: 0,    to: 7 },
@@ -319,7 +332,7 @@ function jobRow(i) {
   job.className = 'job';
 
   var tag = document.createElement('span');
-  tag.className = 'job-item item-' + (i.item === 'concrete' ? 'concrete' : 'shed');
+  tag.className = 'job-item item-' + itemClass(i.item);
   tag.textContent = ITEM_LABEL[i.item] || i.item;
   job.appendChild(tag);
 
@@ -471,7 +484,7 @@ function renderCalendar(installs) {
     dots.className = 'cal-dots';
     jobs.slice(0, 3).forEach(function (entry) {
       var chip = document.createElement('span');
-      chip.className = 'cal-chip chip-' + (entry.job.item === 'concrete' ? 'concrete' : 'shed');
+      chip.className = 'cal-chip chip-' + itemClass(entry.job.item);
       var who = (entry.job.customer_name || '').split(' ').slice(-1)[0] || '';
       /* A continuing day says so, rather than repeating the name as though a
          second job started. */

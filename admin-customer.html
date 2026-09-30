@@ -176,6 +176,14 @@ select:focus{border-color:var(--sp-blue)}
 .install-form button:hover{background:#5ad0ff}
 .install-form button.ghost{background:none;border:1px solid var(--sp-blue);color:var(--sp-blue)}
 .install-form button.ghost:hover{background:rgba(43,181,232,0.12)}
+.plan-wrap{margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid rgba(42,45,56,0.7)}
+.plan-out:empty{display:none}
+.plan-list{margin-top:10px;border:1px solid rgba(43,181,232,0.4);background:rgba(43,181,232,0.06);padding:10px 12px}
+.plan-row{display:flex;justify-content:space-between;gap:14px;font-size:14px;color:var(--fg);padding:3px 0}
+.plan-what{color:var(--bright)}
+.plan-when{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);white-space:nowrap}
+.plan-warn{margin-top:8px;font-size:12px;color:var(--sp-orange);line-height:1.5}
+.plan-err{margin-top:8px;font-size:12px;color:#e0684f;line-height:1.5}
 /* The state a job is actually in, spelled out rather than left to be inferred
    from a date. Derived from the install date every time it renders, so it
    cannot drift out of step with the schedule the way a second stored field
@@ -679,7 +687,8 @@ function summarizeConfig(config) {
   return parts.join(' · ');
 }
 
-var INSTALL_ITEM_LABELS = { concrete: 'Concrete', shed: 'Shed' };
+var INSTALL_ITEM_LABELS = { prep: 'Site prep', pour: 'Pour', gravel: 'Gravel pad', shop: 'Shop build',
+  shed: 'Install', concrete: 'Concrete' };
 
 // One order card can carry several install rows (concrete + shed, possibly
 // more than one of each if a job got redone) — group by submission so each
@@ -711,16 +720,178 @@ function installState(install) {
   return install.install_date <= todayISO() ? 'installed' : 'scheduled';
 }
 
+/* The stages a design implies. The designer stores a CONCRETE pad as
+   foundation:'pad', which reads like any pad — hence the mapping. The worker
+   decides the real plan; this only decides which rows to draw. */
+var FOUNDATION_STAGES = {
+  pad: ['prep', 'pour', 'shop', 'shed'],
+  gravel: ['gravel', 'shop', 'shed']
+};
+var ANCHOR_LABEL = { pad: 'Pour date', gravel: 'Pad date' };
+
+function stagesFor(details, installs, submissionId) {
+  var foundation = (details.config || {}).foundation;
+  var planned = FOUNDATION_STAGES[foundation] || ['shop', 'shed'];
+  /* Anything already booked that the design does not imply — a legacy
+     'concrete' row, or a stage kept after the design changed — still has to
+     be visible, or it cannot be removed. */
+  var booked = installs.filter(function (i) { return i.submission_id === submissionId; })
+    .map(function (i) { return i.item; });
+  return planned.concat(booked.filter(function (b) { return planned.indexOf(b) === -1; }));
+}
+
+/* ONE DATE, THE WHOLE BUILD.
+ *
+ * Five dates typed by hand is how two land on the same day, or the shop day
+ * ends up after the install. The worker works them out — it owns the rules
+ * and the weekends — and this shows them before anything is booked. */
+function renderPlanner(block, s, details, installs) {
+  var foundation = (details.config || {}).foundation;
+  var already = installs.filter(function (i) { return i.submission_id === s.id; }).length;
+
+  var wrap = document.createElement('div');
+  wrap.className = 'plan-wrap';
+
+  var form = document.createElement('div');
+  form.className = 'install-form';
+
+  var dateLabel = document.createElement('span');
+  dateLabel.className = 'install-item';
+  dateLabel.style.width = 'auto';
+  dateLabel.textContent = ANCHOR_LABEL[foundation] || 'Install date';
+  form.appendChild(dateLabel);
+
+  var date = document.createElement('input');
+  date.type = 'date';
+  form.appendChild(date);
+
+  var days = document.createElement('input');
+  days.type = 'number';
+  days.min = '1';
+  days.max = '14';
+  days.step = '1';
+  days.value = '2';
+  days.title = 'Days on site for the install itself';
+  form.appendChild(days);
+
+  var go = document.createElement('button');
+  go.type = 'button';
+  go.textContent = already ? 'Re-plan' : 'Plan the build';
+  form.appendChild(go);
+  wrap.appendChild(form);
+
+  var out = document.createElement('div');
+  out.className = 'plan-out';
+  wrap.appendChild(out);
+
+  function fail(msg) {
+    out.innerHTML = '';
+    var e = document.createElement('div');
+    e.className = 'plan-err';
+    e.textContent = msg;
+    out.appendChild(e);
+  }
+
+  function post(body) {
+    return authFetch('/admin/submissions/' + s.id + '/plan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  }
+
+  go.addEventListener('click', function () {
+    if (!date.value) { fail('Pick a ' + dateLabel.textContent.toLowerCase() + ' first.'); return; }
+    go.disabled = true;
+    out.innerHTML = '';
+    post({ anchor_date: date.value, install_days: Number(days.value) || 2 })
+      .then(function (r) {
+        go.disabled = false;
+        if (!r.ok) { fail((r.data && r.data.error) || 'Could not work that out.'); return; }
+        show(r.data);
+      })
+      .catch(function () { go.disabled = false; fail('Could not reach the server.'); });
+  });
+
+  function show(plan) {
+    out.innerHTML = '';
+    var list = document.createElement('div');
+    list.className = 'plan-list';
+    plan.stages.forEach(function (st) {
+      var row = document.createElement('div');
+      row.className = 'plan-row';
+      var what = document.createElement('span');
+      what.className = 'plan-what';
+      what.textContent = st.label;
+      var when = document.createElement('span');
+      when.className = 'plan-when';
+      var d = new Date(st.install_date + 'T00:00:00');
+      when.textContent = d.toLocaleDateString(undefined,
+        { weekday: 'short', month: 'short', day: 'numeric' }) +
+        (st.days > 1 ? ' · ' + st.days + ' days' : '');
+      row.appendChild(what);
+      row.appendChild(when);
+      list.appendChild(row);
+    });
+    out.appendChild(list);
+
+    if (plan.replaces) {
+      var warn = document.createElement('div');
+      warn.className = 'plan-warn';
+      warn.textContent = 'This replaces ' + plan.replaces + ' booking(s) already on this order.';
+      out.appendChild(warn);
+    }
+
+    var acts = document.createElement('div');
+    acts.className = 'install-form';
+    acts.style.marginTop = '10px';
+    var book = document.createElement('button');
+    book.type = 'button';
+    book.textContent = plan.replaces ? 'Replace and book' : 'Book these dates';
+    var cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'ghost';
+    cancel.textContent = 'Cancel';
+    acts.appendChild(book);
+    acts.appendChild(cancel);
+    out.appendChild(acts);
+
+    cancel.addEventListener('click', function () { out.innerHTML = ''; });
+    book.addEventListener('click', function () {
+      if (plan.replaces && !confirm('Replace the ' + plan.replaces +
+          ' booking(s) already on this order?')) return;
+      book.disabled = true;
+      book.textContent = 'Booking…';
+      post({ anchor_date: date.value, install_days: Number(days.value) || 2,
+             confirm: true, replace: !!plan.replaces })
+        .then(function (r) {
+          if (r.ok) { loadCustomer(); return; }
+          book.disabled = false;
+          book.textContent = 'Book these dates';
+          fail((r.data && r.data.error) || 'Could not book it.');
+        })
+        .catch(function () {
+          book.disabled = false;
+          book.textContent = 'Book these dates';
+          fail('Could not reach the server.');
+        });
+    });
+  }
+
+  block.appendChild(wrap);
+}
+
 function renderInstallBlock(card, s, details, installs) {
-  var hasConcrete = details.config && details.config.foundation === 'pad';
-  var items = hasConcrete ? ['concrete', 'shed'] : ['shed'];
+  var items = stagesFor(details, installs, s.id);
 
   var block = document.createElement('div');
   block.className = 'install-block';
   var label = document.createElement('div');
   label.className = 'install-label';
-  label.textContent = 'Install';
+  label.textContent = 'Build schedule';
   block.appendChild(label);
+
+  renderPlanner(block, s, details, installs);
 
   items.forEach(function (item) {
     var existing = installsForOrder(installs, s.id, item);
@@ -728,7 +899,7 @@ function renderInstallBlock(card, s, details, installs) {
     row.className = 'install-row';
     var itemLabel = document.createElement('span');
     itemLabel.className = 'install-item';
-    itemLabel.textContent = INSTALL_ITEM_LABELS[item];
+    itemLabel.textContent = INSTALL_ITEM_LABELS[item] || item;
     row.appendChild(itemLabel);
 
     // Pending / Scheduled / Installed, worked out from the logged date at
@@ -751,7 +922,7 @@ function renderInstallBlock(card, s, details, installs) {
       del.type = 'button';
       del.textContent = 'Remove';
       del.addEventListener('click', function () {
-        if (!confirm('Remove this ' + INSTALL_ITEM_LABELS[item].toLowerCase() + ' install date?')) return;
+        if (!confirm('Remove the ' + (INSTALL_ITEM_LABELS[item] || item).toLowerCase() + ' date?')) return;
         authFetch('/admin/installs/' + latest.id, { method: 'DELETE' }).then(function (r) {
           if (r.ok) loadCustomer();
         });

@@ -320,3 +320,200 @@ test('a stranded install is still returned on the customer', async () => {
   assert.equal((await api(env, 'GET', '/admin/schedule', null, t)).data.installs.length, 0,
     'but the schedule must not');
 });
+
+/* ---- planning a build from one date ------------------------------------- */
+
+async function planned(env, t, body, subId = 7) {
+  return api(env, 'POST', `/admin/submissions/${subId}/plan`, body, t);
+}
+function withFoundation(foundation) {
+  const s = setup();
+  s.db.prepare('UPDATE submissions SET details = ? WHERE id = 7')
+    .run(JSON.stringify({ redline, config: { w: 10, l: 16, style: 'barn', foundation } }));
+  return s;
+}
+
+test('a concrete order plans prep, pour, shop and install from the pour date', async () => {
+  const { env } = withFoundation('pad');
+  const t = await token(env);
+  const r = await planned(env, t, { anchor_date: '2026-10-07' });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.preview, true, 'nothing is written without confirm');
+  assert.equal(r.data.foundation, 'concrete');
+  assert.equal(r.data.anchor_label, 'Pour date');
+  assert.deepEqual(r.data.stages.map((s) => [s.item, s.install_date, s.days]), [
+    ['prep', '2026-10-06', 1],
+    ['pour', '2026-10-07', 1],
+    ['shop', '2026-10-13', 1],
+    ['shed', '2026-10-14', 2],
+  ]);
+  assert.deepEqual(r.data.stages.map((s) => s.label),
+    ['Site prep', 'Concrete pour', 'Shop build', 'Shed install']);
+});
+
+test('a gravel order plans pad, shop and install with no cure week', async () => {
+  const { env } = withFoundation('gravel');
+  const t = await token(env);
+  const r = await planned(env, t, { anchor_date: '2026-10-05' });
+  assert.equal(r.data.foundation, 'gravel');
+  assert.equal(r.data.anchor_label, 'Pad date');
+  assert.deepEqual(r.data.stages.map((s) => [s.item, s.install_date]), [
+    ['gravel', '2026-10-05'], ['shop', '2026-10-06'], ['shed', '2026-10-07'],
+  ]);
+});
+
+test('an order with no foundation work plans a shop day and an install', async () => {
+  const { env } = withFoundation('none');
+  const t = await token(env);
+  const r = await planned(env, t, { anchor_date: '2026-10-06', install_days: 3 });
+  assert.equal(r.data.anchor_label, 'Install date');
+  assert.deepEqual(r.data.stages.map((s) => [s.item, s.install_date, s.days]), [
+    ['shop', '2026-10-05', 1], ['shed', '2026-10-06', 3],
+  ]);
+});
+
+test('a preview writes nothing at all', async () => {
+  const { db, env } = withFoundation('pad');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07' });
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM installs').get().n, 0);
+});
+
+test('confirming books every stage, in order', async () => {
+  const { db, env } = withFoundation('pad');
+  const t = await token(env);
+  const r = await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.booked, 4);
+  const rows = db.prepare('SELECT item, install_date, days FROM installs ORDER BY install_date').all();
+  assert.deepEqual(rows.map((x) => x.item), ['prep', 'pour', 'shop', 'shed']);
+  assert.equal(rows[3].days, 2);
+});
+
+/* The dates are recomputed on confirm. A plan the browser worked out is not
+   one the worker should be inserting — and the browser is where a stale page,
+   a wrong clock or a hand-edited request comes from. */
+test('the dates come from the worker, never from the request', async () => {
+  const { db, env } = withFoundation('pad');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true,
+    stages: [{ item: 'shed', install_date: '1999-01-01', days: 99 }] });
+  const rows = db.prepare('SELECT install_date, days FROM installs').all();
+  assert.ok(!rows.some((x) => x.install_date === '1999-01-01'), 'it took dates from the caller');
+  assert.ok(!rows.some((x) => x.days === 99));
+});
+
+/* Replacing throws away what was booked, so it is never the default. */
+test('it refuses to overwrite existing bookings unless told to', async () => {
+  const { db, env } = withFoundation('pad');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+
+  const again = await planned(env, t, { anchor_date: '2026-10-21', confirm: true });
+  assert.equal(again.status, 409);
+  assert.equal(again.data.replaces, 4);
+  assert.match(again.data.error, /already has 4 booking/);
+  assert.equal(db.prepare("SELECT install_date FROM installs WHERE item='pour'").get().install_date,
+    '2026-10-07', 'the original dates survived the refusal');
+
+  const replaced = await planned(env, t, { anchor_date: '2026-10-21', confirm: true, replace: true });
+  assert.equal(replaced.status, 200);
+  assert.equal(replaced.data.replaced, 4);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM installs').get().n, 4, 'replaced, not added to');
+  assert.equal(db.prepare("SELECT install_date FROM installs WHERE item='pour'").get().install_date,
+    '2026-10-21');
+});
+
+test('a preview says how many bookings it would replace', async () => {
+  const { env } = withFoundation('pad');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+  const r = await planned(env, t, { anchor_date: '2026-10-21' });
+  assert.equal(r.data.replaces, 4, 'so the CRM can say what is about to be lost');
+});
+
+test('a date it cannot read is refused, with the right field named', async () => {
+  const { db, env } = withFoundation('gravel');
+  const t = await token(env);
+  for (const bad of ['', 'next week', '07/10/2026', '2026-02-30']) {
+    const r = await planned(env, t, { anchor_date: bad, confirm: true });
+    assert.equal(r.status, 400, JSON.stringify(bad));
+    assert.equal(r.data.anchor_label, 'Pad date');
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM installs').get().n, 0);
+});
+
+test('planning needs an admin token, and a real order', async () => {
+  const { env } = withFoundation('pad');
+  const t = await token(env);
+  assert.equal((await api(env, 'POST', '/admin/submissions/7/plan', { anchor_date: '2026-10-07' })).status, 401);
+  assert.equal((await planned(env, t, { anchor_date: '2026-10-07' }, 9999)).status, 404);
+});
+
+/* A planned build has to reach the schedule, which only lists won orders. */
+test('a planned build shows up on the schedule', async () => {
+  const { db, env } = withFoundation('pad');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+  db.prepare("UPDATE submissions SET status = 'won' WHERE id = 7").run();
+  const r = await api(env, 'GET', '/admin/schedule', null, t);
+  assert.deepEqual(r.data.installs.map((i) => i.item), ['prep', 'pour', 'shop', 'shed']);
+  assert.ok(r.data.installs.every((i) => i.calendar_url), 'each stage can be invited from');
+});
+
+/* ---- who gets invited to what ------------------------------------------- */
+
+/* A shop day is a day in your own shop. An invite for it on the customer's
+   calendar is an appointment for a day when nothing happens at their house —
+   they either turn up, or they stop trusting the invites. */
+test('the customer is invited to site days, not to shop days', async () => {
+  const { env } = withFoundation('pad');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+
+  const r = await api(env, 'GET', '/admin/customers/1', null, t);
+  const guests = {};
+  r.data.installs.forEach((i) => {
+    guests[i.item] = decodeURIComponent(params(i.calendar_url).add || '');
+  });
+
+  assert.equal(guests.prep, 'hank@roof.test', 'prep is at their place');
+  assert.equal(guests.pour, 'hank@roof.test', 'so is the pour');
+  assert.equal(guests.shed, 'hank@roof.test', 'and the install');
+  assert.equal(guests.shop, '', 'but the shop day is not');
+});
+
+test('the crew are on every stage, including the shop day', async () => {
+  const { env } = withFoundation('pad');
+  env.INSTALL_CALENDAR_GUESTS = 'crew@shedpro.test';
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+
+  const r = await api(env, 'GET', '/admin/schedule', null, t);
+  const sub = await api(env, 'GET', '/admin/customers/1', null, t);
+  assert.ok(sub.data.installs.length, 'fixture produced no installs');
+  sub.data.installs.forEach((i) => {
+    const add = decodeURIComponent(params(i.calendar_url).add || '');
+    assert.ok(add.indexOf('crew@shedpro.test') !== -1,
+      i.item + ' left the crew off: "' + add + '"');
+  });
+  /* And the shop day carries the crew and ONLY the crew. */
+  const shop = sub.data.installs.find((i) => i.item === 'shop');
+  assert.equal(decodeURIComponent(params(shop.calendar_url).add), 'crew@shedpro.test');
+  assert.ok(r.data.installs.length >= 0);
+});
+
+test('each stage is named for what it is, on its own invite', async () => {
+  const { env } = withFoundation('pad');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+  const r = await api(env, 'GET', '/admin/customers/1', null, t);
+  const titles = {};
+  r.data.installs.forEach((i) => {
+    titles[i.item] = decodeURIComponent(params(i.calendar_url).text);
+  });
+  assert.equal(titles.prep, 'Site prep — Hank Ellis');
+  assert.equal(titles.pour, 'Concrete pour — Hank Ellis');
+  assert.equal(titles.shop, 'Shop build — Hank Ellis');
+  assert.equal(titles.shed, 'Shed install — Hank Ellis');
+});

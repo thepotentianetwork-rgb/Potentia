@@ -980,6 +980,39 @@ builds dates from their parts in local time, and the browser test runs Chrome
 under `TZ=America/Denver` for exactly this reason: in UTC, where this machine
 and Cloudflare both run, the wrong version passes everything.
 
+## Planning a build from one date
+
+On a won order, **Build schedule → Plan the build**. Enter one date and the
+rest follow. It shows the plan before booking anything.
+
+| Foundation | You enter | What gets booked |
+|---|---|---|
+| Concrete pad | Pour date | prep (working day before), pour, shop build (day before install), install a **week** after the pour |
+| Gravel pad | Pad date | pad, shop build, install — consecutive working days, no cure to wait out |
+| None | Install date | shop build the working day before, then the install |
+
+The install is **2 days** by default; change it in the form. Only the install
+takes more than a day.
+
+**Working days are Monday to Friday.** Saturday is a catch-up day, not a day to
+start something on, so nothing is ever scheduled onto a weekend. That matters
+most for the shop day: an install on a Monday is built on the Friday, not the
+Sunday. A weekend date typed into the form is moved to the Monday, and
+everything else is planned from there rather than being quietly a day out.
+
+The cure week is counted in **calendar** days — concrete cures over the
+weekend too — then moved onto a working day if it needs to be.
+
+Re-planning replaces what is already booked, so it never happens by default:
+the preview says how many bookings it would lose and the button says *Replace
+and book*. The dates are recomputed on the server when you confirm, never
+taken from the browser.
+
+The rules live in `worker/schedule.js` and are tested against named weekdays,
+including in six timezones — local-time arithmetic moves a plain calendar day
+for anyone east of UTC, and this machine and Cloudflare both run in UTC where
+the wrong version looks identical.
+
 ## Install invites
 
 Once an order is **won** and an install date is booked, that install row has an
@@ -989,7 +1022,10 @@ Once an order is **won** and an install date is booked, that install row has an
 - Dates — the install date, spanning the number of days booked
 - Location — the customer's address, so it opens in maps from the phone
 - Description — the build, order number, customer's phone, and the install note
-- **Guests — the customer**
+- **Guests — the customer**, on site days only. A shop day is a day in your
+  own shop; an invite for it on the customer's calendar is an appointment for
+  a day when nothing happens at their house. The crew list
+  (`INSTALL_CALENDAR_GUESTS`) goes on every stage, shop days included.
 
 Press **Save** in Google Calendar and Google emails them the invite. That is
 what makes it an invite rather than a note to yourself.

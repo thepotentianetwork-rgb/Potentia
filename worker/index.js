@@ -21,7 +21,8 @@
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap } from "./quotelines.js";
-import { googleCalendarUrl, installTitle, installDetails } from "./calendar.js";
+import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
+import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
 import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
@@ -672,7 +673,7 @@ async function handleGetCustomer(request, env, origin, id) {
         orderId: i.submission_id,
       }),
       location: [customer.address, customer.city, customer.state].filter(Boolean).join(", "),
-      guests: customer.email ? [customer.email].concat(calGuests) : calGuests,
+      guests: (customer.email && isOnSite(i.item)) ? [customer.email].concat(calGuests) : calGuests,
     });
   });
 
@@ -832,6 +833,75 @@ function configSummary(config) {
   if (config.style) parts.push(config.style);
   if (config.siding) parts.push(config.siding);
   return parts.join(" \u00b7 ");
+}
+
+/* POST /admin/submissions/:id/plan — the whole build from one date.
+ *
+ * Typing five dates by hand is how two land on the same day, or the shop day
+ * ends up after the install. One date goes in and the stages come out, worked
+ * out by planBuild() — which is where the rules live and where they are
+ * tested.
+ *
+ * Without `confirm` it only returns the plan, so the CRM can show it before
+ * anything is written. The dates are recomputed on confirm rather than taken
+ * from the browser: a plan the customer's phone worked out is not one this
+ * should be inserting.
+ */
+async function handlePlanBuild(request, env, origin, submissionId) {
+  await ensureInstallsTable(env);
+  const body = await request.json().catch(() => ({}));
+
+  const sub = await env.DB.prepare(
+    "SELECT id, customer_id, details FROM submissions WHERE id = ?"
+  ).bind(submissionId).first();
+  if (!sub) return json({ error: "no such order" }, 404, origin);
+
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+  const kind = foundationKind(details.config);
+
+  const stages = planBuild(String(body.anchor_date || ""), {
+    foundation: kind,
+    installDays: body.install_days,
+  });
+  if (!stages) {
+    return json({ error: "a date is needed, as YYYY-MM-DD", anchor_label: anchorLabel(kind) },
+      400, origin);
+  }
+
+  const shape = {
+    foundation: kind,
+    anchor_label: anchorLabel(kind),
+    stages: stages.map((s) => ({ ...s, label: STAGE_LABELS[s.item] || s.item })),
+  };
+
+  const { results: existing } = await env.DB.prepare(
+    "SELECT id, item, install_date FROM installs WHERE submission_id = ?"
+  ).bind(submissionId).all();
+
+  if (!body.confirm) {
+    return json({ ok: true, preview: true, replaces: (existing || []).length, ...shape }, 200, origin);
+  }
+
+  /* Replacing is the normal case — dates slip and the whole run moves — but
+     it throws away what was booked, so it is never the default. The caller
+     has to have seen how many rows it is about to lose. */
+  if ((existing || []).length && !body.replace) {
+    return json({ error: "this order already has " + existing.length +
+      " booking(s). Confirm replacing them.", replaces: existing.length, ...shape }, 409, origin);
+  }
+  if ((existing || []).length) {
+    await env.DB.prepare("DELETE FROM installs WHERE submission_id = ?").bind(submissionId).run();
+  }
+
+  const now = new Date().toISOString();
+  for (const s of stages) {
+    await env.DB.prepare(
+      "INSERT INTO installs (submission_id, item, install_date, days, note, created_at) VALUES (?,?,?,?,?,?)"
+    ).bind(submissionId, s.item, s.install_date, s.days, body.note ? String(body.note).slice(0, 500) : null, now).run();
+  }
+
+  return json({ ok: true, booked: stages.length, replaced: (existing || []).length, ...shape }, 200, origin);
 }
 
 /* GET /admin/activity — what has happened lately, newest first.
@@ -1024,7 +1094,7 @@ async function handleSchedule(request, env, origin) {
         details: installDetails({ summary, phone: r.customer_phone, note: r.note,
                                   days: r.days, orderId: r.submission_id }),
         location,
-        guests: r.customer_email ? [r.customer_email].concat(calGuests) : calGuests,
+        guests: (r.customer_email && isOnSite(r.item)) ? [r.customer_email].concat(calGuests) : calGuests,
       }),
     };
   });
@@ -4129,6 +4199,12 @@ export default {
          rejected before any database work happens. */
       if (path === "/stripe/webhook" && request.method === "POST") {
         return await handleStripeWebhook(request, env, origin);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.slice("/admin/submissions/".length, -"/plan".length));
+        if (!pid) return json({ error: "bad order id" }, 400, origin);
+        return await handlePlanBuild(request, env, origin, pid);
       }
       if (path === "/admin/activity" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

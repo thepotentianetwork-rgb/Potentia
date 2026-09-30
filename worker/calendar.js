@@ -24,7 +24,25 @@ export const GOOGLE_CALENDAR_BASE = 'https://calendar.google.com/calendar/render
 /* Titles the install rows already use, so the calendar says what the CRM
    says. Kept here rather than imported: the bundler inlines every module at
    top level and these must not collide with the CRM's own copy. */
-export const CAL_ITEM_LABELS = { concrete: 'Concrete pour', shed: 'Shed install' };
+export const CAL_ITEM_LABELS = {
+  prep: 'Site prep',
+  pour: 'Concrete pour',
+  gravel: 'Gravel pad',
+  shop: 'Shop build',
+  shed: 'Shed install',
+  concrete: 'Concrete pour'
+};
+
+/* WHICH STAGES HAPPEN AT THE CUSTOMER'S PLACE.
+ *
+ * A shop day is a day in your own shop. Inviting the customer to it puts an
+ * appointment on their calendar for a day when nothing happens at their
+ * house, which is worse than not inviting them at all — they will either turn
+ * up or stop trusting the invites. Only site days get the customer; the crew
+ * list goes on everything, because the crew need to know about both. */
+export function isOnSite(item) {
+  return item !== 'shop';
+}
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 

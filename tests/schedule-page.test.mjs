@@ -327,7 +327,7 @@ check('the heading names the right weekday, not yesterday\u2019s',
   { head: (month[0] || {}).head, expected: todayName });
 
 const first = ((month[0] || {}).jobs || [])[0] || {};
-check('a job carries its detail', first.item === 'Shed' &&
+check('a job carries its detail', first.item === 'Install' &&
   first.name === 'Hank Ellis' && first.href === 'admin-customer.html?id=1', first);
 check('the install note is shown', first.note === 'gate code 1234', first.note);
 check('the invite carries the customer AND the crew',
