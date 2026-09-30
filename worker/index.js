@@ -42,6 +42,7 @@ const DOOR_PRICE_ENTRIES = [
   ["slideglass", 70], ["slideglassB", 70],
   ["rollup", 72], ["rollup", 84], ["rollup", 96],
   ["cedar", 60], ["cedar", 72], ["cedar", 84], ["cedar", 96],
+  ["cedarSingle", 36], ["cedarSingle", 42],
   ["fairytale", 36]
 ];
 function computeDoorPrices() {
