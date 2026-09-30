@@ -25,7 +25,9 @@ test('the premium group holds both products, at every size asked for', () => {
      up as a tile nobody can click rather than as an error. */
   const sizes = (re) => premium().filter((e) => re.test(e.key))
     .map((e) => e.w + 'x' + e.h).join(',');
-  assert.equal(sizes(/Bi-Fold Bar/), '60x36,72x40,96x40');
+  /* The SAME four sizes for both, so the two price ladders compare line for
+     line and choosing between them is choosing a mechanism, not a size. */
+  assert.equal(sizes(/Bi-Fold Bar/), '48x36,60x42,72x42,96x48');
   assert.equal(sizes(/Lift-Up Bar/), '48x36,60x42,72x42,96x48');
   // Nothing else has crept into the tier.
   assert.equal(premium().filter((e) => !/(Bi-Fold|Lift-Up) Bar/.test(e.key)).length, 0);
@@ -36,6 +38,42 @@ test('the premium group holds both products, at every size asked for', () => {
   }
   for (const e of premium()) {
     assert.ok(e.w > e.h, `${e.key} should be a wide serving opening`);
+  }
+});
+
+/* THE PRICE LIST, AS SUPPLIED. Normally a test that restates a constant is
+   worth nothing — it passes by agreeing with whatever is there. These numbers
+   are different: they are not a derived value, they are what ShedPro sells
+   these windows for, handed over as a list. The failure this catches is a
+   transposition — 5795 where 7495 belongs, a lift-up row typed at a bi-fold
+   price — which every other test in this file is blind to, because a wrong
+   number itemises, totals and flags exactly like a right one.
+   Change these ONLY against a new list from the business. */
+test('both price ladders are exactly what ShedPro quotes', () => {
+  const expect = {
+    'Black Bi-Fold Bar 48x36': 2495,
+    'Black Bi-Fold Bar 60x42': 3495,
+    'Black Bi-Fold Bar 72x42': 3995,
+    'Black Bi-Fold Bar 96x48': 5795,
+    'Black Lift-Up Bar 48x36': 3695,
+    'Black Lift-Up Bar 60x42': 4995,
+    'Black Lift-Up Bar 72x42': 5995,
+    'Black Lift-Up Bar 96x48': 7495
+  };
+  for (const [key, price] of Object.entries(expect)) {
+    assert.equal(SELL.windows[key], price, `${key} is priced at ${SELL.windows[key]}`);
+  }
+  // Every premium entry is covered above — a new size must be priced here too.
+  assert.equal(premium().map((e) => e.key).sort().join('|'),
+               Object.keys(expect).sort().join('|'));
+
+  assert.equal(SELL.options.flat['Exterior Bar Ledge'], 695);
+
+  /* The lift-up is the dearer of the two at every size. Not a preference —
+     it is what the list says, and it is the shape a transposed pair breaks. */
+  for (const size of ['48x36', '60x42', '72x42', '96x48']) {
+    assert.ok(SELL.windows['Black Lift-Up Bar ' + size] > SELL.windows['Black Bi-Fold Bar ' + size],
+      `at ${size} the lift-up is not above the bi-fold`);
   }
 });
 
@@ -78,7 +116,7 @@ test('a placed bar window itemises at its own price, unflagged', () => {
     'a bar window is being reported as unpriced');
 });
 
-test('the bar ledge is a line of its own, not folded into the window', () => {
+test('the bar ledge is a line of its own, at one flat price', () => {
   /* Folded into the window's price it would be invisible: a customer turning
      the ledge off would watch the total drop with nothing on the quote to say
      what left. */
@@ -94,19 +132,26 @@ test('the bar ledge is a line of its own, not folded into the window', () => {
   assert.equal(onLines.length, 2, 'the ledge should add a line');
   assert.equal(offLines.length, 1, 'ledge off should add nothing');
   const ledgeLine = onLines[1];
-  assert.match(ledgeLine.label, /Bar Ledge/, `"${ledgeLine.label}" should name the ledge`);
-  assert.match(ledgeLine.label, new RegExp(String(e.w / 12) + 'ft'), 'the line should say how long it is');
+  assert.equal(ledgeLine.label, 'Exterior Bar Ledge');
   assert.ok(ledgeLine.price > 0, 'the ledge is on the quote at nothing');
+  /* No footage on the label. It was priced per linear foot first and the line
+     read "Exterior Bar Ledge 6ft"; against a flat fee that reads as a rate a
+     customer can divide out and query. */
+  assert.ok(!/\dft/.test(ledgeLine.label), `"${ledgeLine.label}" still carries a length`);
 
   // The difference in the TOTAL is exactly the ledge line, so the line is not
   // decoration over a price charged somewhere else as well.
   assert.equal(on.customer - off.customer, ledgeLine.price);
-  // It scales with the window, so an 8ft bar costs more to counter than a 4ft
-  // one. Measured between the widest and the narrowest lift-up rather than
-  // between two entries that happened to be the same size — which is what the
-  // first version of this compared, and it passed by comparing a thing to itself.
-  assert.ok(sellBarLedge({ type: e.key, w: e.w }) > sellBarLedge({ type: small.key, w: small.w }),
-    `a ${e.w}" ledge should cost more than a ${small.w}" one`);
+
+  /* ONE price per ledge, whatever the window. This is the assertion that
+     flipped: while it was per-foot, an 8ft ledge cost more than a 4ft one and
+     this test said so. ShedPro quotes it flat, so the two must now MATCH —
+     and the same number has to reach both products. */
+  assert.equal(sellBarLedge({ type: e.key, w: e.w }), sellBarLedge({ type: small.key, w: small.w }),
+    'the ledge is still being priced by the foot');
+  const fold = premium().find((x) => /Bi-Fold Bar/.test(x.key));
+  assert.equal(sellBarLedge({ type: fold.key, w: fold.w }), ledgeLine.price,
+    'the two products are quoting different prices for the same counter');
 });
 
 test('only a bar window gets a ledge', () => {
