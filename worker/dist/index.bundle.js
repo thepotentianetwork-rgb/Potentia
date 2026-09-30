@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "30bfd1e";
-const WORKER_BUILT_AT = "2026-09-30T14:50:14.589Z";
+const WORKER_BUILD = "221c36e";
+const WORKER_BUILT_AT = "2026-09-30T15:03:06.249Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -561,7 +561,14 @@ let SELL = {
        overrides all three. */
     "Black Bi-Fold Bar 60x36": 3200,
     "Black Bi-Fold Bar 72x40": 3800,
-    "Black Bi-Fold Bar 96x40": 4600
+    "Black Bi-Fold Bar 96x40": 4600,
+    /* The lift-up is one sash and two struts against the bi-fold's three
+       panels, six hinges and a running track, so it sits well below it at
+       every size. Placeholders, same as above. */
+    "Black Lift-Up Bar 48x36": 1800,
+    "Black Lift-Up Bar 60x42": 2400,
+    "Black Lift-Up Bar 72x42": 2800,
+    "Black Lift-Up Bar 96x48": 3600
   },
 
   // ── SIDING (upcharge, per sqft of WALL AREA) ──
@@ -615,7 +622,16 @@ let SELL = {
       "Shed Removal": 1000, "Concrete Removal": 1000
     },
     perLinFt: { // × linear feet the customer specifies
-      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17
+      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17,
+      /* THE EXTERIOR BAR LEDGE, charged by the linear foot of the WINDOW it
+         serves — not of the slab, which is wider than the window by its
+         casing and its overhang. Those two figures live in the 3D builder in
+         the other repo; pricing off them would put a rendering constant on
+         the quote and let the two drift apart silently. The window's own
+         width is what the customer asked for and what the rate absorbs.
+         PLACEHOLDER: a real per-foot number for the counter and its brackets
+         goes here. Admin \u2192 Pricing \u2192 options.perLinFt overrides it. */
+      "Exterior Bar Ledge": 95
     },
     perSqft: {  // × area — see basis for each
       "Loft":               {rate:3.00,  basis:"loft"},   // customer-specified loft size
@@ -1104,7 +1120,18 @@ const WINDOW_CATALOG = [
      equal lights rather than two and a remainder. */
   {grp:"Premium", key:"Black Bi-Fold Bar 60x36", label:"Bi-Fold Bar Window 5' \u00b7 Black", w:60,h:36},
   {grp:"Premium", key:"Black Bi-Fold Bar 72x40", label:"Bi-Fold Bar Window 6' \u00b7 Black", w:72,h:40},
-  {grp:"Premium", key:"Black Bi-Fold Bar 96x40", label:"Bi-Fold Bar Window 8' \u00b7 Black", w:96,h:40}
+  {grp:"Premium", key:"Black Bi-Fold Bar 96x40", label:"Bi-Fold Bar Window 8' \u00b7 Black", w:96,h:40},
+  /* The LIFT-UP is the other half of the premium pair and a different product,
+     not a variant: one large sash hinged along its TOP edge, lifting to nearly
+     horizontal on two gas struts to make a canopy over the bar. The bi-fold is
+     three vertically hinged panels folding to one side. Nothing is shared but
+     the serving ledge, so they are separate keys, separate geometry and
+     separate prices — a customer who says "the lift-up one" means one of
+     these, and there is no size at which the two meet. */
+  {grp:"Premium", key:"Black Lift-Up Bar 48x36", label:"Lift-Up Bar Window 4' \u00b7 Black", w:48,h:36},
+  {grp:"Premium", key:"Black Lift-Up Bar 60x42", label:"Lift-Up Bar Window 5' \u00b7 Black", w:60,h:42},
+  {grp:"Premium", key:"Black Lift-Up Bar 72x42", label:"Lift-Up Bar Window 6' \u00b7 Black", w:72,h:42},
+  {grp:"Premium", key:"Black Lift-Up Bar 96x48", label:"Lift-Up Bar Window 8' \u00b7 Black", w:96,h:48}
 ];
 function windowCatEntry(key){
   for(var i=0;i<WINDOW_CATALOG.length;i++) if(WINDOW_CATALOG[i].key===key) return WINDOW_CATALOG[i];
@@ -1148,6 +1175,29 @@ function sellWindowPrice(wd){
 // they'd fall through the area buckets and quote as white vinyl.
 function sellWindowPriced(wd){
   return !!(wd && wd.type && SELL.windows[wd.type]!=null);
+}
+
+/* ── THE BAR WINDOWS ──
+   Premium serving windows: one folds to the side, one lifts overhead, both
+   open onto a counter. Recognised through the CATALOG, not by a regex on the
+   key alone — a bare /bar/ test would one day catch a "Barn Sash" and quietly
+   start charging it for a countertop. The group has to say Premium too. */
+function isBarWindowKey(key){
+  var e = windowCatEntry(String(key||''));
+  return !!e && e.grp==='Premium' && /\bBar\b/.test(e.key);
+}
+function barLedgeLengthFt(wd){
+  return Math.round(((wd && wd.w) || 0) / 12 * 10) / 10;
+}
+/* What the optional exterior ledge costs on a placed window. Zero unless this
+   is a bar window AND the ledge is on. Default ON: the ledge is the reason
+   these windows exist, so only an explicit false removes it — the same rule
+   the 3D builder uses, and it is itemised either way so nobody pays for one
+   without seeing it on the quote. */
+function sellBarLedge(wd){
+  if(!wd || !isBarWindowKey(wd.type) || wd.ledge===false) return 0;
+  var rate = SELL.options.perLinFt["Exterior Bar Ledge"] || 0;
+  return barLedgeLengthFt(wd) * rate;
 }
 
 /* What the CUSTOMER reads on the siding line.
@@ -1457,6 +1507,15 @@ function computePricing(cfgIn, opts){
         windowSell += p;
         windowSellLines.push({label:windowDisplayName(wd.type), price:p, est:!priced});
         if(!priced) unpriced.push((wd.type?windowDisplayName(wd.type):'Untyped window')+' — no workbook price, estimated by area');
+      }
+      /* The bar ledge is its own line, right after the window it hangs on.
+         Folded into the window's price it would be invisible: a customer
+         turning the ledge off would watch the total drop with nothing on the
+         quote to say what left. */
+      var ledge = sellBarLedge(wd);
+      if(ledge>0){
+        windowSell += ledge;
+        windowSellLines.push({label:'Exterior Bar Ledge '+barLedgeLengthFt(wd)+'ft', price:ledge});
       }
     });
   }
@@ -7561,9 +7620,19 @@ function computeOptionPrices(cfg) {
     return { 16: lenFt * shelfRate16, 24: lenFt * shelfRate24 };
   });
 
+  /* WHAT THE BAR LEDGE WOULD COST on each placed window, one entry per
+     cfg.windows index, in dollars. Computed with the ledge forced ON so the
+     On/Off control can price BOTH states — a tile that only knows the cost
+     when the option is already selected cannot say what selecting it costs.
+     A dollar amount per window, not the $/ft rate, for the same reason the
+     shelving block above hands over amounts: the rate is ours. */
+  const barLedge = (cfg.windows || []).map((wd) =>
+    sellBarLedge(Object.assign({}, wd, { ledge: true })));
+
   return {
     dormers: Object.assign({}, SELL.dormers),
     windows: windows,
+    barLedge: barLedge,
     doors: computeDoorPrices(),
     interior: interior,
     flooring: flooring,
