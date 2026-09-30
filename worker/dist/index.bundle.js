@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "2f259fc";
-const WORKER_BUILT_AT = "2026-09-30T04:41:23.641Z";
+const WORKER_BUILD = "eb68529";
+const WORKER_BUILT_AT = "2026-09-30T04:52:55.528Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -5272,7 +5272,15 @@ async function handleSchedule(request, env, origin) {
   const from = day(url.searchParams.get("from"));
   const to = day(url.searchParams.get("to"));
 
-  const where = [];
+  /* WON ORDERS ONLY.
+     An install row outlives the order it belongs to: mark a won order lost,
+     or replace it with a newer design, and the booking stays in the table.
+     Without this filter the schedule kept sending someone to a job that was
+     no longer happening — and because the customer page hides the install
+     block on anything but a won order, the booking was invisible there and
+     could not be removed either. It is filtered, not deleted: re-mark the
+     order won and the date comes back exactly as it was. */
+  const where = ["s.status = 'won'"];
   const args = [];
   if (from) { where.push("i.install_date >= ?"); args.push(from); }
   if (to) { where.push("i.install_date <= ?"); args.push(to); }
@@ -5285,7 +5293,7 @@ async function handleSchedule(request, env, origin) {
      FROM installs i
      JOIN submissions s ON i.submission_id = s.id
      JOIN customers c ON s.customer_id = c.id` +
-    (where.length ? " WHERE " + where.join(" AND ") : "") +
+    " WHERE " + where.join(" AND ") +
     " ORDER BY i.install_date ASC, i.id ASC";
 
   const { results } = await env.DB.prepare(sql).bind(...args).all();
