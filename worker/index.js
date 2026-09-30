@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
@@ -2970,9 +2970,19 @@ function computeOptionPrices(cfg) {
     return { 16: lenFt * shelfRate16, 24: lenFt * shelfRate24 };
   });
 
+  /* WHAT THE BAR LEDGE WOULD COST on each placed window, one entry per
+     cfg.windows index, in dollars. Computed with the ledge forced ON so the
+     On/Off control can price BOTH states — a tile that only knows the cost
+     when the option is already selected cannot say what selecting it costs.
+     A dollar amount per window, not the $/ft rate, for the same reason the
+     shelving block above hands over amounts: the rate is ours. */
+  const barLedge = (cfg.windows || []).map((wd) =>
+    sellBarLedge(Object.assign({}, wd, { ledge: true })));
+
   return {
     dormers: Object.assign({}, SELL.dormers),
     windows: windows,
+    barLedge: barLedge,
     doors: computeDoorPrices(),
     interior: interior,
     flooring: flooring,
