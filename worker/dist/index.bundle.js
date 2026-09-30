@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "eb68529";
-const WORKER_BUILT_AT = "2026-09-30T04:52:55.528Z";
+const WORKER_BUILD = "bd49a35";
+const WORKER_BUILT_AT = "2026-09-30T05:00:53.348Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
