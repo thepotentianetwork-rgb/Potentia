@@ -96,3 +96,64 @@ test('size moves the price, so the checks above can fail', async () => {
   const b = await quote({ style: 'gable', w: 26, l: 34, h: 9 });
   assert.ok(b.total > a.total, 'width past the old 20ft ceiling adds nothing to the price');
 });
+
+/* ── THE PORCH, THE SAME WAY ─────────────────────────────────────────────────
+   The depth ladder went to 10ft in the designer with the size bump, and the
+   two loops that price the depth TILES still ran [4, 6, 8]. Nothing failed:
+   a 10ft porch totals correctly, because porch is priced per square foot, so
+   every check on the total stayed green. The tile the customer taps just had
+   no price on it — nothing had computed one for a depth the server did not
+   know was on offer.
+   So the depths are served too, and these hold that the two agree. */
+
+test('the porch depths are on the wire', async () => {
+  const { limits } = (await quote({ style: 'gable', w: 16, l: 24, h: 9 })).optionPrices;
+  assert.ok(Array.isArray(limits.porchDepths), 'no porch depths served');
+  assert.ok(limits.porchDepths.includes(10), 'the 10ft porch is not offered');
+  for (const d of limits.porchDepths) assert.ok(d > 0, `${d} is not a depth`);
+});
+
+test('every depth the server offers, the server has priced', async () => {
+  /* On a shed big enough to take the deepest one, the priced tiles and the
+     offered ladder must be the same list. A depth in one and not the other is
+     either a blank tile or a price for something nobody can pick. */
+  const d = (await quote({ style: 'gable', w: 26, l: 34, h: 9,
+                           porchLoc: 'front', porchDepth: 6, porchTier: 'standard' })).optionPrices;
+  const offered = d.limits.porchDepths.map(String).sort();
+  assert.deepEqual(Object.keys(d.porch.frontDepths).sort(), offered,
+    'the front porch tiles do not match the depths on offer');
+  assert.deepEqual(Object.keys(d.porch.sideDepths).sort(), offered,
+    'the side porch tiles do not match the depths on offer');
+  for (const [ft, price] of Object.entries(d.porch.frontDepths)) {
+    assert.ok(price > 0, `the ${ft}ft front porch tile shows ${price}`);
+  }
+});
+
+test('a deeper porch costs more, on the tile and in the total', async () => {
+  /* The control. Without it, a build that priced every depth the same would
+     satisfy the test above. Checked in BOTH places, because they are computed
+     separately — the tile from porchLineFor, the total from computePricing —
+     and the 10ft case was right in one and missing from the other. */
+  const cfg = { style: 'gable', w: 16, l: 24, h: 9, porchLoc: 'front', porchTier: 'standard' };
+  const tiles = (await quote(Object.assign({}, cfg, { porchDepth: 6 }))).optionPrices.porch.frontDepths;
+  const depths = Object.keys(tiles).map(Number).sort((a, b) => a - b);
+  for (let i = 1; i < depths.length; i++) {
+    assert.ok(tiles[depths[i]] > tiles[depths[i - 1]],
+      `the ${depths[i]}ft tile is not dearer than the ${depths[i - 1]}ft one`);
+  }
+  const shallow = await quote(Object.assign({}, cfg, { porchDepth: depths[0] }));
+  const deep = await quote(Object.assign({}, cfg, { porchDepth: depths[depths.length - 1] }));
+  assert.ok(deep.total > shallow.total,
+    `a ${depths[depths.length - 1]}ft porch does not cost more in the total than a ${depths[0]}ft one`);
+});
+
+test('a footprint too small for a depth is not offered it', async () => {
+  // The ladder is filtered by what the shed can carry, so a small shed shows
+  // fewer tiles — not blank ones.
+  const d = (await quote({ style: 'gable', w: 10, l: 12, h: 9,
+                           porchLoc: 'front', porchDepth: 4, porchTier: 'standard' })).optionPrices;
+  const priced = Object.keys(d.porch.frontDepths).map(Number);
+  assert.ok(priced.length > 0, 'a 10x12 can take no porch at all');
+  assert.ok(Math.max(...priced) <= 12 - 6, 'a depth was offered that eats the whole shed');
+  assert.ok(priced.length < d.limits.porchDepths.length, 'a 12ft shed is being offered every depth');
+});
