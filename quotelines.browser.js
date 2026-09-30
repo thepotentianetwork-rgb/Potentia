@@ -33,8 +33,11 @@
 /* Utah sales tax — applied to the shed and to each separately-billed item
    (concrete, interior finishing) since each is invoiced as its own sale. */
 const TAX_RATE = 0.0725;
-/* Each item is invoiced as its own stage of work, and a 30% deposit is
-   collected against that item's tax-included price when its stage starts. */
+/* ONE deposit, covering the whole job, collected before work begins. It is
+   worked out per item — 30% of each item's tax-included price, which is what
+   the quote itemises — but the items are billed together, not as each stage
+   starts. This comment and the quote both used to say the opposite, which was
+   a promise on every quote sent that the invoicing never kept. */
 const DEPOSIT_RATE = 0.30;
 
 /* What the base shed price covers, named under the Base Shed line. NAMES ONLY,
