@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "221c36e";
-const WORKER_BUILT_AT = "2026-09-30T15:03:06.249Z";
+const WORKER_BUILD = "bab9a3a";
+const WORKER_BUILT_AT = "2026-09-30T15:19:48.293Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -552,23 +552,22 @@ let SELL = {
     "Black Transom 3x10": 105, "Black Transom 5x10": 140,
     "24x48 Insulated": 45, "Transom 87x10": 200,
 
-    /* PREMIUM \u2014 PLACEHOLDER NUMBERS, replace with the real supplier quote.
-       They are here rather than left out because an unpriced window does NOT
-       quote as TBD: sellWindowPrice falls through to the nearest WHITE VINYL
-       by area, so leaving these blank would put a 96x40 bi-fold on the quote
-       at $310 with only a note to say otherwise. A placeholder that is roughly
-       right is the safer wrong answer. Admin \u2192 Pricing \u2192 Windows
-       overrides all three. */
-    "Black Bi-Fold Bar 60x36": 3200,
-    "Black Bi-Fold Bar 72x40": 3800,
-    "Black Bi-Fold Bar 96x40": 4600,
-    /* The lift-up is one sash and two struts against the bi-fold's three
-       panels, six hinges and a running track, so it sits well below it at
-       every size. Placeholders, same as above. */
-    "Black Lift-Up Bar 48x36": 1800,
-    "Black Lift-Up Bar 60x42": 2400,
-    "Black Lift-Up Bar 72x42": 2800,
-    "Black Lift-Up Bar 96x48": 3600
+    /* PREMIUM \u2014 ShedPro's own numbers, replacing the placeholders these
+       shipped with. Same four sizes for both products, so the two ladders read
+       against each other: the lift-up is the dearer of the two at every size,
+       by roughly $1,200 to $1,700.
+       They must never be left blank. An unpriced window does NOT quote as TBD
+       \u2014 sellWindowPrice falls through to the nearest WHITE VINYL by area,
+       so a blank entry would put a 96x48 on a quote at $310 with only a note
+       to say otherwise. Admin \u2192 Pricing \u2192 Windows overrides all eight. */
+    "Black Bi-Fold Bar 48x36": 2495,
+    "Black Bi-Fold Bar 60x42": 3495,
+    "Black Bi-Fold Bar 72x42": 3995,
+    "Black Bi-Fold Bar 96x48": 5795,
+    "Black Lift-Up Bar 48x36": 3695,
+    "Black Lift-Up Bar 60x42": 4995,
+    "Black Lift-Up Bar 72x42": 5995,
+    "Black Lift-Up Bar 96x48": 7495
   },
 
   // ── SIDING (upcharge, per sqft of WALL AREA) ──
@@ -619,19 +618,16 @@ let SELL = {
       // Both $1,000 as of Sep 2026 — breaking up and hauling a slab is the same
       // day's work as taking an old shed away, so it stopped being the cheaper
       // of the two.
-      "Shed Removal": 1000, "Concrete Removal": 1000
+      "Shed Removal": 1000, "Concrete Removal": 1000,
+      /* THE EXTERIOR BAR LEDGE. ONE price per ledge, whatever the window is —
+         ShedPro quotes it that way, so it lives in `flat` rather than being
+         computed per foot. It was built per-linear-foot first, which charged a
+         4ft bar less than an 8ft one; the number below replaces that MODEL,
+         not just its rate. Admin → Pricing → options.flat overrides it. */
+      "Exterior Bar Ledge": 695
     },
     perLinFt: { // × linear feet the customer specifies
-      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17,
-      /* THE EXTERIOR BAR LEDGE, charged by the linear foot of the WINDOW it
-         serves — not of the slab, which is wider than the window by its
-         casing and its overhang. Those two figures live in the 3D builder in
-         the other repo; pricing off them would put a rendering constant on
-         the quote and let the two drift apart silently. The window's own
-         width is what the customer asked for and what the rate absorbs.
-         PLACEHOLDER: a real per-foot number for the counter and its brackets
-         goes here. Admin \u2192 Pricing \u2192 options.perLinFt overrides it. */
-      "Exterior Bar Ledge": 95
+      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17
     },
     perSqft: {  // × area — see basis for each
       "Loft":               {rate:3.00,  basis:"loft"},   // customer-specified loft size
@@ -1114,13 +1110,17 @@ const WINDOW_CATALOG = [
      Keeping them in "Black Aluminum" would have put a $4,000 unit in the same
      list as a $155 one, sorted by size, with nothing to tell them apart.
 
+     Both products are offered at the SAME four sizes, so a customer choosing
+     between them is choosing a mechanism and not a size chart, and the two
+     price lists compare line for line.
      The BI-FOLD BAR WINDOW is three panels on vertical hinges that accordion
-     back against one jamb, over an exterior serving ledge. Widths divide by
-     three exactly (20"/24"/32" panels) so the closed window reads as three
-     equal lights rather than two and a remainder. */
-  {grp:"Premium", key:"Black Bi-Fold Bar 60x36", label:"Bi-Fold Bar Window 5' \u00b7 Black", w:60,h:36},
-  {grp:"Premium", key:"Black Bi-Fold Bar 72x40", label:"Bi-Fold Bar Window 6' \u00b7 Black", w:72,h:40},
-  {grp:"Premium", key:"Black Bi-Fold Bar 96x40", label:"Bi-Fold Bar Window 8' \u00b7 Black", w:96,h:40},
+     back against one jamb, over an exterior serving ledge. Every width divides
+     by three exactly (16"/20"/24"/32" panels) so the closed window reads as
+     three equal lights rather than two and a remainder. */
+  {grp:"Premium", key:"Black Bi-Fold Bar 48x36", label:"Bi-Fold Bar Window 4' \u00b7 Black", w:48,h:36},
+  {grp:"Premium", key:"Black Bi-Fold Bar 60x42", label:"Bi-Fold Bar Window 5' \u00b7 Black", w:60,h:42},
+  {grp:"Premium", key:"Black Bi-Fold Bar 72x42", label:"Bi-Fold Bar Window 6' \u00b7 Black", w:72,h:42},
+  {grp:"Premium", key:"Black Bi-Fold Bar 96x48", label:"Bi-Fold Bar Window 8' \u00b7 Black", w:96,h:48},
   /* The LIFT-UP is the other half of the premium pair and a different product,
      not a variant: one large sash hinged along its TOP edge, lifting to nearly
      horizontal on two gas struts to make a canopy over the bar. The bi-fold is
@@ -1186,18 +1186,15 @@ function isBarWindowKey(key){
   var e = windowCatEntry(String(key||''));
   return !!e && e.grp==='Premium' && /\bBar\b/.test(e.key);
 }
-function barLedgeLengthFt(wd){
-  return Math.round(((wd && wd.w) || 0) / 12 * 10) / 10;
-}
 /* What the optional exterior ledge costs on a placed window. Zero unless this
    is a bar window AND the ledge is on. Default ON: the ledge is the reason
    these windows exist, so only an explicit false removes it — the same rule
    the 3D builder uses, and it is itemised either way so nobody pays for one
-   without seeing it on the quote. */
+   without seeing it on the quote.
+   ONE flat price per ledge, not per foot: that is how ShedPro quotes it. */
 function sellBarLedge(wd){
   if(!wd || !isBarWindowKey(wd.type) || wd.ledge===false) return 0;
-  var rate = SELL.options.perLinFt["Exterior Bar Ledge"] || 0;
-  return barLedgeLengthFt(wd) * rate;
+  return SELL.options.flat["Exterior Bar Ledge"] || 0;
 }
 
 /* What the CUSTOMER reads on the siding line.
@@ -1515,7 +1512,9 @@ function computePricing(cfgIn, opts){
       var ledge = sellBarLedge(wd);
       if(ledge>0){
         windowSell += ledge;
-        windowSellLines.push({label:'Exterior Bar Ledge '+barLedgeLengthFt(wd)+'ft', price:ledge});
+        /* No footage on the line. The fee is flat, and a length printed
+           beside a single number invites dividing one by the other. */
+        windowSellLines.push({label:'Exterior Bar Ledge', price:ledge});
       }
     });
   }
