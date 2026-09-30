@@ -1597,7 +1597,20 @@ function renderOrders(submissions, installs) {
     if (details.quotedPrice != null && s.status !== 'lost' && s.status !== 'superseded') {
       renderInvoiceBlock(card, s, details);
     }
-    if (s.status === 'won') {
+    /* An order that stops being won keeps its install rows. Hiding the block
+       on anything but a won order left those bookings invisible AND
+       undeletable — the only way to clear one was to mark the order won
+       again. Shown whenever a booking exists, whatever the order's state. */
+    var hasInstalls = installs.some(function (i) { return i.submission_id === s.id; });
+    if (s.status === 'won' || hasInstalls) {
+      if (s.status !== 'won') {
+        var stray = document.createElement('div');
+        stray.className = 'install-block';
+        stray.style.cssText += ';font-size:12px;color:var(--sp-orange);line-height:1.5';
+        stray.textContent = 'This order is ' + s.status + ', so the install below is not on ' +
+          'the schedule. Remove it, or mark the order won again to put it back.';
+        card.appendChild(stray);
+      }
       renderInstallBlock(card, s, details, installs);
     } else if (s.status === 'new' || s.status === 'contacted' || s.status === 'quoted') {
       var hint = document.createElement('div');

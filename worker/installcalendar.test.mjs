@@ -261,3 +261,62 @@ test('it carries the phone and the price, so the page needs no second call', asy
   assert.equal(i.customer_id, 1);
   assert.equal(i.submission_id, 7);
 });
+
+/* ---- an order that stops being won -------------------------------------- */
+
+/* THE ONE THAT SENT SOMEONE TO A JOB THAT WAS NOT HAPPENING.
+ *
+ * Install rows outlive the order they belong to. Mark a won order lost, or
+ * replace it with a newer design, and the booking stays in the table — so the
+ * schedule kept listing it, and the customer showed up twice. */
+test('the schedule drops installs whose order is no longer won', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
+              VALUES (9,1,?,'won','2026-09-02')`)
+    .run(JSON.stringify({ redline, config: { w: 12, l: 20, style: 'gable' } }));
+  await schedule(env, t, { submission_id: 7, install_date: '2026-10-15' });
+  await schedule(env, t, { submission_id: 9, install_date: '2026-10-20' });
+
+  assert.equal((await api(env, 'GET', '/admin/schedule', null, t)).data.installs.length, 2);
+
+  for (const gone of ['superseded', 'lost', 'quoted', 'new', 'contacted']) {
+    db.prepare('UPDATE submissions SET status = ? WHERE id = 9').run(gone);
+    const r = await api(env, 'GET', '/admin/schedule', null, t);
+    assert.deepEqual(r.data.installs.map((i) => i.submission_id), [7],
+      'order 9 is ' + gone + ' — it must not be on the schedule');
+  }
+});
+
+/* Filtered, not deleted. Un-winning an order by mistake must not destroy the
+   date that was booked. */
+test('re-winning the order puts the same date back', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  await schedule(env, t, { install_date: '2026-10-15', days: 2, note: 'gate code 1234' });
+
+  db.prepare("UPDATE submissions SET status = 'lost' WHERE id = 7").run();
+  assert.equal((await api(env, 'GET', '/admin/schedule', null, t)).data.installs.length, 0);
+
+  db.prepare("UPDATE submissions SET status = 'won' WHERE id = 7").run();
+  const back = (await api(env, 'GET', '/admin/schedule', null, t)).data.installs;
+  assert.equal(back.length, 1);
+  assert.equal(back[0].install_date, '2026-10-15');
+  assert.equal(back[0].days, 2);
+  assert.equal(back[0].note, 'gate code 1234');
+});
+
+/* The customer page still has to show it, or there is no way to remove it —
+   which is how one got stranded in the first place. */
+test('a stranded install is still returned on the customer', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  await schedule(env, t, { install_date: '2026-10-15' });
+  db.prepare("UPDATE submissions SET status = 'superseded' WHERE id = 7").run();
+
+  const r = await api(env, 'GET', '/admin/customers/1', null, t);
+  assert.equal(r.data.installs.length, 1,
+    'the customer page must still see it, or it cannot be deleted');
+  assert.equal((await api(env, 'GET', '/admin/schedule', null, t)).data.installs.length, 0,
+    'but the schedule must not');
+});
