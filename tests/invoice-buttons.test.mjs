@@ -90,6 +90,18 @@ db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
             VALUES (?,?,?,?,?)`)
   .run(8, 1, JSON.stringify({ consult: true, bestTime: 'mornings' }), 'new', '2026-09-20');
 
+/* A booking left behind by an order that stopped being won. The schedule no
+   longer lists it — but the customer page has to, or there is no way to
+   remove it, which is how one got stranded in the first place. Oldest, so it
+   renders last and the cards above keep their positions. */
+db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
+            VALUES (?,?,?,?,?)`)
+  .run(10, 1, JSON.stringify({ redline, quotedPrice: BREAKDOWN.total,
+                               config: { style: 'gable', w: 8, l: 12, h: 8 } }),
+       'superseded', '2026-08-01');
+db.prepare(`INSERT INTO installs (submission_id,item,install_date,days,note,created_at)
+            VALUES (10,'shed','2026-10-22',1,null,'2026-08-05')`).run();
+
 const env = { DB: makeD1(db), ADMIN_PASSWORD: 'pw', ADMIN_SESSION_SECRET: 'k',
               STRIPE_SECRET_KEY: 'sk_test_fake' };
 
@@ -221,6 +233,12 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
 
     var btns = [].slice.call(quoted.querySelectorAll('.inv-btn'));
     R.buttonLabels = btns.map(txt);
+
+    // ---- a booking stranded by an un-won order --------------------------
+    var last = cards()[cards().length - 1];
+    R.strandedWarning = txt(last);
+    R.strandedHasInstall = !!last.querySelector('.install-block .install-del');
+    R.strandedRemoveLabel = txt(last.querySelector('.install-del'));
 
     // ---- the install invite --------------------------------------------
     var invite = document.querySelector('.install-cal');
@@ -389,10 +407,11 @@ const balanceUncredited = fromCents(buildInvoice(BREAKDOWN, 'balance', []).total
 console.log('\n-- the page loaded and drew the block --');
 check('the browser reported back', !!report, '(nothing came back)');
 check('nothing threw', !R.threw, R.threw);
-check('both orders rendered', R.cardCount === 2, R.cardCount);
+check('all three orders rendered', R.cardCount === 3, R.cardCount);
 /* The consult has no price. One block, not two. */
-check('only the priced order offers invoicing',
-  JSON.stringify(R.blocksPerCard) === '[0,1]', { blocks: R.blocksPerCard, prices: R.orderOfCards });
+check('only the live priced order offers invoicing',
+  JSON.stringify(R.blocksPerCard) === '[0,1,0]',
+  { blocks: R.blocksPerCard, prices: R.orderOfCards });
 check('with a row for each kind',
   JSON.stringify(R.kinds) === '["Deposit","Balance"]', R.kinds);
 check('and a button for each, before anything is sent',
@@ -466,6 +485,14 @@ check('and saying no sends nothing',
   R.stillOnPreview === true &&
   invoicePosts.filter((p) => !p.preview).length === 1,
   invoicePosts.map((p) => (p.preview ? 'preview' : 'SEND') + ':' + p.kind));
+
+console.log('\n-- a booking left behind by an un-won order --');
+check('the card says why it is not on the schedule',
+  /is superseded, so the install below is not on the schedule/.test(R.strandedWarning || ''),
+  (R.strandedWarning || '').slice(0, 200));
+check('and it can still be removed, which is the whole point',
+  R.strandedHasInstall === true && R.strandedRemoveLabel === 'Remove',
+  { hasBlock: R.strandedHasInstall, label: R.strandedRemoveLabel });
 
 console.log('\n-- the install invite --');
 check('a scheduled install offers an invite', R.inviteOffered === true);
