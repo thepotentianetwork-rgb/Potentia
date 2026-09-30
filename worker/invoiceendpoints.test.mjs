@@ -796,3 +796,145 @@ test('a wrongly voided invoice comes back when the key is put right', async () =
   assert.equal(back.data.status, 'open');
   assert.equal(db.prepare('SELECT status FROM invoices WHERE id=?').get(row.id).status, 'open');
 });
+
+/* ---- idempotency keys, end to end --------------------------------------- */
+
+function stubKeys() {
+  const orig = globalThis.fetch;
+  const keys = [];
+  globalThis.fetch = async (url, init) => {
+    const p = new URL(url).pathname;
+    const k = (init && init.headers && init.headers['Idempotency-Key']) || null;
+    if (k) keys.push({ path: p, key: k });
+    const id = p.startsWith('/v1/customers') ? 'cus_new'
+      : p.includes('invoiceitems') ? 'ii_1' : 'in_' + keys.length;
+    return { ok: true, status: 200, json: async () => ({
+      id, status: 'open', hosted_invoice_url: 'https://pay.stripe/x',
+      customer_email: 'hank@roof.test', email: 'hank@roof.test' }) };
+  };
+  return { keys, restore: () => { globalThis.fetch = orig; } };
+}
+const invoiceKey = (s) => (s.keys.find((k) => k.path === '/v1/invoices') || {}).key;
+
+/* A DOUBLE TAP. Both requests read the same state before either has written,
+   which is what makes them fingerprint alike and what makes Stripe collapse
+   them into one invoice. Reset to that starting state rather than only
+   deleting the invoice row: leaving the stored Stripe customer id behind
+   models a situation that cannot occur, and the keys then differ for a good
+   reason — see the retry test below, which depends on exactly that. */
+test('the same invoice, sent twice from the same state, uses the same key', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const reset = () => {
+    db.prepare('DELETE FROM invoices').run();
+    db.prepare('UPDATE customers SET stripe_customer_id = NULL WHERE id = 1').run();
+  };
+
+  let s = stubKeys();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const first = invoiceKey(s);
+  s.restore();
+
+  reset();
+  s = stubKeys();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const second = invoiceKey(s);
+  s.restore();
+
+  assert.ok(first, 'no key was sent at all');
+  assert.equal(second, first, 'an unchanged request must reuse the key, so a double tap sends once');
+});
+
+/* THE PARTIAL FAILURE. ensureCustomer succeeds and stores a Stripe customer
+   id; the invoice call then fails. On the retry the request really is
+   different — it now names a customer Stripe did not know about the first
+   time — so it MUST carry a new key, or Stripe refuses it for 24 hours. This
+   is why the customer is in the fingerprint at all. */
+test('a retry after a half-finished send is not locked out', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+
+  const orig = globalThis.fetch;
+  let firstKey = null;
+  globalThis.fetch = async (url, init) => {
+    const p = new URL(url).pathname;
+    if (p === '/v1/customers') {
+      return { ok: true, status: 200, json: async () => ({ id: 'cus_new', email: 'hank@roof.test' }) };
+    }
+    firstKey = (init && init.headers && init.headers['Idempotency-Key']) || null;
+    return { ok: false, status: 400,
+      json: async () => ({ error: { message: 'must be at most 500 characters' } }) };
+  };
+  const failed = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  globalThis.fetch = orig;
+
+  assert.equal(failed.status, 502);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM invoices').get().n, 0, 'nothing recorded');
+  assert.equal(db.prepare('SELECT stripe_customer_id FROM customers WHERE id=1').get()
+    .stripe_customer_id, 'cus_new', 'but the customer was created and stored');
+
+  const s = stubKeys();
+  const retry = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  s.restore();
+  assert.equal(retry.status, 200, JSON.stringify(retry.data));
+  assert.notEqual(invoiceKey(s), firstKey,
+    'the retry names a different customer, so it needs a different key');
+});
+
+/* THE ONE THAT STUCK A REAL SHED FOR A DAY. */
+test('a changed invoice gets a new key, rather than being locked out', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+
+  let s = stubKeys();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const before = invoiceKey(s);
+  s.restore();
+
+  /* Something about the job changes — here a discount, which is the everyday
+     version of "the request is no longer what it was". */
+  db.prepare('DELETE FROM invoices').run();
+  db.prepare(`UPDATE submissions SET adjustments = ? WHERE id = 7`)
+    .run(JSON.stringify([{ kind: 'amount', value: -500, note: 'Neighbour discount' }]));
+
+  s = stubKeys();
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const after = invoiceKey(s);
+  s.restore();
+
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.notEqual(after, before,
+    'the key must move with the content, or Stripe refuses it for 24 hours');
+});
+
+test('every call in one send shares the base key, and none repeat', async () => {
+  const { env } = setup();
+  const t = await token(env);
+  const s = stubKeys();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  s.restore();
+
+  const base = invoiceKey(s).replace(/:invoice$/, '');
+  assert.ok(s.keys.length >= 3, 'create, items and send should all carry keys');
+  s.keys.forEach((k) => assert.ok(k.key.startsWith(base),
+    k.path + ' used an unrelated key: ' + k.key));
+  const unique = new Set(s.keys.map((k) => k.key));
+  assert.equal(unique.size, s.keys.length,
+    'two different calls shared a key: ' + JSON.stringify(s.keys.map((k) => k.key)));
+  s.keys.forEach((k) => assert.ok(k.key.length <= 255, 'key too long: ' + k.key.length));
+});
+
+test('the deposit and the balance never share a key', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  let s = stubKeys();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const dep = invoiceKey(s);
+  s.restore();
+  db.prepare("UPDATE invoices SET status = 'paid' WHERE kind = 'deposit'").run();
+  s = stubKeys();
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance' }, t);
+  const bal = invoiceKey(s);
+  s.restore();
+  assert.notEqual(dep, bal);
+});

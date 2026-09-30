@@ -1074,6 +1074,15 @@ that endpoint's signing secret.
 - **Payments with no shed against them are not credited.** A repeat customer
   can have two builds; a payment not assigned to one is not netted off either.
   The preview warns, and the payment list has a dropdown to assign it.
+- **A failed send does not lock the shed out.** Stripe remembers an
+  idempotency key for 24 hours and refuses to reuse one with different
+  parameters. The key used to be built from the shed, the kind and the count
+  of prior invoices — nothing about the request — so a failed attempt followed
+  by any change came back *"Keys for idempotent requests can only be used with
+  the same parameters they were first used with"* and stayed stuck for a day.
+  The key now carries a fingerprint of what is being sent: an unchanged
+  request still collapses a double tap into one invoice, while a corrected one
+  gets a fresh key immediately.
 - **One live invoice of each kind per shed.** A second attempt is refused
   until the first is voided, so a double-tap a week apart cannot bill twice.
 - **A paid invoice has no Void button.** The money has moved — that is a
