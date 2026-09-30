@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { computePricing } from './pricing.js';
 import { quoteLines } from './quotelines.js';
 import { buildInvoice, splitPayments, toCents, buildMemo, buildFooter,
-         buildCustomFields, LIMITS } from './invoices.js';
+         buildCustomFields, LIMITS, fingerprint } from './invoices.js';
 
 const BUILDS = {
   'plain 10x16': { style: 'gable', w: 10, l: 16, h: 9 },
@@ -551,4 +551,63 @@ test('a phase still says what is in it, beside its price', () => {
   /* Names, not prices — the sub-items add up to the figure on the same line,
      and printing both invites a check that will not balance to the penny. */
   assert.doesNotMatch(shed.label, /\$/, shed.label);
+});
+
+/* ---- the idempotency key ------------------------------------------------ */
+
+/* A SHED LOCKED OUT FOR 24 HOURS.
+ *
+ * Stripe remembers an idempotency key for a day and refuses to reuse one with
+ * different parameters. The key was built from the shed, the kind and the
+ * count of prior invoices — nothing about the request itself. So a failed
+ * attempt followed by ANY change came back "Keys for idempotent requests can
+ * only be used with the same parameters they were first used with", and the
+ * shed could not be invoiced again until the key aged out. Which is precisely
+ * what happened after the memo was shortened to fit Stripe's 500 characters:
+ * one bug fix, one day of not being able to bill a customer. */
+test('the same request fingerprints the same, so a double tap sends once', () => {
+  const a = { lines: [{ label: 'Phase 1', amount: 10 }], amount: 10, memo: 'x' };
+  assert.equal(fingerprint(a), fingerprint({ ...a }));
+  assert.equal(fingerprint(a), fingerprint(a), 'and it is stable across calls');
+});
+
+test('anything that changes the invoice changes the key', () => {
+  const base = {
+    customer: 'cus_1',
+    lines: [{ label: 'Phase 1 — Shed', amount: 100 }, { label: 'Sales Tax (7.25%)', amount: 7.25 }],
+    amount: 107.25, memo: 'the build', footer: 'terms', fields: [{ name: 'Order', value: '#7' }]
+  };
+  const seen = { base: fingerprint(base) };
+  const changes = {
+    'a different customer':   { ...base, customer: 'cus_2' },
+    'a renamed line':         { ...base, lines: [{ label: 'Phase 1 — Shed: Base Shed', amount: 100 }, base.lines[1]] },
+    'a changed amount':       { ...base, amount: 107.26 },
+    'a changed line amount':  { ...base, lines: [{ ...base.lines[0], amount: 101 }, base.lines[1]] },
+    'an extra line':          { ...base, lines: base.lines.concat([{ label: 'Extra', amount: 1 }]) },
+    'a shortened memo':       { ...base, memo: 'the' },
+    'a different footer':     { ...base, footer: 'other terms' },
+    'a changed header field': { ...base, fields: [{ name: 'Order', value: '#8' }] }
+  };
+  for (const [what, changed] of Object.entries(changes)) {
+    const f = fingerprint(changed);
+    assert.notEqual(f, seen.base, what + ' must produce a new key');
+    seen[what] = f;
+  }
+  /* And they are all different from each other, not just from the base. */
+  const all = Object.values(seen);
+  assert.equal(new Set(all).size, all.length, 'two changes collided: ' + JSON.stringify(seen));
+});
+
+test('the key stays well inside what Stripe accepts', () => {
+  const huge = { lines: Array.from({ length: 200 }, (_, i) => ({ label: 'L'.repeat(200), amount: i })),
+                 memo: 'M'.repeat(500), footer: 'F'.repeat(500) };
+  const key = 'sub123456:deposit:9:' + fingerprint(huge);
+  assert.ok(key.length <= 255, 'Stripe caps idempotency keys at 255: ' + key.length);
+  assert.match(fingerprint(huge), /^[0-9a-z]{1,12}$/, 'and it stays URL-safe');
+});
+
+test('it does not fall over on the shapes a caller might pass', () => {
+  for (const v of [undefined, null, {}, [], 0, '', { a: undefined }]) {
+    assert.match(fingerprint(v), /^[0-9a-z]+$/, JSON.stringify(v));
+  }
 });

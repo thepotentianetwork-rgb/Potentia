@@ -22,7 +22,7 @@ import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConf
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails } from "./calendar.js";
-import { buildInvoice, splitPayments, fromCents, usd } from "./invoices.js";
+import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
@@ -1309,7 +1309,19 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const prior = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM invoices WHERE submission_id = ? AND kind = ?"
   ).bind(sub.id, kind).first();
-  const idempotencyKey = `sub${sub.id}:${kind}:${(prior && prior.n) || 0}`;
+  /* The content goes in the key. Without it a failed attempt locked the shed
+     out for 24 hours the moment anything about the request changed — Stripe
+     refuses a reused key with different parameters, and "different" includes
+     a bug fix. A genuine double-tap still collapses to one invoice, because
+     an unchanged request fingerprints the same. */
+  const idempotencyKey = `sub${sub.id}:${kind}:${(prior && prior.n) || 0}:` + fingerprint({
+    customer: customer.stripe_customer_id || customer.email || null,
+    lines: shape.lines,
+    amount: shape.amount,
+    memo: invoice.memo,
+    footer: invoice.footer,
+    fields: invoice.customFields,
+  });
 
   let stripeCustomerId = customer.stripe_customer_id || null;
   let sent;
