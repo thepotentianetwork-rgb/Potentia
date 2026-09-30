@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "2dda230";
-const WORKER_BUILT_AT = "2026-09-29T16:16:27.555Z";
+const WORKER_BUILD = "2f259fc";
+const WORKER_BUILT_AT = "2026-09-30T04:41:23.641Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3216,8 +3216,11 @@ function safeParse(s) { try { return JSON.parse(s); } catch (e) { return null; }
 /* Utah sales tax — applied to the shed and to each separately-billed item
    (concrete, interior finishing) since each is invoiced as its own sale. */
 const TAX_RATE = 0.0725;
-/* Each item is invoiced as its own stage of work, and a 30% deposit is
-   collected against that item's tax-included price when its stage starts. */
+/* ONE deposit, covering the whole job, collected before work begins. It is
+   worked out per item — 30% of each item's tax-included price, which is what
+   the quote itemises — but the items are billed together, not as each stage
+   starts. This comment and the quote both used to say the opposite, which was
+   a promise on every quote sent that the invoicing never kept. */
 const DEPOSIT_RATE = 0.30;
 
 /* What the base shed price covers, named under the Base Shed line. NAMES ONLY,
