@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "3ec144a";
-const WORKER_BUILT_AT = "2026-09-30T05:11:23.931Z";
+const WORKER_BUILD = "d5f6337";
+const WORKER_BUILT_AT = "2026-09-30T05:26:03.404Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4270,7 +4270,25 @@ const GOOGLE_CALENDAR_BASE = 'https://calendar.google.com/calendar/render';
 /* Titles the install rows already use, so the calendar says what the CRM
    says. Kept here rather than imported: the bundler inlines every module at
    top level and these must not collide with the CRM's own copy. */
-const CAL_ITEM_LABELS = { concrete: 'Concrete pour', shed: 'Shed install' };
+const CAL_ITEM_LABELS = {
+  prep: 'Site prep',
+  pour: 'Concrete pour',
+  gravel: 'Gravel pad',
+  shop: 'Shop build',
+  shed: 'Shed install',
+  concrete: 'Concrete pour'
+};
+
+/* WHICH STAGES HAPPEN AT THE CUSTOMER'S PLACE.
+ *
+ * A shop day is a day in your own shop. Inviting the customer to it puts an
+ * appointment on their calendar for a day when nothing happens at their
+ * house, which is worse than not inviting them at all — they will either turn
+ * up or stop trusting the invites. Only site days get the customer; the crew
+ * list goes on everything, because the crew need to know about both. */
+function isOnSite(item) {
+  return item !== 'shop';
+}
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 
@@ -4362,6 +4380,180 @@ function installDetails({ summary, phone, note, days, orderId }) {
 }
 
 // ---- end inlined calendar.js ----
+
+// ---- inlined from worker/schedule.js by build-bundle.mjs — do not edit below by hand ----
+/* PLANNING A BUILD FROM ONE DATE.
+ *
+ * A shed is not one day in a diary. Concrete needs a prep day and a pour day,
+ * the shed is built in the shop before it goes anywhere, and the on-site build
+ * takes a day or more. Typing five dates by hand is how two of them end up on
+ * the same day, or the shop day ends up after the install.
+ *
+ * So one date is entered and the rest follow:
+ *
+ *   CONCRETE — the pour date is the anchor
+ *     prep      the working day before the pour
+ *     pour      the date entered
+ *     shop      the working day before the install
+ *     install   one week after the pour, 2 days by default
+ *
+ *   GRAVEL — the pad date is the anchor. No cure to wait out, so the shed
+ *     follows straight on: pad, shop, install on consecutive working days.
+ *
+ *   NO FOUNDATION — the install date is the anchor, with a shop day before it.
+ *
+ * WORKING DAYS ARE MONDAY TO FRIDAY. Saturday is a catch-up day, not a day to
+ * start something on, so nothing is ever SCHEDULED onto a weekend — which
+ * matters most for the shop day, since an install on a Monday would otherwise
+ * be prepared for on the Sunday.
+ *
+ * Every date is computed in UTC on a plain calendar day. Local-time arithmetic
+ * shifts the day for anyone east of UTC, and a schedule that is a day out is
+ * one nobody notices until somebody drives somewhere.
+ */
+
+const WORK_START = 1;   // Monday
+const WORK_END = 5;     // Friday
+
+/* The vocabulary of a build. 'concrete' is the older single entry, kept so
+   rows booked before any of this still read properly. */
+const STAGE_LABELS = {
+  prep: 'Site prep',
+  pour: 'Concrete pour',
+  gravel: 'Gravel pad',
+  shop: 'Shop build',
+  shed: 'Shed install',
+  concrete: 'Concrete'
+};
+
+const DEFAULT_INSTALL_DAYS = 2;
+const CURE_DAYS = 7;
+
+/* Named apart from calendar.js's identical helper on purpose: the bundler
+   inlines every module at TOP level, so two `function pad2` is a SyntaxError
+   that stops the whole worker. Caught by bundle.test.mjs, not by reading. */
+function pad2sched(n) { return (n < 10 ? '0' : '') + n; }
+
+function dayFromISO(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || ''));
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  if (dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return dt;
+}
+
+function isoFromDay(date) {
+  return date.getUTCFullYear() + '-' + pad2sched(date.getUTCMonth() + 1) +
+    '-' + pad2sched(date.getUTCDate());
+}
+
+function isWorkday(date) {
+  const d = date.getUTCDay();
+  return d >= WORK_START && d <= WORK_END;
+}
+
+function shift(date, days) {
+  return new Date(date.getTime() + days * 86400000);
+}
+
+/* The nearest working day, searching in one direction. Seven steps is always
+   enough to find one and bounds the loop — an unbounded while() here would
+   hang the worker on a bad calendar rather than return a wrong date. */
+function toWorkday(date, direction) {
+  const step = direction < 0 ? -1 : 1;
+  let d = date;
+  for (let i = 0; i < 7; i++) {
+    if (isWorkday(d)) return d;
+    d = shift(d, step);
+  }
+  return date;
+}
+
+function addWorkdays(date, n) {
+  let d = toWorkday(date, n < 0 ? -1 : 1);
+  const step = n < 0 ? -1 : 1;
+  let left = Math.abs(n);
+  while (left > 0) {
+    d = shift(d, step);
+    if (isWorkday(d)) left--;
+  }
+  return d;
+}
+
+/* What kind of foundation a saved design describes. The designer stores the
+   CONCRETE pad as foundation:'pad', which reads like any pad — hence the
+   mapping rather than passing the raw value around. */
+function foundationKind(config) {
+  const f = config && config.foundation;
+  if (f === 'pad') return 'concrete';
+  if (f === 'gravel') return 'gravel';
+  return 'none';
+}
+
+function stage(item, date, days) {
+  return { item: item, install_date: isoFromDay(date), days: days };
+}
+
+/* Returns the stages in the order they happen, or null for a date it cannot
+   read — a plan built on a date nobody can parse is worse than no plan. */
+function planBuild(anchorISO, opts = {}) {
+  const anchor = dayFromISO(anchorISO);
+  if (!anchor) return null;
+
+  const kind = opts.foundation || 'none';
+  const raw = Number(opts.installDays);
+  const installDays = isFinite(raw) && raw > 0 ? Math.max(1, Math.ceil(raw)) : DEFAULT_INSTALL_DAYS;
+
+  /* The anchor itself is moved onto a working day. Picking a Saturday for a
+     pour is a slip, and quietly honouring it would put every later date a day
+     out as well. */
+  const start = toWorkday(anchor, 1);
+
+  if (kind === 'concrete') {
+    const pour = start;
+    const prep = addWorkdays(pour, -1);
+    /* A week from the pour. Counted in calendar days, because concrete cures
+       over the weekend too — then moved onto a working day, which only bites
+       if the pour itself was dragged off a weekend. */
+    const install = toWorkday(shift(pour, CURE_DAYS), 1);
+    const shop = addWorkdays(install, -1);
+    return [
+      stage('prep', prep, 1),
+      stage('pour', pour, 1),
+      stage('shop', shop, 1),
+      stage('shed', install, installDays)
+    ];
+  }
+
+  if (kind === 'gravel') {
+    const pad = start;
+    const shop = addWorkdays(pad, 1);
+    const install = addWorkdays(shop, 1);
+    return [
+      stage('gravel', pad, 1),
+      stage('shop', shop, 1),
+      stage('shed', install, installDays)
+    ];
+  }
+
+  const install = start;
+  return [
+    stage('shop', addWorkdays(install, -1), 1),
+    stage('shed', install, installDays)
+  ];
+}
+
+/* What the anchor date means for a given foundation, so the form can label
+   its one field honestly instead of saying "date". */
+function anchorLabel(kind) {
+  if (kind === 'concrete') return 'Pour date';
+  if (kind === 'gravel') return 'Pad date';
+  return 'Install date';
+}
+
+// ---- end inlined schedule.js ----
 
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
@@ -5030,7 +5222,7 @@ async function handleGetCustomer(request, env, origin, id) {
         orderId: i.submission_id,
       }),
       location: [customer.address, customer.city, customer.state].filter(Boolean).join(", "),
-      guests: customer.email ? [customer.email].concat(calGuests) : calGuests,
+      guests: (customer.email && isOnSite(i.item)) ? [customer.email].concat(calGuests) : calGuests,
     });
   });
 
@@ -5190,6 +5382,75 @@ function configSummary(config) {
   if (config.style) parts.push(config.style);
   if (config.siding) parts.push(config.siding);
   return parts.join(" \u00b7 ");
+}
+
+/* POST /admin/submissions/:id/plan — the whole build from one date.
+ *
+ * Typing five dates by hand is how two land on the same day, or the shop day
+ * ends up after the install. One date goes in and the stages come out, worked
+ * out by planBuild() — which is where the rules live and where they are
+ * tested.
+ *
+ * Without `confirm` it only returns the plan, so the CRM can show it before
+ * anything is written. The dates are recomputed on confirm rather than taken
+ * from the browser: a plan the customer's phone worked out is not one this
+ * should be inserting.
+ */
+async function handlePlanBuild(request, env, origin, submissionId) {
+  await ensureInstallsTable(env);
+  const body = await request.json().catch(() => ({}));
+
+  const sub = await env.DB.prepare(
+    "SELECT id, customer_id, details FROM submissions WHERE id = ?"
+  ).bind(submissionId).first();
+  if (!sub) return json({ error: "no such order" }, 404, origin);
+
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+  const kind = foundationKind(details.config);
+
+  const stages = planBuild(String(body.anchor_date || ""), {
+    foundation: kind,
+    installDays: body.install_days,
+  });
+  if (!stages) {
+    return json({ error: "a date is needed, as YYYY-MM-DD", anchor_label: anchorLabel(kind) },
+      400, origin);
+  }
+
+  const shape = {
+    foundation: kind,
+    anchor_label: anchorLabel(kind),
+    stages: stages.map((s) => ({ ...s, label: STAGE_LABELS[s.item] || s.item })),
+  };
+
+  const { results: existing } = await env.DB.prepare(
+    "SELECT id, item, install_date FROM installs WHERE submission_id = ?"
+  ).bind(submissionId).all();
+
+  if (!body.confirm) {
+    return json({ ok: true, preview: true, replaces: (existing || []).length, ...shape }, 200, origin);
+  }
+
+  /* Replacing is the normal case — dates slip and the whole run moves — but
+     it throws away what was booked, so it is never the default. The caller
+     has to have seen how many rows it is about to lose. */
+  if ((existing || []).length && !body.replace) {
+    return json({ error: "this order already has " + existing.length +
+      " booking(s). Confirm replacing them.", replaces: existing.length, ...shape }, 409, origin);
+  }
+  if ((existing || []).length) {
+    await env.DB.prepare("DELETE FROM installs WHERE submission_id = ?").bind(submissionId).run();
+  }
+
+  const now = new Date().toISOString();
+  for (const s of stages) {
+    await env.DB.prepare(
+      "INSERT INTO installs (submission_id, item, install_date, days, note, created_at) VALUES (?,?,?,?,?,?)"
+    ).bind(submissionId, s.item, s.install_date, s.days, body.note ? String(body.note).slice(0, 500) : null, now).run();
+  }
+
+  return json({ ok: true, booked: stages.length, replaced: (existing || []).length, ...shape }, 200, origin);
 }
 
 /* GET /admin/activity — what has happened lately, newest first.
@@ -5382,7 +5643,7 @@ async function handleSchedule(request, env, origin) {
         details: installDetails({ summary, phone: r.customer_phone, note: r.note,
                                   days: r.days, orderId: r.submission_id }),
         location,
-        guests: r.customer_email ? [r.customer_email].concat(calGuests) : calGuests,
+        guests: (r.customer_email && isOnSite(r.item)) ? [r.customer_email].concat(calGuests) : calGuests,
       }),
     };
   });
@@ -8487,6 +8748,12 @@ export default {
          rejected before any database work happens. */
       if (path === "/stripe/webhook" && request.method === "POST") {
         return await handleStripeWebhook(request, env, origin);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.slice("/admin/submissions/".length, -"/plan".length));
+        if (!pid) return json({ error: "bad order id" }, 400, origin);
+        return await handlePlanBuild(request, env, origin, pid);
       }
       if (path === "/admin/activity" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
