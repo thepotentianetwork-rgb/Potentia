@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "2663b98";
-const WORKER_BUILT_AT = "2026-09-30T14:18:54.921Z";
+const WORKER_BUILD = "30bfd1e";
+const WORKER_BUILT_AT = "2026-09-30T14:50:14.589Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -550,7 +550,18 @@ let SELL = {
     "White Transom 3x10": 80, "White Transom 5x10": 120,
     "Brown Transom 3x10": 80, "Brown Transom 5x10": 120,
     "Black Transom 3x10": 105, "Black Transom 5x10": 140,
-    "24x48 Insulated": 45, "Transom 87x10": 200
+    "24x48 Insulated": 45, "Transom 87x10": 200,
+
+    /* PREMIUM \u2014 PLACEHOLDER NUMBERS, replace with the real supplier quote.
+       They are here rather than left out because an unpriced window does NOT
+       quote as TBD: sellWindowPrice falls through to the nearest WHITE VINYL
+       by area, so leaving these blank would put a 96x40 bi-fold on the quote
+       at $310 with only a note to say otherwise. A placeholder that is roughly
+       right is the safer wrong answer. Admin \u2192 Pricing \u2192 Windows
+       overrides all three. */
+    "Black Bi-Fold Bar 60x36": 3200,
+    "Black Bi-Fold Bar 72x40": 3800,
+    "Black Bi-Fold Bar 96x40": 4600
   },
 
   // ── SIDING (upcharge, per sqft of WALL AREA) ──
@@ -1079,7 +1090,21 @@ const WINDOW_CATALOG = [
   {grp:"Transom", key:"Brown Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 Brown", w:36,h:10},
   {grp:"Transom", key:"Brown Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 Brown", w:60,h:10},
   {grp:"Transom", key:"Black Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 Black", w:36,h:10},
-  {grp:"Transom", key:"Black Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 Black", w:60,h:10}
+  {grp:"Transom", key:"Black Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 Black", w:60,h:10},
+  /* ── PREMIUM ──
+     Its own group, not a size of an existing one, because these are bought-in
+     architectural units rather than a stock shed window: a different supplier,
+     a different lead time, and a price an order of magnitude above the vinyl.
+     Keeping them in "Black Aluminum" would have put a $4,000 unit in the same
+     list as a $155 one, sorted by size, with nothing to tell them apart.
+
+     The BI-FOLD BAR WINDOW is three panels on vertical hinges that accordion
+     back against one jamb, over an exterior serving ledge. Widths divide by
+     three exactly (20"/24"/32" panels) so the closed window reads as three
+     equal lights rather than two and a remainder. */
+  {grp:"Premium", key:"Black Bi-Fold Bar 60x36", label:"Bi-Fold Bar Window 5' \u00b7 Black", w:60,h:36},
+  {grp:"Premium", key:"Black Bi-Fold Bar 72x40", label:"Bi-Fold Bar Window 6' \u00b7 Black", w:72,h:40},
+  {grp:"Premium", key:"Black Bi-Fold Bar 96x40", label:"Bi-Fold Bar Window 8' \u00b7 Black", w:96,h:40}
 ];
 function windowCatEntry(key){
   for(var i=0;i<WINDOW_CATALOG.length;i++) if(WINDOW_CATALOG[i].key===key) return WINDOW_CATALOG[i];
