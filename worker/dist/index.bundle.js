@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "155844a";
-const WORKER_BUILT_AT = "2026-09-30T15:36:52.793Z";
+const WORKER_BUILD = "bd8275d";
+const WORKER_BUILT_AT = "2026-09-30T15:41:48.188Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -7483,6 +7483,15 @@ const SHED_LIMITS = {
   l: { min: 6,  max: 34, def: 12, step: 2 },
   h: { min: 6,  max: 12, def: 8,  step: 1 }
 };
+/* THE PORCH DEPTHS OFFERED, and the only place they are written down.
+   Exactly the trap SHED_LIMITS was written for, and it had already been
+   sprung: the designer's depth ladder went to 10ft with the size bump while
+   the two loops below still ran [4, 6, 8]. Nothing failed. A 10ft porch
+   prices correctly in the TOTAL — that is computed per square foot — but the
+   depth tile the customer taps had no price on it at all, because nothing
+   ever computed one for a depth the server did not know was on offer.
+   Served with the limits, and the designer renders exactly these. */
+const PORCH_DEPTHS_FT = [4, 6, 8, 10];
 function validateShedConfig(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
   const lim = (k) => [SHED_LIMITS[k].min, SHED_LIMITS[k].max, SHED_LIMITS[k].def];
@@ -7564,12 +7573,12 @@ function computeOptionPrices(cfg) {
   const maxPorchFront = Math.max(0, cfg.l - 6);
   const maxPorchSide = Math.max(0, cfg.w - 6);
   const frontDepths = {};
-  [4, 6, 8].filter((ft) => ft <= maxPorchFront).forEach((ft) => {
+  PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchFront).forEach((ft) => {
     const line = porchLineFor("front", ft, curTier, cfg.w);
     if (line) frontDepths[ft] = line.price;
   });
   const sideDepths = {};
-  [4, 6, 8].filter((ft) => ft <= maxPorchSide).forEach((ft) => {
+  PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchSide).forEach((ft) => {
     const line = porchLineFor("side", ft, "standard", cfg.l);
     if (line) sideDepths[ft] = line.price;
   });
@@ -7667,9 +7676,10 @@ function computeOptionPrices(cfg) {
     sellBarLedge(Object.assign({}, wd, { ledge: true })));
 
   return {
-    /* The size the client is allowed to build. Served rather than duplicated
-       in the designer's markup — see SHED_LIMITS. */
-    limits: SHED_LIMITS,
+    /* The sizes the client is allowed to build, and the porch depths it may
+       offer. Served rather than duplicated in the designer — see SHED_LIMITS
+       and PORCH_DEPTHS_FT. */
+    limits: Object.assign({ porchDepths: PORCH_DEPTHS_FT.slice() }, SHED_LIMITS),
     dormers: Object.assign({}, SELL.dormers),
     windows: windows,
     barLedge: barLedge,
