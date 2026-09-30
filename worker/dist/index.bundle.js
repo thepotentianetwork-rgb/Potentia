@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "0fa2c32";
-const WORKER_BUILT_AT = "2026-09-30T14:11:20.951Z";
+const WORKER_BUILD = "2663b98";
+const WORKER_BUILT_AT = "2026-09-30T14:18:54.921Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -449,9 +449,9 @@ let SELL = {
        leaf instead of two. Priced as its own pair of entries rather than as
        a fraction of a double: the casing, transom and hardware cost the same
        whatever the leaf count, so half the width is nowhere near half the
-       price. These two numbers are a starting point — set the real ones in
-       Admin \u2192 Pricing \u2192 Doors, which overrides this table. */
-    "3' Cedar Single": 450, "3'6\" Cedar Single": 500,
+       price — $500 and $600 against the 5' double's $700, ShedPro's own
+       numbers. Admin \u2192 Pricing \u2192 Doors overrides this table if they move. */
+    "3' Cedar Single": 500, "3'6\" Cedar Single": 600,
     "Fairytale Entry": 700, "9' Garage Door": 600,
 
     // Home-Depot-sourced doors — cost × 1.3, computed from COST.doorHomeDepot
