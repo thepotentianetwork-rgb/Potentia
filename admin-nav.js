@@ -107,8 +107,40 @@
     });
     wrap.appendChild(menu);
 
+    /* KEEP THE MENU ON THE SCREEN.
+       It hangs off the button's RIGHT edge, which is correct on a desktop,
+       where the header sits at the top right and the menu opens back under
+       it. On a phone the header wraps, the button lands against the LEFT
+       margin, and a 190px menu anchored to the right edge of a button 80px
+       from the left runs 90px off the side of the screen — which is where the
+       first three destinations were. Nothing errors and nothing looks broken:
+       the panel is there, the words are simply outside the glass.
+       Measured and nudged back on every open rather than fixed with a media
+       query, because what matters is where the button actually ENDED UP, and
+       that depends on how the header wrapped — which depends on the page, the
+       brand text, the font and the device. A query guesses; this looks. */
+    var GUTTER = 8;
+    function place() {
+      /* Back to the CSS anchor FIRST, every time. Without this the menu is
+         measured while still carrying the shift from last time, so a nudge
+         that is no longer needed is never taken back — rotate a phone to
+         landscape and the header stops wrapping, but the menu stays pushed
+         right by the amount portrait needed and hangs off the other side. */
+      menu.style.right = '';
+      var vw = document.documentElement.clientWidth || 0;
+      if (!vw) return;
+      var m = menu.getBoundingClientRect();
+      /* Only the LEFT edge can escape. `right:0` puts the menu's right edge
+         on the button's own, and the button is on the screen by definition —
+         so there is no right-hand case to handle, and a branch for one would
+         be a guard no test could ever reach. If this anchor ever changes,
+         that stops being true and this needs the other half.
+         A NEGATIVE right pushes the whole menu further right, back on. */
+      if (m.left < GUTTER) menu.style.right = (m.left - GUTTER) + 'px';
+    }
+
     function close() { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
-    function open() { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); }
+    function open() { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); place(); }
 
     btn.addEventListener('click', function (e) {
       e.stopPropagation();
@@ -122,6 +154,10 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') close();
     });
+    /* Rotating a phone with the menu open re-wraps the header under it, which
+       moves the button and leaves the menu measured against a screen that is
+       no longer there. */
+    window.addEventListener('resize', function () { if (!menu.hidden) place(); });
 
     mount.insertBefore(wrap, mount.firstChild);
     return { wrap: wrap, button: btn, menu: menu, close: close };
