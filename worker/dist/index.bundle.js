@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "bd49a35";
-const WORKER_BUILT_AT = "2026-09-30T05:00:53.348Z";
+const WORKER_BUILD = "a986881";
+const WORKER_BUILT_AT = "2026-09-30T05:04:35.022Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3645,9 +3645,26 @@ function adjustmentLines(bd, adjustments) {
 /* Phases, adjustments and tax — everything above the line that differs by
    kind. Sums to the job total, which is asserted in the tests rather than
    assumed here. */
+/* What a phase is made of, named on the phase's own line.
+ *
+ * This used to live only in the memo — until the memo turned out to be capped
+ * at 500 characters, which a real shed's itemisation does not fit inside. So
+ * the names move to the line items, where there is a separate budget per line
+ * and, better, where they sit beside the money they explain. No prices: the
+ * sub-items add up to the phase total on the same line, and printing both
+ * invites a customer to check one against the other. */
+function phaseLabel(row) {
+  const parts = (row.subLines || []).map((s) => s.label).filter(Boolean);
+  if (!parts.length) return row.label;
+  /* Not clipped here. buildInvoice clips every line label on the way out, and
+     a second cap at this spot is a line that looks load-bearing but cannot be
+     made to fail — removing it changed no test, which is the tell. */
+  return row.label + ': ' + parts.join(', ');
+}
+
 function jobLines(bd, adjustments) {
   const lines = bd.rows
-    .map((r) => ({ label: r.label, amountCents: toCents(r.amt) }))
+    .map((r) => ({ label: phaseLabel(r), amountCents: toCents(r.amt) }))
     .filter((l) => l.amountCents !== 0);
   adjustmentLines(bd, adjustments).forEach((l) => lines.push({ ...l, fixed: true }));
   const taxCents = toCents(bd.tax);
@@ -3749,7 +3766,15 @@ function splitPayments(payments, submissionId) {
  * contents go first, then whole sub-lines, so what survives is always the
  * most useful part rather than an arbitrary cut mid-word.
  */
-const LIMITS = { memo: 1200, footer: 1000, fieldName: 40, fieldValue: 140, label: 250 };
+/* MEASURED, NOT GUESSED.
+ *
+ * Stripe documents the custom-field limits (40 / 140) and not the others, so
+ * the memo was capped at a "conservative" 1200. It is 500 — learned when a
+ * real invoice came back "Invalid string: ...; must be at most 500
+ * characters" and did not send. A conservative guess at an undocumented limit
+ * is still a guess; these are the numbers Stripe has actually enforced, and
+ * the rest sit under the same 500 because nothing here needs more. */
+const LIMITS = { memo: 500, footer: 500, fieldName: 40, fieldValue: 140, label: 250 };
 
 function clip(s, max) {
   const t = String(s == null ? '' : s);
