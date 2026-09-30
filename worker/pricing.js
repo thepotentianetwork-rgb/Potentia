@@ -1092,12 +1092,12 @@ export const WINDOW_CATALOG = [
   {grp:"Black Aluminum", key:"Black Aluminum 12x12", w:12,h:12},
   {grp:"Black Aluminum", key:"Black Aluminum 18x27", w:18,h:27},
   {grp:"Black Aluminum", key:"Black Aluminum 24x36", w:24,h:36},
-  {grp:"Transom", key:"White Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 White", w:36,h:10},
-  {grp:"Transom", key:"White Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 White", w:60,h:10},
-  {grp:"Transom", key:"Brown Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 Brown", w:36,h:10},
-  {grp:"Transom", key:"Brown Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 Brown", w:60,h:10},
-  {grp:"Transom", key:"Black Transom 3x10", label:"Horizontal Transom 3x10 \u00b7 Black", w:36,h:10},
-  {grp:"Transom", key:"Black Transom 5x10", label:"Horizontal Transom 5x10 \u00b7 Black", w:60,h:10},
+  {grp:"Transom", key:"White Transom 3x10", label:"Horizontal Transom 36x10 \u00b7 White", w:36,h:10},
+  {grp:"Transom", key:"White Transom 5x10", label:"Horizontal Transom 60x10 \u00b7 White", w:60,h:10},
+  {grp:"Transom", key:"Brown Transom 3x10", label:"Horizontal Transom 36x10 \u00b7 Brown", w:36,h:10},
+  {grp:"Transom", key:"Brown Transom 5x10", label:"Horizontal Transom 60x10 \u00b7 Brown", w:60,h:10},
+  {grp:"Transom", key:"Black Transom 3x10", label:"Horizontal Transom 36x10 \u00b7 Black", w:36,h:10},
+  {grp:"Transom", key:"Black Transom 5x10", label:"Horizontal Transom 60x10 \u00b7 Black", w:60,h:10},
   /* ── PREMIUM ──
      Its own group, not a size of an existing one, because these are bought-in
      architectural units rather than a stock shed window: a different supplier,
@@ -1112,10 +1112,10 @@ export const WINDOW_CATALOG = [
      back against one jamb, over an exterior serving ledge. Every width divides
      by three exactly (16"/20"/24"/32" panels) so the closed window reads as
      three equal lights rather than two and a remainder. */
-  {grp:"Premium", key:"Black Bi-Fold Bar 48x36", label:"Bi-Fold Bar Window 4' \u00b7 Black", w:48,h:36},
-  {grp:"Premium", key:"Black Bi-Fold Bar 60x42", label:"Bi-Fold Bar Window 5' \u00b7 Black", w:60,h:42},
-  {grp:"Premium", key:"Black Bi-Fold Bar 72x42", label:"Bi-Fold Bar Window 6' \u00b7 Black", w:72,h:42},
-  {grp:"Premium", key:"Black Bi-Fold Bar 96x48", label:"Bi-Fold Bar Window 8' \u00b7 Black", w:96,h:48},
+  {grp:"Premium", key:"Black Bi-Fold Bar 48x36", label:"Bi-Fold Bar Window 48x36 \u00b7 Black", w:48,h:36},
+  {grp:"Premium", key:"Black Bi-Fold Bar 60x42", label:"Bi-Fold Bar Window 60x42 \u00b7 Black", w:60,h:42},
+  {grp:"Premium", key:"Black Bi-Fold Bar 72x42", label:"Bi-Fold Bar Window 72x42 \u00b7 Black", w:72,h:42},
+  {grp:"Premium", key:"Black Bi-Fold Bar 96x48", label:"Bi-Fold Bar Window 96x48 \u00b7 Black", w:96,h:48},
   /* The LIFT-UP is the other half of the premium pair and a different product,
      not a variant: one large sash hinged along its TOP edge, lifting to nearly
      horizontal on two gas struts to make a canopy over the bar. The bi-fold is
@@ -1123,10 +1123,10 @@ export const WINDOW_CATALOG = [
      the serving ledge, so they are separate keys, separate geometry and
      separate prices — a customer who says "the lift-up one" means one of
      these, and there is no size at which the two meet. */
-  {grp:"Premium", key:"Black Lift-Up Bar 48x36", label:"Lift-Up Bar Window 4' \u00b7 Black", w:48,h:36},
-  {grp:"Premium", key:"Black Lift-Up Bar 60x42", label:"Lift-Up Bar Window 5' \u00b7 Black", w:60,h:42},
-  {grp:"Premium", key:"Black Lift-Up Bar 72x42", label:"Lift-Up Bar Window 6' \u00b7 Black", w:72,h:42},
-  {grp:"Premium", key:"Black Lift-Up Bar 96x48", label:"Lift-Up Bar Window 8' \u00b7 Black", w:96,h:48}
+  {grp:"Premium", key:"Black Lift-Up Bar 48x36", label:"Lift-Up Bar Window 48x36 \u00b7 Black", w:48,h:36},
+  {grp:"Premium", key:"Black Lift-Up Bar 60x42", label:"Lift-Up Bar Window 60x42 \u00b7 Black", w:60,h:42},
+  {grp:"Premium", key:"Black Lift-Up Bar 72x42", label:"Lift-Up Bar Window 72x42 \u00b7 Black", w:72,h:42},
+  {grp:"Premium", key:"Black Lift-Up Bar 96x48", label:"Lift-Up Bar Window 96x48 \u00b7 Black", w:96,h:48}
 ];
 function windowCatEntry(key){
   for(var i=0;i<WINDOW_CATALOG.length;i++) if(WINDOW_CATALOG[i].key===key) return WINDOW_CATALOG[i];
@@ -1146,10 +1146,29 @@ function windowCatEntry(key){
    The noun lands before the size rather than after it so the size stays last,
    matching the doors ("6' Roll-Up Garage Door" keeps its 6' out front). A key
    with no WxH in it — the area-fallback "Window" — is returned untouched. */
+/* THE GABLE/WALL VENT'S SIZE, in inches, stated once.
+   The louvre is 16 wide by 8 tall. That was written down in three places and
+   named in a fourth — the price key is spelled "8x16 Gable/Wall Vent", which
+   is HEIGHT BY WIDTH, the opposite order to every window in this file. So the
+   line the customer reads is built from these two numbers rather than from
+   that key, and it comes out 16x8 like everything else. */
+export const VENT_SIZE_IN = { w: 16, h: 8 };
+
 export function windowDisplayName(key){
   var k = String(key || '').trim();
   if(!k) return 'Window';
   if(/\bwindows?\b/i.test(k)) return k;
+  /* EVERY WINDOW SIZE IS STATED IN INCHES, and the digits in the key cannot be
+     trusted to be. The horizontal transoms are keyed "3x10" and "5x10" — those
+     are FEET by inches, so a 36in wide window went onto a quote reading
+     "White Transom Window 3x10". Nobody reads that as three feet; they read a
+     window three inches wide, next to a 12x24 that really is inches.
+     The catalog carries the true w/h, so the line is built from those. The KEY
+     is left exactly as it is: it indexes SELL.windows and sits inside every
+     saved design, and renaming it there would miss every price entry — the
+     same trap doorDisplayName was written around. */
+  var e = windowCatEntry(k);
+  if(e) return k.replace(/\s*\d+\s*x\s*\d+\s*$/, '') + ' Window ' + e.w + 'x' + e.h;
   return /\d+\s*x\s*\d+\s*$/.test(k) ? k.replace(/(\d+\s*x\s*\d+)\s*$/, 'Window $1') : k;
 }
 // Customer price for a placed window. Uses wd.type if set; else nearest by area.
@@ -1620,7 +1639,10 @@ export function computePricing(cfgIn, opts){
       var _vp=(flat['8x16 Gable/Wall Vent']||0)*_ventCt;
       if(_vp>0){
         addonSell+=_vp;
-        addonLines.push({name:'Gable/Wall Vent \u00d7'+_ventCt, amt:_vp});
+        // Sized on the line like every window, in inches. It was the one
+        // opening on the quote that said nothing about how big it is.
+        addonLines.push({name:'Gable/Wall Vent '+VENT_SIZE_IN.w+'x'+VENT_SIZE_IN.h+
+                              ' \u00d7'+_ventCt, amt:_vp});
       }
     }
     if(ADDONS.cupola==='black')  _flat(true,'Cupola 16" Black Roof','Cupola (Black Roof)');
