@@ -511,9 +511,14 @@ check('and says who it will invite', /hank@roof\.test/.test(R.inviteTitle || '')
 console.log('\n-- the whole quote, on the invoice --');
 /* The point of all of it: nothing gets retyped, and the customer reads one
    document rather than checking the invoice against the quote. */
+/* Each phase leads with its own name, then says what is in it — the contents
+   moved onto the line when Stripe's 500-character memo cap turned out to be
+   real and the itemisation stopped fitting there. */
 check('the phases are listed by name',
-  BREAKDOWN.rows.every((r) => (R.previewLabels || []).indexOf(r.label) !== -1),
+  BREAKDOWN.rows.every((r) => (R.previewLabels || []).some((l) => l.indexOf(r.label) === 0)),
   { shown: R.previewLabels, phases: BREAKDOWN.rows.map((r) => r.label) });
+check('and a phase says what is in it, next to the price',
+  (R.previewLabels || []).some((l) => /Shed.*: .*Base Shed/.test(l)), R.previewLabels);
 check('sales tax is its own line, named with the rate',
   (R.previewLabels || []).some((l) => /^Sales Tax \(7\.25%\)$/.test(l)), R.previewLabels);
 check('and the deferral explains what is NOT being collected yet',

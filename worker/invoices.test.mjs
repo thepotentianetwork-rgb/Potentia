@@ -82,7 +82,11 @@ test('the deposit invoice shows the whole quote, then defers the rest', () => {
     const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
 
     phases.forEach((r, i) => {
-      assert.equal(inv.lines[i].label, r.label, `${label}: phase ${i} label`);
+      /* startsWith, not equals: the phase line now names what is in the
+         phase after a colon, because the memo cannot carry it at 500
+         characters. The phase's own name still has to lead. */
+      assert.ok(inv.lines[i].label.startsWith(r.label),
+        `${label}: "${inv.lines[i].label}" should lead with "${r.label}"`);
       assert.equal(inv.lines[i].amountCents, toCents(r.amt),
         `${label}: "${r.label}" should be the quote's pre-tax figure`);
     });
@@ -178,7 +182,11 @@ test('the balance invoice shows the same quote, then credits what was paid', () 
     const inv = buildInvoice(bd, 'balance', [{ amount: 1500, method: 'check' }], { adjustments: adj });
     const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
     phases.forEach((r, i) => {
-      assert.equal(inv.lines[i].label, r.label, `${label}: phase ${i} label`);
+      /* startsWith, not equals: the phase line now names what is in the
+         phase after a colon, because the memo cannot carry it at 500
+         characters. The phase's own name still has to lead. */
+      assert.ok(inv.lines[i].label.startsWith(r.label),
+        `${label}: "${inv.lines[i].label}" should lead with "${r.label}"`);
       assert.ok(Math.abs(inv.lines[i].amountCents - toCents(r.amt)) <= 2,
         `${label}: "${r.label}" is ${inv.lines[i].amountCents}, the quote says ${toCents(r.amt)}`);
     });
@@ -460,4 +468,87 @@ test('a foundation phase is billed on the same deposit as the shed', () => {
   assert.ok(labels.some((l) => /Shed/i.test(l)), labels.join(' | '));
   assert.equal(inv.totalCents, toCents(bd.depositTotal),
     'one invoice, both phases');
+});
+
+/* ---- the limits Stripe actually enforces -------------------------------- */
+
+/* A REAL INVOICE CAME BACK "must be at most 500 characters" AND DID NOT SEND.
+ *
+ * Stripe documents the custom-field limits and not the memo's, so the memo was
+ * capped at a "conservative" 1200. The real figure is 500. The old cap test
+ * passed, because it checked the memo against LIMITS.memo — the same wrong
+ * number the code was using. A test that reads its expectation out of the
+ * implementation cannot fail.
+ *
+ * So this checks against the constant Stripe enforced, written here on its
+ * own, and against every string that goes over the wire — not just the one
+ * that happened to break. */
+const STRIPE_MAX_STRING = 500;
+
+function hugeBreakdown() {
+  /* A shed with everything on it, then every name lengthened, because the
+     invoice that broke was a real build with a full electrical package. */
+  const { redline } = computePricing({ style: 'barn', w: 12, l: 20, h: 9,
+    foundation: 'pad', foundationFinish: 'coated', intFinish: 'painted',
+    elec: 'essential', floor: 'lvp', siding: 'vertical', loft: '6-front',
+    doors: [{ wall: 'front', pos: 0.5, w: 72, h: 80, style: 'fairytale', color: 'white' }],
+    windows: [{ wall: 'left', pos: 0.3, w: 24, h: 36, cy: 52, type: 'White Vinyl 24x36' }],
+    addons: { shutters: true, skylight: true, flowerbox: true } });
+  const bd = quoteLines(redline, []);
+  return { ...bd, rows: bd.rows.map((r) => ({
+    ...r,
+    label: r.label + ' ' + 'X'.repeat(300),
+    subLines: (r.subLines || []).map((s) => ({
+      ...s, label: s.label + ' ' + 'Y'.repeat(200),
+      includes: (s.includes || []).map((i) => i + ' ' + 'Z'.repeat(200))
+    }))
+  })) };
+}
+
+test('nothing sent to Stripe can exceed what Stripe accepts', () => {
+  for (const bd of [quoteLines(RICH, []), hugeBreakdown()]) {
+    for (const kind of ['deposit', 'balance']) {
+      const inv = buildInvoice(bd, kind, kind === 'balance' ? [{ amount: 500 }] : [], {
+        summary: 'Z'.repeat(400), submissionId: 999999,
+        comped: Object.fromEntries(Array.from({ length: 30 },
+          (_, i) => ['Comped item number ' + i, 10])),
+        adjustments: [{ kind: 'amount', value: -1000, note: 'N'.repeat(400) }]
+      });
+
+      assert.ok(inv.memo.length <= STRIPE_MAX_STRING,
+        kind + ': memo is ' + inv.memo.length + ' characters');
+      assert.ok(inv.footer.length <= STRIPE_MAX_STRING,
+        kind + ': footer is ' + inv.footer.length + ' characters');
+      inv.lines.forEach((l) => {
+        assert.ok(l.label.length <= STRIPE_MAX_STRING,
+          kind + ': a line is ' + l.label.length + ' characters: ' + l.label.slice(0, 60));
+      });
+      inv.customFields.forEach((f) => {
+        assert.ok(f.name.length <= 40, 'field name: ' + f.name);
+        assert.ok(f.value.length <= 140, 'field value is ' + f.value.length);
+      });
+    }
+  }
+});
+
+/* And the caps in the code must not drift back above what Stripe takes. */
+test('the declared caps stay inside what Stripe enforces', () => {
+  assert.ok(LIMITS.memo <= STRIPE_MAX_STRING, 'memo cap is ' + LIMITS.memo);
+  assert.ok(LIMITS.footer <= STRIPE_MAX_STRING, 'footer cap is ' + LIMITS.footer);
+  assert.ok(LIMITS.label <= STRIPE_MAX_STRING, 'line cap is ' + LIMITS.label);
+  assert.equal(LIMITS.fieldName, 40, 'Stripe documents this one');
+  assert.equal(LIMITS.fieldValue, 140, 'and this one');
+});
+
+/* The detail has to survive the move, or the 500-character cap just deleted
+   the thing the customer wanted to read. */
+test('a phase still says what is in it, beside its price', () => {
+  const bd = quoteLines(RICH, []);
+  const inv = buildInvoice(bd, 'deposit', []);
+  const shed = inv.lines.find((l) => /Shed/.test(l.label));
+  assert.ok(shed, inv.lines.map((l) => l.label).join(' | '));
+  assert.match(shed.label, /Base Shed/, 'the phase line should list its contents: ' + shed.label);
+  /* Names, not prices — the sub-items add up to the figure on the same line,
+     and printing both invites a check that will not balance to the penny. */
+  assert.doesNotMatch(shed.label, /\$/, shed.label);
 });
