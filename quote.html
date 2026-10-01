@@ -427,7 +427,10 @@ function render(submission, customer) {
 
   if (customer) document.getElementById('back-link').href = 'admin-customer.html?id=' + encodeURIComponent(customer.id);
 
-  var addressLine = [details.address, [details.city, details.state, details.zip].filter(Boolean).join(', ')]
+  /* The state and the ZIP are one field joined by a SPACE. Joined with a
+     comma like the rest, this read "Riverton, UT, 84065" — a list, not an
+     address. Same rule as worker/address.js. */
+  var addressLine = [details.address, details.city, [details.state, details.zip].filter(Boolean).join(' ')]
     .filter(Boolean).join(', ');
 
   var fields = '';

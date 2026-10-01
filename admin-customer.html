@@ -2101,7 +2101,11 @@ function loadCustomer() {
     renderPhoneCell(document.getElementById('c-phone'), c.phone);
     fillFollowUp(c);
     document.getElementById('c-address').textContent = c.address || '—';
-    var loc = [c.city, c.state].filter(Boolean).join(', ');
+    /* "Riverton, UT 84065" — a SPACE before the ZIP, not a comma. The zip has
+       been on this payload all along (the endpoint selects *); nothing read
+       it, so the CRM showed an address you could not post anything to. Same
+       rule as worker/address.js — see cityStateZip there. */
+    var loc = [c.city, [c.state, c.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     document.getElementById('c-location').textContent = loc || '—';
     document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
 
