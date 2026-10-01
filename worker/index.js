@@ -607,6 +607,21 @@ async function ensureInstallsTable(env) {
       created_at TEXT NOT NULL
     )`
   ).run();
+
+  /* done_at came later, for the customer-facing tracker.
+     A booked date is a PLAN. Until something recorded that a stage actually
+     happened, the only honest thing a tracker could tell a customer was what
+     the diary said, so the first time a pour slipped a day the page was
+     confidently wrong — which is worse than having no page.
+     Null means "not ticked off", not "late": a stage with a past date and no
+     done_at is simply one nobody has confirmed, and the tracker says
+     "scheduled" rather than claiming progress. Same reasoning as payments'
+     submission_id above, same PRAGMA dance for the same D1 reason. */
+  const have = await env.DB.prepare("PRAGMA table_info(installs)").all();
+  const names = (have.results || []).map((r) => r.name);
+  if (names.length && names.indexOf("done_at") === -1) {
+    await env.DB.prepare("ALTER TABLE installs ADD COLUMN done_at TEXT").run();
+  }
 }
 
 // ---- /admin/customers/:id: full detail — customer + all their submissions + notes + payments + installs ----
@@ -662,7 +677,7 @@ async function handleGetCustomer(request, env, origin, id) {
   // a repeat customer's install log for order A never bleeds into order B.
   await ensureInstallsTable(env);
   const { results: installs } = await env.DB.prepare(
-    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at
+    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at, i.done_at
      FROM installs i JOIN submissions s ON i.submission_id = s.id
      WHERE s.customer_id = ? ORDER BY i.install_date DESC, i.id DESC`
   )
@@ -1072,7 +1087,7 @@ async function handleSchedule(request, env, origin) {
   if (to) { where.push("i.install_date <= ?"); args.push(to); }
 
   const sql =
-    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at,
+    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at, i.done_at,
             c.id AS customer_id, c.name AS customer_name, c.email AS customer_email,
             c.phone AS customer_phone, c.address, c.city, c.state, c.zip,
             s.details, s.status AS order_status
@@ -1098,6 +1113,7 @@ async function handleSchedule(request, env, origin) {
       install_date: r.install_date,
       days: r.days,
       note: r.note,
+      done_at: r.done_at || null,
       order_status: r.order_status,
       customer_id: r.customer_id,
       customer_name: r.customer_name,
@@ -1578,7 +1594,12 @@ async function handleDeletePayment(request, env, origin, id) {
 }
 
 // ---- /admin/submissions/:id/installs ----
-const INSTALL_ITEMS = ["concrete", "shed"];
+/* EVERY STAGE THE PLANNER CAN BOOK, plus 'concrete' for rows booked before the
+   stages were split up. This used to be ["concrete", "shed"] while planBuild
+   inserted prep/pour/gravel/shop/shed straight into the table, so the planner
+   could book a shop day but a person could not add one by hand — the endpoint
+   answered "valid item required" for a stage the CRM was already showing. */
+const INSTALL_ITEMS = ["prep", "pour", "gravel", "materials", "shop", "shed", "concrete"];
 async function handleAddInstall(request, env, origin, submissionId) {
   const body = await request.json().catch(() => ({}));
   const item = String(body.item || "").toLowerCase().trim();
@@ -1603,6 +1624,24 @@ async function handleDeleteInstall(request, env, origin, id) {
   await ensureInstallsTable(env);
   await env.DB.prepare("DELETE FROM installs WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, origin);
+}
+
+/* ---- /admin/installs/:id/done: this stage actually happened --------------
+   One tap from the schedule page. It is what turns the customer's tracker from
+   a copy of the diary into a report of what has been done, so it has to be
+   cheap enough to do standing in a yard: POST {done: true|false}, no body at
+   all means true.
+   Reversible on purpose. A tap on the wrong row is the most likely mistake
+   there is, and it would otherwise tell a customer their shed was built. */
+async function handleInstallDone(request, env, origin, id) {
+  await ensureInstallsTable(env);
+  const body = await request.json().catch(() => ({}));
+  const done = body.done === undefined ? true : !!body.done;
+  const row = await env.DB.prepare("SELECT id FROM installs WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  const doneAt = done ? new Date().toISOString() : null;
+  await env.DB.prepare("UPDATE installs SET done_at = ? WHERE id = ?").bind(doneAt, id).run();
+  return json({ ok: true, done_at: doneAt }, 200, origin);
 }
 
 // ---- /admin/submissions/:id: single order, for the quote document ----
@@ -4321,6 +4360,16 @@ export default {
         const id = Number(path.slice("/admin/submissions/".length, -"/installs".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleAddInstall(request, env, origin, id);
+      }
+      /* Specific before general, as the rest of this chain does. Today the
+         method is what actually separates this from the DELETE below, so the
+         order is convention rather than load-bearing — but the next person to
+         add a POST on /admin/installs/ is the one who would find out. */
+      if (path.startsWith("/admin/installs/") && path.endsWith("/done") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/installs/".length, -"/done".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleInstallDone(request, env, origin, id);
       }
       if (path.startsWith("/admin/installs/") && request.method === "DELETE") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

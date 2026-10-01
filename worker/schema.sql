@@ -58,11 +58,19 @@ CREATE TABLE IF NOT EXISTS payments (
 CREATE TABLE IF NOT EXISTS installs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   submission_id INTEGER NOT NULL,
-  item TEXT NOT NULL,        -- 'concrete' | 'shed'
+  item TEXT NOT NULL,        -- prep | pour | gravel | materials | shop | shed
+                             -- ('concrete' on rows booked before the split)
   install_date TEXT NOT NULL,
   days REAL,
   note TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  -- When someone confirmed this stage actually happened, as opposed to when it
+  -- was planned for. NULL means nobody has ticked it off, which is NOT the same
+  -- as late: the customer tracker says "scheduled" for those rather than
+  -- claiming progress it cannot vouch for. Added at runtime too, so this only
+  -- matters for a fresh install.
+  --   ALTER TABLE installs ADD COLUMN done_at TEXT;
+  done_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS pricing (
