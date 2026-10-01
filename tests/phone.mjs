@@ -32,11 +32,18 @@ async function cdp(ws, id, method, params) {
 }
 
 /* Serves `html` at /, runs it at the given viewport, and returns whatever the
-   page assigned to window.__R. */
-export async function runAtWidth({ width = 390, height = 844, html, files = {} }) {
-  const srv = http.createServer((req, res) => {
+   page assigned to window.__R.
+
+   `api` is an optional handler for anything that is not `html` or a `files`
+   entry — a page that fetches its own data needs a real endpoint to fetch
+   from, and a static file map cannot be one. It is handed (req, res) and
+   returns true once it has answered. */
+export async function runAtWidth({ width = 390, height = 844, html, files = {}, api = null,
+                                  tz = null }) {
+  const srv = http.createServer(async (req, res) => {
     const f = files[req.url];
     if (f) { res.writeHead(200, { 'Content-Type': f.type }); return res.end(f.body); }
+    if (api && await api(req, res)) return;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   });
@@ -63,6 +70,12 @@ export async function runAtWidth({ width = 390, height = 844, html, files = {} }
     let id = 0;
     await cdp(ws, ++id, 'Emulation.setDeviceMetricsOverride',
       { width, height, deviceScaleFactor: 1, mobile: true });
+    /* THE BROWSER'S TIMEZONE, when the test is about a date. This container
+       runs in UTC, where a page that parses '2026-10-15' as an instant and one
+       that parses it as a calendar day print the same words — so a date bug
+       that shows up for every customer in Utah is invisible here. Overriding
+       the zone is what makes those two readings disagree. */
+    if (tz) await cdp(ws, ++id, 'Emulation.setTimezoneOverride', { timezoneId: tz });
     await cdp(ws, ++id, 'Page.enable');
     await cdp(ws, ++id, 'Page.navigate', { url: 'http://127.0.0.1:' + port + '/' });
 

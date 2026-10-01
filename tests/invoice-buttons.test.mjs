@@ -511,12 +511,14 @@ console.log('\n-- planning a build from one date --');
 check('the won order offers a planner', R.plannerShown === true);
 check('the field is named for a concrete job', R.anchorLabel === 'Pour date', R.anchorLabel);
 check('two days on site by default', R.defaultDays === '2', R.defaultDays);
-/* 2026-10-07 is a Wednesday: prep Tue, pour Wed, then a week, shop Tue,
-   install Wed. The shop day must never be a Sunday. */
+/* 2026-10-07 is a Wednesday: prep Tue, pour Wed, then a week, materials Mon,
+   shop Tue, install Wed. The shop day must never be a Sunday, and the materials
+   day is always the working day before it. */
 check('it lays out the whole build',
   JSON.stringify(R.planRows) === JSON.stringify([
     'Site prep | Tue, Oct 6',
     'Concrete pour | Wed, Oct 7',
+    'Materials | Mon, Oct 12',
     'Shop build | Tue, Oct 13',
     'Shed install | Wed, Oct 14 · 2 days',
   ]), R.planRows);

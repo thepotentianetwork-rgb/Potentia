@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your Shed — ShedPro</title>
+<!-- A private link. It should never turn up in a search result. -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+  --sp-green:#3ddc97;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;padding:32px 20px 60px}
+
+.wrap{max-width:720px;margin:0 auto}
+
+.head{display:flex;align-items:center;gap:16px;margin-bottom:34px}
+.head img{width:52px;height:52px;object-fit:contain}
+.brand{font-family:'Syncopate',sans-serif;font-size:15px;letter-spacing:0.15em;color:var(--bright)}
+.brand-sub{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);margin-top:5px}
+
+.greet{font-size:30px;font-weight:300;color:var(--bright);line-height:1.25;margin-bottom:8px}
+.greet-sub{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);letter-spacing:0.05em;margin-bottom:34px}
+
+.card{background:var(--deep);border:1px solid var(--dim);padding:28px;margin-bottom:20px}
+.card-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:18px;border-bottom:1px solid var(--dim);padding-bottom:8px}
+
+/* ── the four phases ──────────────────────────────────────────────────────
+   A vertical list, not a horizontal bar: there are four of them with words
+   like "Gathering materials" on each, and a horizontal bar on a phone turns
+   those into one letter per line. The connecting rail is drawn per-step so a
+   step can colour its own half of it. */
+.phases{list-style:none}
+.phase{display:flex;gap:16px;position:relative;padding-bottom:26px}
+.phase:last-child{padding-bottom:0}
+/* The rail, behind the dot, stopping at the last step. */
+.phase:not(:last-child)::before{content:'';position:absolute;left:11px;top:24px;bottom:2px;width:2px;background:var(--dim)}
+.phase.done:not(:last-child)::before{background:var(--sp-green)}
+.phase-dot{flex:0 0 24px;width:24px;height:24px;border-radius:50%;border:2px solid var(--dim);background:var(--deep);position:relative;z-index:1;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:11px;color:var(--silver)}
+.phase.done .phase-dot{border-color:var(--sp-green);background:var(--sp-green);color:var(--black)}
+.phase.active .phase-dot{border-color:var(--sp-blue);box-shadow:0 0 0 4px rgba(44,192,253,0.16)}
+.phase-body{flex:1;padding-top:1px}
+.phase-name{font-size:19px;font-weight:300;color:var(--silver);line-height:1.3}
+.phase.done .phase-name{color:var(--chrome)}
+.phase.active .phase-name{color:var(--bright)}
+.phase-when{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);margin-top:5px;letter-spacing:0.04em}
+.phase.active .phase-when{color:var(--sp-blue)}
+.phase-stages{list-style:none;margin-top:10px}
+.phase-stage{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);line-height:1.9}
+.phase-stage .tick{color:var(--sp-green);margin-right:7px}
+.phase-stage .pending{color:var(--dim);margin-right:7px}
+
+.now{background:rgba(44,192,253,0.06);border:1px solid var(--sp-blue-deep);padding:20px 24px;margin-bottom:20px}
+.now-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.25em;color:var(--sp-blue);text-transform:uppercase;margin-bottom:8px}
+.now-text{font-size:21px;font-weight:300;color:var(--bright)}
+.now.is-done{background:rgba(61,220,151,0.07);border-color:var(--sp-green)}
+.now.is-done .now-label{color:var(--sp-green)}
+
+.spec{list-style:none}
+.spec li{font-family:'DM Mono',monospace;font-size:12px;color:var(--chrome);line-height:2;border-bottom:1px solid rgba(42,45,56,0.5);padding:2px 0}
+.spec li:last-child{border-bottom:none}
+
+.row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
+.total{font-size:30px;color:var(--bright);font-weight:300}
+
+.btn{display:inline-block;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;padding:12px 22px;border:none;cursor:pointer;text-decoration:none;font-weight:700;background:var(--sp-blue);color:var(--black)}
+.btn:hover{background:#5ad0ff}
+.btn.ghost{background:transparent;border:1px solid var(--dim);color:var(--chrome);font-weight:400}
+.btn.ghost:hover{border-color:var(--silver);color:var(--bright)}
+.btns{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}
+
+.change-note{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);line-height:1.8}
+.change-note strong{color:var(--sp-orange)}
+textarea{width:100%;background:var(--black);border:1px solid var(--dim);color:var(--chrome);font-family:'Cormorant Garamond',serif;font-size:16px;padding:12px;margin-top:14px;resize:vertical;min-height:96px}
+textarea:focus{outline:none;border-color:var(--sp-blue)}
+.sent{font-family:'DM Mono',monospace;font-size:12px;color:var(--sp-green);margin-top:14px;line-height:1.7}
+.err{font-family:'DM Mono',monospace;font-size:12px;color:var(--sp-orange);margin-top:14px;line-height:1.7}
+
+.foot{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);line-height:2;text-align:center;margin-top:34px}
+.foot a{color:var(--sp-blue);text-decoration:none}
+
+.state{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);text-align:center;padding:60px 20px;line-height:2}
+
+@media(max-width:560px){
+  body{padding:24px 16px 48px}
+  .card{padding:20px}
+  .greet{font-size:25px}
+  .now-text{font-size:19px}
+  .total{font-size:26px}
+  /* Full width so they are thumb-sized, not two slivers side by side. */
+  .btns .btn{flex:1 1 100%;text-align:center}
+}
+</style>
+</head>
+<body>
+
+<div class="wrap" id="wrap">
+  <div class="state" id="state">Loading your build…</div>
+</div>
+
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var TOKEN = new URLSearchParams(location.search).get('t') || '';
+
+/* A plain YYYY-MM-DD, read as a calendar day rather than an instant. new Date
+   ('2026-10-15') is midnight UTC, which is the 14th in Utah — a tracker that
+   names the wrong day is the one thing it must not do. */
+function prettyDay(iso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return '';
+  var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+}
+
+function usd(n) {
+  if (n == null || !isFinite(n)) return '';
+  return '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function showState(text) {
+  var wrap = document.getElementById('wrap');
+  wrap.textContent = '';
+  wrap.appendChild(el('div', 'state', text));
+}
+
+/* What the dot says. A number for anything not yet done, so an upcoming step
+   reads as "step 3" rather than as a blank circle. */
+function dotText(phase, i) {
+  return phase.state === 'done' ? '✓' : String(i + 1);
+}
+
+function phaseWhen(phase) {
+  var day = prettyDay(phase.date);
+  if (phase.state === 'done') return day ? 'Done · ' + day : 'Done';
+  if (!day) return phase.state === 'active' ? 'In progress' : 'Not scheduled yet';
+  return (phase.state === 'active' ? 'In progress · ' : '') + day;
+}
+
+function phaseItem(phase, i) {
+  var li = el('li', 'phase ' + phase.state);
+  li.appendChild(el('div', 'phase-dot', dotText(phase, i)));
+  var body = el('div', 'phase-body');
+  body.appendChild(el('div', 'phase-name', phase.label));
+  body.appendChild(el('div', 'phase-when', phaseWhen(phase)));
+
+  /* The stages inside a phase, so a customer whose pad went in yesterday sees
+     that rather than a bare "pre-build". Skipped on an upcoming phase: a list
+     of things that have not happened is noise. */
+  if (phase.stages && phase.stages.length && phase.state !== 'upcoming') {
+    var ul = el('ul', 'phase-stages');
+    phase.stages.forEach(function (s) {
+      var row = el('li', 'phase-stage');
+      row.appendChild(el('span', s.done ? 'tick' : 'pending', s.done ? '✓' : '·'));
+      /* A real space, not just the margin on the span: a screen reader reads
+         the text, and a tick glued to the label is one word to it. */
+      row.appendChild(document.createTextNode(' ' + s.label));
+      ul.appendChild(row);
+    });
+    body.appendChild(ul);
+  }
+  li.appendChild(body);
+  return li;
+}
+
+/* THE ONE LINE THEY READ. Everything else on the page is detail. */
+function nowCard(data) {
+  var box = el('div', 'now');
+  if (data.complete) {
+    box.className = 'now is-done';
+    box.appendChild(el('div', 'now-label', 'Finished'));
+    box.appendChild(el('div', 'now-text', 'Your shed is built and set up. Enjoy it.'));
+    return box;
+  }
+  var active = null;
+  (data.phases || []).forEach(function (p) { if (!active && p.state === 'active') active = p; });
+  box.appendChild(el('div', 'now-label', 'Right now'));
+  box.appendChild(el('div', 'now-text', active ? active.label : 'Your order is in'));
+  var day = active ? prettyDay(active.date) : '';
+  if (day) box.appendChild(el('div', 'phase-when', day));
+  return box;
+}
+
+function changeCard(data) {
+  var card = el('div', 'card');
+  card.appendChild(el('div', 'card-label', 'Want to change something?'));
+  var note = el('div', 'change-note');
+
+  if (data.changes && data.changes.open) {
+    if (data.changes.until) {
+      note.appendChild(document.createTextNode('There is still time to change this build. Send us a note by '));
+      note.appendChild(el('strong', null, prettyDay(data.changes.until)));
+      note.appendChild(document.createTextNode(' and we can add, remove or swap things before we start buying materials.'));
+    } else {
+      note.textContent = 'Nothing is booked in yet, so there is plenty of time to change this build — add, remove or swap anything you like.';
+    }
+  } else {
+    /* Not hidden once the window shuts. A customer who wants a change still
+       wants to ask, and a missing form reads as "they do not want to hear from
+       me" rather than "it is late". */
+    note.textContent = 'Work on your shed has started, so changes are not automatic any more — but ask anyway and we will tell you honestly what is still possible.';
+  }
+  card.appendChild(note);
+
+  var box = el('textarea');
+  box.id = 'change-text';
+  box.placeholder = 'What would you like to change?';
+  box.setAttribute('aria-label', 'What would you like to change?');
+  card.appendChild(box);
+
+  var btns = el('div', 'btns');
+  var send = el('button', 'btn', 'Send to the shop');
+  send.id = 'change-send';
+  send.onclick = sendChange;
+  btns.appendChild(send);
+  if (data.design_url) {
+    var see = el('a', 'btn ghost', 'See it in 3D');
+    see.href = data.design_url;
+    see.target = '_blank';
+    see.rel = 'noopener';
+    btns.appendChild(see);
+  }
+  card.appendChild(btns);
+  card.id = 'change-card';
+  return card;
+}
+
+function sendChange() {
+  var box = document.getElementById('change-text');
+  var btn = document.getElementById('change-send');
+  var text = (box.value || '').trim();
+  clearMsg();
+  if (!text) {
+    msg('err', 'Type what you would like to change first.');
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  fetch(API_BASE + '/track/' + encodeURIComponent(TOKEN) + '/change', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: text })
+  }).then(function (res) {
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    box.value = '';
+    btn.textContent = 'Sent';
+    msg('sent', 'Got it — that is on your file and someone will be in touch. '
+      + 'If it is urgent, call us.');
+  }).catch(function () {
+    btn.disabled = false;
+    btn.textContent = 'Send to the shop';
+    /* The phone number, not just "try again": a form that failed is the moment
+       someone needs the other way of reaching us. */
+    msg('err', 'That did not send. Please call or text us instead.');
+  });
+}
+
+function clearMsg() {
+  var old = document.getElementById('change-msg');
+  if (old) old.remove();
+}
+function msg(cls, text) {
+  clearMsg();
+  var m = el('div', cls, text);
+  m.id = 'change-msg';
+  /* The card itself, by id. Walking up from the button worked but broke the
+     moment the button moved inside another wrapper. */
+  document.getElementById('change-card').appendChild(m);
+}
+
+function render(data) {
+  var wrap = document.getElementById('wrap');
+  wrap.textContent = '';
+
+  var head = el('div', 'head');
+  var logo = el('img');
+  logo.src = 'shedpro-logo.png';
+  logo.alt = '';
+  head.appendChild(logo);
+  var brand = el('div');
+  brand.appendChild(el('div', 'brand', 'SHEDPRO'));
+  brand.appendChild(el('div', 'brand-sub', 'Order #' + data.order_id));
+  head.appendChild(brand);
+  wrap.appendChild(head);
+
+  wrap.appendChild(el('div', 'greet',
+    (data.first_name ? data.first_name + ', here' : 'Here') + ' is your shed'));
+  if (data.summary) wrap.appendChild(el('div', 'greet-sub', data.summary));
+
+  wrap.appendChild(nowCard(data));
+
+  var prog = el('div', 'card');
+  prog.appendChild(el('div', 'card-label', 'Progress'));
+  var ul = el('ul', 'phases');
+  (data.phases || []).forEach(function (p, i) { ul.appendChild(phaseItem(p, i)); });
+  prog.appendChild(ul);
+  wrap.appendChild(prog);
+
+  if (data.spec && data.spec.length) {
+    var spec = el('div', 'card');
+    spec.appendChild(el('div', 'card-label', 'What we are building'));
+    var sl = el('ul', 'spec');
+    data.spec.forEach(function (line) { sl.appendChild(el('li', '', line)); });
+    spec.appendChild(sl);
+    if (data.total != null) {
+      var row = el('div', 'row');
+      row.style.marginTop = '20px';
+      row.appendChild(el('div', 'card-label', 'Your price'));
+      row.appendChild(el('div', 'total', usd(data.total)));
+      spec.appendChild(row);
+    }
+    wrap.appendChild(spec);
+  }
+
+  wrap.appendChild(changeCard(data));
+
+  var foot = el('div', 'foot');
+  foot.appendChild(document.createTextNode('Questions? '));
+  if (data.shop_phone) {
+    var tel = el('a', '', data.shop_phone);
+    tel.href = 'tel:' + data.shop_phone.replace(/[^0-9+]/g, '');
+    foot.appendChild(tel);
+  }
+  if (data.shop_phone && data.shop_email) foot.appendChild(document.createTextNode(' · '));
+  if (data.shop_email) {
+    var mail = el('a', '', data.shop_email);
+    mail.href = 'mailto:' + data.shop_email;
+    foot.appendChild(mail);
+  }
+  wrap.appendChild(foot);
+}
+
+function load() {
+  if (!TOKEN) {
+    showState('This link is incomplete. Please use the link we sent you, or give us a call.');
+    return;
+  }
+  fetch(API_BASE + '/track/' + encodeURIComponent(TOKEN)).then(function (res) {
+    if (res.status === 404) {
+      /* Deliberately vague about WHY. A link can 404 because the order is no
+         longer live, and that is a conversation to have on the phone. */
+      showState('We could not find a build for this link. '
+        + 'It may be an old one — please give us a call and we will sort it out.');
+      return null;
+    }
+    if (res.status === 429) {
+      showState('Give that a moment and refresh the page.');
+      return null;
+    }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }).then(function (data) {
+    if (data) render(data);
+  }).catch(function () {
+    showState('We could not load your build just now. Please refresh, or give us a call.');
+  });
+}
+
+load();
+</script>
+</body>
+</html>
