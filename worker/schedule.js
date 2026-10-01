@@ -8,15 +8,23 @@
  * So one date is entered and the rest follow:
  *
  *   CONCRETE — the pour date is the anchor
- *     prep      the working day before the pour
- *     pour      the date entered
- *     shop      the working day before the install
- *     install   one week after the pour, 2 days by default
+ *     prep       the working day before the pour
+ *     pour       the date entered
+ *     materials  the working day before the shop day
+ *     shop       the working day before the install
+ *     install    one week after the pour, 2 days by default
  *
  *   GRAVEL — the pad date is the anchor. No cure to wait out, so the shed
  *     follows straight on: pad, shop, install on consecutive working days.
  *
  *   NO FOUNDATION — the install date is the anchor, with a shop day before it.
+ *
+ * MATERIALS IS ALWAYS THE WORKING DAY BEFORE THE SHOP DAY, for every
+ * foundation — one rule, no special cases. Nothing can be built in the shop
+ * before the materials for it are in, so it hangs off the shop day rather than
+ * off the anchor. On a gravel job the schedule is tight enough that it lands on
+ * the pad day itself; that is a true statement about a tight week, not a bug,
+ * and scheduleGravelMaterials in the tests pins it.
  *
  * WORKING DAYS ARE MONDAY TO FRIDAY. Saturday is a catch-up day, not a day to
  * start something on, so nothing is ever SCHEDULED onto a weekend — which
@@ -37,6 +45,7 @@ export const STAGE_LABELS = {
   prep: 'Site prep',
   pour: 'Concrete pour',
   gravel: 'Gravel pad',
+  materials: 'Materials',
   shop: 'Shop build',
   shed: 'Shed install',
   concrete: 'Concrete'
@@ -138,6 +147,7 @@ export function planBuild(anchorISO, opts = {}) {
     return [
       stage('prep', prep, 1),
       stage('pour', pour, 1),
+      stage('materials', addWorkdays(shop, -1), 1),
       stage('shop', shop, 1),
       stage('shed', install, installDays)
     ];
@@ -149,14 +159,17 @@ export function planBuild(anchorISO, opts = {}) {
     const install = addWorkdays(shop, 1);
     return [
       stage('gravel', pad, 1),
+      stage('materials', addWorkdays(shop, -1), 1),
       stage('shop', shop, 1),
       stage('shed', install, installDays)
     ];
   }
 
   const install = start;
+  const shop = addWorkdays(install, -1);
   return [
-    stage('shop', addWorkdays(install, -1), 1),
+    stage('materials', addWorkdays(shop, -1), 1),
+    stage('shop', shop, 1),
     stage('shed', install, installDays)
   ];
 }

@@ -405,11 +405,12 @@ test('a concrete order plans prep, pour, shop and install from the pour date', a
   assert.deepEqual(r.data.stages.map((s) => [s.item, s.install_date, s.days]), [
     ['prep', '2026-10-06', 1],
     ['pour', '2026-10-07', 1],
+    ['materials', '2026-10-12', 1],
     ['shop', '2026-10-13', 1],
     ['shed', '2026-10-14', 2],
   ]);
   assert.deepEqual(r.data.stages.map((s) => s.label),
-    ['Site prep', 'Concrete pour', 'Shop build', 'Shed install']);
+    ['Site prep', 'Concrete pour', 'Materials', 'Shop build', 'Shed install']);
 });
 
 test('a gravel order plans pad, shop and install with no cure week', async () => {
@@ -418,8 +419,11 @@ test('a gravel order plans pad, shop and install with no cure week', async () =>
   const r = await planned(env, t, { anchor_date: '2026-10-05' });
   assert.equal(r.data.foundation, 'gravel');
   assert.equal(r.data.anchor_label, 'Pad date');
+  /* The materials day lands on the pad day on a gravel job: shop is the day
+     after the pad, and materials is the day before the shop. */
   assert.deepEqual(r.data.stages.map((s) => [s.item, s.install_date]), [
-    ['gravel', '2026-10-05'], ['shop', '2026-10-06'], ['shed', '2026-10-07'],
+    ['gravel', '2026-10-05'], ['materials', '2026-10-05'],
+    ['shop', '2026-10-06'], ['shed', '2026-10-07'],
   ]);
 });
 
@@ -429,7 +433,7 @@ test('an order with no foundation work plans a shop day and an install', async (
   const r = await planned(env, t, { anchor_date: '2026-10-06', install_days: 3 });
   assert.equal(r.data.anchor_label, 'Install date');
   assert.deepEqual(r.data.stages.map((s) => [s.item, s.install_date, s.days]), [
-    ['shop', '2026-10-05', 1], ['shed', '2026-10-06', 3],
+    ['materials', '2026-10-02', 1], ['shop', '2026-10-05', 1], ['shed', '2026-10-06', 3],
   ]);
 });
 
@@ -445,10 +449,13 @@ test('confirming books every stage, in order', async () => {
   const t = await token(env);
   const r = await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
   assert.equal(r.status, 200);
-  assert.equal(r.data.booked, 4);
+  assert.equal(r.data.booked, 5);
   const rows = db.prepare('SELECT item, install_date, days FROM installs ORDER BY install_date').all();
-  assert.deepEqual(rows.map((x) => x.item), ['prep', 'pour', 'shop', 'shed']);
-  assert.equal(rows[3].days, 2);
+  assert.deepEqual(rows.map((x) => x.item), ['prep', 'pour', 'materials', 'shop', 'shed']);
+  /* By item, not by index: inserting a stage silently moved this assertion
+     onto the shop day, where 1 day is also correct and told nobody. */
+  assert.equal(rows.find((x) => x.item === 'shed').days, 2, 'the install carries the days');
+  assert.equal(rows.find((x) => x.item === 'materials').days, 1);
 });
 
 /* The dates are recomputed on confirm. A plan the browser worked out is not
@@ -472,15 +479,15 @@ test('it refuses to overwrite existing bookings unless told to', async () => {
 
   const again = await planned(env, t, { anchor_date: '2026-10-21', confirm: true });
   assert.equal(again.status, 409);
-  assert.equal(again.data.replaces, 4);
-  assert.match(again.data.error, /already has 4 booking/);
+  assert.equal(again.data.replaces, 5);
+  assert.match(again.data.error, /already has 5 booking/);
   assert.equal(db.prepare("SELECT install_date FROM installs WHERE item='pour'").get().install_date,
     '2026-10-07', 'the original dates survived the refusal');
 
   const replaced = await planned(env, t, { anchor_date: '2026-10-21', confirm: true, replace: true });
   assert.equal(replaced.status, 200);
-  assert.equal(replaced.data.replaced, 4);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM installs').get().n, 4, 'replaced, not added to');
+  assert.equal(replaced.data.replaced, 5);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM installs').get().n, 5, 'replaced, not added to');
   assert.equal(db.prepare("SELECT install_date FROM installs WHERE item='pour'").get().install_date,
     '2026-10-21');
 });
@@ -490,7 +497,7 @@ test('a preview says how many bookings it would replace', async () => {
   const t = await token(env);
   await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
   const r = await planned(env, t, { anchor_date: '2026-10-21' });
-  assert.equal(r.data.replaces, 4, 'so the CRM can say what is about to be lost');
+  assert.equal(r.data.replaces, 5, 'so the CRM can say what is about to be lost');
 });
 
 test('a date it cannot read is refused, with the right field named', async () => {
@@ -518,7 +525,7 @@ test('a planned build shows up on the schedule', async () => {
   await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
   db.prepare("UPDATE submissions SET status = 'won' WHERE id = 7").run();
   const r = await api(env, 'GET', '/admin/schedule', null, t);
-  assert.deepEqual(r.data.installs.map((i) => i.item), ['prep', 'pour', 'shop', 'shed']);
+  assert.deepEqual(r.data.installs.map((i) => i.item), ['prep', 'pour', 'materials', 'shop', 'shed']);
   assert.ok(r.data.installs.every((i) => i.calendar_url), 'each stage can be invited from');
 });
 

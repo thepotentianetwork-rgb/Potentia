@@ -73,7 +73,7 @@ test('a concrete job: prep, pour, then a week, then shop and install', () => {
 test('they come back in the order they happen', () => {
   const dates = plan(WED, 'concrete').map((s) => s.install_date);
   assert.deepEqual(plan(WED, 'concrete').map((s) => s.item),
-    ['prep', 'pour', 'shop', 'shed']);
+    ['prep', 'pour', 'materials', 'shop', 'shed']);
   assert.deepEqual([...dates].sort(), dates, 'a stage must never precede the one before it');
 });
 
@@ -126,8 +126,29 @@ test('a gravel pad has no cure to wait out', () => {
   assert.equal(s.gravel.install_date, MON);
   assert.equal(s.shop.install_date, TUE, 'the shop day is the next working day');
   assert.equal(s.shed.install_date, WED, 'and the install the day after that');
-  assert.equal(plan(MON, 'gravel').length, 3, 'no prep or pour on a gravel job');
-  assert.deepEqual(plan(MON, 'gravel').map((s2) => s2.item), ['gravel', 'shop', 'shed']);
+  assert.equal(plan(MON, 'gravel').length, 4, 'no prep or pour on a gravel job');
+  assert.deepEqual(plan(MON, 'gravel').map((s2) => s2.item), ['gravel', 'materials', 'shop', 'shed']);
+});
+
+/* MATERIALS HANGS OFF THE SHOP DAY, NOT THE ANCHOR, for every foundation —
+   nothing can be built before the materials for it are in. On a gravel job
+   that puts it on the pad day itself, because the shop day is the day after
+   the pad. That is a tight week, not a bug, and it is pinned here so changing
+   the rule has to be a decision rather than a side effect. */
+test('materials is always the working day before the shop day', () => {
+  for (const kind of ['concrete', 'gravel', 'none']) {
+    for (const anchor of [MON, TUE, WED, THU, FRI]) {
+      const s = byItem(plan(anchor, kind));
+      assert.ok(s.materials, kind + ': no materials stage');
+      assert.equal(s.materials.install_date,
+        isoFromDay(addWorkdays(dayFromISO(s.shop.install_date), -1)),
+        kind + ' from ' + anchor + ': materials is not the day before the shop day');
+      assert.ok(s.materials.install_date < s.shop.install_date,
+        kind + ': materials is not before the shop day');
+    }
+  }
+  assert.equal(byItem(plan(MON, 'gravel')).materials.install_date, MON,
+    'on a gravel job it lands on the pad day');
 });
 
 test('a gravel job late in the week runs into the next one', () => {
@@ -142,7 +163,7 @@ test('a gravel job late in the week runs into the next one', () => {
 
 test('with no foundation work it is a shop day and an install', () => {
   const s = byItem(plan(TUE, 'none'));
-  assert.deepEqual(plan(TUE, 'none').map((x) => x.item), ['shop', 'shed']);
+  assert.deepEqual(plan(TUE, 'none').map((x) => x.item), ['materials', 'shop', 'shed']);
   assert.equal(s.shed.install_date, TUE, 'the date entered is the install');
   assert.equal(s.shop.install_date, MON);
 });
@@ -216,8 +237,8 @@ test('a date it cannot read produces no plan at all', () => {
 });
 
 test('an unknown foundation is treated as none rather than crashing', () => {
-  assert.deepEqual(plan(TUE, 'mystery').map((s) => s.item), ['shop', 'shed']);
-  assert.deepEqual(planBuild(TUE, {}).map((s) => s.item), ['shop', 'shed']);
+  assert.deepEqual(plan(TUE, 'mystery').map((s) => s.item), ['materials', 'shop', 'shed']);
+  assert.deepEqual(planBuild(TUE, {}).map((s) => s.item), ['materials', 'shop', 'shed']);
 });
 
 // ── reading the design ─────────────────────────────────────────────────────

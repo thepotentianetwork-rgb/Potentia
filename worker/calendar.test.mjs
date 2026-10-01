@@ -12,7 +12,40 @@ import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { parseDay, ymd, calendarDays, dayRange, googleCalendarUrl,
-         installTitle, installDetails, GOOGLE_CALENDAR_BASE } from './calendar.js';
+         installTitle, installDetails, isOnSite, CAL_ITEM_LABELS,
+         GOOGLE_CALENDAR_BASE } from './calendar.js';
+import { planBuild } from './schedule.js';
+
+/* ---- the stage vocabulary, which lives in two files ---------------------- */
+
+/* schedule.js names the stages and calendar.js titles them, and they are
+   deliberately separate copies (the bundler inlines every module into one
+   scope). Separate copies drift: a stage added to the planner and not here
+   would title its invite "Install — Hank Ellis" and look fine. */
+test('every stage the planner can produce has a calendar title', () => {
+  for (const kind of ['concrete', 'gravel', 'none']) {
+    planBuild('2026-10-07', { foundation: kind }).forEach((s) => {
+      assert.ok(CAL_ITEM_LABELS[s.item], kind + ': no calendar title for "' + s.item + '"');
+    });
+  }
+});
+
+/* WHICH WAY THE DEFAULT FAILS. Inviting a customer to a day at the shop or at
+   a supplier is the expensive mistake — they drive over and nothing is
+   happening. Leaving the crew off is noticed by the crew that morning. So an
+   unlisted stage must come back false, not true. */
+test('only days at the customer\u2019s place count as on site', () => {
+  ['prep', 'pour', 'gravel', 'shed', 'concrete'].forEach((item) => {
+    assert.equal(isOnSite(item), true, item + ' happens at their address');
+  });
+  ['shop', 'materials'].forEach((item) => {
+    assert.equal(isOnSite(item), false, item + ' does not happen at their address');
+  });
+  assert.equal(isOnSite('warranty-visit'), false,
+    'a stage nobody has classified must not invite the customer by default');
+  assert.equal(isOnSite(''), false);
+  assert.equal(isOnSite(undefined), false);
+});
 
 test('a one-day install ends on the NEXT day, because the end is exclusive', () => {
   assert.deepEqual(dayRange('2026-10-15', 1), { start: '20261015', end: '20261016' });

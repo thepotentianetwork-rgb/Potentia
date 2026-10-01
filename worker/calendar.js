@@ -28,6 +28,7 @@ export const CAL_ITEM_LABELS = {
   prep: 'Site prep',
   pour: 'Concrete pour',
   gravel: 'Gravel pad',
+  materials: 'Materials',
   shop: 'Shop build',
   shed: 'Shed install',
   concrete: 'Concrete pour'
@@ -39,9 +40,19 @@ export const CAL_ITEM_LABELS = {
  * appointment on their calendar for a day when nothing happens at their
  * house, which is worse than not inviting them at all — they will either turn
  * up or stop trusting the invites. Only site days get the customer; the crew
- * list goes on everything, because the crew need to know about both. */
+ * list goes on everything, because the crew need to know about both.
+ *
+ * NAMED THE OTHER WAY ROUND ON PURPOSE. This was `item !== 'shop'`, so every
+ * stage was on site unless it was listed — and the day a 'materials' stage was
+ * added, gathering materials at a supplier became a day the customer was
+ * invited to their own house for. Listing the site days instead means a new
+ * stage defaults to NOT inviting the customer, and the two mistakes are not
+ * equal: a missing crew invite is noticed by the crew that morning, a wrong
+ * customer invite is noticed by the customer standing outside. */
+const CAL_ON_SITE = ['prep', 'pour', 'gravel', 'shed', 'concrete'];
+
 export function isOnSite(item) {
-  return item !== 'shop';
+  return CAL_ON_SITE.indexOf(item) !== -1;
 }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
