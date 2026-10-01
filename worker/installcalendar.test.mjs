@@ -50,7 +50,16 @@ function setup(extraEnv = {}, customer = {}) {
   db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
               VALUES (7,1,?,'won','2026-09-01')`)
     .run(JSON.stringify({ redline, quotedPrice: 9000,
-                          config: { w: 10, l: 16, style: 'barn', siding: 'vertical' } }));
+                          permalink: 'https://shedpro-utah.com/designer.html?d=a1b2c3d4',
+                          /* Enough of a build to tell a real SPEC from the
+                             one-line summary that used to be all the invite
+                             carried — a foundation and a door are things the
+                             summary never mentioned. */
+                          config: { w: 10, l: 16, h: 9, style: 'barn', siding: 'vertical',
+                                    foundation: 'pad', foundationFinish: 'coated',
+                                    doors: [{ wall: 'front', w: 96, style: 'rollup', color: 'brown' }],
+                                    windows: [{ wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' },
+                                              { wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' }] } }));
   return { db, env: { DB: makeD1(db), ADMIN_PASSWORD: 'pw', ADMIN_SESSION_SECRET: 'k', ...extraEnv } };
 }
 
@@ -100,10 +109,14 @@ test('the customer is on the guest list', async () => {
   const t = await token(env);
   await schedule(env, t);
   const i = await firstInstall(env, t);
-  assert.equal(decodeURIComponent(params(i.calendar_url).add), 'hank@roof.test');
+  const add = decodeURIComponent(params(i.calendar_url).add);
+  assert.ok(add.split(',').indexOf('hank@roof.test') !== -1,
+    'the customer is not on the invite: "' + add + '"');
 });
 
-test('extra crew addresses can be added without touching the code', async () => {
+/* The env var REPLACES the built-in crew, it does not add to it — otherwise
+   someone who leaves the crew keeps getting every install until a deploy. */
+test('INSTALL_CALENDAR_GUESTS sets the crew without touching the code', async () => {
   const { env } = setup({ INSTALL_CALENDAR_GUESTS: 'crew@shedpro.test, boss@shedpro.test' });
   const t = await token(env);
   await schedule(env, t);
@@ -146,6 +159,19 @@ test('the description carries the build, the phone and the note', async () => {
   assert.match(d, /Order #7/);
   assert.match(d, /Phone: 4355550000/);
   assert.match(d, /Note: gate code 1234/);
+
+  /* THE SPEC REACHES THE INVITE. Every check above passes on the one line the
+     invite used to carry — "10x16 ft · barn · vertical" has the size and the
+     style in it. These are the things only the full spec says, and removing
+     the wiring that puts it there left all of the above green. */
+  assert.match(d, /9ft walls/, 'the wall height is missing — this is the old one-line summary');
+  assert.match(d, /Foundation: Concrete pad \(coated\)/);
+  assert.match(d, /8' Roll-Up Garage Door \u00b7 Brown \(front\)/);
+  assert.match(d, /2 \u00d7 Black Vinyl Window 24x36 \(left\)/);
+  // The 3D build, last, as a short link anyone on the invite can open.
+  assert.match(d, /\n3D build: https:\/\/www\.shedpro-utah\.com\/designer\.html\?d=a1b2c3d4$/);
+  // And no money on it — the customer is a guest on this event.
+  assert.ok(!/\$|9000|[Qq]uoted/.test(d), `a price reached the invite: ${d}`);
 });
 
 test('concrete and shed are named apart', async () => {
@@ -190,6 +216,23 @@ test('an unreadable install date yields no link at all', async () => {
   assert.equal(i.calendar_url, null);
 });
 
+/* ---- who is on the invite ------------------------------------------------ */
+
+test('the crew are invited without anyone configuring anything', async () => {
+  /* This was env-only and therefore EMPTY until someone set it. A shop day —
+     where the customer is deliberately NOT invited — opened an event with no
+     guests at all, which looks like the feature working. */
+  const { env } = setup();                      // no INSTALL_CALENDAR_GUESTS
+  const t = await token(env);
+  await schedule(env, t);
+  const i = await firstInstall(env, t);
+  const add = decodeURIComponent(params(i.calendar_url).add || '');
+  assert.match(add, /shedprollc\.utah@gmail\.com/, 'the company address is not on the invite');
+  assert.match(add, /sandovalcristian64@gmail\.com/, 'Cristian is not on the invite');
+  // The customer too — a shed install happens at their address.
+  assert.match(add, /hank@roof\.test/);
+});
+
 /* ---- the schedule page's data ------------------------------------------ */
 
 test('the schedule lists installs across every customer, by date', async () => {
@@ -221,6 +264,14 @@ test('the schedule lists installs across every customer, by date', async () => {
   assert.equal(rows[1].address, '123 Main St, Eagle Mountain, UT 84005');
   assert.equal(rows[1].summary, '10x16 ft · barn · vertical');
   assert.ok(rows[0].calendar_url && rows[1].calendar_url, 'each row can be invited from here too');
+  /* And those invites carry the SPEC, not just a date and a name. The schedule
+     builds its own invite separately from the customer page's, so wiring one
+     says nothing about the other — removing it here left every check above
+     green. Row 1 is Hank, whose fixture has the full build on it. */
+  const sd = decodeURIComponent(params(rows[1].calendar_url).details);
+  assert.match(sd, /9ft walls/, 'the schedule invite is still the old one-line summary');
+  assert.match(sd, /Foundation: Concrete pad/);
+  assert.match(sd, /3D build: https:/);
 });
 
 test('it can be bounded to a date range, inclusive at both ends', async () => {
@@ -487,10 +538,11 @@ test('the customer is invited to site days, not to shop days', async () => {
     guests[i.item] = decodeURIComponent(params(i.calendar_url).add || '');
   });
 
-  assert.equal(guests.prep, 'hank@roof.test', 'prep is at their place');
-  assert.equal(guests.pour, 'hank@roof.test', 'so is the pour');
-  assert.equal(guests.shed, 'hank@roof.test', 'and the install');
-  assert.equal(guests.shop, '', 'but the shop day is not');
+  const invited = (item) => guests[item].split(',').indexOf('hank@roof.test') !== -1;
+  assert.ok(invited('prep'), 'prep is at their place');
+  assert.ok(invited('pour'), 'so is the pour');
+  assert.ok(invited('shed'), 'and the install');
+  assert.ok(!invited('shop'), 'but the shop day is not: "' + guests.shop + '"');
 });
 
 test('the crew are on every stage, including the shop day', async () => {
@@ -511,6 +563,40 @@ test('the crew are on every stage, including the shop day', async () => {
   const shop = sub.data.installs.find((i) => i.item === 'shop');
   assert.equal(decodeURIComponent(params(shop.calendar_url).add), 'crew@shedpro.test');
   assert.ok(r.data.installs.length >= 0);
+});
+
+/* The customer page and the schedule page build their invite links in two
+   separate places. A break pass that reverted the schedule page to the old
+   env-only crew list failed nothing — the crew tests all read the customer
+   page. The schedule is where the week is actually worked from. */
+test('the schedule page invites the crew too, not just the customer page', async () => {
+  const { env } = withFoundation('pad');     // no INSTALL_CALENDAR_GUESTS
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+  const r = await api(env, 'GET', '/admin/schedule', null, t);
+  assert.ok(r.data.installs.length, 'fixture produced no installs');
+  r.data.installs.forEach((i) => {
+    const add = decodeURIComponent(params(i.calendar_url).add || '').split(',');
+    assert.ok(add.indexOf('shedprollc.utah@gmail.com') !== -1,
+      i.item + ' on the schedule left the shop off');
+    assert.ok(add.indexOf('sandovalcristian64@gmail.com') !== -1,
+      i.item + ' on the schedule left Cristian off');
+  });
+});
+
+/* The shop day is the one that exposed this: before the crew had a default,
+   an unconfigured worker opened it with NO guests at all, which from the CRM
+   looks exactly like a working invite. */
+test('a shop day invites the crew without anyone configuring anything', async () => {
+  const { env } = withFoundation('pad');     // no INSTALL_CALENDAR_GUESTS
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+  const r = await api(env, 'GET', '/admin/customers/1', null, t);
+  const shop = r.data.installs.find((i) => i.item === 'shop');
+  const add = decodeURIComponent(params(shop.calendar_url).add || '').split(',');
+  assert.ok(add.indexOf('shedprollc.utah@gmail.com') !== -1, 'the shop is not on its own build day');
+  assert.ok(add.indexOf('sandovalcristian64@gmail.com') !== -1, 'Cristian is not on the shop day');
+  assert.ok(add.indexOf('hank@roof.test') === -1, 'the customer was invited to a shop day');
 });
 
 test('each stage is named for what it is, on its own invite', async () => {

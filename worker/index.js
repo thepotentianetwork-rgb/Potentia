@@ -23,6 +23,7 @@ import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnab
 import { quoteLines, compedMap } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
+import { buildSpecLines, designLinkFor } from "./buildspec.js";
 import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
 import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
@@ -86,6 +87,23 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
    box on purpose: "Fernando M", "fernando" and "Fernando" are three owners
    of the same lead, and nobody notices until someone asks whose it is. */
 const DEFAULT_CALLERS = "Fernando M, Alejandro A";
+
+/* WHO IS ON AN INSTALL INVITE, besides the customer.
+   Same shape as the caller roster above: a sensible default in the code,
+   overridden by INSTALL_CALENDAR_GUESTS so the crew can change without a
+   deploy. It was env-only and therefore EMPTY until someone set it — which
+   meant a shop day, where the customer is deliberately not invited, opened an
+   event with no guests on it at all and nothing to say why.
+   The customer is added separately, and only on days that happen at their
+   address — see isOnSite. */
+const DEFAULT_INSTALL_GUESTS = "shedprollc.utah@gmail.com, sandovalcristian64@gmail.com";
+
+/* One reader, because there were two identical copies of this and a crew
+   added to one is a crew missing from the other half the time. */
+function installGuests(env) {
+  return String((env && env.INSTALL_CALENDAR_GUESTS) || DEFAULT_INSTALL_GUESTS)
+    .split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 /* ---------------------------------------------------------------------------
    RATE LIMITING
@@ -656,8 +674,7 @@ async function handleGetCustomer(request, env, origin, id) {
      event's end date is EXCLUSIVE — lives in one tested place. The customer
      is on the guest list, so whoever opens the link and presses Save has
      Google send them the invite. */
-  const calGuests = String(env.INSTALL_CALENDAR_GUESTS || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+  const calGuests = installGuests(env);
   const subById = {};
   submissions.forEach((s) => { subById[s.id] = s; });
   installs.forEach((i) => {
@@ -669,6 +686,8 @@ async function handleGetCustomer(request, env, origin, id) {
       days: i.days,
       details: installDetails({
         summary: configSummary(details.config),
+        spec: buildSpecLines(details.config),
+        designUrl: designLinkFor(details),
         phone: customer.phone,
         note: i.note,
         days: i.days,
@@ -1065,8 +1084,7 @@ async function handleSchedule(request, env, origin) {
 
   const { results } = await env.DB.prepare(sql).bind(...args).all();
 
-  const calGuests = String(env.INSTALL_CALENDAR_GUESTS || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+  const calGuests = installGuests(env);
 
   const installs = (results || []).map((r) => {
     let details = {};
@@ -1093,7 +1111,9 @@ async function handleSchedule(request, env, origin) {
         title: installTitle(r.item, r.customer_name),
         installDate: r.install_date,
         days: r.days,
-        details: installDetails({ summary, phone: r.customer_phone, note: r.note,
+        details: installDetails({ summary, spec: buildSpecLines(details.config),
+                                  designUrl: designLinkFor(details),
+                                  phone: r.customer_phone, note: r.note,
                                   days: r.days, orderId: r.submission_id }),
         location,
         guests: (r.customer_email && isOnSite(r.item)) ? [r.customer_email].concat(calGuests) : calGuests,

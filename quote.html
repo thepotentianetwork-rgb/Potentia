@@ -159,6 +159,7 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 <div class="toolbar">
   <a href="#" class="back-link" id="back-link">← Back</a>
   <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
+  <button class="print-btn" id="email-btn" style="display:none" onclick="emailQuote()"></button>
 </div>
 
 <div class="doc" id="doc">
@@ -226,6 +227,112 @@ function field(label, value) {
   return '<div class="doc-field"><div class="fl">' + esc(label) + '</div><div class="fv">' + (value ? esc(value) : '—') + '</div></div>';
 }
 function money2(n) { return '$' + Math.round(n).toLocaleString(); }
+
+/* ── THE EMAIL THAT SENDS THIS QUOTE ────────────────────────────────────────
+   Sending a quote was: print it, go back to the CRM, copy the address, open
+   Mail, type it out, attach the PDF. This writes everything but the attaching.
+
+   It CANNOT attach the PDF. A browser has no way to put a file on an email it
+   opens — mailto has no attachment field, and that is an OS limitation, not
+   something to code around. So the button saves the PDF first and the body
+   says the quote is attached, which makes the one remaining manual step the
+   obvious one rather than a thing to remember.
+
+   ShedPro's own number and address come off the quote header above, where they
+   already live. Typing them again here is how a business ends up with two
+   phone numbers in circulation. */
+/* ShedPro's own contact details, written down ONCE. The header and the footer
+   of the quote each carried their own copy before this, which is two places to
+   miss on the day the number changes — and this email would have been a third. */
+var SHEDPRO_PHONE = '435-232-9516';
+var SHEDPRO_EMAIL = 'shedprollc.utah@gmail.com';
+
+function firstName(full) {
+  var n = String(full || '').trim().split(/\s+/)[0] || '';
+  return /^[A-Za-z'\-]+$/.test(n) ? n : '';
+}
+
+/* "12x20 ft barn" — enough for the subject line to mean something in an inbox
+   six weeks later. */
+function buildPhrase(config) {
+  var c = config || {};
+  var size = (c.w && c.l) ? (c.w + 'x' + c.l + ' ft') : '';
+  var style = String(c.style || '').trim();
+  return [size, style].filter(Boolean).join(' ');
+}
+
+/* Returns null when there is no address to send to — the caller says so rather
+   than opening an empty draft, which looks like it worked. */
+function quoteEmailDraft(customer, config, totalDue) {
+  var to = String((customer && customer.email) || '').trim();
+  if (!to) return null;
+
+  var who = firstName(customer && customer.name);
+  var what = buildPhrase(config);
+  var subject = 'Your ShedPro quote' + (what ? ' \u2014 ' + what : '');
+
+  var body = [];
+  body.push(who ? ('Hi ' + who + ',') : 'Hi,');
+  body.push('');
+  body.push(what ? ('Thanks for your time \u2014 here is your quote for the ' + what + '.')
+                 : 'Thanks for your time \u2014 here is your quote.');
+  if (totalDue != null && isFinite(Number(totalDue))) {
+    body.push('');
+    body.push('Total: ' + money2(totalDue) + ' (including tax)');
+  }
+  body.push('');
+  body.push('The full itemised quote is attached.');
+  body.push('');
+  body.push('Any questions, just reply to this or give us a call on ' + SHEDPRO_PHONE + '.');
+  body.push('');
+  body.push('ShedPro');
+
+  return { to: to, subject: subject, body: body.join('\n') };
+}
+
+/* The button. Saves the PDF first, THEN opens the draft, because the body says
+   the quote is attached and the file has to exist before anyone can attach it.
+   window.print() blocks until the dialog is dismissed, so the draft opens
+   after it rather than behind it. */
+var EMAIL_DRAFT = null;
+
+function syncEmailBtn(customer, config, totalDue) {
+  var btn = document.getElementById('email-btn');
+  if (!btn) return;
+  EMAIL_DRAFT = quoteEmailDraft(customer, config, totalDue);
+  btn.style.display = '';
+  if (EMAIL_DRAFT) {
+    btn.textContent = 'Email quote';
+    btn.disabled = false;
+    btn.style.opacity = '';
+    btn.title = 'Saves the PDF, then opens an email to ' + EMAIL_DRAFT.to
+      + ' written and ready to send \u2014 attach the PDF you just saved.';
+  } else {
+    /* Said out loud rather than hidden. A missing button looks like the
+       feature is broken; this says which piece of data is missing and where
+       to put it. */
+    btn.textContent = 'No email on file';
+    btn.disabled = true;
+    btn.style.opacity = '0.45';
+    btn.title = 'This customer has no email address in the CRM. Add one on their '
+      + 'customer page and this will send to it.';
+  }
+}
+
+function emailQuote() {
+  if (!EMAIL_DRAFT) return;
+  /* Print first. If the dialog is cancelled the draft still opens — someone
+     who already has the PDF should not have to print it twice. */
+  try { window.print(); } catch (e) {}
+  window.location.href = mailtoHref(EMAIL_DRAFT);
+}
+
+function mailtoHref(draft) {
+  if (!draft) return '';
+  return 'mailto:' + encodeURIComponent(draft.to)
+    + '?subject=' + encodeURIComponent(draft.subject)
+    + '&body=' + encodeURIComponent(draft.body);
+}
 
 var PCT_LABEL = function (r) { return (r * 100).toFixed(2).replace(/\.?0+$/, ''); };
 
@@ -459,13 +566,15 @@ function render(submission, customer) {
   var totalDue = breakdown ? breakdown.total
     : (details.quotedPrice != null && isFinite(Number(details.quotedPrice)) ? Number(details.quotedPrice) * (1 + TAX_RATE) : null);
 
+  syncEmailBtn(customer, config, totalDue);
+
   var html = ''
     + '<div class="doc-header">'
     +   '<div class="doc-brand">'
     +     '<img src="shedpro-logo.png" alt="ShedPro">'
     +     '<div>'
     +       '<div class="doc-brand-name">SHEDPRO</div>'
-    +       '<div class="doc-brand-contact">435-232-9516<br>shedprollc.utah@gmail.com</div>'
+    +       '<div class="doc-brand-contact">' + SHEDPRO_PHONE + '<br>' + SHEDPRO_EMAIL + '</div>'
     +     '</div>'
     +   '</div>'
     +   '<div class="doc-meta">'
@@ -503,7 +612,7 @@ function render(submission, customer) {
 
     + '<div class="doc-footer">'
     +   'Pricing is reviewed and confirmed by a ShedPro representative before order. Current promotions will be included in your final quote.<br>'
-    +   'Questions? Call or text 435-232-9516, or email shedprollc.utah@gmail.com.'
+    +   'Questions? Call or text ' + SHEDPRO_PHONE + ', or email ' + SHEDPRO_EMAIL + '.'
     + '</div>';
 
   document.getElementById('doc').innerHTML = html;
