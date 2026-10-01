@@ -25,6 +25,7 @@ import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./cal
 import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
 import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
+import { trackPhases, trackComplete, trackChangeWindow } from "./tracker.js";
 import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
@@ -97,6 +98,14 @@ const DEFAULT_CALLERS = "Fernando M, Alejandro A";
    The customer is added separately, and only on days that happen at their
    address — see isOnSite. */
 const DEFAULT_INSTALL_GUESTS = "shedprollc.utah@gmail.com, sandovalcristian64@gmail.com";
+
+/* HOW A CUSTOMER REACHES THE SHOP from their tracking page. Overridable,
+   because a wrong phone number on a page a customer is already looking at is
+   the most expensive typo in the building. */
+const SHOP_EMAIL = "shedprollc.utah@gmail.com";
+const SHOP_PHONE = "435-232-9516";
+function shopEmail(env) { return String((env && env.SHOP_EMAIL) || SHOP_EMAIL); }
+function shopPhone(env) { return String((env && env.SHOP_PHONE) || SHOP_PHONE); }
 
 /* One reader, because there were two identical copies of this and a crew
    added to one is a crew missing from the other half the time. */
@@ -937,6 +946,10 @@ async function handlePlanBuild(request, env, origin, submissionId) {
     ).bind(submissionId, s.item, s.install_date, s.days, body.note ? String(body.note).slice(0, 500) : null, now).run();
   }
 
+  /* Planning a build is the other moment an order becomes a real job, and the
+     install invite is built straight after it — so the link has to exist by
+     now. Idempotent: an order won first already has one and keeps it. */
+  await ensureTrackToken(env, submissionId);
   return json({ ok: true, booked: stages.length, replaced: (existing || []).length, ...shape }, 200, origin);
 }
 
@@ -1822,14 +1835,67 @@ async function handleBackfillQuoteRedline(request, env, origin) {
 //
 // ALTER TABLE at runtime, since submissions is live and SQLite has no
 // ADD COLUMN IF NOT EXISTS.
-let submissionWonColumnReady = false;
+/* REMEMBERED AGAINST THE DATABASE, not in a plain boolean. A bare flag assumes
+   one database per isolate, which is true in production — one D1 binding — and
+   false the moment anything drives this module against a second one. That is
+   not hypothetical: the test suite builds a fresh database per case in one
+   process, so the first one to be migrated made every later one skip the ALTER
+   and then fail on a SELECT of the column it was supposed to have added. It
+   cost nothing to key the memo on the binding and get both. */
+const submissionWonColumnReady = new WeakSet();
 async function ensureSubmissionWonColumn(env) {
-  if (submissionWonColumnReady) return;
+  const binding = env && env.DB;
+  if (!binding) return;
+  if (submissionWonColumnReady.has(binding)) return;
   const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
-  if ((results || []).every((r) => r.name !== "won_at")) {
+  const names = (results || []).map((r) => r.name);
+  if (names.indexOf("won_at") === -1) {
     await env.DB.prepare("ALTER TABLE submissions ADD COLUMN won_at TEXT").run();
   }
-  submissionWonColumnReady = true;
+  /* The customer's tracking link. Minted when an order is won and never
+     changed after: a link already in a customer's inbox has to keep working,
+     so re-marking a won order must not issue a new one. */
+  if (names.indexOf("track_token") === -1) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN track_token TEXT").run();
+  }
+  submissionWonColumnReady.add(binding);
+}
+
+/* THE TRACKING TOKEN IS THE ONLY THING GUARDING THE PAGE, so it is not the
+   8-hex design code: that is 32 bits, fine for a link someone chose to share
+   and far too few for one that names a customer and their address. A bare UUID
+   is 122 bits of randomness and cannot be walked.
+   No collision retry, unlike randomDesignCode — at 122 bits, a collision is not
+   a thing that happens, and a retry loop would be untested code pretending
+   otherwise. */
+function randomTrackToken() {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+/* Mints one if the order has none, and hands back whatever it has. Called from
+   the two places an order becomes a real job — marked won, and planned — so a
+   read never has to write to produce a link. */
+async function ensureTrackToken(env, submissionId) {
+  await ensureSubmissionWonColumn(env);
+  const row = await env.DB.prepare("SELECT track_token FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  if (!row) return null;
+  if (row.track_token) return row.track_token;
+  const token = randomTrackToken();
+  await env.DB.prepare("UPDATE submissions SET track_token = COALESCE(track_token, ?) WHERE id = ?")
+    .bind(token, submissionId).run();
+  const after = await env.DB.prepare("SELECT track_token FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  return (after && after.track_token) || token;
+}
+
+/* Where the customer's page lives. Configurable because the pages have moved
+   host once already, and a link that is wrong is worse than one that is absent. */
+const DEFAULT_TRACK_BASE = "https://www.potentianetwork.com/track.html";
+function trackUrlFor(env, token) {
+  if (!token) return "";
+  const base = String((env && env.TRACK_BASE_URL) || DEFAULT_TRACK_BASE);
+  return base + "?t=" + encodeURIComponent(token);
 }
 
 
@@ -2158,6 +2224,13 @@ async function handleUpdateSubmissionStatus(request, env, origin) {
     )
       .bind(status, new Date().toISOString(), id)
       .run();
+    /* The customer's tracking link exists from the moment the job is real, so
+       the quote email and the install invite can both carry it without either
+       of them having to write to the database to get one. Not cleared when an
+       order moves back OUT of won: the link stays valid, and /track refuses to
+       serve anything that is not currently won, so an un-won job goes dark
+       without burning a link that may already be in an inbox. */
+    await ensureTrackToken(env, id);
   } else {
     await env.DB.prepare("UPDATE submissions SET status = ?, won_at = NULL WHERE id = ?")
       .bind(status, id)
@@ -3235,6 +3308,142 @@ async function handleGetDesign(request, env, origin, code) {
   return json({ config }, 200, origin);
 }
 
+/* ===========================================================================
+   THE CUSTOMER'S TRACKING PAGE — GET /track/:token
+   ===========================================================================
+   Public, because the point is that a customer can open it from a text message
+   without an account. The token is the whole of the authorisation, so:
+
+   - WON ORDERS ONLY. An order that is lost, superseded or still a quote goes
+     dark rather than 404ing differently, so a token cannot be used to find out
+     anything about an order that is not a live job. Same filter as the
+     schedule page, same reason.
+   - NO MONEY THAT IS NOT THEIRS TO SEE. redline is the shop's COST and never
+     leaves the building; the customer's own quoted total does, because they
+     already have it on their quote.
+   - NO OTHER CUSTOMER, EVER. Everything is keyed off the one submission the
+     token names.
+   - RATE LIMITED, unlike the design endpoint, precisely because a token here
+     is worth guessing at: 122 bits is not walkable, and a limit means nobody
+     gets to try.
+
+   What it does NOT include is deliberate: no address, no phone number, no
+   note the shop wrote for itself. The customer knows their own address; what
+   they do not need is their details read back to anyone holding the link. */
+async function handleTrack(request, env, origin, token) {
+  await ensureInstallsTable(env);
+  await ensureSubmissionWonColumn(env);
+  await ensureSubmissionAdjustColumns(env);
+
+  const clean = String(token || "").trim();
+  /* Shape-checked before it reaches the database: the minted token is 32 hex
+     characters, so anything else is not a link this shop ever issued. Defence
+     in depth rather than the guard itself — the lookup below finds nothing for
+     a junk token anyway — so it is here to keep rubbish out of the query, not
+     because anything depends on it. */
+  if (!/^[0-9a-f]{32}$/.test(clean)) return json({ error: "Not found" }, 404, origin);
+
+  const sub = await env.DB.prepare(
+    `SELECT s.id, s.details, s.status, s.won_at, s.effective_price,
+            c.name AS customer_name
+     FROM submissions s JOIN customers c ON s.customer_id = c.id
+     WHERE s.track_token = ?`
+  ).bind(clean).first();
+  if (!sub || sub.status !== "won") return json({ error: "Not found" }, 404, origin);
+
+  const { results: installs } = await env.DB.prepare(
+    `SELECT item, install_date, days, done_at FROM installs
+     WHERE submission_id = ? ORDER BY install_date ASC, id ASC`
+  ).bind(sub.id).all();
+  const rows = installs || [];
+
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+
+  /* First name only. The page greets them; it does not need to recite their
+     full name to whoever is holding the link. */
+  const firstName = String(sub.customer_name || "").trim().split(/\s+/)[0] || "";
+
+  const total = sub.effective_price != null ? Number(sub.effective_price)
+              : (details.quotedPrice != null ? Number(details.quotedPrice) : null);
+
+  return json({
+    order_id: sub.id,
+    first_name: firstName,
+    summary: configSummary(details.config),
+    spec: buildSpecLines(details.config),
+    design_url: designLinkFor(details),
+    total: Number.isFinite(total) ? total : null,
+    phases: trackPhases(rows),
+    complete: trackComplete(rows),
+    changes: trackChangeWindow(rows),
+    shop_email: shopEmail(env),
+    shop_phone: shopPhone(env),
+  }, 200, origin);
+}
+
+/* ---- POST /track/:token/change: "can we change something?" ----------------
+   The ONE thing a customer can write. It lands as a note on their own customer
+   record, which is where the shop already looks, rather than as an email that
+   needs a provider and a DNS record to exist.
+
+   IT CHANGES NOTHING ABOUT THE ORDER. The build, the price and the dates are
+   untouched — this is a message, and a person reads it and decides. A customer
+   editing a won order directly is how a shed gets built to one spec and
+   invoiced against another.
+
+   Accepted even once the change window has shut, because "can you still fit a
+   window in?" is a reasonable thing to ask late and a silent failure is not a
+   reasonable answer. The note records when it arrived; the shop decides. */
+async function handleTrackChange(request, env, origin, token) {
+  await ensureSubmissionWonColumn(env);
+  const clean = String(token || "").trim();
+  if (!/^[0-9a-f]{32}$/.test(clean)) return json({ error: "Not found" }, 404, origin);
+
+  const sub = await env.DB.prepare(
+    `SELECT s.id, s.status, s.customer_id FROM submissions s WHERE s.track_token = ?`
+  ).bind(clean).first();
+  if (!sub || sub.status !== "won") return json({ error: "Not found" }, 404, origin);
+
+  const body = await request.json().catch(() => ({}));
+  /* Capped hard. This is an unauthenticated write, so the only defence against
+     someone filling the notes table through it is the rate limit above and a
+     length nobody can hide an essay in. */
+  const text = String(body.text || "").trim().slice(0, 1000);
+  if (!text) return json({ error: "a message is required" }, 400, origin);
+
+  await env.DB.prepare(
+    "INSERT INTO notes (customer_id, text, created_at) VALUES (?,?,?)"
+  ).bind(sub.customer_id,
+         "CHANGE REQUEST from the customer's tracking page (order #" + sub.id + "): " + text,
+         new Date().toISOString()).run();
+
+  return json({ ok: true }, 200, origin);
+}
+
+/* ---- POST /admin/submissions/:id/track-link -------------------------------
+   The link to send the customer, minted on first ask.
+
+   On demand rather than on the customer page's main read for two reasons: that
+   read is the busiest in the CRM and should not be writing anything, and a
+   token minted the moment anyone glanced at a customer would exist for orders
+   that never became jobs. Won orders already have one from the status change —
+   this is what covers the orders won before any of this existed. */
+async function handleTrackLink(request, env, origin, submissionId) {
+  await ensureSubmissionWonColumn(env);
+  const sub = await env.DB.prepare("SELECT id, status FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  if (!sub) return json({ error: "no such order" }, 404, origin);
+  /* A link for an order that is not won would answer "Not found" when the
+     customer opened it, which is worse than saying so now. */
+  if (sub.status !== "won") {
+    return json({ error: "only a won order has a tracking page" }, 409, origin);
+  }
+  const token = await ensureTrackToken(env, submissionId);
+  if (!token) return json({ error: "could not issue a link" }, 500, origin);
+  return json({ ok: true, url: trackUrlFor(env, token) }, 200, origin);
+}
+
 // ============================================================================
 // Potentia's own client CRM — /crm/*
 //
@@ -4300,6 +4509,12 @@ export default {
       if (path === "/stripe/webhook" && request.method === "POST") {
         return await handleStripeWebhook(request, env, origin);
       }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/track-link") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const tid = Number(path.slice("/admin/submissions/".length, -"/track-link".length));
+        if (!tid) return json({ error: "bad order id" }, 400, origin);
+        return await handleTrackLink(request, env, origin, tid);
+      }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const pid = Number(path.slice("/admin/submissions/".length, -"/plan".length));
@@ -4812,6 +5027,20 @@ export default {
         const code = path.slice("/shed/design/".length);
         if (!code) return json({ error: "Invalid code" }, 400, origin);
         return await handleGetDesign(request, env, origin, code);
+      }
+
+      /* The customer's own progress page. A customer refreshes it a few times
+         a week; 120 an hour is far more than that and still shuts the door on
+         anyone working through tokens. */
+      if (path.startsWith("/track/") && path.endsWith("/change") && request.method === "POST") {
+        const rl = await rateLimit(request, env, "trackchange", 10, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
+        return await handleTrackChange(request, env, origin, path.slice("/track/".length, -"/change".length));
+      }
+      if (path.startsWith("/track/") && request.method === "GET") {
+        const rl = await rateLimit(request, env, "track", 120, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
+        return await handleTrack(request, env, origin, path.slice("/track/".length));
       }
 
       return json({ error: "Not found" }, 404, origin);

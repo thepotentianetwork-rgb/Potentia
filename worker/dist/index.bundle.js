@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "62e1436";
-const WORKER_BUILT_AT = "2026-10-01T22:24:30.811Z";
+const WORKER_BUILD = "1bf026d-dirty";
+const WORKER_BUILT_AT = "2026-10-01T23:41:58.307Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4396,6 +4396,7 @@ const CAL_ITEM_LABELS = {
   prep: 'Site prep',
   pour: 'Concrete pour',
   gravel: 'Gravel pad',
+  materials: 'Materials',
   shop: 'Shop build',
   shed: 'Shed install',
   concrete: 'Concrete pour'
@@ -4407,9 +4408,19 @@ const CAL_ITEM_LABELS = {
  * appointment on their calendar for a day when nothing happens at their
  * house, which is worse than not inviting them at all — they will either turn
  * up or stop trusting the invites. Only site days get the customer; the crew
- * list goes on everything, because the crew need to know about both. */
+ * list goes on everything, because the crew need to know about both.
+ *
+ * NAMED THE OTHER WAY ROUND ON PURPOSE. This was `item !== 'shop'`, so every
+ * stage was on site unless it was listed — and the day a 'materials' stage was
+ * added, gathering materials at a supplier became a day the customer was
+ * invited to their own house for. Listing the site days instead means a new
+ * stage defaults to NOT inviting the customer, and the two mistakes are not
+ * equal: a missing crew invite is noticed by the crew that morning, a wrong
+ * customer invite is noticed by the customer standing outside. */
+const CAL_ON_SITE = ['prep', 'pour', 'gravel', 'shed', 'concrete'];
+
 function isOnSite(item) {
-  return item !== 'shop';
+  return CAL_ON_SITE.indexOf(item) !== -1;
 }
 
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
@@ -4547,15 +4558,23 @@ function capped(text) {
  * So one date is entered and the rest follow:
  *
  *   CONCRETE — the pour date is the anchor
- *     prep      the working day before the pour
- *     pour      the date entered
- *     shop      the working day before the install
- *     install   one week after the pour, 2 days by default
+ *     prep       the working day before the pour
+ *     pour       the date entered
+ *     materials  the working day before the shop day
+ *     shop       the working day before the install
+ *     install    one week after the pour, 2 days by default
  *
  *   GRAVEL — the pad date is the anchor. No cure to wait out, so the shed
  *     follows straight on: pad, shop, install on consecutive working days.
  *
  *   NO FOUNDATION — the install date is the anchor, with a shop day before it.
+ *
+ * MATERIALS IS ALWAYS THE WORKING DAY BEFORE THE SHOP DAY, for every
+ * foundation — one rule, no special cases. Nothing can be built in the shop
+ * before the materials for it are in, so it hangs off the shop day rather than
+ * off the anchor. On a gravel job the schedule is tight enough that it lands on
+ * the pad day itself; that is a true statement about a tight week, not a bug,
+ * and scheduleGravelMaterials in the tests pins it.
  *
  * WORKING DAYS ARE MONDAY TO FRIDAY. Saturday is a catch-up day, not a day to
  * start something on, so nothing is ever SCHEDULED onto a weekend — which
@@ -4576,6 +4595,7 @@ const STAGE_LABELS = {
   prep: 'Site prep',
   pour: 'Concrete pour',
   gravel: 'Gravel pad',
+  materials: 'Materials',
   shop: 'Shop build',
   shed: 'Shed install',
   concrete: 'Concrete'
@@ -4677,6 +4697,7 @@ function planBuild(anchorISO, opts = {}) {
     return [
       stage('prep', prep, 1),
       stage('pour', pour, 1),
+      stage('materials', addWorkdays(shop, -1), 1),
       stage('shop', shop, 1),
       stage('shed', install, installDays)
     ];
@@ -4688,14 +4709,17 @@ function planBuild(anchorISO, opts = {}) {
     const install = addWorkdays(shop, 1);
     return [
       stage('gravel', pad, 1),
+      stage('materials', addWorkdays(shop, -1), 1),
       stage('shop', shop, 1),
       stage('shed', install, installDays)
     ];
   }
 
   const install = start;
+  const shop = addWorkdays(install, -1);
   return [
-    stage('shop', addWorkdays(install, -1), 1),
+    stage('materials', addWorkdays(shop, -1), 1),
+    stage('shop', shop, 1),
     stage('shed', install, installDays)
   ];
 }
@@ -4921,6 +4945,172 @@ function designLinkFor(details, base) {
 
 // ---- end inlined buildspec.js ----
 
+// ---- inlined from worker/tracker.js by build-bundle.mjs — do not edit below by hand ----
+/* WHAT THE CUSTOMER SEES, DERIVED FROM WHAT THE SHOP ALREADY RECORDS.
+ *
+ * Four phases, in the customer's words:
+ *
+ *   1  Pre-build            the order is in; changes are still possible
+ *   2  Gathering materials  buying the lumber, siding, doors and windows
+ *   3  Building in the shop the shed is assembled off site
+ *   4  Build day            it is delivered and set on its foundation
+ *
+ * NOTHING HERE IS A STORED STATUS. The phase is read off the install rows the
+ * shop already books and ticks off, because a second status field would have to
+ * be kept in step by hand and would therefore be wrong — and a tracker that is
+ * wrong is worse than no tracker, since the customer stops asking and starts
+ * turning up.
+ *
+ * THE FOUNDATION LIVES IN PHASE 1 on purpose. Site prep and the pour happen
+ * before the materials are bought (the shed is built during the concrete's cure
+ * week), so they belong to the run-up, not to build day. They are listed inside
+ * phase 1 with their own ticks, so a customer whose pad went in yesterday sees
+ * that rather than a bare "pre-build".
+ *
+ * A PHASE IS NEVER DONE WHILE A LATER ONE IS. Stages are ticked off by hand in
+ * a yard, so one WILL get missed; a shed cannot be installed without having
+ * been built, so a later tick is taken as proof of the earlier ones. Smoothing
+ * it here means the customer never sees "built ✓ / materials ✗".
+ */
+
+/* Which install stages make up each phase, in the order they happen. 'concrete'
+   is the old single foundation row, from before the stages were split. */
+const TRACK_PHASE_DEFS = [
+  { key: 'prebuild',  label: 'Pre-build',            stages: ['prep', 'pour', 'gravel', 'concrete'] },
+  { key: 'materials', label: 'Gathering materials',  stages: ['materials'] },
+  { key: 'shop',      label: 'Building in the shop', stages: ['shop'] },
+  { key: 'install',   label: 'Build day',            stages: ['shed'] }
+];
+
+/* Customer-facing stage names. The CRM's own labels are terser ("Materials"),
+   and one of them — "Shed install" — is the name of a phase here. */
+const TRACK_STAGE_LABELS = {
+  prep: 'Site preparation',
+  pour: 'Concrete poured',
+  gravel: 'Gravel pad laid',
+  concrete: 'Foundation',
+  materials: 'Materials gathered',
+  shop: 'Shed built in the shop',
+  shed: 'Delivery and set-up'
+};
+
+function trackStageLabel(item) {
+  return TRACK_STAGE_LABELS[item] || String(item || '');
+}
+
+function doneOf(row) {
+  return !!(row && row.done_at);
+}
+
+/* The earliest install_date in a set, as a plain YYYY-MM-DD, or null. Dates are
+   compared as strings: they are already zero-padded ISO days, so that sorts
+   correctly and avoids a timezone ever entering into it. */
+function firstDate(rows) {
+  const days = rows.map((r) => String(r.install_date || '').slice(0, 10))
+                   .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+                   .sort();
+  return days.length ? days[0] : null;
+}
+
+/* THE FOUR PHASES, each with its own stages.
+ *
+ * state is one of:
+ *   'done'      everything in it has been ticked off (or something later has)
+ *   'active'    the first phase that is not done — where the build is now
+ *   'upcoming'  still ahead
+ *
+ * Phases the order has no stages for are still returned, so the page always
+ * draws four steps and a customer with no foundation does not see a gap. */
+function trackPhases(installs) {
+  const rows = Array.isArray(installs) ? installs : [];
+  const byPhase = TRACK_PHASE_DEFS.map((def) => {
+    const mine = rows.filter((r) => def.stages.indexOf(String(r.item || '')) !== -1);
+    return {
+      key: def.key,
+      label: def.label,
+      date: firstDate(mine),
+      /* In the order they happen, which is the order the stage list is
+         written in, not the order the rows came out of the database. */
+      stages: def.stages
+        .map((item) => mine.filter((r) => r.item === item))
+        .filter((group) => group.length)
+        .map((group) => ({
+          item: group[0].item,
+          label: trackStageLabel(group[0].item),
+          date: firstDate(group),
+          done: group.every(doneOf)
+        })),
+      /* Held separately from state: "every stage I have is ticked" is a fact
+         about this phase, while state also depends on the phases after it. */
+      selfDone: mine.length > 0 && mine.every(doneOf)
+    };
+  });
+
+  /* A later tick proves the earlier phases, so sweep backwards. */
+  let laterDone = false;
+  for (let i = byPhase.length - 1; i >= 0; i--) {
+    byPhase[i].done = byPhase[i].selfDone || laterDone;
+    if (byPhase[i].done) laterDone = true;
+  }
+
+  let active = -1;
+  for (let i = 0; i < byPhase.length; i++) {
+    if (!byPhase[i].done) { active = i; break; }
+  }
+
+  return byPhase.map((p, i) => ({
+    key: p.key,
+    label: p.label,
+    date: p.date,
+    stages: p.stages,
+    state: p.done ? 'done' : (i === active ? 'active' : 'upcoming')
+  }));
+}
+
+/* WHETHER THE BUILD IS FINISHED — every phase done, and at least one stage
+   actually ticked. Without the second half an order with no bookings at all
+   would read as complete, because "all of nothing is done" is true. */
+function trackComplete(installs) {
+  const rows = Array.isArray(installs) ? installs : [];
+  if (!rows.some(doneOf)) return false;
+  return trackPhases(rows).every((p) => p.state === 'done');
+}
+
+/* CAN THEY STILL CHANGE THE BUILD?
+ *
+ * One rule, not a per-phase one: changes are open until the first booked stage
+ * of any kind, and shut the moment anything has been done. Tying it to the
+ * phase would have told a customer whose concrete went in on Monday that they
+ * were still free to change the size of the shed it was poured for.
+ *
+ * until is the day before the first booked stage — the last day a change is
+ * free — or null when nothing is booked yet and there is no deadline to name. */
+function trackChangeWindow(installs) {
+  const rows = Array.isArray(installs) ? installs : [];
+  if (rows.some(doneOf)) {
+    return { open: false, until: null, reason: 'started' };
+  }
+  const first = firstDate(rows);
+  if (!first) return { open: true, until: null, reason: 'unscheduled' };
+  const d = new Date(first + 'T00:00:00Z');
+  if (isNaN(d.getTime())) return { open: true, until: null, reason: 'unscheduled' };
+  d.setUTCDate(d.getUTCDate() - 1);
+  const until = d.toISOString().slice(0, 10);
+  /* A build starting today or tomorrow leaves no window to name; saying
+     "changes until yesterday" would be worse than saying it has started. */
+  return until < todayISO() ? { open: false, until: null, reason: 'started' }
+                            : { open: true, until: until, reason: 'scheduled' };
+}
+
+/* Injectable so the tests are not a calendar away from failing. */
+let trackNow = null;
+function setTrackNow(iso) { trackNow = iso || null; }
+function todayISO() {
+  return (trackNow || new Date().toISOString()).slice(0, 10);
+}
+
+// ---- end inlined tracker.js ----
+
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
 //  2. /admin/*          — password-gated dashboard for the shed company
@@ -5010,6 +5200,14 @@ const DEFAULT_CALLERS = "Fernando M, Alejandro A";
    The customer is added separately, and only on days that happen at their
    address — see isOnSite. */
 const DEFAULT_INSTALL_GUESTS = "shedprollc.utah@gmail.com, sandovalcristian64@gmail.com";
+
+/* HOW A CUSTOMER REACHES THE SHOP from their tracking page. Overridable,
+   because a wrong phone number on a page a customer is already looking at is
+   the most expensive typo in the building. */
+const SHOP_EMAIL = "shedprollc.utah@gmail.com";
+const SHOP_PHONE = "435-232-9516";
+function shopEmail(env) { return String((env && env.SHOP_EMAIL) || SHOP_EMAIL); }
+function shopPhone(env) { return String((env && env.SHOP_PHONE) || SHOP_PHONE); }
 
 /* One reader, because there were two identical copies of this and a crew
    added to one is a crew missing from the other half the time. */
@@ -5520,6 +5718,21 @@ async function ensureInstallsTable(env) {
       created_at TEXT NOT NULL
     )`
   ).run();
+
+  /* done_at came later, for the customer-facing tracker.
+     A booked date is a PLAN. Until something recorded that a stage actually
+     happened, the only honest thing a tracker could tell a customer was what
+     the diary said, so the first time a pour slipped a day the page was
+     confidently wrong — which is worse than having no page.
+     Null means "not ticked off", not "late": a stage with a past date and no
+     done_at is simply one nobody has confirmed, and the tracker says
+     "scheduled" rather than claiming progress. Same reasoning as payments'
+     submission_id above, same PRAGMA dance for the same D1 reason. */
+  const have = await env.DB.prepare("PRAGMA table_info(installs)").all();
+  const names = (have.results || []).map((r) => r.name);
+  if (names.length && names.indexOf("done_at") === -1) {
+    await env.DB.prepare("ALTER TABLE installs ADD COLUMN done_at TEXT").run();
+  }
 }
 
 // ---- /admin/customers/:id: full detail — customer + all their submissions + notes + payments + installs ----
@@ -5575,7 +5788,7 @@ async function handleGetCustomer(request, env, origin, id) {
   // a repeat customer's install log for order A never bleeds into order B.
   await ensureInstallsTable(env);
   const { results: installs } = await env.DB.prepare(
-    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at
+    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at, i.done_at
      FROM installs i JOIN submissions s ON i.submission_id = s.id
      WHERE s.customer_id = ? ORDER BY i.install_date DESC, i.id DESC`
   )
@@ -5835,6 +6048,10 @@ async function handlePlanBuild(request, env, origin, submissionId) {
     ).bind(submissionId, s.item, s.install_date, s.days, body.note ? String(body.note).slice(0, 500) : null, now).run();
   }
 
+  /* Planning a build is the other moment an order becomes a real job, and the
+     install invite is built straight after it — so the link has to exist by
+     now. Idempotent: an order won first already has one and keeps it. */
+  await ensureTrackToken(env, submissionId);
   return json({ ok: true, booked: stages.length, replaced: (existing || []).length, ...shape }, 200, origin);
 }
 
@@ -5985,7 +6202,7 @@ async function handleSchedule(request, env, origin) {
   if (to) { where.push("i.install_date <= ?"); args.push(to); }
 
   const sql =
-    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at,
+    `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at, i.done_at,
             c.id AS customer_id, c.name AS customer_name, c.email AS customer_email,
             c.phone AS customer_phone, c.address, c.city, c.state, c.zip,
             s.details, s.status AS order_status
@@ -6011,6 +6228,7 @@ async function handleSchedule(request, env, origin) {
       install_date: r.install_date,
       days: r.days,
       note: r.note,
+      done_at: r.done_at || null,
       order_status: r.order_status,
       customer_id: r.customer_id,
       customer_name: r.customer_name,
@@ -6491,7 +6709,12 @@ async function handleDeletePayment(request, env, origin, id) {
 }
 
 // ---- /admin/submissions/:id/installs ----
-const INSTALL_ITEMS = ["concrete", "shed"];
+/* EVERY STAGE THE PLANNER CAN BOOK, plus 'concrete' for rows booked before the
+   stages were split up. This used to be ["concrete", "shed"] while planBuild
+   inserted prep/pour/gravel/shop/shed straight into the table, so the planner
+   could book a shop day but a person could not add one by hand — the endpoint
+   answered "valid item required" for a stage the CRM was already showing. */
+const INSTALL_ITEMS = ["prep", "pour", "gravel", "materials", "shop", "shed", "concrete"];
 async function handleAddInstall(request, env, origin, submissionId) {
   const body = await request.json().catch(() => ({}));
   const item = String(body.item || "").toLowerCase().trim();
@@ -6516,6 +6739,24 @@ async function handleDeleteInstall(request, env, origin, id) {
   await ensureInstallsTable(env);
   await env.DB.prepare("DELETE FROM installs WHERE id = ?").bind(id).run();
   return json({ ok: true }, 200, origin);
+}
+
+/* ---- /admin/installs/:id/done: this stage actually happened --------------
+   One tap from the schedule page. It is what turns the customer's tracker from
+   a copy of the diary into a report of what has been done, so it has to be
+   cheap enough to do standing in a yard: POST {done: true|false}, no body at
+   all means true.
+   Reversible on purpose. A tap on the wrong row is the most likely mistake
+   there is, and it would otherwise tell a customer their shed was built. */
+async function handleInstallDone(request, env, origin, id) {
+  await ensureInstallsTable(env);
+  const body = await request.json().catch(() => ({}));
+  const done = body.done === undefined ? true : !!body.done;
+  const row = await env.DB.prepare("SELECT id FROM installs WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  const doneAt = done ? new Date().toISOString() : null;
+  await env.DB.prepare("UPDATE installs SET done_at = ? WHERE id = ?").bind(doneAt, id).run();
+  return json({ ok: true, done_at: doneAt }, 200, origin);
 }
 
 // ---- /admin/submissions/:id: single order, for the quote document ----
@@ -6696,14 +6937,67 @@ async function handleBackfillQuoteRedline(request, env, origin) {
 //
 // ALTER TABLE at runtime, since submissions is live and SQLite has no
 // ADD COLUMN IF NOT EXISTS.
-let submissionWonColumnReady = false;
+/* REMEMBERED AGAINST THE DATABASE, not in a plain boolean. A bare flag assumes
+   one database per isolate, which is true in production — one D1 binding — and
+   false the moment anything drives this module against a second one. That is
+   not hypothetical: the test suite builds a fresh database per case in one
+   process, so the first one to be migrated made every later one skip the ALTER
+   and then fail on a SELECT of the column it was supposed to have added. It
+   cost nothing to key the memo on the binding and get both. */
+const submissionWonColumnReady = new WeakSet();
 async function ensureSubmissionWonColumn(env) {
-  if (submissionWonColumnReady) return;
+  const binding = env && env.DB;
+  if (!binding) return;
+  if (submissionWonColumnReady.has(binding)) return;
   const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
-  if ((results || []).every((r) => r.name !== "won_at")) {
+  const names = (results || []).map((r) => r.name);
+  if (names.indexOf("won_at") === -1) {
     await env.DB.prepare("ALTER TABLE submissions ADD COLUMN won_at TEXT").run();
   }
-  submissionWonColumnReady = true;
+  /* The customer's tracking link. Minted when an order is won and never
+     changed after: a link already in a customer's inbox has to keep working,
+     so re-marking a won order must not issue a new one. */
+  if (names.indexOf("track_token") === -1) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN track_token TEXT").run();
+  }
+  submissionWonColumnReady.add(binding);
+}
+
+/* THE TRACKING TOKEN IS THE ONLY THING GUARDING THE PAGE, so it is not the
+   8-hex design code: that is 32 bits, fine for a link someone chose to share
+   and far too few for one that names a customer and their address. A bare UUID
+   is 122 bits of randomness and cannot be walked.
+   No collision retry, unlike randomDesignCode — at 122 bits, a collision is not
+   a thing that happens, and a retry loop would be untested code pretending
+   otherwise. */
+function randomTrackToken() {
+  return crypto.randomUUID().replace(/-/g, "");
+}
+
+/* Mints one if the order has none, and hands back whatever it has. Called from
+   the two places an order becomes a real job — marked won, and planned — so a
+   read never has to write to produce a link. */
+async function ensureTrackToken(env, submissionId) {
+  await ensureSubmissionWonColumn(env);
+  const row = await env.DB.prepare("SELECT track_token FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  if (!row) return null;
+  if (row.track_token) return row.track_token;
+  const token = randomTrackToken();
+  await env.DB.prepare("UPDATE submissions SET track_token = COALESCE(track_token, ?) WHERE id = ?")
+    .bind(token, submissionId).run();
+  const after = await env.DB.prepare("SELECT track_token FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  return (after && after.track_token) || token;
+}
+
+/* Where the customer's page lives. Configurable because the pages have moved
+   host once already, and a link that is wrong is worse than one that is absent. */
+const DEFAULT_TRACK_BASE = "https://www.potentianetwork.com/track.html";
+function trackUrlFor(env, token) {
+  if (!token) return "";
+  const base = String((env && env.TRACK_BASE_URL) || DEFAULT_TRACK_BASE);
+  return base + "?t=" + encodeURIComponent(token);
 }
 
 
@@ -7032,6 +7326,13 @@ async function handleUpdateSubmissionStatus(request, env, origin) {
     )
       .bind(status, new Date().toISOString(), id)
       .run();
+    /* The customer's tracking link exists from the moment the job is real, so
+       the quote email and the install invite can both carry it without either
+       of them having to write to the database to get one. Not cleared when an
+       order moves back OUT of won: the link stays valid, and /track refuses to
+       serve anything that is not currently won, so an un-won job goes dark
+       without burning a link that may already be in an inbox. */
+    await ensureTrackToken(env, id);
   } else {
     await env.DB.prepare("UPDATE submissions SET status = ?, won_at = NULL WHERE id = ?")
       .bind(status, id)
@@ -8109,6 +8410,142 @@ async function handleGetDesign(request, env, origin, code) {
   return json({ config }, 200, origin);
 }
 
+/* ===========================================================================
+   THE CUSTOMER'S TRACKING PAGE — GET /track/:token
+   ===========================================================================
+   Public, because the point is that a customer can open it from a text message
+   without an account. The token is the whole of the authorisation, so:
+
+   - WON ORDERS ONLY. An order that is lost, superseded or still a quote goes
+     dark rather than 404ing differently, so a token cannot be used to find out
+     anything about an order that is not a live job. Same filter as the
+     schedule page, same reason.
+   - NO MONEY THAT IS NOT THEIRS TO SEE. redline is the shop's COST and never
+     leaves the building; the customer's own quoted total does, because they
+     already have it on their quote.
+   - NO OTHER CUSTOMER, EVER. Everything is keyed off the one submission the
+     token names.
+   - RATE LIMITED, unlike the design endpoint, precisely because a token here
+     is worth guessing at: 122 bits is not walkable, and a limit means nobody
+     gets to try.
+
+   What it does NOT include is deliberate: no address, no phone number, no
+   note the shop wrote for itself. The customer knows their own address; what
+   they do not need is their details read back to anyone holding the link. */
+async function handleTrack(request, env, origin, token) {
+  await ensureInstallsTable(env);
+  await ensureSubmissionWonColumn(env);
+  await ensureSubmissionAdjustColumns(env);
+
+  const clean = String(token || "").trim();
+  /* Shape-checked before it reaches the database: the minted token is 32 hex
+     characters, so anything else is not a link this shop ever issued. Defence
+     in depth rather than the guard itself — the lookup below finds nothing for
+     a junk token anyway — so it is here to keep rubbish out of the query, not
+     because anything depends on it. */
+  if (!/^[0-9a-f]{32}$/.test(clean)) return json({ error: "Not found" }, 404, origin);
+
+  const sub = await env.DB.prepare(
+    `SELECT s.id, s.details, s.status, s.won_at, s.effective_price,
+            c.name AS customer_name
+     FROM submissions s JOIN customers c ON s.customer_id = c.id
+     WHERE s.track_token = ?`
+  ).bind(clean).first();
+  if (!sub || sub.status !== "won") return json({ error: "Not found" }, 404, origin);
+
+  const { results: installs } = await env.DB.prepare(
+    `SELECT item, install_date, days, done_at FROM installs
+     WHERE submission_id = ? ORDER BY install_date ASC, id ASC`
+  ).bind(sub.id).all();
+  const rows = installs || [];
+
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+
+  /* First name only. The page greets them; it does not need to recite their
+     full name to whoever is holding the link. */
+  const firstName = String(sub.customer_name || "").trim().split(/\s+/)[0] || "";
+
+  const total = sub.effective_price != null ? Number(sub.effective_price)
+              : (details.quotedPrice != null ? Number(details.quotedPrice) : null);
+
+  return json({
+    order_id: sub.id,
+    first_name: firstName,
+    summary: configSummary(details.config),
+    spec: buildSpecLines(details.config),
+    design_url: designLinkFor(details),
+    total: Number.isFinite(total) ? total : null,
+    phases: trackPhases(rows),
+    complete: trackComplete(rows),
+    changes: trackChangeWindow(rows),
+    shop_email: shopEmail(env),
+    shop_phone: shopPhone(env),
+  }, 200, origin);
+}
+
+/* ---- POST /track/:token/change: "can we change something?" ----------------
+   The ONE thing a customer can write. It lands as a note on their own customer
+   record, which is where the shop already looks, rather than as an email that
+   needs a provider and a DNS record to exist.
+
+   IT CHANGES NOTHING ABOUT THE ORDER. The build, the price and the dates are
+   untouched — this is a message, and a person reads it and decides. A customer
+   editing a won order directly is how a shed gets built to one spec and
+   invoiced against another.
+
+   Accepted even once the change window has shut, because "can you still fit a
+   window in?" is a reasonable thing to ask late and a silent failure is not a
+   reasonable answer. The note records when it arrived; the shop decides. */
+async function handleTrackChange(request, env, origin, token) {
+  await ensureSubmissionWonColumn(env);
+  const clean = String(token || "").trim();
+  if (!/^[0-9a-f]{32}$/.test(clean)) return json({ error: "Not found" }, 404, origin);
+
+  const sub = await env.DB.prepare(
+    `SELECT s.id, s.status, s.customer_id FROM submissions s WHERE s.track_token = ?`
+  ).bind(clean).first();
+  if (!sub || sub.status !== "won") return json({ error: "Not found" }, 404, origin);
+
+  const body = await request.json().catch(() => ({}));
+  /* Capped hard. This is an unauthenticated write, so the only defence against
+     someone filling the notes table through it is the rate limit above and a
+     length nobody can hide an essay in. */
+  const text = String(body.text || "").trim().slice(0, 1000);
+  if (!text) return json({ error: "a message is required" }, 400, origin);
+
+  await env.DB.prepare(
+    "INSERT INTO notes (customer_id, text, created_at) VALUES (?,?,?)"
+  ).bind(sub.customer_id,
+         "CHANGE REQUEST from the customer's tracking page (order #" + sub.id + "): " + text,
+         new Date().toISOString()).run();
+
+  return json({ ok: true }, 200, origin);
+}
+
+/* ---- POST /admin/submissions/:id/track-link -------------------------------
+   The link to send the customer, minted on first ask.
+
+   On demand rather than on the customer page's main read for two reasons: that
+   read is the busiest in the CRM and should not be writing anything, and a
+   token minted the moment anyone glanced at a customer would exist for orders
+   that never became jobs. Won orders already have one from the status change —
+   this is what covers the orders won before any of this existed. */
+async function handleTrackLink(request, env, origin, submissionId) {
+  await ensureSubmissionWonColumn(env);
+  const sub = await env.DB.prepare("SELECT id, status FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  if (!sub) return json({ error: "no such order" }, 404, origin);
+  /* A link for an order that is not won would answer "Not found" when the
+     customer opened it, which is worse than saying so now. */
+  if (sub.status !== "won") {
+    return json({ error: "only a won order has a tracking page" }, 409, origin);
+  }
+  const token = await ensureTrackToken(env, submissionId);
+  if (!token) return json({ error: "could not issue a link" }, 500, origin);
+  return json({ ok: true, url: trackUrlFor(env, token) }, 200, origin);
+}
+
 // ============================================================================
 // Potentia's own client CRM — /crm/*
 //
@@ -9174,6 +9611,12 @@ export default {
       if (path === "/stripe/webhook" && request.method === "POST") {
         return await handleStripeWebhook(request, env, origin);
       }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/track-link") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const tid = Number(path.slice("/admin/submissions/".length, -"/track-link".length));
+        if (!tid) return json({ error: "bad order id" }, 400, origin);
+        return await handleTrackLink(request, env, origin, tid);
+      }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const pid = Number(path.slice("/admin/submissions/".length, -"/plan".length));
@@ -9234,6 +9677,16 @@ export default {
         const id = Number(path.slice("/admin/submissions/".length, -"/installs".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleAddInstall(request, env, origin, id);
+      }
+      /* Specific before general, as the rest of this chain does. Today the
+         method is what actually separates this from the DELETE below, so the
+         order is convention rather than load-bearing — but the next person to
+         add a POST on /admin/installs/ is the one who would find out. */
+      if (path.startsWith("/admin/installs/") && path.endsWith("/done") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/installs/".length, -"/done".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleInstallDone(request, env, origin, id);
       }
       if (path.startsWith("/admin/installs/") && request.method === "DELETE") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
@@ -9676,6 +10129,20 @@ export default {
         const code = path.slice("/shed/design/".length);
         if (!code) return json({ error: "Invalid code" }, 400, origin);
         return await handleGetDesign(request, env, origin, code);
+      }
+
+      /* The customer's own progress page. A customer refreshes it a few times
+         a week; 120 an hour is far more than that and still shuts the door on
+         anyone working through tokens. */
+      if (path.startsWith("/track/") && path.endsWith("/change") && request.method === "POST") {
+        const rl = await rateLimit(request, env, "trackchange", 10, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
+        return await handleTrackChange(request, env, origin, path.slice("/track/".length, -"/change".length));
+      }
+      if (path.startsWith("/track/") && request.method === "GET") {
+        const rl = await rateLimit(request, env, "track", 120, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
+        return await handleTrack(request, env, origin, path.slice("/track/".length));
       }
 
       return json({ error: "Not found" }, 404, origin);
