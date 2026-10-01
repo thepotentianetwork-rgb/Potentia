@@ -255,6 +255,46 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
       R.installsBeforeBooking = won.querySelectorAll('.install-row .install-del').length;
     }
 
+    /* ---- the customer's tracking link ---------------------------------
+       Offered on a won order and nowhere else, and the Copy button has to come
+       back with a real link rather than a promise of one. */
+    function trackBtns(card){
+      return [].slice.call(card.querySelectorAll('button'))
+        .filter(function(b){return /tracking link/i.test(txt(b))});
+    }
+    R.trackOnWon = trackBtns(won || document.body).map(txt);
+    R.trackOnQuote = trackBtns(priced === won ? document.createElement('div') : priced).map(txt);
+    R.trackOnAnyCard = cards().map(function(c){return trackBtns(c).length});
+
+    if (won) {
+      /* Whatever the page hands to the clipboard is the link it would give the
+         shop. Headless Chrome DOES grant clipboard access here, so stubbing
+         window.prompt alone caught nothing — the button succeeded quietly and
+         the link was never seen. Both paths are captured. */
+      var prompted = null;
+      var realPrompt = window.prompt;
+      window.prompt = function(_m, v){ prompted = v; return v; };
+      var realClip = navigator.clipboard && navigator.clipboard.writeText;
+      if (realClip) {
+        navigator.clipboard.writeText = function(v){ prompted = v; return Promise.resolve(); };
+      }
+      var copyBtn = trackBtns(won).filter(function(b){return /^copy/i.test(txt(b))})[0];
+      R.copyBtnFound = !!copyBtn;
+      if (copyBtn) {
+        copyBtn.click();
+        await until(function(){ return prompted || /copied|failed/i.test(txt(copyBtn)); }, 8000);
+        await sleep(200);
+        R.copiedLink = prompted;
+        R.copyBtnAfter = txt(copyBtn);
+      }
+      window.prompt = realPrompt;
+      if (realClip) navigator.clipboard.writeText = realClip;
+
+      var textBtn = trackBtns(won).filter(function(b){return /^text/i.test(txt(b))})[0];
+      R.textBtnFound = !!textBtn;
+      R.textBtnEnabled = textBtn ? !textBtn.disabled : null;
+    }
+
     // ---- a booking stranded by an un-won order --------------------------
     var last = cards()[cards().length - 1];
     R.strandedWarning = txt(last);
@@ -506,6 +546,22 @@ check('and saying no sends nothing',
   R.stillOnPreview === true &&
   invoicePosts.filter((p) => !p.preview).length === 1,
   invoicePosts.map((p) => (p.preview ? 'preview' : 'SEND') + ':' + p.kind));
+
+console.log('\n-- the customer\u2019s tracking link --');
+check('a won order offers both ways of sending it',
+  JSON.stringify(R.trackOnWon) === JSON.stringify(['Copy Tracking Link', 'Text Tracking Link']),
+  R.trackOnWon);
+check('a quote that has not sold offers neither',
+  (R.trackOnQuote || []).length === 0, R.trackOnQuote);
+check('exactly one card has them', (R.trackOnAnyCard || []).filter((n) => n > 0).length === 1,
+  R.trackOnAnyCard);
+check('pressing Copy produces a real link', R.copyBtnFound === true &&
+  /\/track\.html\?t=[0-9a-f]{32}$/.test(R.copiedLink || ''), R.copiedLink);
+check('and the button says it copied', /copied/i.test(R.copyBtnAfter || ''),
+  { after: R.copyBtnAfter, link: R.copiedLink });
+check('the Text button is offered and usable, since this customer has a phone',
+  R.textBtnFound === true && R.textBtnEnabled === true,
+  { found: R.textBtnFound, enabled: R.textBtnEnabled });
 
 console.log('\n-- planning a build from one date --');
 check('the won order offers a planner', R.plannerShown === true);

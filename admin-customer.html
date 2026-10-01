@@ -627,14 +627,7 @@ function copyText(text) {
 }
 
 function makeCustomerLinkButton(details) {
-  var btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'order-link';
-  btn.style.background = 'none';
-  btn.style.border = '1px solid var(--dim)';
-  btn.style.padding = '7px 12px';
-  btn.style.cursor = 'pointer';
-  btn.textContent = 'Copy Customer Link';
+  var btn = plainBtn('Copy Customer Link');
 
   btn.addEventListener('click', function () {
     var base = designerBase();
@@ -676,6 +669,94 @@ function makeCustomerLinkButton(details) {
   return btn;
 }
 
+/* ---- THE CUSTOMER'S TRACKING LINK -----------------------------------------
+   Two buttons, because the shop texts customers. Copy puts it on the clipboard;
+   Text opens a message with it already written, which is the way it will
+   actually get sent.
+
+   Only on a won order: the worker refuses to issue a link for anything else,
+   since a link that answers "not found" when the customer taps it is worse than
+   no link at all. */
+function trackingButtons(submissionId, customerPhone) {
+  var wrap = document.createElement('span');
+  wrap.style.display = 'inline-flex';
+  wrap.style.gap = '8px';
+  wrap.style.flexWrap = 'wrap';
+
+  var copy = plainBtn('Copy Tracking Link');
+  var text = plainBtn('Text Tracking Link');
+  if (!customerPhone) {
+    /* Said out loud rather than hidden — a missing button reads as a missing
+       feature, and the fix is on this very page. */
+    text.disabled = true;
+    text.style.opacity = '0.45';
+    text.title = 'This customer has no phone number on file.';
+  }
+
+  /* Fetched on demand, and remembered, so pressing both buttons does not ask
+     the worker twice. */
+  var cached = null;
+  function withLink(btn, label, use) {
+    if (cached) { use(cached); return; }
+    btn.disabled = true;
+    btn.textContent = 'Getting link…';
+    authFetch('/admin/submissions/' + submissionId + '/track-link', { method: 'POST' })
+      .then(function (res) {
+        if (!res.ok || !res.data || !res.data.url) throw new Error('no link');
+        cached = res.data.url;
+        btn.disabled = false;
+        btn.textContent = label;
+        use(cached);
+      })
+      .catch(function () {
+        btn.disabled = false;
+        btn.textContent = 'Failed — retry';
+        setTimeout(function () { btn.textContent = label; }, 2500);
+      });
+  }
+
+  copy.addEventListener('click', function () {
+    withLink(copy, 'Copy Tracking Link', function (url) {
+      copyText(url).then(function () {
+        copy.textContent = 'Copied ✓';
+        setTimeout(function () { copy.textContent = 'Copy Tracking Link'; }, 2500);
+      }).catch(function () {
+        /* Clipboard blocked — show it rather than leaving them with nothing. */
+        window.prompt('Copy this link:', url);
+      });
+    });
+  });
+
+  text.addEventListener('click', function () {
+    if (!customerPhone) return;
+    withLink(text, 'Text Tracking Link', function (url) {
+      var body = 'Hi! You can follow your shed build here: ' + url;
+      /* sms: wants the body after a ?, and iOS has historically wanted & —
+         ? is the spec and is what both handle now. */
+      window.location.href = 'sms:' + customerPhone.replace(/[^0-9+]/g, '')
+        + '?&body=' + encodeURIComponent(body);
+    });
+  });
+
+  wrap.appendChild(copy);
+  wrap.appendChild(text);
+  return wrap;
+}
+
+/* The outline-button look the Copy Customer Link button already uses, which was
+   five inline styles repeated by hand. */
+function plainBtn(label) {
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'order-link';
+  btn.style.background = 'none';
+  btn.style.border = '1px solid var(--dim)';
+  btn.style.padding = '7px 12px';
+  btn.style.cursor = 'pointer';
+  btn.textContent = label;
+  return btn;
+}
+
 function summarizeConfig(config) {
   if (!config) return '';
   var parts = [];
@@ -687,7 +768,7 @@ function summarizeConfig(config) {
   return parts.join(' · ');
 }
 
-var INSTALL_ITEM_LABELS = { prep: 'Site prep', pour: 'Pour', gravel: 'Gravel pad', shop: 'Shop build',
+var INSTALL_ITEM_LABELS = { prep: 'Site prep', pour: 'Pour', gravel: 'Gravel pad', materials: 'Materials', shop: 'Shop build',
   shed: 'Install', concrete: 'Concrete' };
 
 // One order card can carry several install rows (concrete + shed, possibly
@@ -1747,6 +1828,12 @@ function renderOrders(submissions, installs) {
     quoteLink.textContent = 'Generate Quote';
     actions.appendChild(quoteLink);
 
+    /* The customer's own progress page. Won orders only — that is the only
+       thing the worker will issue a link for. */
+    if (s.status === 'won') {
+      actions.appendChild(trackingButtons(s.id, CUSTOMER_PHONE));
+    }
+
     card.appendChild(top);
     if (consultBox) card.appendChild(consultBox);
     card.appendChild(summary);
@@ -1934,6 +2021,9 @@ function renderPayments(payments) {
 
 var CUSTOMER_NAME = '';
 var CUSTOMER_EMAIL = '';
+/* The order cards are built from the submissions list, which carries no phone
+   number — and the Text Tracking Link button needs one. */
+var CUSTOMER_PHONE = '';
 
 function el(id) { return document.getElementById(id); }
 
@@ -2095,6 +2185,7 @@ function loadCustomer() {
     var c = r.data.customer;
     CUSTOMER_NAME = c.name || '';
     CUSTOMER_EMAIL = c.email || '';
+    CUSTOMER_PHONE = c.phone || '';
     document.getElementById('customer-name').textContent = c.name || 'Unnamed customer';
     document.title = (c.name || 'Customer') + ' — ShedPro Admin';
     document.getElementById('c-email').textContent = c.email || '—';
