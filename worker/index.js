@@ -88,6 +88,23 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
    of the same lead, and nobody notices until someone asks whose it is. */
 const DEFAULT_CALLERS = "Fernando M, Alejandro A";
 
+/* WHO IS ON AN INSTALL INVITE, besides the customer.
+   Same shape as the caller roster above: a sensible default in the code,
+   overridden by INSTALL_CALENDAR_GUESTS so the crew can change without a
+   deploy. It was env-only and therefore EMPTY until someone set it — which
+   meant a shop day, where the customer is deliberately not invited, opened an
+   event with no guests on it at all and nothing to say why.
+   The customer is added separately, and only on days that happen at their
+   address — see isOnSite. */
+const DEFAULT_INSTALL_GUESTS = "shedprollc.utah@gmail.com, sandovalcristian64@gmail.com";
+
+/* One reader, because there were two identical copies of this and a crew
+   added to one is a crew missing from the other half the time. */
+function installGuests(env) {
+  return String((env && env.INSTALL_CALENDAR_GUESTS) || DEFAULT_INSTALL_GUESTS)
+    .split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 /* ---------------------------------------------------------------------------
    RATE LIMITING
    Every /shed/* endpoint below and /chat are public by necessity — a customer
@@ -657,8 +674,7 @@ async function handleGetCustomer(request, env, origin, id) {
      event's end date is EXCLUSIVE — lives in one tested place. The customer
      is on the guest list, so whoever opens the link and presses Save has
      Google send them the invite. */
-  const calGuests = String(env.INSTALL_CALENDAR_GUESTS || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+  const calGuests = installGuests(env);
   const subById = {};
   submissions.forEach((s) => { subById[s.id] = s; });
   installs.forEach((i) => {
@@ -1068,8 +1084,7 @@ async function handleSchedule(request, env, origin) {
 
   const { results } = await env.DB.prepare(sql).bind(...args).all();
 
-  const calGuests = String(env.INSTALL_CALENDAR_GUESTS || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
+  const calGuests = installGuests(env);
 
   const installs = (results || []).map((r) => {
     let details = {};
