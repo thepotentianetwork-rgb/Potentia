@@ -13,6 +13,9 @@
 :root{
   --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
   --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+  /* The same green the quote page and the customer's tracking page use for a
+     thing that is finished. */
+  --sp-green:#3ddc97;
 }
 body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
 
@@ -99,6 +102,16 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 .job-meta{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.08em;color:var(--dim);text-transform:uppercase;margin-top:7px}
 .job-acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .act{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border:1px solid rgba(44,192,253,0.45);padding:6px 10px;white-space:nowrap}
+/* THE TICK. Its own class, not .act: those are ways of contacting a customer
+   and this one writes to the database, so it should not look like them or be
+   counted with them. Green because it is the one control on this page that the
+   customer's own tracking page is reading. */
+.tick{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-green);background:none;border:1px solid rgba(61,220,151,0.45);padding:6px 10px;white-space:nowrap;cursor:pointer}
+.tick:hover{background:rgba(61,220,151,0.12)}
+.tick.is-done{color:var(--black);background:var(--sp-green);border-color:var(--sp-green);font-weight:700}
+.tick:disabled{opacity:0.5;cursor:default}
+.job.is-done .job-item{opacity:0.65}
+.job.is-done .job-name{color:var(--silver)}
 .act:hover{background:rgba(44,192,253,0.12)}
 .act.quiet{color:var(--silver);border-color:var(--dim)}
 .act.quiet:hover{border-color:var(--sp-blue);color:var(--bright);background:none}
@@ -409,10 +422,50 @@ function jobRow(i) {
     cal.textContent = 'Invite ↗';
     acts.appendChild(cal);
   }
+
+  /* THE ONE CONTROL ON THIS PAGE THAT A CUSTOMER SEES THE RESULT OF.
+     Their tracking page moves on when this is tapped and not before, so it has
+     to be cheap enough to do standing in a yard — one tap, no dialog, and
+     tappable again to undo, because the wrong row is the likeliest mistake. */
+  if (i.done_at) job.className += ' is-done';
+  var tick = document.createElement('button');
+  tick.type = 'button';
+  tick.className = 'tick' + (i.done_at ? ' is-done' : '');
+  tick.textContent = i.done_at ? '✓ Done' : 'Mark done';
+  tick.title = i.done_at
+    ? 'Done. Tap to undo — the customer’s tracking page follows this.'
+    : 'Tap when this is finished. The customer’s tracking page follows this.';
+  tick.onclick = function () { markDone(i, tick); };
+  acts.appendChild(tick);
+
   body.appendChild(acts);
 
   job.appendChild(body);
   return job;
+}
+
+/* Writes the tick, then reloads so every copy of this job agrees — a multi-day
+   install is drawn into each of its days, so the row tapped is one of several
+   showing the same install. Updating just the button would leave the others
+   saying the opposite. */
+function markDone(install, btn) {
+  var next = !install.done_at;
+  btn.disabled = true;
+  btn.textContent = next ? 'Saving…' : 'Undoing…';
+  authFetch('/admin/installs/' + install.id + '/done', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ done: next })
+  }).then(function (res) {
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    load();
+  }).catch(function () {
+    /* Says so rather than reverting silently. A tick that did not save, on a
+       page the customer is reading, is worth a word. */
+    btn.disabled = false;
+    btn.textContent = next ? 'Did not save' : 'Did not undo';
+    btn.title = 'That did not save. Check your connection and try again.';
+  });
 }
 
 /* A job spans its whole booked length, so a three-day install shows on all

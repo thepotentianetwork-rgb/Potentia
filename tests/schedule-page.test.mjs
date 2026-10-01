@@ -238,6 +238,46 @@ function pressBtn(label){
     await until(function(){return days().length});
     R.all = snapshot();
     R.allCount = txt(document.getElementById('count'));
+
+    /* ---- the tick ------------------------------------------------------
+       Tapped on a real row, then read back after the page reloads itself. */
+    function ticks(){return [].slice.call(document.querySelectorAll('.tick'))}
+    function jobs(){return [].slice.call(document.querySelectorAll('.job'))}
+    R.tickCount = ticks().length;
+    R.jobCount = jobs().length;
+    R.tickLabels = ticks().map(txt);
+    /* classList, not a regex. This probe is injected through a template
+       literal, which eats one level of backslash — so a word-boundary escape
+       written the obvious way arrives as a literal backspace character and the
+       regex silently matches nothing. That version of this assertion passed on
+       a button that did carry the class. */
+    R.tickIsAct = ticks().some(function(b){return b.classList.contains('act')});
+    R.doneRowsBefore = jobs().filter(function(j){return /is-done/.test(j.className)}).length;
+
+    var first = ticks()[0];
+    if (first) {
+      first.click();
+      /* The page reloads itself, so wait for a row to come back marked. */
+      await until(function(){
+        return jobs().filter(function(j){return /is-done/.test(j.className)}).length > 0;
+      }, 8000);
+      await sleep(250);
+      R.doneRowsAfter = jobs().filter(function(j){return /is-done/.test(j.className)}).length;
+      R.tickLabelsAfter = ticks().map(txt);
+
+      /* And untapped again — the wrong row is the likeliest mistake. */
+      var doneBtn = ticks().filter(function(b){return /is-done/.test(b.className)})[0];
+      R.foundDoneBtn = !!doneBtn;
+      if (doneBtn) {
+        doneBtn.click();
+        await until(function(){
+          return jobs().filter(function(j){return /is-done/.test(j.className)}).length === 0;
+        }, 8000);
+        await sleep(250);
+        R.doneRowsUndone = jobs().filter(function(j){return /is-done/.test(j.className)}).length;
+        R.tickLabelsUndone = ticks().map(txt);
+      }
+    }
   }catch(e){R.threw=String((e&&e.stack)||e)}
   fetch('${BASE}/__result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(R)});
 })();
@@ -344,6 +384,33 @@ check('Everything shows all five bookings',
   R.pressedAll === true &&
   (R.all || []).reduce((t, d) => t + d.jobs.length, 0) === 5,
   { days: (R.all || []).length, count: R.allCount });
+
+/* ---- ticking a stage off --------------------------------------------------
+   The one control on this page a CUSTOMER sees the result of: their tracking
+   page moves on when this is tapped and not before. So it is checked the whole
+   way through — tap, persisted, read back, and undone again. */
+console.log('\n-- marking a stage done --');
+check('every job offers a tick', R.tickCount === R.jobCount && R.tickCount > 0,
+  { ticks: R.tickCount, jobs: R.jobCount });
+check('it is not counted among the ways of contacting a customer',
+  R.tickIsAct === false, R.tickLabels);
+check('it says what it will do before it is tapped',
+  (R.tickLabels || []).every((t) => t === 'Mark done'), R.tickLabels);
+check('nothing starts out done', R.doneRowsBefore === 0, R.doneRowsBefore);
+
+check('tapping it marks the job', R.doneRowsAfter >= 1,
+  { after: R.doneRowsAfter, labels: R.tickLabelsAfter });
+check('and the tick says so afterwards',
+  (R.tickLabelsAfter || []).some((t) => /Done/.test(t)), R.tickLabelsAfter);
+/* THE ROUND TRIP. The page reloads from the worker after writing, so a label
+   that comes back marked proves the tick was stored, not just painted. */
+check('the tick survived a reload, so it really was stored',
+  (R.tickLabelsAfter || []).filter((t) => /Done/.test(t)).length >= 1, R.tickLabelsAfter);
+
+check('a done tick can be tapped again to undo it', R.foundDoneBtn === true);
+check('and undoing it clears the job', R.doneRowsUndone === 0, R.doneRowsUndone);
+check('leaving every tick back where it started',
+  (R.tickLabelsUndone || []).every((t) => t === 'Mark done'), R.tickLabelsUndone);
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nall passed');
 process.exit(fails ? 1 : 0);
