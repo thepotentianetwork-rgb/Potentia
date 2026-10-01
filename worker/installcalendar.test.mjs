@@ -50,7 +50,16 @@ function setup(extraEnv = {}, customer = {}) {
   db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
               VALUES (7,1,?,'won','2026-09-01')`)
     .run(JSON.stringify({ redline, quotedPrice: 9000,
-                          config: { w: 10, l: 16, style: 'barn', siding: 'vertical' } }));
+                          permalink: 'https://shedpro-utah.com/designer.html?d=a1b2c3d4',
+                          /* Enough of a build to tell a real SPEC from the
+                             one-line summary that used to be all the invite
+                             carried — a foundation and a door are things the
+                             summary never mentioned. */
+                          config: { w: 10, l: 16, h: 9, style: 'barn', siding: 'vertical',
+                                    foundation: 'pad', foundationFinish: 'coated',
+                                    doors: [{ wall: 'front', w: 96, style: 'rollup', color: 'brown' }],
+                                    windows: [{ wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' },
+                                              { wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' }] } }));
   return { db, env: { DB: makeD1(db), ADMIN_PASSWORD: 'pw', ADMIN_SESSION_SECRET: 'k', ...extraEnv } };
 }
 
@@ -146,6 +155,19 @@ test('the description carries the build, the phone and the note', async () => {
   assert.match(d, /Order #7/);
   assert.match(d, /Phone: 4355550000/);
   assert.match(d, /Note: gate code 1234/);
+
+  /* THE SPEC REACHES THE INVITE. Every check above passes on the one line the
+     invite used to carry — "10x16 ft · barn · vertical" has the size and the
+     style in it. These are the things only the full spec says, and removing
+     the wiring that puts it there left all of the above green. */
+  assert.match(d, /9ft walls/, 'the wall height is missing — this is the old one-line summary');
+  assert.match(d, /Foundation: Concrete pad \(coated\)/);
+  assert.match(d, /8' Roll-Up Garage Door \u00b7 Brown \(front\)/);
+  assert.match(d, /2 \u00d7 Black Vinyl Window 24x36 \(left\)/);
+  // The 3D build, last, as a short link anyone on the invite can open.
+  assert.match(d, /\n3D build: https:\/\/www\.shedpro-utah\.com\/designer\.html\?d=a1b2c3d4$/);
+  // And no money on it — the customer is a guest on this event.
+  assert.ok(!/\$|9000|[Qq]uoted/.test(d), `a price reached the invite: ${d}`);
 });
 
 test('concrete and shed are named apart', async () => {
@@ -221,6 +243,14 @@ test('the schedule lists installs across every customer, by date', async () => {
   assert.equal(rows[1].address, '123 Main St, Eagle Mountain, UT 84005');
   assert.equal(rows[1].summary, '10x16 ft · barn · vertical');
   assert.ok(rows[0].calendar_url && rows[1].calendar_url, 'each row can be invited from here too');
+  /* And those invites carry the SPEC, not just a date and a name. The schedule
+     builds its own invite separately from the customer page's, so wiring one
+     says nothing about the other — removing it here left every check above
+     green. Row 1 is Hank, whose fixture has the full build on it. */
+  const sd = decodeURIComponent(params(rows[1].calendar_url).details);
+  assert.match(sd, /9ft walls/, 'the schedule invite is still the old one-line summary');
+  assert.match(sd, /Foundation: Concrete pad/);
+  assert.match(sd, /3D build: https:/);
 });
 
 test('it can be bounded to a date range, inclusive at both ends', async () => {

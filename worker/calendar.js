@@ -122,13 +122,46 @@ export function installTitle(item, customerName) {
 }
 
 /* Everything worth having on the phone when you are already in the truck. */
-export function installDetails({ summary, phone, note, days, orderId }) {
+/* HOW LONG THE DESCRIPTION MAY RUN.
+   This goes into the QUERY STRING of a Google Calendar template link, where
+   every newline costs three characters encoded. A loaded build's spec plus a
+   long note can run past what browsers and Google will carry, and the way
+   that fails is silent truncation — the link still opens, the event still
+   saves, and the back half of the spec is simply not there. Capped here, with
+   a line saying so, because a spec that stops mid-sentence looks like the
+   build stops there too. */
+export const DETAILS_MAX = 1400;
+
+export function installDetails({ summary, spec, designUrl, phone, note, days, orderId }) {
   const lines = [];
-  if (summary) lines.push(summary);
+  /* The full spec replaces the one-line summary when there is one — the
+     summary IS its first line, so printing both repeats it. */
+  const body = (spec && spec.length) ? spec.slice() : (summary ? [summary] : []);
+  body.forEach((l) => { if (l) lines.push(l); });
   if (orderId) lines.push('Order #' + orderId);
   if (phone) lines.push('Phone: ' + phone);
   const n = Number(days);
   if (isFinite(n) && n > 0) lines.push('Scheduled: ' + n + (n === 1 ? ' day' : ' days'));
   if (note) lines.push('Note: ' + note);
-  return lines.join('\n');
+  /* Last, so a long spec pushes the link off the bottom rather than burying
+     it — and so the cap below takes the spec's tail before it takes this. */
+  if (designUrl) lines.push('3D build: ' + designUrl);
+  return capped(lines.join('\n'));
+}
+
+/* Trims whole LINES off the end rather than cutting mid-word, and keeps the
+   design link if there was one: a truncated URL is worse than no URL. */
+function capped(text) {
+  if (text.length <= DETAILS_MAX) return text;
+  const lines = text.split('\n');
+  const link = lines[lines.length - 1].indexOf('3D build: ') === 0 ? lines.pop() : null;
+  const tail = (link ? '\n' + link : '');
+  const room = DETAILS_MAX - tail.length - 3;
+  const kept = [];
+  let used = 0;
+  for (const l of lines) {
+    if (used + l.length + 1 > room) break;
+    kept.push(l); used += l.length + 1;
+  }
+  return kept.join('\n') + '\n\u2026' + tail;
 }

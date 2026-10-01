@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "3a92c05";
-const WORKER_BUILT_AT = "2026-10-01T19:49:56.301Z";
+const WORKER_BUILD = "f3b527c-dirty";
+const WORKER_BUILT_AT = "2026-10-01T21:56:43.604Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4490,15 +4490,48 @@ function installTitle(item, customerName) {
 }
 
 /* Everything worth having on the phone when you are already in the truck. */
-function installDetails({ summary, phone, note, days, orderId }) {
+/* HOW LONG THE DESCRIPTION MAY RUN.
+   This goes into the QUERY STRING of a Google Calendar template link, where
+   every newline costs three characters encoded. A loaded build's spec plus a
+   long note can run past what browsers and Google will carry, and the way
+   that fails is silent truncation — the link still opens, the event still
+   saves, and the back half of the spec is simply not there. Capped here, with
+   a line saying so, because a spec that stops mid-sentence looks like the
+   build stops there too. */
+const DETAILS_MAX = 1400;
+
+function installDetails({ summary, spec, designUrl, phone, note, days, orderId }) {
   const lines = [];
-  if (summary) lines.push(summary);
+  /* The full spec replaces the one-line summary when there is one — the
+     summary IS its first line, so printing both repeats it. */
+  const body = (spec && spec.length) ? spec.slice() : (summary ? [summary] : []);
+  body.forEach((l) => { if (l) lines.push(l); });
   if (orderId) lines.push('Order #' + orderId);
   if (phone) lines.push('Phone: ' + phone);
   const n = Number(days);
   if (isFinite(n) && n > 0) lines.push('Scheduled: ' + n + (n === 1 ? ' day' : ' days'));
   if (note) lines.push('Note: ' + note);
-  return lines.join('\n');
+  /* Last, so a long spec pushes the link off the bottom rather than burying
+     it — and so the cap below takes the spec's tail before it takes this. */
+  if (designUrl) lines.push('3D build: ' + designUrl);
+  return capped(lines.join('\n'));
+}
+
+/* Trims whole LINES off the end rather than cutting mid-word, and keeps the
+   design link if there was one: a truncated URL is worse than no URL. */
+function capped(text) {
+  if (text.length <= DETAILS_MAX) return text;
+  const lines = text.split('\n');
+  const link = lines[lines.length - 1].indexOf('3D build: ') === 0 ? lines.pop() : null;
+  const tail = (link ? '\n' + link : '');
+  const room = DETAILS_MAX - tail.length - 3;
+  const kept = [];
+  let used = 0;
+  for (const l of lines) {
+    if (used + l.length + 1 > room) break;
+    kept.push(l); used += l.length + 1;
+  }
+  return kept.join('\n') + '\n\u2026' + tail;
 }
 
 // ---- end inlined calendar.js ----
@@ -4718,6 +4751,175 @@ function fullAddress(c) {
 }
 
 // ---- end inlined address.js ----
+
+// ---- inlined from worker/buildspec.js by build-bundle.mjs — do not edit below by hand ----
+/* WHAT TO BUILD, for the people building it.
+ *
+ * The install invite carried one line — "12x20 ft · gable · board-batten" —
+ * which tells a crew where to go and nothing about what to make when they get
+ * there. This turns the stored config into the spec a shop actually works
+ * from: the specShell, then everything hung on it.
+ *
+ * NO PRICES. The customer is a guest on every on-site day, the description is
+ * the same for everyone on the event, and a calendar invite is the easiest
+ * thing in the world to forward. The money lives behind the CRM login where
+ * it already does.
+ *
+ * Items are named through the SAME helpers the quote uses — doorDisplayName,
+ * windowDisplayName, sidingDisplayName — so the shop reads "8' Roll-Up Garage
+ * Door · Brown" and so does the customer's quote. A second set of labels here
+ * would be a second thing to keep in step, and they would drift the first time
+ * a product was renamed.
+ */
+
+const SPEC_WALL = { front: "front", back: "back", left: "left", right: "right" };
+
+const SPEC_FOUNDATION = { blocks: "Blocks", gravel: "Gravel pad", pad: "Concrete pad",
+                     existing: "Customer's own slab" };
+const SPEC_FOUND_FINISH = { plain: "", broom: "broom finish", coated: "coated" };
+const SPEC_INTERIOR = { none: "", bare: "Bare", painted: "Painted", insulated: "Insulated" };
+const SPEC_FLOOR = { none: "", good: "Good", better: "Better", best: "Best" };
+const SPEC_ELEC = { none: "", basic: "Basic", core: "Core", essential: "Essential" };
+const SPEC_ROOF = { shingle: "Shingle", metal: "Metal" };
+const SPEC_DECK = { none: "No deck", pt: "Pressure-treated deck", composite: "Composite deck" };
+
+function sv(v) { return String(v == null ? "" : v).trim(); }
+function specCap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+/* "3 × Black Vinyl Window 24x36 (left)" — specGrouped, because six identical
+   windows listed six times is a wall of text nobody reads to the end of. */
+function specGrouped(items, label) {
+  const order = [], seen = {};
+  items.forEach((it) => {
+    const key = label(it);
+    if (!key) return;
+    if (!seen[key]) { seen[key] = { n: 0, walls: [] }; order.push(key); }
+    seen[key].n += 1;
+    const w = SPEC_WALL[sv(it.wall)];
+    if (w && seen[key].walls.indexOf(w) < 0) seen[key].walls.push(w);
+  });
+  return order.map((k) => {
+    const g = seen[k];
+    const where = g.walls.length ? " (" + g.walls.join(", ") + ")" : "";
+    return (g.n > 1 ? g.n + " × " : "") + k + where;
+  });
+}
+
+/* The specShell, as one line: "12x20 ft · gable · 9ft walls · 6/12 pitch". */
+function specShell(c) {
+  const bits = [];
+  if (c.w && c.l) bits.push(c.w + "x" + c.l + " ft");
+  if (c.style) bits.push(sv(c.style));
+  if (c.h) bits.push(c.h + "ft walls");
+  if (c.pitch) bits.push(c.pitch + "/12 pitch");
+  return bits.join(" · ");
+}
+
+function specFoundationLine(c) {
+  const base = SPEC_FOUNDATION[sv(c.foundation)] || "";
+  if (!base) return "";
+  const fin = SPEC_FOUND_FINISH[sv(c.foundationFinish)] || "";
+  return "Foundation: " + base + (fin ? " (" + fin + ")" : "");
+}
+
+function specPorchLine(c) {
+  const loc = sv(c.porchLoc);
+  if (!loc || loc === "none") return "";
+  const bits = [specCap(loc)];
+  if (c.porchDepth) bits.push(c.porchDepth + "ft deep");
+  const deck = SPEC_DECK[sv(c.porchDeck)];
+  if (deck) bits.push(deck);
+  const tier = sv(c.porchTier);
+  if (tier && tier !== "standard") bits.push(tier);
+  return "Porch: " + bits.join(" · ");
+}
+
+/* Interior, floor and electrical on one line — they are three short answers
+   and three lines of "Interior: none" is how a description stops being read. */
+function specInsideLine(c) {
+  const bits = [];
+  const i = SPEC_INTERIOR[sv(c.intFinish)]; if (i) bits.push("Interior " + i.toLowerCase());
+  const f = SPEC_FLOOR[sv(c.floor)];        if (f) bits.push("floor " + f.toLowerCase());
+  const e = SPEC_ELEC[sv(c.elec)];          if (e) bits.push("electrical " + e.toLowerCase());
+  return bits.length ? specCap(bits.join(" · ")) : "";
+}
+
+function specAddonLine(c) {
+  const a = c.addons;
+  if (!a || typeof a !== "object") return "";
+  const names = Object.keys(a)
+    .filter((k) => a[k] === true || (a[k] && a[k] !== "none"))
+    /* camelCase to words: shedRemoval -> shed removal. The keys are the
+       designer's own and there is no table of labels for them, so this is a
+       transformation rather than a lookup that would silently miss new ones. */
+    .map((k) => k.replace(/([A-Z])/g, " $1").toLowerCase().trim());
+  return names.length ? "Add-ons: " + names.join(", ") : "";
+}
+
+/* Every line the shop needs, shortest first. Empty entries drop out, so a
+   plain shed is four lines and a loaded one is a dozen. */
+function buildSpecLines(config) {
+  const c = config && typeof config === "object" ? config : null;
+  if (!c) return [];
+  const out = [];
+
+  const s = specShell(c); if (s) out.push(s);
+  /* sidingDisplayName already ends in "Siding" — "Siding: Board & Batten
+     Siding" is the kind of thing that reads fine in code and looks careless on
+     a page someone else is working from. */
+  const sid = sidingDisplayName(sv(c.siding)).replace(/\s*Siding$/, "");
+  if (sid) out.push("Siding: " + sid);
+  const roof = SPEC_ROOF[sv(c.roofType)]; if (roof) out.push("Roof: " + roof);
+  const f = specFoundationLine(c); if (f) out.push(f);
+
+  const doors = Array.isArray(c.doors) ? c.doors : [];
+  /* Name AND colour, joined exactly as the quote's own door line does — a
+     brown roll-up and a white one are different things to pull off the rack,
+     and the quote has always said which. */
+  const dl = specGrouped(doors, (d) => doorDisplayName(d) + doorColorLabel(d));
+  if (dl.length) out.push("Doors: " + dl.join(", "));
+
+  const wins = Array.isArray(c.windows) ? c.windows : [];
+  const wl = specGrouped(wins, (w) => (w && w.type ? windowDisplayName(w.type) : "Window"));
+  if (wl.length) out.push("Windows: " + wl.join(", "));
+
+  const vents = Array.isArray(c.vents) ? c.vents.length : 0;
+  if (vents) out.push("Vents: " + vents);
+
+  const p = specPorchLine(c); if (p) out.push(p);
+
+  const loft = sv(c.loft);
+  if (loft && loft !== "none") out.push("Loft: " + loft.replace("-", "ft "));
+
+  const shelves = Array.isArray(c.shelves) ? c.shelves : [];
+  if (shelves.length) {
+    out.push("Shelves: " + specGrouped(shelves, (sh) =>
+      (sh.len ? sh.len + "ft " : "") + (sh.depth || 16) + '" deep').join(", "));
+  }
+
+  const inside = specInsideLine(c); if (inside) out.push(inside);
+  const ad = specAddonLine(c); if (ad) out.push(ad);
+
+  return out;
+}
+
+/* THE 3D BUILD, openable by anyone on the invite.
+ *
+ * Only ever the SHORT ?d= code. The other thing a permalink can carry is the
+ * whole config base64'd into the fragment, which runs to thousands of
+ * characters — and this is going into the query string of a Google Calendar
+ * template link, where it would push the URL past what browsers and Google
+ * will carry and truncate the description with it. A missing link costs a
+ * click; a truncated one silently eats the spec above it.
+ */
+function designLinkFor(details, base) {
+  const pl = sv(details && details.permalink);
+  const short = /[?&]d=([A-Za-z0-9]+)/.exec(pl);
+  if (!short) return "";
+  return (base || "https://www.shedpro-utah.com/designer.html") + "?d=" + short[1];
+}
+
+// ---- end inlined buildspec.js ----
 
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
@@ -5381,6 +5583,8 @@ async function handleGetCustomer(request, env, origin, id) {
       days: i.days,
       details: installDetails({
         summary: configSummary(details.config),
+        spec: buildSpecLines(details.config),
+        designUrl: designLinkFor(details),
         phone: customer.phone,
         note: i.note,
         days: i.days,
@@ -5805,7 +6009,9 @@ async function handleSchedule(request, env, origin) {
         title: installTitle(r.item, r.customer_name),
         installDate: r.install_date,
         days: r.days,
-        details: installDetails({ summary, phone: r.customer_phone, note: r.note,
+        details: installDetails({ summary, spec: buildSpecLines(details.config),
+                                  designUrl: designLinkFor(details),
+                                  phone: r.customer_phone, note: r.note,
                                   days: r.days, orderId: r.submission_id }),
         location,
         guests: (r.customer_email && isOnSite(r.item)) ? [r.customer_email].concat(calGuests) : calGuests,

@@ -118,3 +118,40 @@ test('the builder writes a bundle without falling over', () => {
     fs.rmSync(out, { recursive: true, force: true });
   }
 });
+
+/* ── TWO FILES MAY NOT SHARE A NAME ──────────────────────────────────────────
+   The single most repeated failure in this worker: PAYMENT_METHODS, usd, pad2
+   and FOUNDATION have all collided. Everything is inlined into one top-level
+   scope, so a name in two files is one name.
+
+   Two consts collide loudly — the bundle is a SyntaxError and the worker will
+   not start. A duplicate `function` or `var` does NOT throw: the second
+   silently replaces the first, the bundle parses, the worker starts, and
+   something far away quietly uses the wrong one. That is the case worth a
+   guard, and it is the case `node --check` cannot see. */
+test('the builder refuses a bundle where two files declare the same name', async () => {
+  const { assemble } = await import('./build-bundle.mjs');
+  const fsp = await import('node:fs');
+  const p = await import('node:path');
+  const dir = p.dirname(fileURLToPath(import.meta.url));
+
+  const spec = p.join(dir, 'buildspec.js');
+  const original = fsp.readFileSync(spec, 'utf8');
+  try {
+    /* The FOUNDATION collision exactly as it happened: a const in a module
+       against a name pricing.js declares FOUR LINES into a wrapped `let` list.
+       A line-anchored grep says that name is free, which is why it got in. */
+    fsp.writeFileSync(spec, original.replace('const SPEC_FOUNDATION = {', 'const FOUNDATION = {'));
+    assert.throws(() => assemble(), /same top-level name[\s\S]*FOUNDATION/,
+      'a collision with a name declared mid-list went through');
+
+    /* And a duplicate FUNCTION, which is legal JavaScript and parses fine. */
+    fsp.writeFileSync(spec, original + '\nexport function configSummary(c){ return "oops"; }\n');
+    assert.throws(() => assemble(), /same top-level name[\s\S]*configSummary/,
+      'a silently-shadowing duplicate function went through');
+  } finally {
+    fsp.writeFileSync(spec, original);
+  }
+  // And the real sources still build.
+  assert.ok(assemble().length > 1000);
+});

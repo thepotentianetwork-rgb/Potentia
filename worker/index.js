@@ -23,6 +23,7 @@ import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnab
 import { quoteLines, compedMap } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
+import { buildSpecLines, designLinkFor } from "./buildspec.js";
 import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
 import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
@@ -669,6 +670,8 @@ async function handleGetCustomer(request, env, origin, id) {
       days: i.days,
       details: installDetails({
         summary: configSummary(details.config),
+        spec: buildSpecLines(details.config),
+        designUrl: designLinkFor(details),
         phone: customer.phone,
         note: i.note,
         days: i.days,
@@ -1093,7 +1096,9 @@ async function handleSchedule(request, env, origin) {
         title: installTitle(r.item, r.customer_name),
         installDate: r.install_date,
         days: r.days,
-        details: installDetails({ summary, phone: r.customer_phone, note: r.note,
+        details: installDetails({ summary, spec: buildSpecLines(details.config),
+                                  designUrl: designLinkFor(details),
+                                  phone: r.customer_phone, note: r.note,
                                   days: r.days, orderId: r.submission_id }),
         location,
         guests: (r.customer_email && isOnSite(r.item)) ? [r.customer_email].concat(calGuests) : calGuests,

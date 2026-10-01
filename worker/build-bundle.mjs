@@ -18,7 +18,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 
 // Add a module here when index.js starts importing one. Nothing else to change.
 export const MODULES = ["pricing.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js", "stripewebhook.js",
-  "calendar.js", "schedule.js", "address.js"];
+  "calendar.js", "schedule.js", "address.js", "buildspec.js"];
 
 /* The commit the bundle was built from, for the stamp below and the log
    line at the end. Module scope so both can reach it. */
@@ -42,6 +42,7 @@ function gitDesc() {
 export function assemble() {
 let indexSrc = fs.readFileSync(path.join(dir, "index.js"), "utf8");
 let inlined = "";
+const parts = [];
 
 for (const mod of MODULES) {
   const src = fs.readFileSync(path.join(dir, mod), "utf8");
@@ -52,19 +53,138 @@ for (const mod of MODULES) {
   if (!importRe.test(indexSrc)) {
     throw new Error("Could not find the " + mod + " import line in index.js — bundler is out of sync, fix by hand.");
   }
-  const stripped = src
+  let stripped = src
     .replace(/^export function /gm, "function ")
     .replace(/^export async function /gm, "async function ")
     .replace(/^export const /gm, "const ")
     .replace(/^export let /gm, "let ");
+  /* A MODULE MAY IMPORT ANOTHER MODULE. Everything lands in one top-level
+     scope, so the name is already there at runtime — but the import LINE is
+     not valid in the bundle and the worker fails to start on it.
+     Until this, a module needing something from another had to copy it, and
+     calendar.js carries a comment saying it duplicated its labels for exactly
+     that reason. Only imports of files that are themselves inlined are
+     removed; an import of anything else is left alone so it still fails
+     loudly rather than silently resolving to nothing. */
+  for (const dep of MODULES) {
+    stripped = stripped.replace(
+      new RegExp('^import \\{[^}]*\\} from "\\./' + dep.replace(".", "\\.") + '";\\n', "gm"),
+      ""
+    );
+  }
+  if (/^import /m.test(stripped)) {
+    throw new Error(mod + " imports something that is not an inlined module: " + stripped.match(/^import .*/m)[0]);
+  }
   if (/^export /m.test(stripped)) {
     throw new Error(mod + " has an export form the bundler doesn't handle: " + stripped.match(/^export .*/m)[0]);
   }
   indexSrc = indexSrc.replace(importRe, "");
+  parts.push({ file: mod, src: stripped });
   inlined +=
     "// ---- inlined from worker/" + mod + " by build-bundle.mjs — do not edit below by hand ----\n" +
     stripped + "\n// ---- end inlined " + mod + " ----\n\n";
 }
+
+/* TWO THINGS MAY NOT SHARE A NAME.
+ *
+ * Everything lands in one top-level scope, so a name declared in two files is
+ * a collision — and this is the single most repeated failure in this worker:
+ * PAYMENT_METHODS, usd, pad2 and FOUNDATION have all done it.
+ *
+ * Two consts collide loudly: the bundle is a SyntaxError and the worker will
+ * not start, which is bad but obvious. A duplicate `function` or `var` does
+ * NOT throw. The second silently replaces the first, the bundle parses, the
+ * worker starts, and something far away quietly uses the wrong one. That is
+ * the case this is here for.
+ *
+ * The scan is deliberately simple-minded — top-level declarations only, found
+ * by column — because these are hand-written files in one house style. It
+ * reads comma lists (`var a=1, FOUNDATION='blocks', c=3`), which is where
+ * FOUNDATION was hiding when a line-anchored grep said the name was free.
+ */
+function topLevelNames(src) {
+  const names = new Map();
+  const lines = src.split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fn = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/.exec(line);
+    if (fn) { if (!names.has(fn[1])) names.set(fn[1], i + 1); i++; continue; }
+    const decl = /^(?:export\s+)?(?:var|let|const)\s/.exec(line);
+    if (decl) {
+      /* Gather the whole statement — a var list can run over many lines — and
+         take every name that is being assigned at its top level. Anything
+         inside brackets or braces is a value, not a declaration. */
+      let stmt = "", j = i;
+      while (j < lines.length) {
+        stmt += lines[j] + "\n";
+        if (/;\s*$/.test(lines[j])) break;
+        j++;
+      }
+      const body = stmt.replace(/^(?:export\s+)?(?:var|let|const)\s+/, "");
+      /* Walk the statement for the names being DECLARED: the identifier at the
+         start, and the one after every top-level comma. Three things have to
+         be respected or the walk lies about what it found —
+           - brackets, so `{ a: 1 }` and `[x, y]` are values, not declarations;
+           - quotes, so a comma or an `=` inside a string is just text;
+           - newlines, which are whitespace. The first version treated a
+             newline as the end of a name and cleared the "expecting a name"
+             flag with it, so in a list that wrapped it read the first line and
+             silently stopped. pricing.js declares FOUNDATION on the fourth
+             line of one — which is how the collision this scanner exists for
+             got past the scanner. */
+      let depth = 0, quote = "", token = "", expectName = true;
+      for (let k = 0; k < body.length; k++) {
+        const ch = body[k];
+        if (quote) { if (ch === quote && body[k - 1] !== "\\") quote = ""; continue; }
+        if (ch === "'" || ch === '"' || ch === "`") { quote = ch; continue; }
+        if ("([{".indexOf(ch) >= 0) { depth++; continue; }
+        if (")]}".indexOf(ch) >= 0) { depth--; continue; }
+        if (depth > 0) continue;
+        if (ch === ",") { expectName = true; token = ""; continue; }
+        if (ch === "=" || ch === ";") {
+          const n = token.trim();
+          if (expectName && /^[A-Za-z_$][\w$]*$/.test(n) && !names.has(n)) names.set(n, i + 1);
+          expectName = false; token = ""; continue;
+        }
+        if (ch === "\n") continue;          // whitespace, nothing more
+        token += ch;
+      }
+      // A declaration with no initialiser — `let a, b;` — ends without an `=`.
+      const last = token.trim();
+      if (expectName && /^[A-Za-z_$][\w$]*$/.test(last) && !names.has(last)) names.set(last, i + 1);
+      i = j + 1; continue;
+    }
+    i++;
+  }
+  return names;
+}
+
+function assertNoCollisions(parts) {
+  const seen = new Map();
+  const clashes = [];
+  for (const { file, src } of parts) {
+    for (const [name, line] of topLevelNames(src)) {
+      if (seen.has(name)) {
+        clashes.push(name + " — " + seen.get(name).file + " and " + file);
+      } else {
+        seen.set(name, { file, line });
+      }
+    }
+  }
+  if (clashes.length) {
+    throw new Error(
+      "Two files declare the same top-level name. Everything is inlined into one\n" +
+      "scope, so one of them silently wins:\n  " + clashes.join("\n  ") +
+      "\nRename one — the module's own is usually the one to change."
+    );
+  }
+}
+
+/* Checked after the modules are stripped and before anything is written, so a
+   collision is a failed build rather than a bundle that was pasted and then
+   misbehaved. index.js goes in last: a module's name is the one to rename. */
+assertNoCollisions(parts.concat([{ file: "index.js", src: indexSrc }]));
 
 /* Stamp the build so what is running in Cloudflare can be read from outside.
    The worker is deployed by pasting this file into a dashboard editor, which
