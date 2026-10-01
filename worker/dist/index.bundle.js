@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "bd8275d";
-const WORKER_BUILT_AT = "2026-09-30T15:41:48.188Z";
+const WORKER_BUILD = "4810ce3-dirty";
+const WORKER_BUILT_AT = "2026-10-01T19:49:42.788Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4677,6 +4677,48 @@ function anchorLabel(kind) {
 
 // ---- end inlined schedule.js ----
 
+// ---- inlined from worker/address.js by build-bundle.mjs — do not edit below by hand ----
+/* HOW AN ADDRESS IS WRITTEN DOWN, in one place.
+ *
+ * Four places composed one by hand and no two agreed. Three dropped the ZIP
+ * entirely — including the location on the Google Calendar invite, which is
+ * the address a crew types into a phone on the morning of an install. The
+ * fourth kept it and punctuated it "Riverton, UT, 84065".
+ *
+ * A US address takes a COMMA between the street and the city and between the
+ * city and the state, and a SPACE before the ZIP. Not a comma: "UT, 84065"
+ * reads as a list and is what every hand-rolled `[city, state, zip].join(', ')`
+ * produces, which is exactly why this is a function and not a convention.
+ *
+ * Blank parts fall out rather than leaving stray punctuation — most of these
+ * rows have a city and state and nothing else, and ", , UT" is worse than no
+ * address at all.
+ */
+
+function clean(v) {
+  return String(v == null ? '' : v).trim();
+}
+
+/* "Riverton, UT 84065" — the locality line on its own. */
+function cityStateZip(c) {
+  c = c || {};
+  var city = clean(c.city), state = clean(c.state), zip = clean(c.zip);
+  /* The state and the ZIP are ONE field joined by a space; the comma belongs
+     between the city and that field. Building it in that order is what keeps
+     a missing state from producing "Riverton, 84065" with a comma that now
+     separates nothing. */
+  var tail = [state, zip].filter(Boolean).join(' ');
+  return [city, tail].filter(Boolean).join(', ');
+}
+
+/* "11999 South Lampton View Drive, Riverton, UT 84065" — what you navigate to. */
+function fullAddress(c) {
+  c = c || {};
+  return [clean(c.address), cityStateZip(c)].filter(Boolean).join(', ');
+}
+
+// ---- end inlined address.js ----
+
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
 //  2. /admin/*          — password-gated dashboard for the shed company
@@ -5344,7 +5386,7 @@ async function handleGetCustomer(request, env, origin, id) {
         days: i.days,
         orderId: i.submission_id,
       }),
-      location: [customer.address, customer.city, customer.state].filter(Boolean).join(", "),
+      location: fullAddress(customer),
       guests: (customer.email && isOnSite(i.item)) ? [customer.email].concat(calGuests) : calGuests,
     });
   });
@@ -5725,7 +5767,7 @@ async function handleSchedule(request, env, origin) {
   const sql =
     `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at,
             c.id AS customer_id, c.name AS customer_name, c.email AS customer_email,
-            c.phone AS customer_phone, c.address, c.city, c.state,
+            c.phone AS customer_phone, c.address, c.city, c.state, c.zip,
             s.details, s.status AS order_status
      FROM installs i
      JOIN submissions s ON i.submission_id = s.id
@@ -5742,7 +5784,7 @@ async function handleSchedule(request, env, origin) {
     let details = {};
     try { details = JSON.parse(r.details) || {}; } catch (e) {}
     const summary = configSummary(details.config);
-    const location = [r.address, r.city, r.state].filter(Boolean).join(", ");
+    const location = fullAddress(r);
     return {
       id: r.id,
       submission_id: r.submission_id,

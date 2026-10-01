@@ -22,6 +22,7 @@ import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConf
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
+import { fullAddress } from "./address.js";
 import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
 import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
@@ -673,7 +674,7 @@ async function handleGetCustomer(request, env, origin, id) {
         days: i.days,
         orderId: i.submission_id,
       }),
-      location: [customer.address, customer.city, customer.state].filter(Boolean).join(", "),
+      location: fullAddress(customer),
       guests: (customer.email && isOnSite(i.item)) ? [customer.email].concat(calGuests) : calGuests,
     });
   });
@@ -1054,7 +1055,7 @@ async function handleSchedule(request, env, origin) {
   const sql =
     `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.note, i.created_at,
             c.id AS customer_id, c.name AS customer_name, c.email AS customer_email,
-            c.phone AS customer_phone, c.address, c.city, c.state,
+            c.phone AS customer_phone, c.address, c.city, c.state, c.zip,
             s.details, s.status AS order_status
      FROM installs i
      JOIN submissions s ON i.submission_id = s.id
@@ -1071,7 +1072,7 @@ async function handleSchedule(request, env, origin) {
     let details = {};
     try { details = JSON.parse(r.details) || {}; } catch (e) {}
     const summary = configSummary(details.config);
-    const location = [r.address, r.city, r.state].filter(Boolean).join(", ");
+    const location = fullAddress(r);
     return {
       id: r.id,
       submission_id: r.submission_id,

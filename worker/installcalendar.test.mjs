@@ -43,10 +43,10 @@ function setup(extraEnv = {}, customer = {}) {
              created_at TEXT, effective_price REAL);
            CREATE TABLE notes (id INTEGER PRIMARY KEY, customer_id INTEGER, text TEXT, created_at TEXT);`);
   const c = { name: 'Hank Ellis', email: 'hank@roof.test', phone: '4355550000',
-              address: '123 Main St', city: 'Eagle Mountain', state: 'UT', ...customer };
-  db.prepare(`INSERT INTO customers (id,name,email,phone,address,city,state,created_at)
-              VALUES (1,?,?,?,?,?,?,?)`)
-    .run(c.name, c.email, c.phone, c.address, c.city, c.state, '2026-08-01');
+              address: '123 Main St', city: 'Eagle Mountain', state: 'UT', zip: '84005', ...customer };
+  db.prepare(`INSERT INTO customers (id,name,email,phone,address,city,state,zip,created_at)
+              VALUES (1,?,?,?,?,?,?,?,?)`)
+    .run(c.name, c.email, c.phone, c.address, c.city, c.state, c.zip, '2026-08-01');
   db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
               VALUES (7,1,?,'won','2026-09-01')`)
     .run(JSON.stringify({ redline, quotedPrice: 9000,
@@ -126,8 +126,13 @@ test('the address goes on it, so it opens in maps', async () => {
   const t = await token(env);
   await schedule(env, t);
   const i = await firstInstall(env, t);
+  /* WITH THE ZIP. This is the address a crew types into a phone on the
+     morning of an install, and it went out without one — the line read
+     "123 Main St, Eagle Mountain, UT" and looked complete. A space before the
+     ZIP, not a comma: "UT, 84005" is what a hand-rolled join produces and it
+     is wrong on every delivery label. */
   assert.equal(decodeURIComponent(params(i.calendar_url).location),
-    '123 Main St, Eagle Mountain, UT');
+    '123 Main St, Eagle Mountain, UT 84005');
 });
 
 test('the description carries the build, the phone and the note', async () => {
@@ -190,8 +195,8 @@ test('an unreadable install date yields no link at all', async () => {
 test('the schedule lists installs across every customer, by date', async () => {
   const { db, env } = setup();
   const t = await token(env);
-  db.prepare(`INSERT INTO customers (id,name,email,phone,address,city,state,created_at)
-              VALUES (2,'Dana Reed','dana@reed.test','4355551111','9 Oak Ave','Lehi','UT','2026-08-02')`).run();
+  db.prepare(`INSERT INTO customers (id,name,email,phone,address,city,state,zip,created_at)
+              VALUES (2,'Dana Reed','dana@reed.test','4355551111','9 Oak Ave','Lehi','UT','84043','2026-08-02')`).run();
   db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
               VALUES (9,2,?,'won','2026-09-02')`)
     .run(JSON.stringify({ redline, config: { w: 12, l: 20, style: 'gable' } }));
@@ -208,7 +213,12 @@ test('the schedule lists installs across every customer, by date', async () => {
     'soonest first — this is a schedule, not a log');
   assert.deepEqual(rows.map((i) => i.customer_name), ['Dana Reed', 'Hank Ellis']);
   assert.equal(rows[0].item, 'concrete');
-  assert.equal(rows[0].address, '9 Oak Ave, Lehi, UT');
+  /* The schedule's address needs the ZIP for the same reason the calendar
+     invite does — it is what a crew navigates to. Its query did not even
+     SELECT the column, so no amount of formatting downstream could have put
+     one on the line. */
+  assert.equal(rows[0].address, '9 Oak Ave, Lehi, UT 84043');
+  assert.equal(rows[1].address, '123 Main St, Eagle Mountain, UT 84005');
   assert.equal(rows[1].summary, '10x16 ft · barn · vertical');
   assert.ok(rows[0].calendar_url && rows[1].calendar_url, 'each row can be invited from here too');
 });
