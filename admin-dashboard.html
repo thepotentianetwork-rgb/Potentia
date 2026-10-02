@@ -116,7 +116,17 @@ a.row-name:hover{color:var(--sp-blue)}
   .spark i{width:3px}
   .panel{padding:17px 16px}
   .ptitle{font-size:22px}
-  .week{grid-template-columns:1fr}
+  /* ONE COLUMN, BUT COMPACT. Stacked at their desktop height, five jobs push
+     Follow Ups — the panel with something to DO on it — most of a screen
+     further down than the list of jobs that are already booked and handled.
+     The day goes on one line with its date, and the padding comes in. */
+  .week{grid-template-columns:1fr;gap:10px}
+  .day-when{display:flex;gap:9px;align-items:baseline;padding:8px 12px}
+  .day-when b{display:inline}
+  .day-shot{width:74px;flex:0 0 74px}
+  .day-body{padding:9px 12px;gap:2px}
+  .day-name{font-size:18px}
+  .day-tag{padding:6px 11px}
 }
 </style>
 </head>
