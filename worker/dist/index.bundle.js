@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "32c538e-dirty";
-const WORKER_BUILT_AT = "2026-10-02T05:14:28.620Z";
+const WORKER_BUILD = "5457e12-dirty";
+const WORKER_BUILT_AT = "2026-10-02T05:23:34.022Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -8626,7 +8626,15 @@ async function handleDashboard(request, env, origin) {
   const url = new URL(request.url);
   const nowMs = Date.now();
   const today = dashDay(url.searchParams.get("today")) || new Date(nowMs).toISOString().slice(0, 10);
+  /* THE LATER OF THE TWO DAYS IT COULD BE. The shop is behind UTC, so a sale
+     closed this evening is stamped tomorrow by the worker's clock and would
+     fall outside a window that ended on the shop's today — the month's figures
+     would quietly drop the last few hours of every day. Taking whichever day is
+     further ahead costs one empty bar at worst. */
+  const utcToday = new Date(nowMs).toISOString().slice(0, 10);
+  const windowEnd = today >= utcToday ? today : utcToday;
   const month = monthToDate(today);
+  const monthEnd = month && windowEnd > month.end ? windowEnd : (month && month.end);
 
   const [subRows, instRows, invRows, custRows] = await Promise.all([
     /* Every order that is still live, plus the dates the month's figures come
@@ -8688,7 +8696,7 @@ async function handleDashboard(request, env, origin) {
   /* ---- the four figures ------------------------------------------------ */
   const inMonth = (iso) => {
     const d = dashDay(iso);
-    return !!(d && month && d >= month.start && d <= month.end);
+    return !!(d && month && d >= month.start && d <= monthEnd);
   };
 
   const newLeadDates = subs.filter((s) => inMonth(s.created_at)).map((s) => s.created_at);
@@ -8705,12 +8713,12 @@ async function handleDashboard(request, env, origin) {
   const kpis = {
     newLeads: {
       count: newLeadDates.length,
-      series: month ? daySeries(newLeadDates, month.start, month.end) : []
+      series: month ? daySeries(newLeadDates, month.start, monthEnd) : []
     },
     won: {
       count: wonThisMonth.length,
       amount: sum(wonThisMonth),
-      series: month ? daySeries(wonThisMonth.map((s) => s.won_at), month.start, month.end) : []
+      series: month ? daySeries(wonThisMonth.map((s) => s.won_at), month.start, monthEnd) : []
     },
     awaiting: { count: awaiting.length, amount: sum(awaiting) },
     unpaid: {

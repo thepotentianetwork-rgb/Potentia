@@ -124,7 +124,7 @@ check('the menu is no wider than the screen', r.menu.w <= r.vw, { w: r.menu.w, v
 
 /* Every destination readable, not just the panel on screen. The panel could
    sit inside the viewport with its items clipped out of it. */
-check('all five destinations are on the screen', r.items.length === 5, r.items);
+check('all six destinations are on the screen', r.items.length === 6, r.items);
 for (const it of r.items || []) {
   check(it.href + ' is readable', it.l >= 0 && it.r <= r.vw, it);
 }

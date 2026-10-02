@@ -25,8 +25,9 @@ const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 let fails = 0;
 const check = (n, c, x) => { if (c) console.log('  ok   ' + n); else { fails++; console.log('  FAIL ' + n + (x !== undefined ? '  ' + JSON.stringify(x).slice(0, 240) : '')); } };
 
-const PAGES = ['admin.html', 'admin-customer.html', 'admin-schedule.html',
-               'admin-activity.html', 'admin-data.html', 'admin-pricing.html'];
+const PAGES = ['admin-dashboard.html', 'admin.html', 'admin-customer.html',
+               'admin-schedule.html', 'admin-activity.html', 'admin-data.html',
+               'admin-pricing.html'];
 
 console.log('\n-- every page uses the shared nav --');
 const files = {};
@@ -48,7 +49,7 @@ for (const f of PAGES) {
 const nav = readFileSync(path.join(root, 'admin-nav.js'), 'utf8');
 const listed = [...nav.matchAll(/href:\s*'([^']+)'/g)].map((m) => m[1]);
 console.log('\n-- the menu points at pages that exist --');
-check('five destinations', listed.length === 5, listed);
+check('six destinations', listed.length === 6, listed);
 for (const href of listed) {
   check(href + ' is a real page', PAGES.includes(href), listed);
 }
@@ -143,7 +144,7 @@ check('and the page’s own buttons survive', R.logoutSurvived === true);
 check('tapping opens it', R.opensOnTap === true);
 check('with every page on it',
   JSON.stringify(R.items || []).replace(/\d+/g, '') ===
-  JSON.stringify(['Customers', 'Schedule', 'Activity', 'Data', 'Pricing']), R.items);
+  JSON.stringify(['Dashboard', 'Customers', 'Schedule', 'Activity', 'Data', 'Pricing']), R.items);
 check('the page you are on is marked, once',
   JSON.stringify(R.currentMarked) === '["admin-schedule.html"]', R.currentMarked);
 /* Two badges, one number: the button and the menu item must not disagree

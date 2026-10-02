@@ -66,7 +66,10 @@ var errorEl = document.getElementById('error');
 var submitBtn = document.getElementById('submit-btn');
 var rawNext = new URLSearchParams(location.search).get('next');
 // Only allow a same-site relative path — never redirect off-site (open redirect guard).
-var nextUrl = rawNext && /^[a-zA-Z0-9_-]+\.html(\?[^\s]*)?$/.test(rawNext) ? rawNext : 'admin.html';
+/* The dashboard is where the day starts. A ?next= from an expired session
+   still wins — being sent somewhere other than the page you asked for is
+   worse than landing on a list. */
+var nextUrl = rawNext && /^[a-zA-Z0-9_-]+\.html(\?[^\s]*)?$/.test(rawNext) ? rawNext : 'admin-dashboard.html';
 
 if (localStorage.getItem('potentia_admin_token')) {
   window.location.href = nextUrl;

@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — ShedPro</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+  --sp-green:#3ddc97;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+
+header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.h-brand{display:flex;align-items:center;gap:14px}
+.h-brand img{width:34px;height:34px;object-fit:contain}
+.h-brand-text{display:flex;flex-direction:column;gap:2px}
+.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
+.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
+.h-actions{display:flex;gap:20px;align-items:center}
+.h-date{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
+.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);background:none;border:1px solid var(--dim);padding:8px 14px;cursor:pointer;text-transform:uppercase}
+.logout:hover{border-color:var(--sp-orange);color:var(--sp-orange)}
+
+main{padding:36px 40px 90px;max-width:1500px;margin:0 auto}
+.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
+h2{font-family:'Cormorant Garamond',serif;font-size:46px;font-weight:300;color:var(--bright);line-height:1.05;letter-spacing:-0.01em}
+.lede{font-family:'Cormorant Garamond',serif;font-size:19px;color:var(--silver);margin-top:6px;margin-bottom:30px;font-weight:300}
+
+/* ── the four figures ─────────────────────────────────────────────────── */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px}
+.kpi{border:1px solid var(--dim);background:var(--deep);padding:20px 22px;display:flex;flex-direction:column;gap:10px;text-decoration:none;color:inherit}
+a.kpi:hover{border-color:var(--sp-blue)}
+.kl{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.22em;color:var(--silver);text-transform:uppercase;line-height:1.5}
+.krow{display:flex;align-items:flex-end;justify-content:space-between;gap:14px}
+.kv{font-family:'Cormorant Garamond',serif;font-size:44px;font-weight:300;color:var(--bright);line-height:1}
+.kn{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
+/* The sparkline: one bar per day of the month, drawn from flex children so it
+   needs no canvas and no library. */
+.spark{display:flex;align-items:flex-end;gap:2px;height:34px;flex:0 0 auto}
+.spark i{display:block;width:4px;min-height:2px;background:var(--sp-blue);opacity:0.5}
+.spark i.has{opacity:1}
+.kpi.warm .spark i{background:var(--sp-orange)}
+.kpi.good .spark i{background:var(--sp-green)}
+.kpi.good .kv{color:var(--sp-green)}
+
+/* ── panels ───────────────────────────────────────────────────────────── */
+.panel{border:1px solid var(--dim);background:var(--deep);padding:22px 24px;margin-bottom:22px}
+.phead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap}
+.ptitle{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:300;color:var(--bright);line-height:1.1}
+.pmore{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--sp-blue);text-decoration:none;text-transform:uppercase;white-space:nowrap}
+.pmore:hover{color:var(--bright)}
+
+/* ── the week ─────────────────────────────────────────────────────────── */
+.week{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:14px}
+.day{border:1px solid var(--dim);display:flex;flex-direction:column;text-decoration:none;color:inherit;background:var(--black)}
+.day:hover{border-color:var(--sp-blue)}
+.day.is-done{opacity:0.6}
+.day-top{display:flex;align-items:stretch;gap:0;border-bottom:1px solid var(--dim)}
+.day-when{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--silver);text-transform:uppercase;padding:11px 12px;line-height:1.7;flex:1}
+.day-when b{display:block;color:var(--bright);font-weight:400}
+.day-shot{width:92px;flex:0 0 92px;object-fit:cover;display:block;background:#0d0d16;border-left:1px solid var(--dim)}
+.day-body{padding:12px;display:flex;flex-direction:column;gap:3px;flex:1}
+.day-name{font-family:'Cormorant Garamond',serif;font-size:19px;color:var(--bright);font-weight:300;line-height:1.25}
+.day-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);line-height:1.7}
+.day-tag{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;padding:7px 11px;text-align:center;font-weight:700;color:var(--black)}
+.tag-prep,.tag-pour,.tag-gravel,.tag-concrete{background:var(--sp-orange)}
+.tag-materials{background:#b98cf2}
+.tag-shop{background:var(--sp-blue)}
+.tag-shed{background:var(--sp-green)}
+.tag-done{background:none;color:var(--sp-green);border-top:1px solid var(--sp-green)}
+
+/* ── the three lists ──────────────────────────────────────────────────── */
+.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;align-items:start}
+.row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(42,45,56,0.65)}
+.row:last-child{border-bottom:none}
+.row-bar{width:3px;align-self:stretch;min-height:34px;background:var(--sp-blue);flex:0 0 3px}
+.row-bar.warm{background:var(--sp-orange)}
+.row-bar.good{background:var(--sp-green)}
+.row-shot{width:46px;height:36px;flex:0 0 46px;object-fit:cover;background:#0d0d16;border:1px solid var(--dim)}
+.row-main{flex:1;min-width:0}
+.row-name{font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--bright);font-weight:300;line-height:1.3;text-decoration:none;display:block}
+a.row-name:hover{color:var(--sp-blue)}
+.row-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row-when{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);white-space:nowrap}
+.row-when.late{color:var(--sp-orange)}
+.row-act{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border:1px solid rgba(44,192,253,0.45);padding:7px 10px;white-space:nowrap}
+.row-act:hover{background:rgba(44,192,253,0.12)}
+.row-act.off{color:var(--dim);border-color:var(--dim);pointer-events:none}
+.chip{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;border:1px solid var(--dim);color:var(--silver);padding:4px 7px;white-space:nowrap}
+.chip.warm{color:var(--sp-orange);border-color:rgba(246,148,31,0.5)}
+
+.empty{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);padding:26px 0;line-height:1.9}
+.state{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);padding:70px 0;line-height:2}
+
+@media (max-width:1200px){
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .cols{grid-template-columns:1fr}
+}
+@media (max-width:760px){
+  header{padding:16px 20px}
+  .h-date{display:none}
+  main{padding:26px 16px 80px}
+  h2{font-size:34px}
+  .lede{font-size:17px;margin-bottom:22px}
+  .kpis{gap:12px}
+  .kpi{padding:15px 16px}
+  .kv{font-size:34px}
+  .spark{height:26px}
+  .spark i{width:3px}
+  .panel{padding:17px 16px}
+  .ptitle{font-size:22px}
+  .week{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="h-brand">
+    <img src="shedpro-logo.png" alt="ShedPro">
+    <div class="h-brand-text">
+      <span class="h-title">SHEDPRO ADMIN</span>
+      <span class="h-sub">Built &amp; managed by Potentia</span>
+    </div>
+  </div>
+  <div class="h-actions">
+    <span class="h-date" id="h-date"></span>
+    <button class="logout" id="logout-btn">Log Out</button>
+  </div>
+</header>
+
+<main>
+  <p class="sec-label">ShedPro Partner</p>
+  <h2 id="greeting">Dashboard</h2>
+  <p class="lede">Jobs on site, leads to call, and what&rsquo;s next.</p>
+  <div id="content"><div class="state" id="state">Loading&hellip;</div></div>
+</main>
+
+<script src="admin-nav.js"></script>
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_admin_token');
+var selfUrl = 'admin-dashboard.html';
+if (!token) window.location.href = 'admin-login.html';
+
+document.getElementById('logout-btn').addEventListener('click', function () {
+  localStorage.removeItem('potentia_admin_token');
+  window.location.href = 'admin-login.html';
+});
+
+function authFetch(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, { 'Authorization': 'Bearer ' + token });
+  return fetch(API_BASE + path, options).then(function (res) {
+    if (res.status === 401) {
+      localStorage.removeItem('potentia_admin_token');
+      window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+      throw new Error('Session expired');
+    }
+    return res.json().then(function (data) { return { ok: res.ok, data: data }; });
+  });
+}
+
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function usd(n) {
+  if (n == null || !isFinite(n)) return '$0';
+  return '$' + Math.round(Number(n)).toLocaleString('en-US');
+}
+
+/* TODAY, AS THE BROWSER SEES IT. The worker runs in UTC and this shop does not,
+   so the day is computed here and sent with the request — otherwise "today" is
+   tomorrow for the whole evening. */
+function todayISO() {
+  var d = new Date();
+  var p = function (x) { return (x < 10 ? '0' : '') + x; };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+
+/* A YYYY-MM-DD read as a calendar day. new Date('2026-10-15') is midnight UTC,
+   which is the previous evening here — the same trap as the customer tracker. */
+function dayParts(iso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  if (!m) return null;
+  var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return isNaN(d.getTime()) ? null : d;
+}
+function dayShort(iso) {
+  var d = dayParts(iso);
+  if (!d) return '';
+  return d.toLocaleDateString(undefined, { weekday: 'short' }).toUpperCase();
+}
+function dayNum(iso) {
+  var d = dayParts(iso);
+  if (!d) return '';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }).toUpperCase();
+}
+/* "Today"/"Tomorrow" beat a date somebody has to work out. */
+function dayWhen(iso, today) {
+  var a = dayParts(iso), b = dayParts(today);
+  if (!a || !b) return dayShort(iso);
+  var diff = Math.round((a - b) / 86400000);
+  if (diff === 0) return 'TODAY';
+  if (diff === 1) return 'TOMORROW';
+  return dayShort(iso);
+}
+
+function greetingFor(d) {
+  var h = d.getHours();
+  /* Said out loud at the right time of day or not at all — a dashboard that
+     says good morning at four in the afternoon looks broken. */
+  if (h < 12) return 'Good morning.';
+  if (h < 18) return 'Good afternoon.';
+  return 'Good evening.';
+}
+
+/* ── the four figures ───────────────────────────────────────────────────── */
+
+function sparkline(series) {
+  var box = el('div', 'spark');
+  var vals = (series || []).slice(-31);
+  if (!vals.length) return box;
+  var max = Math.max.apply(null, vals.concat([1]));
+  vals.forEach(function (v) {
+    var bar = el('i', v > 0 ? 'has' : '');
+    bar.style.height = Math.max(2, Math.round((v / max) * 34)) + 'px';
+    box.appendChild(bar);
+  });
+  return box;
+}
+
+function kpi(opts) {
+  var card = el(opts.href ? 'a' : 'div', 'kpi' + (opts.tone ? ' ' + opts.tone : ''));
+  if (opts.href) card.href = opts.href;
+  card.appendChild(el('div', 'kl', opts.label));
+  var row = el('div', 'krow');
+  var left = el('div');
+  left.appendChild(el('div', 'kv', String(opts.value)));
+  if (opts.note) left.appendChild(el('div', 'kn', opts.note));
+  row.appendChild(left);
+  if (opts.series) row.appendChild(sparkline(opts.series));
+  card.appendChild(row);
+  return card;
+}
+
+/* ── the week ───────────────────────────────────────────────────────────── */
+
+function dayCard(w, today) {
+  var card = el('a', 'day' + (w.done ? ' is-done' : ''));
+  card.href = 'admin-customer.html?id=' + w.customer_id;
+
+  var top = el('div', 'day-top');
+  var when = el('div', 'day-when');
+  when.appendChild(el('b', '', dayWhen(w.install_date, today)));
+  when.appendChild(document.createTextNode(dayNum(w.install_date)));
+  top.appendChild(when);
+  /* Only ever the customer's own render. An order with none gets no picture
+     rather than a shed that is not theirs. */
+  if (w.image) {
+    var shot = el('img', 'day-shot');
+    shot.src = w.image;
+    shot.alt = '';
+    shot.loading = 'lazy';
+    /* A dead R2 link would otherwise leave a broken-image icon on the job.
+       Hidden rather than removed: it takes up no space either way, and the
+       element staying put is what lets a test see which picture was chosen. */
+    shot.onerror = function () { shot.style.display = 'none'; shot.setAttribute('data-failed', '1'); };
+    top.appendChild(shot);
+  }
+  card.appendChild(top);
+
+  var body = el('div', 'day-body');
+  body.appendChild(el('div', 'day-name', w.customer_name || 'Unnamed customer'));
+  if (w.summary) body.appendChild(el('div', 'day-sub', w.summary));
+  if (w.city) body.appendChild(el('div', 'day-sub', w.city));
+  card.appendChild(body);
+
+  card.appendChild(el('div', 'day-tag ' + (w.done ? 'tag-done' : 'tag-' + w.item),
+    w.done ? '✓ ' + w.label : w.label));
+  return card;
+}
+
+/* ── the three lists ────────────────────────────────────────────────────── */
+
+function panel(title, eyebrow, moreHref, moreLabel) {
+  var box = el('div', 'panel');
+  var head = el('div', 'phead');
+  var left = el('div');
+  left.appendChild(el('p', 'sec-label', eyebrow));
+  left.appendChild(el('div', 'ptitle', title));
+  head.appendChild(left);
+  if (moreHref) {
+    var more = el('a', 'pmore', moreLabel + ' →');
+    more.href = moreHref;
+    head.appendChild(more);
+  }
+  box.appendChild(head);
+  return box;
+}
+
+function fillOrEmpty(box, rows, emptyText) {
+  if (!rows.length) { box.appendChild(el('div', 'empty', emptyText)); return box; }
+  rows.forEach(function (r) { box.appendChild(r); });
+  return box;
+}
+
+function followRow(f) {
+  var row = el('div', 'row');
+  row.appendChild(el('div', 'row-bar' + (f.urgent ? ' warm' : '')));
+  var main = el('div', 'row-main');
+  var name = el('a', 'row-name', f.name);
+  name.href = 'admin-customer.html?id=' + f.customer_id;
+  main.appendChild(name);
+  main.appendChild(el('div', 'row-sub', f.reason));
+  row.appendChild(main);
+  row.appendChild(el('div', 'row-when' + (f.urgent ? ' late' : ''), f.ago || ''));
+  var call = el('a', 'row-act' + (f.phone ? '' : ' off'), f.phone ? 'Call' : 'No #');
+  if (f.phone) call.href = 'tel:' + f.phone.replace(/[^0-9+]/g, '');
+  row.appendChild(call);
+  return row;
+}
+
+function readyRow(r) {
+  var row = el('div', 'row');
+  row.appendChild(el('div', 'row-bar'));
+  if (r.image) {
+    var shot = el('img', 'row-shot');
+    shot.src = r.image; shot.alt = ''; shot.loading = 'lazy';
+    shot.onerror = function () { shot.style.display = 'none'; shot.setAttribute('data-failed', '1'); };
+    row.appendChild(shot);
+  }
+  var main = el('div', 'row-main');
+  var name = el('a', 'row-name', r.customer_name);
+  name.href = 'admin-customer.html?id=' + r.customer_id;
+  main.appendChild(name);
+  main.appendChild(el('div', 'row-sub', [r.summary, usd(r.amount)].filter(Boolean).join(' · ')));
+  row.appendChild(main);
+  /* Straight to the planner on their order, which is where a date gets set. */
+  var go = el('a', 'row-act', 'Schedule');
+  go.href = 'admin-customer.html?id=' + r.customer_id;
+  row.appendChild(go);
+  return row;
+}
+
+function payRow(p) {
+  var row = el('div', 'row');
+  row.appendChild(el('div', 'row-bar' + (p.sent_days != null && p.sent_days >= 7 ? ' warm' : '')));
+  var main = el('div', 'row-main');
+  var name = el('a', 'row-name', p.customer_name);
+  name.href = 'admin-customer.html?id=' + p.customer_id;
+  main.appendChild(name);
+  main.appendChild(el('div', 'row-sub',
+    [p.kind === 'deposit' ? 'Deposit' : 'Balance', usd(p.amount)].join(' · ')));
+  row.appendChild(main);
+  /* SENT, not overdue. Nothing records payment terms, so the honest word is
+     how long it has been out. */
+  if (p.sent_days != null) {
+    row.appendChild(el('div', 'chip' + (p.sent_days >= 7 ? ' warm' : ''),
+      p.sent_days === 0 ? 'today' : p.sent_days + 'd out'));
+  }
+  var view = el('a', 'row-act' + (p.hosted_url ? '' : ' off'), 'View');
+  if (p.hosted_url) { view.href = p.hosted_url; view.target = '_blank'; view.rel = 'noopener'; }
+  row.appendChild(view);
+  return row;
+}
+
+/* ── putting it together ────────────────────────────────────────────────── */
+
+function render(d) {
+  var wrap = document.getElementById('content');
+  wrap.textContent = '';
+
+  var k = d.kpis || {};
+  var kpis = el('div', 'kpis');
+  kpis.appendChild(kpi({ label: 'New Leads', value: (k.newLeads || {}).count || 0,
+    note: 'this month', series: (k.newLeads || {}).series, tone: 'warm',
+    href: 'admin.html' }));
+  kpis.appendChild(kpi({ label: 'Jobs Won', value: (k.won || {}).count || 0,
+    note: usd((k.won || {}).amount), series: (k.won || {}).series, tone: 'good',
+    href: 'admin-data.html' }));
+  kpis.appendChild(kpi({ label: 'Awaiting Schedule', value: (k.awaiting || {}).count || 0,
+    note: usd((k.awaiting || {}).amount), href: 'admin-schedule.html' }));
+  kpis.appendChild(kpi({ label: 'Unpaid Invoices', value: (k.unpaid || {}).count || 0,
+    note: usd((k.unpaid || {}).amount), href: 'admin-activity.html' }));
+  wrap.appendChild(kpis);
+
+  var week = panel('Upcoming Installs', 'This week', 'admin-schedule.html', 'View full schedule');
+  var strip = el('div', 'week');
+  (d.week || []).forEach(function (w) { strip.appendChild(dayCard(w, d.today)); });
+  week.appendChild((d.week || []).length ? strip
+    : el('div', 'empty', 'Nothing booked in the next seven days.'));
+  wrap.appendChild(week);
+
+  var cols = el('div', 'cols');
+
+  var follow = panel('Follow Ups', 'Needs attention', 'admin.html', 'View all');
+  fillOrEmpty(follow, (d.followUps || []).map(followRow),
+    'Nobody is waiting on a call. Good.');
+  cols.appendChild(follow);
+
+  var ready = panel('Ready to Schedule', 'Sold, no date yet', 'admin-schedule.html', 'View all');
+  fillOrEmpty(ready, (d.ready || []).map(readyRow),
+    'Every sold job has a date on it.');
+  cols.appendChild(ready);
+
+  var pay = panel('Payments Due', 'Unpaid invoices', 'admin-activity.html', 'View all');
+  fillOrEmpty(pay, (d.payments || []).map(payRow),
+    'Nothing outstanding.');
+  cols.appendChild(pay);
+
+  wrap.appendChild(cols);
+}
+
+function load() {
+  var now = new Date();
+  document.getElementById('greeting').textContent = greetingFor(now);
+  document.getElementById('h-date').textContent =
+    now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+  authFetch('/admin/dashboard?today=' + encodeURIComponent(todayISO())).then(function (res) {
+    if (!res.ok) throw new Error('load failed');
+    render(res.data);
+  }).catch(function (e) {
+    if (/Session expired/.test(String(e && e.message))) return;
+    var wrap = document.getElementById('content');
+    wrap.textContent = '';
+    wrap.appendChild(el('div', 'state', 'Could not load the dashboard. Refresh to try again.'));
+  });
+}
+
+load();
+
+AdminNav.render(document.querySelector('.h-actions'));
+</script>
+</body>
+</html>
