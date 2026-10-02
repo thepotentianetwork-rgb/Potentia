@@ -26,6 +26,8 @@ import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
 import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
 import { trackPhases, trackComplete, trackChangeWindow } from "./tracker.js";
+import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
+         stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
 import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
@@ -141,9 +143,11 @@ function installGuests(env) {
      - It never blocks the admin. Staff endpoints are behind requireAuth and
        are not rate limited at all.
 --------------------------------------------------------------------------- */
-let _rateTableReady = false;
+const _rateTableReady = new WeakSet();
 async function ensureRateTable(env) {
-  if (_rateTableReady) return;
+  const binding = env.DB;
+  if (!binding) return;
+  if (_rateTableReady.has(binding)) return;
   await env.DB.prepare(
     `CREATE TABLE IF NOT EXISTS rate_limits (
       bucket TEXT PRIMARY KEY,
@@ -151,7 +155,7 @@ async function ensureRateTable(env) {
       window_start INTEGER NOT NULL
     )`
   ).run();
-  _rateTableReady = true;
+  _rateTableReady.add(binding);
 }
 
 function clientIp(request) {
@@ -455,9 +459,11 @@ async function findOrCreateCustomer(env, { name, email, phone, address, city, st
 // Added by ALTER TABLE rather than in schema.sql because the customers table is
 // already live with data. SQLite has no ADD COLUMN IF NOT EXISTS, so this reads
 // the table's own columns first. Cheap no-op once they exist.
-let customerTempColumnsReady = false;
+const customerTempColumnsReady = new WeakSet();
 async function ensureCustomerTempColumns(env) {
-  if (customerTempColumnsReady) return;
+  const binding = env.DB;
+  if (!binding) return;
+  if (customerTempColumnsReady.has(binding)) return;
   const { results } = await env.DB.prepare("PRAGMA table_info(customers)").all();
   const have = (results || []).map((r) => r.name);
   if (have.indexOf("temp_override") === -1) {
@@ -466,7 +472,7 @@ async function ensureCustomerTempColumns(env) {
   if (have.indexOf("follow_up_at") === -1) {
     await env.DB.prepare("ALTER TABLE customers ADD COLUMN follow_up_at TEXT").run();
   }
-  customerTempColumnsReady = true;
+  customerTempColumnsReady.add(binding);
 }
 
 const LEAD_TEMPS = ["hot", "warm", "cold", "dormant"];
@@ -1841,7 +1847,10 @@ async function handleBackfillQuoteRedline(request, env, origin) {
    not hypothetical: the test suite builds a fresh database per case in one
    process, so the first one to be migrated made every later one skip the ALTER
    and then fail on a SELECT of the column it was supposed to have added. It
-   cost nothing to key the memo on the binding and get both. */
+   cost nothing to key the memo on the binding and get both.
+   Every other ensure* memo in this file is keyed the same way now — the same
+   bug turned up a second time the moment the dashboard read follow_up_at, and
+   twice is enough to stop fixing them one at a time. */
 const submissionWonColumnReady = new WeakSet();
 async function ensureSubmissionWonColumn(env) {
   const binding = env && env.DB;
@@ -2081,9 +2090,11 @@ function validateAdjustments(raw) {
 // (positive) — a delivery a long way out, an awkward site.
 //
 // ALTER TABLE at runtime, since submissions is live.
-let submissionAdjustColumnsReady = false;
+const submissionAdjustColumnsReady = new WeakSet();
 async function ensureSubmissionAdjustColumns(env) {
-  if (submissionAdjustColumnsReady) return;
+  const binding = env.DB;
+  if (!binding) return;
+  if (submissionAdjustColumnsReady.has(binding)) return;
   const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
   const have = (results || []).map((r) => r.name);
   if (have.indexOf("price_adjustment") === -1) {
@@ -2101,7 +2112,7 @@ async function ensureSubmissionAdjustColumns(env) {
   if (have.indexOf("effective_price") === -1) {
     await env.DB.prepare("ALTER TABLE submissions ADD COLUMN effective_price REAL").run();
   }
-  submissionAdjustColumnsReady = true;
+  submissionAdjustColumnsReady.add(binding);
 }
 
 
@@ -3309,6 +3320,186 @@ async function handleGetDesign(request, env, origin, code) {
 }
 
 /* ===========================================================================
+   GET /admin/dashboard — the screen the CRM opens on
+   ===========================================================================
+   One request, because this is the first thing loaded every morning and five
+   round trips on a phone in a yard is five chances to be looking at a spinner.
+
+   ?today=YYYY-MM-DD comes from the BROWSER. Everything here turns on which day
+   it is, and the worker's day is not the shop's day for seven hours out of
+   every twenty-four. The page knows; the worker does not; so the page says.
+   An absent or unreadable value falls back to UTC's day rather than failing —
+   a dashboard that refuses to load because of a query parameter is worse than
+   one that is a few hours out overnight. */
+async function handleDashboard(request, env, origin) {
+  await ensureInstallsTable(env);
+  await ensureSubmissionWonColumn(env);
+  await ensureSubmissionAdjustColumns(env);
+  await ensureInvoicesTable(env);
+  await ensureCustomerTempColumns(env);
+  await ensureCallsTable(env);
+
+  const url = new URL(request.url);
+  const nowMs = Date.now();
+  const today = dashDay(url.searchParams.get("today")) || new Date(nowMs).toISOString().slice(0, 10);
+  const month = monthToDate(today);
+
+  const [subRows, instRows, invRows, custRows] = await Promise.all([
+    /* Every order that is still live, plus the dates the month's figures come
+       from. Lost and superseded are excluded here rather than filtered later:
+       a superseded order's price would otherwise be counted as sold. */
+    env.DB.prepare(
+      `SELECT s.id, s.details, s.status, s.created_at, s.won_at, s.effective_price,
+              c.id AS customer_id, c.name AS customer_name
+       FROM submissions s JOIN customers c ON s.customer_id = c.id
+       WHERE s.status NOT IN ('superseded')
+       ORDER BY s.created_at DESC`
+    ).all(),
+    env.DB.prepare(
+      `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.done_at,
+              s.details, s.status AS order_status,
+              c.id AS customer_id, c.name AS customer_name, c.city
+       FROM installs i
+       JOIN submissions s ON i.submission_id = s.id
+       JOIN customers c ON s.customer_id = c.id
+       WHERE s.status = 'won'
+       ORDER BY i.install_date ASC, i.id ASC`
+    ).all(),
+    env.DB.prepare(
+      `SELECT v.id, v.kind, v.amount, v.status, v.created_at, v.hosted_url, v.submission_id,
+              c.id AS customer_id, c.name AS customer_name
+       FROM invoices v JOIN customers c ON v.customer_id = c.id
+       WHERE v.status != 'paid' AND v.status != 'void'
+       ORDER BY v.created_at ASC`
+    ).all(),
+    /* The call list's raw material. last_call_at is what separates a lead
+       nobody has rung from one that has been rung — a note is not a call. */
+    env.DB.prepare(
+      `SELECT c.id, c.name, c.phone, c.follow_up_at, c.created_at,
+         (SELECT n.text FROM notes n WHERE n.customer_id = c.id
+           ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
+         (SELECT s.status FROM submissions s WHERE s.customer_id = c.id
+           ORDER BY s.created_at DESC LIMIT 1) AS latest_status,
+         (SELECT s.created_at FROM submissions s WHERE s.customer_id = c.id
+           ORDER BY s.created_at DESC LIMIT 1) AS latest_submission_at,
+         (SELECT MAX(k.called_at) FROM calls k WHERE k.customer_id = c.id) AS last_call_at
+       FROM customers c`
+    ).all(),
+  ]);
+
+  const subs = subRows.results || [];
+  const installs = instRows.results || [];
+  const invoices = invRows.results || [];
+  const customers = custRows.results || [];
+
+  const detailsOf = (row) => {
+    try { return JSON.parse(row.details) || {}; } catch (e) { return {}; }
+  };
+  const priceOf = (row, details) => {
+    const n = row.effective_price != null ? Number(row.effective_price)
+            : (details.quotedPrice != null ? Number(details.quotedPrice) : NaN);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  /* ---- the four figures ------------------------------------------------ */
+  const inMonth = (iso) => {
+    const d = dashDay(iso);
+    return !!(d && month && d >= month.start && d <= month.end);
+  };
+
+  const newLeadDates = subs.filter((s) => inMonth(s.created_at)).map((s) => s.created_at);
+  const wonThisMonth = subs.filter((s) => s.status === "won" && inMonth(s.won_at));
+
+  /* Sold, and nobody has put a date on it. The one figure here that is a job
+     to do rather than a number to admire. */
+  const booked = {};
+  installs.forEach((i) => { booked[i.submission_id] = true; });
+  const awaiting = subs.filter((s) => s.status === "won" && !booked[s.id]);
+
+  const sum = (rows) => rows.reduce((t, r) => t + priceOf(r, detailsOf(r)), 0);
+
+  const kpis = {
+    newLeads: {
+      count: newLeadDates.length,
+      series: month ? daySeries(newLeadDates, month.start, month.end) : []
+    },
+    won: {
+      count: wonThisMonth.length,
+      amount: sum(wonThisMonth),
+      series: month ? daySeries(wonThisMonth.map((s) => s.won_at), month.start, month.end) : []
+    },
+    awaiting: { count: awaiting.length, amount: sum(awaiting) },
+    unpaid: {
+      count: invoices.length,
+      amount: invoices.reduce((t, v) => t + (Number(v.amount) || 0), 0)
+    }
+  };
+
+  /* ---- the week -------------------------------------------------------- */
+  const weekEnd = (() => {
+    const d = new Date(today + "T00:00:00Z");
+    d.setUTCDate(d.getUTCDate() + 6);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const week = stagesInWindow(installs, today, weekEnd).slice(0, 12).map((i) => {
+    const details = detailsOf(i);
+    return {
+      id: i.id,
+      submission_id: i.submission_id,
+      customer_id: i.customer_id,
+      customer_name: i.customer_name,
+      item: i.item,
+      label: STAGE_LABELS[i.item] || i.item,
+      install_date: dashDay(i.install_date),
+      days: i.days,
+      done: !!i.done_at,
+      summary: configSummary(details.config),
+      city: i.city || "",
+      image: renderThumb(details)
+    };
+  });
+
+  /* ---- who to ring ------------------------------------------------------ */
+  const followUps = pickFollowUps(customers, today, 6).map((f) => ({
+    ...f,
+    ago: f.urgent ? f.when : agoLabel(f.at, today, nowMs)
+  }));
+
+  /* ---- sold, no date yet ------------------------------------------------ */
+  const ready = awaiting.slice(0, 6).map((s) => {
+    const details = detailsOf(s);
+    return {
+      submission_id: s.id,
+      customer_id: s.customer_id,
+      customer_name: s.customer_name,
+      summary: configSummary(details.config),
+      amount: priceOf(s, details),
+      image: renderThumb(details)
+    };
+  });
+
+  /* ---- not paid --------------------------------------------------------- */
+  const payments = invoices.slice(0, 6).map((v) => {
+    const age = daysBetween(dashDay(v.created_at), today);
+    return {
+      id: v.id,
+      customer_id: v.customer_id,
+      customer_name: v.customer_name,
+      submission_id: v.submission_id,
+      kind: v.kind,
+      amount: Number(v.amount) || 0,
+      /* SENT, not overdue. Nothing records payment terms, so "8 days overdue"
+         would be a number this CRM has no basis for. */
+      sent_days: age === null ? null : Math.max(0, age),
+      hosted_url: v.hosted_url || ""
+    };
+  });
+
+  return json({ today, month, kpis, week, followUps, ready, payments }, 200, origin);
+}
+
+/* ===========================================================================
    THE CUSTOMER'S TRACKING PAGE — GET /track/:token
    ===========================================================================
    Public, because the point is that a customer can open it from a text message
@@ -3521,9 +3712,11 @@ const CRM_PAYMENT_METHODS = ["cash", "check", "venmo", "zelle", "card", "stripe"
 // build fee when totalling what a client has actually paid.
 const CRM_PAYMENT_KINDS = ["build", "monthly", "addon", "other"];
 
-let crmTablesReady = false;
+const crmTablesReady = new WeakSet();
 async function ensureCrmTables(env) {
-  if (crmTablesReady) return;
+  const binding = env.CRM_DB;
+  if (!binding) return;
+  if (crmTablesReady.has(binding)) return;
   await env.CRM_DB.batch([
     env.CRM_DB.prepare(
       `CREATE TABLE IF NOT EXISTS clients (
@@ -3667,7 +3860,7 @@ async function ensureCrmTables(env) {
     }
   }
 
-  crmTablesReady = true;
+  crmTablesReady.add(binding);
 }
 
 function crmStr(v, max) {
@@ -4524,6 +4717,10 @@ export default {
       if (path === "/admin/activity" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleActivity(request, env, origin);
+      }
+      if (path === "/admin/dashboard" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleDashboard(request, env, origin);
       }
       if (path === "/admin/schedule" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
