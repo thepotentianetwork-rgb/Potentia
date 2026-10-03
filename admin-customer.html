@@ -670,180 +670,123 @@ function makeCustomerLinkButton(details) {
 }
 
 /* ---- THE CUSTOMER'S TRACKING LINK -----------------------------------------
-   Two buttons, because the shop texts customers. Copy puts it on the clipboard;
-   Text opens a message with it already written, which is the way it will
-   actually get sent.
+   ONE BUTTON, AND IT COPIES. There were two: Copy, and a Text that handed an
+   sms: link to the phone's own messages app. This shop sends from Google Voice,
+   so that second button went out from the wrong number or nowhere at all, on
+   every press. Voice cannot be deep-linked to a thread with a message already
+   in it either — see the long note on GV_TEXT_URL above, where the Text action
+   beside the phone number opens Voice and copies the NUMBER for exactly that
+   reason. So the useful thing here is the link on the clipboard, ready to paste
+   into whatever is actually writing the message.
 
    Only on a won order: the worker refuses to issue a link for anything else,
    since a link that answers "not found" when the customer taps it is worse than
    no link at all. */
-function trackingButtons(submissionId, customerPhone) {
-  var wrap = document.createElement('span');
-  wrap.style.display = 'inline-flex';
-  wrap.style.gap = '8px';
-  wrap.style.flexWrap = 'wrap';
-
+function trackingButtons(submissionId) {
   var copy = plainBtn('Copy Tracking Link');
-  var text = plainBtn('Text Tracking Link');
-  if (!customerPhone) {
-    /* Said out loud rather than hidden — a missing button reads as a missing
-       feature, and the fix is on this very page. */
-    text.disabled = true;
-    text.style.opacity = '0.45';
-    text.title = 'This customer has no phone number on file.';
-  }
+  copy.title = 'Copies their progress link, to paste into Google Voice or an email.';
 
-  /* Fetched on demand, and remembered, so pressing both buttons does not ask
-     the worker twice. */
+  /* Fetched once and remembered, so a second press does not ask again. */
   var cached = null;
-  function withLink(btn, label, use) {
-    if (cached) { use(cached); return; }
-    btn.disabled = true;
-    btn.textContent = 'Getting link…';
-    authFetch('/admin/submissions/' + submissionId + '/track-link', { method: 'POST' })
-      .then(function (res) {
-        if (!res.ok || !res.data || !res.data.url) throw new Error('no link');
-        cached = res.data.url;
-        btn.disabled = false;
-        btn.textContent = label;
-        use(cached);
-      })
-      .catch(function () {
-        btn.disabled = false;
-        btn.textContent = 'Failed — retry';
-        setTimeout(function () { btn.textContent = label; }, 2500);
-      });
+
+  function put(url) {
+    copyText(url).then(function () {
+      copy.textContent = 'Copied \u2713';
+      setTimeout(function () { copy.textContent = 'Copy Tracking Link'; }, 2500);
+    }).catch(function () {
+      /* Clipboard blocked \u2014 show it rather than leaving them with nothing. */
+      window.prompt('Copy this link:', url);
+      copy.textContent = 'Copy Tracking Link';
+    });
   }
 
   copy.addEventListener('click', function () {
-    withLink(copy, 'Copy Tracking Link', function (url) {
-      copyText(url).then(function () {
-        copy.textContent = 'Copied ✓';
+    if (cached) { put(cached); return; }
+    copy.disabled = true;
+    copy.textContent = 'Getting link\u2026';
+    authFetch('/admin/submissions/' + submissionId + '/track-link', { method: 'POST' })
+      .then(function (res) {
+        copy.disabled = false;
+        copy.textContent = 'Copy Tracking Link';
+        if (!res.ok || !res.data || !res.data.url) throw new Error('no link');
+        cached = res.data.url;
+        put(cached);
+      })
+      .catch(function () {
+        copy.disabled = false;
+        copy.textContent = 'Failed \u2014 retry';
         setTimeout(function () { copy.textContent = 'Copy Tracking Link'; }, 2500);
-      }).catch(function () {
-        /* Clipboard blocked — show it rather than leaving them with nothing. */
-        window.prompt('Copy this link:', url);
       });
-    });
   });
 
-  text.addEventListener('click', function () {
-    if (!customerPhone) return;
-    withLink(text, 'Text Tracking Link', function (url) {
-      var body = 'Hi! You can follow your shed build here: ' + url;
-      openExternal(smsHref(customerPhone, body));
-    });
-  });
-
-  wrap.appendChild(copy);
-  wrap.appendChild(text);
-  return wrap;
+  return copy;
 }
 
-/* A text message, already written, in the phone's own messages app.
-   sms: wants the body after a ?, and iOS has historically wanted & —
-   ? is the spec and is what both handle now. */
-/* Hands an sms: or mailto: link to the phone. One function so the browser
-   test can watch what would have opened instead of leaving the page. */
+/* Hands a mailto: link to the browser. One function so the browser test can
+   watch what would have opened instead of leaving the page.
+   There was an smsHref beside this, and it is gone: an sms: link opens the
+   phone's own messages app, and this shop sends from Google Voice. */
 function openExternal(url) {
   window.location.href = url;
 }
 
-function smsHref(phone, body) {
-  return 'sms:' + String(phone || '').replace(/[^0-9+]/g, '') + '?&body=' + encodeURIComponent(body);
-}
+/* ---- THE BUILD SCHEDULE, AS A MESSAGE --------------------------------------
+   One button, and it copies. The worker writes the message — every booked stage
+   in plain words, the tracking link, add-to-calendar links for the days at their
+   place — and it goes on the clipboard to paste into Google Voice.
 
-/* ---- SEND BUILD SCHEDULE ----------------------------------------------------
-   One tap: the worker writes the message (every booked stage in plain words,
-   the tracking link, add-to-calendar links for the days at their place) and
-   the phone's text app opens with it filled in, addressed to the customer.
-   Copy and Email sit beside it for when texting is not the way.
+   It used to open the phone's own text app with the message filled in, with
+   Copy Message and Email It beside it. That top button never worked here: this
+   shop sends from Google Voice, so an sms: link addressed the wrong line. What
+   is left is the one of the three that was always doing the real work.
 
    The words come from the worker, not from here, so when Twilio is connected
    the automatic text says exactly what this one does. */
-function scheduleSendButton(submissionId, customerPhone, customerEmail) {
-  var wrap = document.createElement('span');
-  wrap.className = 'sched-send';
-  wrap.style.display = 'inline-flex';
-  wrap.style.gap = '8px';
-  wrap.style.flexWrap = 'wrap';
-  wrap.style.alignItems = 'center';
-
-  var LABEL = 'Send Build Schedule';
-  var send = plainBtn(LABEL);
-  send.title = customerPhone ? 'Opens a text to ' + customerPhone + ' with their dates and tracking link.'
-                             : 'No phone on file — you can copy or email it instead.';
-  var copy = plainBtn('Copy Message');
-  var mail = plainBtn('Email It');
-  copy.style.display = 'none';
-  mail.style.display = 'none';
+function scheduleSendButton(submissionId) {
+  var LABEL = 'Copy Build Schedule';
+  var btn = plainBtn(LABEL);
+  btn.title = 'Copies their dates and tracking link, to paste into Google Voice or an email.';
 
   var cached = null;
-  function withMessage(use) {
-    if (cached) { use(cached); return; }
-    send.disabled = true;
-    send.textContent = 'Writing…';
-    authFetch('/admin/submissions/' + submissionId + '/schedule-message', { method: 'POST' })
-      .then(function (res) {
-        send.disabled = false;
-        send.textContent = LABEL;
-        if (!res.ok || !res.data || !res.data.text) {
-          var why = (res.data && res.data.error) || 'Failed — retry';
-          send.textContent = /plan the build/i.test(why) ? 'Plan the build first' : 'Failed — retry';
-          send.title = why;
-          setTimeout(function () { send.textContent = LABEL; }, 3000);
-          return;
-        }
-        cached = res.data;
-        copy.style.display = '';
-        if (cached.email || customerEmail) mail.style.display = '';
-        use(cached);
-      })
-      .catch(function () {
-        send.disabled = false;
-        send.textContent = 'Failed — retry';
-        setTimeout(function () { send.textContent = LABEL; }, 2500);
-      });
+
+  function put(text) {
+    copyText(text).then(function () {
+      btn.textContent = 'Copied \u2713';
+      setTimeout(function () { btn.textContent = LABEL; }, 2500);
+    }).catch(function () {
+      window.prompt('Copy this message:', text);
+      btn.textContent = LABEL;
+    });
   }
 
-  send.addEventListener('click', function () {
-    withMessage(function (m) {
-      var phone = m.phone || customerPhone;
-      if (phone) {
-        openExternal(smsHref(phone, m.text));
-      } else {
-        /* No number: put it on the clipboard so it can go out some other way. */
-        copyText(m.text).then(function () {
-          send.textContent = 'No phone — message copied ✓';
-          setTimeout(function () { send.textContent = LABEL; }, 3000);
-        }).catch(function () { window.prompt('Copy this message:', m.text); });
-      }
-    });
+  btn.addEventListener('click', function () {
+    if (cached) { put(cached); return; }
+    btn.disabled = true;
+    btn.textContent = 'Writing\u2026';
+    authFetch('/admin/submissions/' + submissionId + '/schedule-message', { method: 'POST' })
+      .then(function (res) {
+        btn.disabled = false;
+        btn.textContent = LABEL;
+        if (!res.ok || !res.data || !res.data.text) {
+          /* "Plan the build first" is the common one and is not a failure —
+             there is nothing to send until the dates exist. */
+          var why = (res.data && res.data.error) || 'Failed \u2014 retry';
+          btn.textContent = /plan the build/i.test(why) ? 'Plan the build first' : 'Failed \u2014 retry';
+          btn.title = why;
+          setTimeout(function () { btn.textContent = LABEL; }, 3000);
+          return;
+        }
+        cached = res.data.text;
+        put(cached);
+      })
+      .catch(function () {
+        btn.disabled = false;
+        btn.textContent = 'Failed \u2014 retry';
+        setTimeout(function () { btn.textContent = LABEL; }, 2500);
+      });
   });
 
-  copy.addEventListener('click', function () {
-    withMessage(function (m) {
-      copyText(m.text).then(function () {
-        copy.textContent = 'Copied ✓';
-        setTimeout(function () { copy.textContent = 'Copy Message'; }, 2500);
-      }).catch(function () { window.prompt('Copy this message:', m.text); });
-    });
-  });
-
-  mail.addEventListener('click', function () {
-    withMessage(function (m) {
-      var to = m.email || customerEmail;
-      if (!to) return;
-      openExternal('mailto:' + encodeURIComponent(to) +
-        '?subject=' + encodeURIComponent(m.subject || 'Your ShedPro build schedule') +
-        '&body=' + encodeURIComponent(m.text));
-    });
-  });
-
-  wrap.appendChild(send);
-  wrap.appendChild(copy);
-  wrap.appendChild(mail);
-  return wrap;
+  return btn;
 }
 
 /* The outline-button look the Copy Customer Link button already uses, which was
@@ -1936,10 +1879,10 @@ function renderOrders(submissions, installs) {
     /* The customer's own progress page. Won orders only — that is the only
        thing the worker will issue a link for. */
     if (s.status === 'won') {
-      actions.appendChild(trackingButtons(s.id, CUSTOMER_PHONE));
+      actions.appendChild(trackingButtons(s.id));
       /* Only once dates are booked — before that there is no schedule to send. */
       if ((installs || []).some(function (i) { return i.submission_id === s.id; })) {
-        actions.appendChild(scheduleSendButton(s.id, CUSTOMER_PHONE, CUSTOMER_EMAIL));
+        actions.appendChild(scheduleSendButton(s.id));
       }
     }
 
@@ -2130,9 +2073,6 @@ function renderPayments(payments) {
 
 var CUSTOMER_NAME = '';
 var CUSTOMER_EMAIL = '';
-/* The order cards are built from the submissions list, which carries no phone
-   number — and the Text Tracking Link button needs one. */
-var CUSTOMER_PHONE = '';
 
 function el(id) { return document.getElementById(id); }
 
@@ -2294,7 +2234,6 @@ function loadCustomer() {
     var c = r.data.customer;
     CUSTOMER_NAME = c.name || '';
     CUSTOMER_EMAIL = c.email || '';
-    CUSTOMER_PHONE = c.phone || '';
     document.getElementById('customer-name').textContent = c.name || 'Unnamed customer';
     document.title = (c.name || 'Customer') + ' — ShedPro Admin';
     document.getElementById('c-email').textContent = c.email || '—';
