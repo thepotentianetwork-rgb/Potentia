@@ -14,17 +14,25 @@
  *     shop       the working day before the install
  *     install    one week after the pour, 2 days by default
  *
- *   GRAVEL — the pad date is the anchor. No cure to wait out, so the shed
- *     follows straight on: pad, shop, install on consecutive working days.
+ *   GRAVEL — the pad date is the anchor, and the order is NOT the concrete
+ *     order. Gravel has no cure to wait out, so it goes in last: the shed is
+ *     already built in the shop by the time the pad is laid, and the crew
+ *     starts setting the shed the same afternoon when they can.
+ *     materials  the working day before the shop day
+ *     shop       the working day before the pad
+ *     gravel     the date entered — the working day before the install
+ *     install    the next working day, 2 days by default
+ *
+ *     (Until 2026-10-03 this was pad, shop, install — the pad first, as if it
+ *     were concrete. Plans booked before then keep their dates; only newly
+ *     generated plans follow this order.)
  *
  *   NO FOUNDATION — the install date is the anchor, with a shop day before it.
  *
  * MATERIALS IS ALWAYS THE WORKING DAY BEFORE THE SHOP DAY, for every
  * foundation — one rule, no special cases. Nothing can be built in the shop
  * before the materials for it are in, so it hangs off the shop day rather than
- * off the anchor. On a gravel job the schedule is tight enough that it lands on
- * the pad day itself; that is a true statement about a tight week, not a bug,
- * and scheduleGravelMaterials in the tests pins it.
+ * off the anchor.
  *
  * WORKING DAYS ARE MONDAY TO FRIDAY. Saturday is a catch-up day, not a day to
  * start something on, so nothing is ever SCHEDULED onto a weekend — which
@@ -154,13 +162,16 @@ export function planBuild(anchorISO, opts = {}) {
   }
 
   if (kind === 'gravel') {
+    /* The shed is finished in the shop BEFORE the gravel goes in, and the pad
+       is laid the working day before the install — so a Friday pad means a
+       Monday install, and a shop day before it on the Thursday. */
     const pad = start;
-    const shop = addWorkdays(pad, 1);
-    const install = addWorkdays(shop, 1);
+    const install = addWorkdays(pad, 1);
+    const shop = addWorkdays(pad, -1);
     return [
-      stage('gravel', pad, 1),
       stage('materials', addWorkdays(shop, -1), 1),
       stage('shop', shop, 1),
+      stage('gravel', pad, 1),
       stage('shed', install, installDays)
     ];
   }

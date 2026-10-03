@@ -988,7 +988,7 @@ rest follow. It shows the plan before booking anything.
 | Foundation | You enter | What gets booked |
 |---|---|---|
 | Concrete pad | Pour date | prep (working day before), pour, shop build (day before install), install a **week** after the pour |
-| Gravel pad | Pad date | pad, shop build, install — consecutive working days, no cure to wait out |
+| Gravel pad | Pad date | materials, shop build, **then** the pad (the date entered — the working day before the install), install the next working day. The shed is already built when the gravel goes in; the crew often starts setting it the same afternoon |
 | None | Install date | shop build the working day before, then the install |
 
 The install is **2 days** by default; change it in the form. Only the install
@@ -1002,6 +1002,20 @@ everything else is planned from there rather than being quietly a day out.
 
 The cure week is counted in **calendar** days — concrete cures over the
 weekend too — then moved onto a working day if it needs to be.
+
+Every foundation also gets a **materials** day, the working day before the
+shop build.
+
+Concrete and gravel run in **different orders**: concrete is poured first so it
+cures while the shed is built; gravel needs no cure, so it goes in last. On the
+customer's tracking page a concrete pour is part of *Pre-build* and a gravel pad
+is part of *Build day*. Customers get calendar invites only for the days at
+their place (prep, pour, gravel pad, install).
+
+Example — gravel, pad date Tue Oct 13 2026: materials Fri Oct 9 → shop build
+Mon Oct 12 → gravel pad Tue Oct 13 → install Wed Oct 14.
+Concrete, pour date Wed Oct 7 2026: prep Tue Oct 6 → pour Wed Oct 7 → materials
+Mon Oct 12 → shop build Tue Oct 13 → install Wed Oct 14.
 
 Re-planning replaces what is already booked, so it never happens by default:
 the preview says how many bookings it would lose and the button says *Replace
@@ -1156,3 +1170,18 @@ node --experimental-sqlite tests/invoice-buttons.test.mjs
 The last one drives the real page in a real browser against the real Worker
 with Stripe stubbed, and its main job is to prove that the first click on an
 invoice button sends nothing.
+
+## Send Build Schedule
+
+On a won order with dates booked, **Send Build Schedule** opens the phone's
+text app addressed to the customer, with the message already written: each
+booked stage in plain words ("Gravel pad: Tue Oct 13 - at your place"), their
+private tracking link, and add-to-calendar links for the days at their place.
+**Copy Message** and **Email It** (when they have an email) appear beside it.
+
+The message is written by the worker — `POST /admin/submissions/:id/schedule-message`,
+using `scheduleMessage()` in `schedulemsg.js` — not by the page. When Twilio is
+connected, that same function is what sends it automatically; only delivery
+changes. The customer's calendar links carry no guest list and none of the
+shop's notes, unlike the crew invites on the schedule.
+

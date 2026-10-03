@@ -13,11 +13,17 @@
  * wrong is worse than no tracker, since the customer stops asking and starts
  * turning up.
  *
- * THE FOUNDATION LIVES IN PHASE 1 on purpose. Site prep and the pour happen
- * before the materials are bought (the shed is built during the concrete's cure
- * week), so they belong to the run-up, not to build day. They are listed inside
- * phase 1 with their own ticks, so a customer whose pad went in yesterday sees
- * that rather than a bare "pre-build".
+ * A CONCRETE FOUNDATION LIVES IN PHASE 1 on purpose. Site prep and the pour
+ * happen before the materials are bought (the shed is built during the
+ * concrete's cure week), so they belong to the run-up, not to build day. They
+ * are listed inside phase 1 with their own ticks, so a customer whose pad went
+ * in yesterday sees that rather than a bare "pre-build".
+ *
+ * A GRAVEL PAD LIVES IN PHASE 4. It goes in after the shed is built in the
+ * shop — the working day before the install, and the crew often starts setting
+ * the shed that same day — so it is the first half of build day, not pre-build.
+ * Listed under phase 1 it would read "foundation ✗" while the shop phase showed
+ * the shed already built.
  *
  * A PHASE IS NEVER DONE WHILE A LATER ONE IS. Stages are ticked off by hand in
  * a yard, so one WILL get missed; a shed cannot be installed without having
@@ -28,10 +34,10 @@
 /* Which install stages make up each phase, in the order they happen. 'concrete'
    is the old single foundation row, from before the stages were split. */
 const TRACK_PHASE_DEFS = [
-  { key: 'prebuild',  label: 'Pre-build',            stages: ['prep', 'pour', 'gravel', 'concrete'] },
+  { key: 'prebuild',  label: 'Pre-build',            stages: ['prep', 'pour', 'concrete'] },
   { key: 'materials', label: 'Gathering materials',  stages: ['materials'] },
   { key: 'shop',      label: 'Building in the shop', stages: ['shop'] },
-  { key: 'install',   label: 'Build day',            stages: ['shed'] }
+  { key: 'install',   label: 'Build day',            stages: ['gravel', 'shed'] }
 ];
 
 /* Customer-facing stage names. The CRM's own labels are terser ("Materials"),

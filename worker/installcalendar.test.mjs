@@ -413,18 +413,52 @@ test('a concrete order plans prep, pour, shop and install from the pour date', a
     ['Site prep', 'Concrete pour', 'Materials', 'Shop build', 'Shed install']);
 });
 
-test('a gravel order plans pad, shop and install with no cure week', async () => {
+test('a gravel order builds the shed first, then lays the pad the day before the install', async () => {
   const { env } = withFoundation('gravel');
   const t = await token(env);
-  const r = await planned(env, t, { anchor_date: '2026-10-05' });
+  const r = await planned(env, t, { anchor_date: '2026-10-07' });
   assert.equal(r.data.foundation, 'gravel');
   assert.equal(r.data.anchor_label, 'Pad date');
-  /* The materials day lands on the pad day on a gravel job: shop is the day
-     after the pad, and materials is the day before the shop. */
   assert.deepEqual(r.data.stages.map((s) => [s.item, s.install_date]), [
-    ['gravel', '2026-10-05'], ['materials', '2026-10-05'],
-    ['shop', '2026-10-06'], ['shed', '2026-10-07'],
+    ['materials', '2026-10-05'], ['shop', '2026-10-06'],
+    ['gravel', '2026-10-07'], ['shed', '2026-10-08'],
   ]);
+  assert.deepEqual(r.data.stages.map((s) => s.label),
+    ['Materials', 'Shop build', 'Gravel pad', 'Shed install']);
+});
+
+/* The pad is laid at the customer's house, so they get that invite — but not
+   the materials or shop days, which happen elsewhere. */
+test('on a gravel job the customer is invited to the pad and the install only', async () => {
+  const { env } = withFoundation('gravel');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07', confirm: true });
+  const r = await api(env, 'GET', '/admin/customers/1', null, t);
+  const invited = {};
+  r.data.installs.forEach((i) => {
+    invited[i.item] = decodeURIComponent(params(i.calendar_url).add || '')
+      .split(',').indexOf('hank@roof.test') !== -1;
+  });
+  assert.deepEqual(invited, { materials: false, shop: false, gravel: true, shed: true });
+});
+
+/* Re-planning is the only thing that moves a booked job. Existing bookings are
+   never rewritten by a code change: what is in the table stays as it was. */
+test('bookings made under the old gravel order keep their dates', async () => {
+  const { db, env } = withFoundation('gravel');
+  const t = await token(env);
+  await planned(env, t, { anchor_date: '2026-10-07' });   // creates the table; writes nothing
+  const ins = db.prepare("INSERT INTO installs (submission_id, item, install_date, days, created_at) VALUES (7,?,?,?,?)");
+  [['gravel', '2026-10-05', 1], ['materials', '2026-10-05', 1], ['shop', '2026-10-06', 1], ['shed', '2026-10-07', 2]]
+    .forEach(([i, d, n]) => ins.run(i, d, n, '2026-10-01T00:00:00Z'));
+  const r = await api(env, 'GET', '/admin/customers/1', null, t);
+  assert.equal(r.status, 200);
+  assert.deepEqual(db.prepare('SELECT item, install_date FROM installs ORDER BY id').all()
+    .map((x) => [x.item, x.install_date]),
+    [['gravel', '2026-10-05'], ['materials', '2026-10-05'], ['shop', '2026-10-06'], ['shed', '2026-10-07']]);
+  const preview = await planned(env, t, { anchor_date: '2026-10-07' });
+  assert.equal(preview.data.replaces, 4, 'a re-plan says what it would replace');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM installs').get().n, 4, 'and a preview replaces nothing');
 });
 
 test('an order with no foundation work plans a shop day and an install', async () => {

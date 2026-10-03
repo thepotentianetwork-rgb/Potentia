@@ -26,6 +26,7 @@ import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
 import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
 import { trackPhases, trackComplete, trackChangeWindow } from "./tracker.js";
+import { scheduleMessage } from "./schedulemsg.js";
 import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
          stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
 import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
@@ -3643,6 +3644,60 @@ async function handleTrackLink(request, env, origin, submissionId) {
   return json({ ok: true, url: trackUrlFor(env, token) }, 200, origin);
 }
 
+/* ---- POST /admin/submissions/:id/schedule-message ------------------------
+   The "here is your build schedule" message for one won order: every booked
+   stage in plain words with its date, the private tracking link, and an
+   add-to-calendar link for each day at the customer's place.
+
+   ONE SERVER FUNCTION ON PURPOSE. Today the CRM hands the result to the
+   phone's text app, to email, or to the clipboard, so a person still presses
+   Send. When Twilio is connected this is the function that will send it
+   automatically: the words are already decided here, so only the delivery
+   changes. It writes nothing except the tracking token (minted on first ask,
+   the same as the Copy Tracking Link button). */
+async function handleScheduleMessage(request, env, origin, submissionId) {
+  await ensureSubmissionWonColumn(env);
+  await ensureInstallsTable(env);
+  const sub = await env.DB.prepare("SELECT id, status, customer_id FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  if (!sub) return json({ error: "no such order" }, 404, origin);
+  /* SELECT * so an older customers table without every address column still
+     answers; fullAddress uses whichever parts are there. */
+  const customer = (await env.DB.prepare("SELECT * FROM customers WHERE id = ?")
+    .bind(sub.customer_id).first()) || {};
+  if (sub.status !== "won") {
+    return json({ error: "only a won order has a build schedule to send" }, 409, origin);
+  }
+  const { results } = await env.DB.prepare(
+    "SELECT id, item, install_date, days, done_at FROM installs WHERE submission_id = ? ORDER BY install_date ASC, id ASC"
+  ).bind(submissionId).all();
+  if (!(results || []).length) {
+    return json({ error: "no dates are booked yet. Plan the build first." }, 409, origin);
+  }
+  const token = await ensureTrackToken(env, submissionId);
+  const trackUrl = token ? trackUrlFor(env, token) : null;
+  const msg = scheduleMessage({
+    firstName: String(customer.name || "").trim().split(/\s+/)[0] || "",
+    installs: results,
+    trackUrl,
+    address: fullAddress(customer),
+    shopPhone: shopPhone(env),
+  });
+  if (!msg.stages.length) {
+    return json({ error: "no readable dates are booked yet. Plan the build first." }, 409, origin);
+  }
+  return json({
+    ok: true,
+    text: msg.text,
+    subject: msg.subject,
+    stages: msg.stages,
+    calendar: msg.calendar,
+    track_url: trackUrl,
+    phone: customer.phone || null,
+    email: customer.email || null,
+  }, 200, origin);
+}
+
 // ============================================================================
 // Potentia's own client CRM — /crm/*
 //
@@ -4715,6 +4770,12 @@ export default {
         const tid = Number(path.slice("/admin/submissions/".length, -"/track-link".length));
         if (!tid) return json({ error: "bad order id" }, 400, origin);
         return await handleTrackLink(request, env, origin, tid);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/schedule-message") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const mid = Number(path.slice("/admin/submissions/".length, -"/schedule-message".length));
+        if (!mid) return json({ error: "bad order id" }, 400, origin);
+        return await handleScheduleMessage(request, env, origin, mid);
       }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

@@ -121,20 +121,36 @@ test('the cure is a week of calendar days, not working days', () => {
 
 // ── gravel ─────────────────────────────────────────────────────────────────
 
-test('a gravel pad has no cure to wait out', () => {
-  const s = byItem(plan(MON, 'gravel'));
-  assert.equal(s.gravel.install_date, MON);
-  assert.equal(s.shop.install_date, TUE, 'the shop day is the next working day');
-  assert.equal(s.shed.install_date, WED, 'and the install the day after that');
-  assert.equal(plan(MON, 'gravel').length, 4, 'no prep or pour on a gravel job');
-  assert.deepEqual(plan(MON, 'gravel').map((s2) => s2.item), ['gravel', 'materials', 'shop', 'shed']);
+/* GRAVEL IS NOT CONCRETE. Concrete is poured first so it can cure while the
+   shed is built; gravel needs no cure, so the shed is built in the shop FIRST
+   and the pad goes in the working day before the install (the crew often
+   starts setting the shed that same afternoon). The anchor is the pad date. */
+test('a gravel job builds the shed first, then the pad, then the install', () => {
+  const s = byItem(plan(WED, 'gravel'));
+  assert.deepEqual(plan(WED, 'gravel').map((x) => x.item), ['materials', 'shop', 'gravel', 'shed'],
+    'materials, shop build, gravel pad, shed install');
+  assert.equal(s.gravel.install_date, WED, 'the date entered is the pad day');
+  assert.equal(s.shed.install_date, THU, 'the install is the working day after the pad');
+  assert.equal(s.shop.install_date, TUE, 'the shed is built before the pad goes in');
+  assert.equal(s.materials.install_date, MON, 'and the materials come in before that');
+  assert.equal(s.shed.days, DEFAULT_INSTALL_DAYS);
+  assert.equal(plan(WED, 'gravel').length, 4, 'no prep or pour on a gravel job');
+});
+
+test('on a gravel job the pad is always the working day before the install', () => {
+  for (let i = 0; i < 40; i++) {
+    const d = isoFromDay(new Date(Date.UTC(2026, 9, 1 + i)));
+    const s = byItem(plan(d, 'gravel'));
+    assert.equal(s.gravel.install_date,
+      isoFromDay(addWorkdays(dayFromISO(s.shed.install_date), -1)), 'from ' + d);
+    assert.ok(s.materials.install_date < s.shop.install_date, 'materials before shop, from ' + d);
+    assert.ok(s.shop.install_date < s.gravel.install_date, 'shop before the pad, from ' + d);
+    assert.ok(s.gravel.install_date < s.shed.install_date, 'pad before the install, from ' + d);
+  }
 });
 
 /* MATERIALS HANGS OFF THE SHOP DAY, NOT THE ANCHOR, for every foundation —
-   nothing can be built before the materials for it are in. On a gravel job
-   that puts it on the pad day itself, because the shop day is the day after
-   the pad. That is a tight week, not a bug, and it is pinned here so changing
-   the rule has to be a decision rather than a side effect. */
+   nothing can be built before the materials for it are in. */
 test('materials is always the working day before the shop day', () => {
   for (const kind of ['concrete', 'gravel', 'none']) {
     for (const anchor of [MON, TUE, WED, THU, FRI]) {
@@ -147,16 +163,33 @@ test('materials is always the working day before the shop day', () => {
         kind + ': materials is not before the shop day');
     }
   }
-  assert.equal(byItem(plan(MON, 'gravel')).materials.install_date, MON,
-    'on a gravel job it lands on the pad day');
 });
 
-test('a gravel job late in the week runs into the next one', () => {
-  const s = byItem(plan(THU, 'gravel'));
-  assert.equal(s.gravel.install_date, THU);
-  assert.equal(s.shop.install_date, FRI);
-  assert.equal(s.shed.install_date, '2026-10-12', 'the Monday, not the Saturday');
-  assert.equal(dow(s.shed.install_date), 'Mon');
+test('a Friday gravel pad means a Monday install', () => {
+  const s = byItem(plan(FRI, 'gravel'));
+  assert.equal(s.gravel.install_date, FRI);
+  assert.equal(s.shed.install_date, NEXT_MON, 'the Monday, not the Saturday');
+  assert.equal(s.shop.install_date, THU);
+  assert.equal(s.materials.install_date, WED);
+});
+
+test('a Monday gravel pad reaches back into the week before', () => {
+  const s = byItem(plan(MON, 'gravel'));
+  assert.equal(s.shed.install_date, TUE);
+  assert.equal(s.shop.install_date, PREV_FRI, 'the shop day is the Friday before, not the Sunday');
+  assert.equal(s.materials.install_date, '2026-10-01', 'and materials the Thursday');
+});
+
+test('a weekend gravel date is moved to the Monday, and the rest follows', () => {
+  assert.deepEqual(plan(SAT, 'gravel'), plan(NEXT_MON, 'gravel'));
+});
+
+/* The concrete flow is untouched by the gravel change — pinned by date. */
+test('the concrete order is unchanged: prep, pour, materials, shop, install', () => {
+  assert.deepEqual(plan(WED, 'concrete').map((x) => [x.item, x.install_date]), [
+    ['prep', TUE], ['pour', WED], ['materials', NEXT_MON], ['shop', '2026-10-13'],
+    ['shed', '2026-10-14']
+  ]);
 });
 
 // ── no foundation ──────────────────────────────────────────────────────────

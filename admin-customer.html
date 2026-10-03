@@ -731,15 +731,118 @@ function trackingButtons(submissionId, customerPhone) {
     if (!customerPhone) return;
     withLink(text, 'Text Tracking Link', function (url) {
       var body = 'Hi! You can follow your shed build here: ' + url;
-      /* sms: wants the body after a ?, and iOS has historically wanted & —
-         ? is the spec and is what both handle now. */
-      window.location.href = 'sms:' + customerPhone.replace(/[^0-9+]/g, '')
-        + '?&body=' + encodeURIComponent(body);
+      openExternal(smsHref(customerPhone, body));
     });
   });
 
   wrap.appendChild(copy);
   wrap.appendChild(text);
+  return wrap;
+}
+
+/* A text message, already written, in the phone's own messages app.
+   sms: wants the body after a ?, and iOS has historically wanted & —
+   ? is the spec and is what both handle now. */
+/* Hands an sms: or mailto: link to the phone. One function so the browser
+   test can watch what would have opened instead of leaving the page. */
+function openExternal(url) {
+  window.location.href = url;
+}
+
+function smsHref(phone, body) {
+  return 'sms:' + String(phone || '').replace(/[^0-9+]/g, '') + '?&body=' + encodeURIComponent(body);
+}
+
+/* ---- SEND BUILD SCHEDULE ----------------------------------------------------
+   One tap: the worker writes the message (every booked stage in plain words,
+   the tracking link, add-to-calendar links for the days at their place) and
+   the phone's text app opens with it filled in, addressed to the customer.
+   Copy and Email sit beside it for when texting is not the way.
+
+   The words come from the worker, not from here, so when Twilio is connected
+   the automatic text says exactly what this one does. */
+function scheduleSendButton(submissionId, customerPhone, customerEmail) {
+  var wrap = document.createElement('span');
+  wrap.className = 'sched-send';
+  wrap.style.display = 'inline-flex';
+  wrap.style.gap = '8px';
+  wrap.style.flexWrap = 'wrap';
+  wrap.style.alignItems = 'center';
+
+  var LABEL = 'Send Build Schedule';
+  var send = plainBtn(LABEL);
+  send.title = customerPhone ? 'Opens a text to ' + customerPhone + ' with their dates and tracking link.'
+                             : 'No phone on file — you can copy or email it instead.';
+  var copy = plainBtn('Copy Message');
+  var mail = plainBtn('Email It');
+  copy.style.display = 'none';
+  mail.style.display = 'none';
+
+  var cached = null;
+  function withMessage(use) {
+    if (cached) { use(cached); return; }
+    send.disabled = true;
+    send.textContent = 'Writing…';
+    authFetch('/admin/submissions/' + submissionId + '/schedule-message', { method: 'POST' })
+      .then(function (res) {
+        send.disabled = false;
+        send.textContent = LABEL;
+        if (!res.ok || !res.data || !res.data.text) {
+          var why = (res.data && res.data.error) || 'Failed — retry';
+          send.textContent = /plan the build/i.test(why) ? 'Plan the build first' : 'Failed — retry';
+          send.title = why;
+          setTimeout(function () { send.textContent = LABEL; }, 3000);
+          return;
+        }
+        cached = res.data;
+        copy.style.display = '';
+        if (cached.email || customerEmail) mail.style.display = '';
+        use(cached);
+      })
+      .catch(function () {
+        send.disabled = false;
+        send.textContent = 'Failed — retry';
+        setTimeout(function () { send.textContent = LABEL; }, 2500);
+      });
+  }
+
+  send.addEventListener('click', function () {
+    withMessage(function (m) {
+      var phone = m.phone || customerPhone;
+      if (phone) {
+        openExternal(smsHref(phone, m.text));
+      } else {
+        /* No number: put it on the clipboard so it can go out some other way. */
+        copyText(m.text).then(function () {
+          send.textContent = 'No phone — message copied ✓';
+          setTimeout(function () { send.textContent = LABEL; }, 3000);
+        }).catch(function () { window.prompt('Copy this message:', m.text); });
+      }
+    });
+  });
+
+  copy.addEventListener('click', function () {
+    withMessage(function (m) {
+      copyText(m.text).then(function () {
+        copy.textContent = 'Copied ✓';
+        setTimeout(function () { copy.textContent = 'Copy Message'; }, 2500);
+      }).catch(function () { window.prompt('Copy this message:', m.text); });
+    });
+  });
+
+  mail.addEventListener('click', function () {
+    withMessage(function (m) {
+      var to = m.email || customerEmail;
+      if (!to) return;
+      openExternal('mailto:' + encodeURIComponent(to) +
+        '?subject=' + encodeURIComponent(m.subject || 'Your ShedPro build schedule') +
+        '&body=' + encodeURIComponent(m.text));
+    });
+  });
+
+  wrap.appendChild(send);
+  wrap.appendChild(copy);
+  wrap.appendChild(mail);
   return wrap;
 }
 
@@ -805,14 +908,16 @@ function installState(install) {
    foundation:'pad', which reads like any pad — hence the mapping. The worker
    decides the real plan; this only decides which rows to draw. */
 var FOUNDATION_STAGES = {
-  pad: ['prep', 'pour', 'shop', 'shed'],
-  gravel: ['gravel', 'shop', 'shed']
+  pad: ['prep', 'pour', 'materials', 'shop', 'shed'],
+  /* Gravel goes in AFTER the shop build — the working day before the install —
+     unlike concrete, which is poured first to cure. */
+  gravel: ['materials', 'shop', 'gravel', 'shed']
 };
 var ANCHOR_LABEL = { pad: 'Pour date', gravel: 'Pad date' };
 
 function stagesFor(details, installs, submissionId) {
   var foundation = (details.config || {}).foundation;
-  var planned = FOUNDATION_STAGES[foundation] || ['shop', 'shed'];
+  var planned = FOUNDATION_STAGES[foundation] || ['materials', 'shop', 'shed'];
   /* Anything already booked that the design does not imply — a legacy
      'concrete' row, or a stage kept after the design changed — still has to
      be visible, or it cannot be removed. */
@@ -1832,6 +1937,10 @@ function renderOrders(submissions, installs) {
        thing the worker will issue a link for. */
     if (s.status === 'won') {
       actions.appendChild(trackingButtons(s.id, CUSTOMER_PHONE));
+      /* Only once dates are booked — before that there is no schedule to send. */
+      if ((installs || []).some(function (i) { return i.submission_id === s.id; })) {
+        actions.appendChild(scheduleSendButton(s.id, CUSTOMER_PHONE, CUSTOMER_EMAIL));
+      }
     }
 
     card.appendChild(top);

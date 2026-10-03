@@ -295,6 +295,32 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
       R.textBtnEnabled = textBtn ? !textBtn.disabled : null;
     }
 
+    /* ---- Send Build Schedule ------------------------------------------
+       One tap opens the text app with the worker's message, addressed to the
+       customer. openExternal is swapped so the test sees what would open
+       instead of the page navigating away to sms:. */
+    function schedBtns(card){
+      return [].slice.call(card.querySelectorAll('.sched-send button'));
+    }
+    R.schedOnWon = won ? schedBtns(won).filter(function(b){return b.style.display !== 'none'}).map(txt) : [];
+    R.schedOnAnyCard = cards().map(function(c){return schedBtns(c).length});
+    if (won) {
+      var opened = [];
+      var realOpen = window.openExternal;
+      window.openExternal = function(u){ opened.push(u); };
+      var sendBtn = schedBtns(won).filter(function(b){return /send build schedule/i.test(txt(b))})[0];
+      if (sendBtn) {
+        sendBtn.click();
+        await until(function(){ return opened.length || /failed|plan/i.test(txt(sendBtn)); }, 8000);
+        R.schedOpened = opened[0] || null;
+        R.schedAfterSend = schedBtns(won).filter(function(b){return b.style.display !== 'none'}).map(txt);
+        var mailBtn = schedBtns(won).filter(function(b){return /email/i.test(txt(b))})[0];
+        if (mailBtn) { mailBtn.click(); await until(function(){ return opened.length > 1; }, 4000); }
+        R.schedMailto = opened[1] || null;
+      }
+      window.openExternal = realOpen;
+    }
+
     // ---- a booking stranded by an un-won order --------------------------
     var last = cards()[cards().length - 1];
     R.strandedWarning = txt(last);
@@ -638,6 +664,22 @@ check('and says the amounts already include tax',
 check('the header fields carry the order and the build',
   (R.fields || []).some((f) => /^Order=#/.test(f)) &&
   (R.fields || []).some((f) => /^Job total=/.test(f)), R.fields);
+
+console.log('\n-- Send Build Schedule --');
+check('a won order with dates offers it', JSON.stringify(R.schedOnWon) === JSON.stringify(['Send Build Schedule']),
+  R.schedOnWon);
+check('and no other card does', (R.schedOnAnyCard || []).filter((n) => n > 0).length === 1, R.schedOnAnyCard);
+const smsBody = R.schedOpened && R.schedOpened.indexOf('?&body=') !== -1
+  ? decodeURIComponent(R.schedOpened.slice(R.schedOpened.indexOf('?&body=') + 7)) : '';
+check('one tap opens a text to the customer', /^sms:4355550000\?&body=/.test(R.schedOpened || ''), R.schedOpened);
+check('with their dates in plain words', /Shed install: Thu Oct 15 \(2 days\) - at your place/.test(smsBody), smsBody);
+check('and their tracking link', /track\.html\?t=[0-9a-f]{32}/.test(smsBody), smsBody);
+check('and none of the shop\u2019s notes', !/gate code/.test(smsBody), smsBody);
+check('Copy and Email appear once the message is written',
+  JSON.stringify(R.schedAfterSend) === JSON.stringify(['Send Build Schedule', 'Copy Message', 'Email It']), R.schedAfterSend);
+check('Email opens a mail to the customer with the same message',
+  /^mailto:hank%40roof\.test\?subject=Your%20ShedPro%20build%20schedule&body=/.test(R.schedMailto || '') &&
+  decodeURIComponent((R.schedMailto || '').split('&body=')[1] || '') === smsBody, R.schedMailto);
 
 console.log('\n-- the link, as something you can text --');
 check('Copy pay link is offered on an unpaid invoice', R.copyOffered === true);

@@ -110,11 +110,44 @@ test('an order with no foundation work still moves through the phases', () => {
                                            shop: 'active', install: 'upcoming' });
 });
 
-test('a gravel pad counts as the foundation', () => {
-  const gravel = [{ item: 'gravel', install_date: '2026-10-05', done_at: '2026-10-05T12:00:00Z' },
-                  { item: 'materials', install_date: '2026-10-05', done_at: null }];
-  assert.equal(states(gravel).prebuild, 'done');
-  assert.equal(trackPhases(gravel)[0].stages[0].label, 'Gravel pad laid');
+/* A gravel job, in the order planBuild produces it: the shed is built in the
+   shop first, and the pad goes in the working day before the install. */
+function gravelBuild(done = []) {
+  return [
+    { item: 'materials', install_date: '2026-10-05', done_at: tick('materials', done) },
+    { item: 'shop',      install_date: '2026-10-06', done_at: tick('shop', done) },
+    { item: 'gravel',    install_date: '2026-10-07', done_at: tick('gravel', done) },
+    { item: 'shed',      install_date: '2026-10-08', done_at: tick('shed', done) }
+  ];
+}
+
+test('a gravel pad is part of build day, not pre-build', () => {
+  const p = trackPhases(gravelBuild());
+  assert.deepEqual(p[0].stages, [], 'pre-build claimed a foundation that goes in later');
+  assert.deepEqual(p[3].stages.map((x) => [x.item, x.label, x.date]),
+    [['gravel', 'Gravel pad laid', '2026-10-07'], ['shed', 'Delivery and set-up', '2026-10-08']]);
+  assert.equal(p[3].date, '2026-10-07', 'build day starts with the pad');
+});
+
+test('a gravel job moves through the phases in the order it happens', () => {
+  assert.deepEqual(states(gravelBuild()),
+    { prebuild: 'active', materials: 'upcoming', shop: 'upcoming', install: 'upcoming' });
+  assert.deepEqual(states(gravelBuild(['materials'])),
+    { prebuild: 'done', materials: 'done', shop: 'active', install: 'upcoming' });
+  assert.deepEqual(states(gravelBuild(['materials', 'shop'])),
+    { prebuild: 'done', materials: 'done', shop: 'done', install: 'active' });
+  /* Pad down, shed not yet set: still build day, with the pad ticked. */
+  const padDown = trackPhases(gravelBuild(['materials', 'shop', 'gravel']));
+  assert.equal(padDown[3].state, 'active');
+  assert.deepEqual(padDown[3].stages.map((x) => x.done), [true, false]);
+  assert.equal(trackComplete(gravelBuild(['materials', 'shop', 'gravel', 'shed'])), true);
+});
+
+test('a concrete pour still counts as pre-build', () => {
+  const p = trackPhases(build(['prep', 'pour']));
+  assert.deepEqual(p[0].stages.map((x) => x.item), ['prep', 'pour']);
+  assert.equal(p[0].state, 'done');
+  assert.deepEqual(p[3].stages.map((x) => x.item), ['shed']);
 });
 
 /* Rows booked before the stages were split carry item 'concrete', and such an
