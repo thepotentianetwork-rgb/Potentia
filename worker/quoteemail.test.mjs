@@ -63,15 +63,15 @@ test('the phone number is ShedPro’s own, and only written down once', () => {
   const d = page().quoteEmailDraft(CUST, CFG, 1000);
   /* The quote header above already carries the number. A second copy typed
      into the email body is how a business ends up with two in circulation. */
-  assert.match(d.body, /435-232-9516/);
+  assert.match(d.body, /435-277-0764/);
   /* ONCE in the file. The header and the footer of the quote each carried
      their own copy, and this email would have been a third — three places to
      miss on the day the number changes. They all read one constant now. */
-  assert.equal((HTML.match(/435-232-9516/g) || []).length, 1,
+  assert.equal((HTML.match(/435-277-0764/g) || []).length, 1,
     'the number is written down more than once again');
   assert.equal((HTML.match(/shedprollc\.utah@gmail\.com/g) || []).length, 1,
     'the address is written down more than once again');
-  assert.match(HTML, /var SHEDPRO_PHONE = '435-232-9516'/);
+  assert.match(HTML, /var SHEDPRO_PHONE = '435-277-0764'/);
 });
 
 test('no email on file means no draft, not an empty one', () => {
