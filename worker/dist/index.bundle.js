@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "7821be5";
-const WORKER_BUILT_AT = "2026-10-02T05:25:31.778Z";
+const WORKER_BUILD = "8348ff2";
+const WORKER_BUILT_AT = "2026-10-03T08:37:48.107Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4564,17 +4564,25 @@ function capped(text) {
  *     shop       the working day before the install
  *     install    one week after the pour, 2 days by default
  *
- *   GRAVEL — the pad date is the anchor. No cure to wait out, so the shed
- *     follows straight on: pad, shop, install on consecutive working days.
+ *   GRAVEL — the pad date is the anchor, and the order is NOT the concrete
+ *     order. Gravel has no cure to wait out, so it goes in last: the shed is
+ *     already built in the shop by the time the pad is laid, and the crew
+ *     starts setting the shed the same afternoon when they can.
+ *     materials  the working day before the shop day
+ *     shop       the working day before the pad
+ *     gravel     the date entered — the working day before the install
+ *     install    the next working day, 2 days by default
+ *
+ *     (Until 2026-10-03 this was pad, shop, install — the pad first, as if it
+ *     were concrete. Plans booked before then keep their dates; only newly
+ *     generated plans follow this order.)
  *
  *   NO FOUNDATION — the install date is the anchor, with a shop day before it.
  *
  * MATERIALS IS ALWAYS THE WORKING DAY BEFORE THE SHOP DAY, for every
  * foundation — one rule, no special cases. Nothing can be built in the shop
  * before the materials for it are in, so it hangs off the shop day rather than
- * off the anchor. On a gravel job the schedule is tight enough that it lands on
- * the pad day itself; that is a true statement about a tight week, not a bug,
- * and scheduleGravelMaterials in the tests pins it.
+ * off the anchor.
  *
  * WORKING DAYS ARE MONDAY TO FRIDAY. Saturday is a catch-up day, not a day to
  * start something on, so nothing is ever SCHEDULED onto a weekend — which
@@ -4704,13 +4712,16 @@ function planBuild(anchorISO, opts = {}) {
   }
 
   if (kind === 'gravel') {
+    /* The shed is finished in the shop BEFORE the gravel goes in, and the pad
+       is laid the working day before the install — so a Friday pad means a
+       Monday install, and a shop day before it on the Thursday. */
     const pad = start;
-    const shop = addWorkdays(pad, 1);
-    const install = addWorkdays(shop, 1);
+    const install = addWorkdays(pad, 1);
+    const shop = addWorkdays(pad, -1);
     return [
-      stage('gravel', pad, 1),
       stage('materials', addWorkdays(shop, -1), 1),
       stage('shop', shop, 1),
+      stage('gravel', pad, 1),
       stage('shed', install, installDays)
     ];
   }
@@ -4961,11 +4972,17 @@ function designLinkFor(details, base) {
  * wrong is worse than no tracker, since the customer stops asking and starts
  * turning up.
  *
- * THE FOUNDATION LIVES IN PHASE 1 on purpose. Site prep and the pour happen
- * before the materials are bought (the shed is built during the concrete's cure
- * week), so they belong to the run-up, not to build day. They are listed inside
- * phase 1 with their own ticks, so a customer whose pad went in yesterday sees
- * that rather than a bare "pre-build".
+ * A CONCRETE FOUNDATION LIVES IN PHASE 1 on purpose. Site prep and the pour
+ * happen before the materials are bought (the shed is built during the
+ * concrete's cure week), so they belong to the run-up, not to build day. They
+ * are listed inside phase 1 with their own ticks, so a customer whose pad went
+ * in yesterday sees that rather than a bare "pre-build".
+ *
+ * A GRAVEL PAD LIVES IN PHASE 4. It goes in after the shed is built in the
+ * shop — the working day before the install, and the crew often starts setting
+ * the shed that same day — so it is the first half of build day, not pre-build.
+ * Listed under phase 1 it would read "foundation ✗" while the shop phase showed
+ * the shed already built.
  *
  * A PHASE IS NEVER DONE WHILE A LATER ONE IS. Stages are ticked off by hand in
  * a yard, so one WILL get missed; a shed cannot be installed without having
@@ -4976,10 +4993,10 @@ function designLinkFor(details, base) {
 /* Which install stages make up each phase, in the order they happen. 'concrete'
    is the old single foundation row, from before the stages were split. */
 const TRACK_PHASE_DEFS = [
-  { key: 'prebuild',  label: 'Pre-build',            stages: ['prep', 'pour', 'gravel', 'concrete'] },
+  { key: 'prebuild',  label: 'Pre-build',            stages: ['prep', 'pour', 'concrete'] },
   { key: 'materials', label: 'Gathering materials',  stages: ['materials'] },
   { key: 'shop',      label: 'Building in the shop', stages: ['shop'] },
-  { key: 'install',   label: 'Build day',            stages: ['shed'] }
+  { key: 'install',   label: 'Build day',            stages: ['gravel', 'shed'] }
 ];
 
 /* Customer-facing stage names. The CRM's own labels are terser ("Materials"),
@@ -5110,6 +5127,162 @@ function todayISO() {
 }
 
 // ---- end inlined tracker.js ----
+
+// ---- inlined from worker/schedulemsg.js by build-bundle.mjs — do not edit below by hand ----
+/* THE "HERE IS YOUR BUILD SCHEDULE" MESSAGE, WRITTEN IN ONE PLACE.
+ *
+ * The CRM's "Send build schedule" button asks the worker for this and then
+ * hands it to the phone's own text app (sms:), to email (mailto:), or to the
+ * clipboard. When Twilio is set up, the same message is what gets sent
+ * automatically — only the delivery changes, never the words, so a text sent
+ * by hand today and one sent by Twilio tomorrow say the same thing.
+ *
+ * WHAT GOES IN: the customer's first name, each booked stage in plain words
+ * with its date ("Gravel pad: Wed Oct 7"), their private tracking link, and an
+ * "add to your calendar" link for each day that happens AT THEIR PLACE.
+ *
+ * WHAT STAYS OUT: the shop's own calendar links. Those carry the crew's guest
+ * list and the shop's internal notes; a customer who opened one and pressed
+ * Save would invite the crew from their own account. The customer gets their
+ * own links instead — no guests, no notes, just the day and the address.
+ *
+ * PLAIN ASCII in the text body on purpose. One curly quote or bullet switches
+ * a text message to a different encoding that fits 70 characters per segment
+ * instead of 160, which more than doubles what an automated text costs.
+ *
+ * Dates are plain calendar days, formatted in UTC so "the 7th" never becomes
+ * "the 6th" on the way through anyone's clock.
+ */
+
+/* What each stage is called in a message to a customer. Off-site days say
+   where they happen, so nobody waits at home for a shop day. */
+const SM_STAGE_WORDS = {
+  prep: 'Site prep',
+  pour: 'Concrete pour',
+  concrete: 'Concrete pad',
+  gravel: 'Gravel pad',
+  materials: 'Materials gathered',
+  shop: 'Shed built in our shop',
+  shed: 'Shed install'
+};
+
+/* The order stages are listed in when two fall on the same day. */
+const SM_ORDER = ['prep', 'pour', 'concrete', 'materials', 'shop', 'gravel', 'shed'];
+
+const SM_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const SM_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/* "Wed Oct 7", or null for anything that is not a real YYYY-MM-DD day. */
+function smDay(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (d.getUTCMonth() !== Number(m[2]) - 1 || d.getUTCDate() !== Number(m[3])) return null;
+  return SM_DOW[d.getUTCDay()] + ' ' + SM_MON[d.getUTCMonth()] + ' ' + d.getUTCDate();
+}
+
+/* One row per stage, the newest booking of each, in the order they happen.
+   A job that was re-done can have two rows for one stage; the customer only
+   needs the one that stands. Rows with no readable date are left out — a
+   schedule line that says "Shed install: undefined" is worse than none. */
+function smStages(installs) {
+  const latest = {};
+  (Array.isArray(installs) ? installs : []).forEach((r) => {
+    const item = String((r && r.item) || '');
+    if (!SM_STAGE_WORDS[item] || !smDay(r.install_date)) return;
+    const prev = latest[item];
+    if (!prev || Number(r.id || 0) > Number(prev.id || 0)) latest[item] = r;
+  });
+  return Object.keys(latest).map((k) => latest[k]).sort((a, b) => {
+    const da = String(a.install_date).slice(0, 10), db = String(b.install_date).slice(0, 10);
+    if (da !== db) return da < db ? -1 : 1;
+    return SM_ORDER.indexOf(a.item) - SM_ORDER.indexOf(b.item);
+  }).map((r) => {
+    const n = Number(r.days);
+    return {
+      item: r.item,
+      label: SM_STAGE_WORDS[r.item],
+      date: String(r.install_date).slice(0, 10),
+      when: smDay(r.install_date),
+      days: isFinite(n) && n > 1 ? Math.ceil(n) : 1,
+      on_site: isOnSite(r.item),
+      done: !!r.done_at
+    };
+  });
+}
+
+/* Strips what would push a text into the expensive encoding. Names and
+   addresses are the customer's own and are left alone; this is for our
+   words, which should never need it. */
+function smAscii(s) {
+  return String(s)
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-').replace(/\u2026/g, '...').replace(/\u00b7/g, '-');
+}
+
+/* The whole message.
+ *   firstName  greeting; optional
+ *   installs   the order's install rows (item, install_date, days, done_at, id)
+ *   trackUrl   their private tracking page
+ *   address    where on-site days happen, for the calendar links
+ *   shopPhone  how to reach the shop
+ * Returns { stages, calendar, text, subject } — text is the same body for a
+ * text message and an email. */
+function scheduleMessage({ firstName, installs, trackUrl, address, shopPhone }) {
+  const stages = smStages(installs);
+  const name = String(firstName || '').trim();
+
+  /* Kept short: every character here is in the text message too, twice
+     over once encoded. The tracking link is already in the message body. */
+  const calendar = stages.filter((s) => s.on_site && !s.done).map((s) => ({
+    item: s.item,
+    label: s.label,
+    url: googleCalendarUrl({
+      title: 'ShedPro: ' + s.label,
+      installDate: s.date,
+      days: s.days,
+      details: smAscii((s.item === 'shed'
+        ? 'Our crew delivers and sets up your shed.'
+        : 'Our crew will be at your place for the ' + s.label.toLowerCase() + '.') +
+        (shopPhone ? '\nQuestions? ' + shopPhone : '')),
+      location: address || '',
+      guests: []
+    })
+  })).filter((c) => c.url);
+
+  const lines = [];
+  lines.push((name ? 'Hi ' + name + '! ' : 'Hi! ') + "Here's your ShedPro build schedule:");
+  lines.push('');
+  stages.forEach((s) => {
+    let line = '- ' + s.label + ': ' + s.when;
+    if (s.days > 1) line += ' (' + s.days + ' days)';
+    if (s.on_site) line += ' - at your place';
+    if (s.done) line += ' (done)';
+    lines.push(line);
+  });
+  if (trackUrl) {
+    lines.push('');
+    lines.push('Follow your build anytime: ' + trackUrl);
+  }
+  if (calendar.length) {
+    lines.push('');
+    lines.push('Add to your calendar:');
+    calendar.forEach((c) => lines.push(c.label + ': ' + c.url));
+  }
+  lines.push('');
+  lines.push('Dates can shift a day with weather; we will let you know.' +
+    (shopPhone ? ' Questions? Call or text ' + shopPhone + '.' : ''));
+  lines.push('- ShedPro');
+
+  return {
+    stages,
+    calendar,
+    text: smAscii(lines.join('\n')),
+    subject: 'Your ShedPro build schedule'
+  };
+}
+
+// ---- end inlined schedulemsg.js ----
 
 // ---- inlined from worker/dashboard.js by build-bundle.mjs — do not edit below by hand ----
 /* WHAT THE SHOP SEES WHEN IT OPENS THE CRM.
@@ -8927,6 +9100,60 @@ async function handleTrackLink(request, env, origin, submissionId) {
   return json({ ok: true, url: trackUrlFor(env, token) }, 200, origin);
 }
 
+/* ---- POST /admin/submissions/:id/schedule-message ------------------------
+   The "here is your build schedule" message for one won order: every booked
+   stage in plain words with its date, the private tracking link, and an
+   add-to-calendar link for each day at the customer's place.
+
+   ONE SERVER FUNCTION ON PURPOSE. Today the CRM hands the result to the
+   phone's text app, to email, or to the clipboard, so a person still presses
+   Send. When Twilio is connected this is the function that will send it
+   automatically: the words are already decided here, so only the delivery
+   changes. It writes nothing except the tracking token (minted on first ask,
+   the same as the Copy Tracking Link button). */
+async function handleScheduleMessage(request, env, origin, submissionId) {
+  await ensureSubmissionWonColumn(env);
+  await ensureInstallsTable(env);
+  const sub = await env.DB.prepare("SELECT id, status, customer_id FROM submissions WHERE id = ?")
+    .bind(submissionId).first();
+  if (!sub) return json({ error: "no such order" }, 404, origin);
+  /* SELECT * so an older customers table without every address column still
+     answers; fullAddress uses whichever parts are there. */
+  const customer = (await env.DB.prepare("SELECT * FROM customers WHERE id = ?")
+    .bind(sub.customer_id).first()) || {};
+  if (sub.status !== "won") {
+    return json({ error: "only a won order has a build schedule to send" }, 409, origin);
+  }
+  const { results } = await env.DB.prepare(
+    "SELECT id, item, install_date, days, done_at FROM installs WHERE submission_id = ? ORDER BY install_date ASC, id ASC"
+  ).bind(submissionId).all();
+  if (!(results || []).length) {
+    return json({ error: "no dates are booked yet. Plan the build first." }, 409, origin);
+  }
+  const token = await ensureTrackToken(env, submissionId);
+  const trackUrl = token ? trackUrlFor(env, token) : null;
+  const msg = scheduleMessage({
+    firstName: String(customer.name || "").trim().split(/\s+/)[0] || "",
+    installs: results,
+    trackUrl,
+    address: fullAddress(customer),
+    shopPhone: shopPhone(env),
+  });
+  if (!msg.stages.length) {
+    return json({ error: "no readable dates are booked yet. Plan the build first." }, 409, origin);
+  }
+  return json({
+    ok: true,
+    text: msg.text,
+    subject: msg.subject,
+    stages: msg.stages,
+    calendar: msg.calendar,
+    track_url: trackUrl,
+    phone: customer.phone || null,
+    email: customer.email || null,
+  }, 200, origin);
+}
+
 // ============================================================================
 // Potentia's own client CRM — /crm/*
 //
@@ -9999,6 +10226,12 @@ export default {
         const tid = Number(path.slice("/admin/submissions/".length, -"/track-link".length));
         if (!tid) return json({ error: "bad order id" }, 400, origin);
         return await handleTrackLink(request, env, origin, tid);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/schedule-message") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const mid = Number(path.slice("/admin/submissions/".length, -"/schedule-message".length));
+        if (!mid) return json({ error: "bad order id" }, 400, origin);
+        return await handleScheduleMessage(request, env, origin, mid);
       }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
