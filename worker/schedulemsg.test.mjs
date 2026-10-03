@@ -30,7 +30,7 @@ test('dates read like a person wrote them', () => {
 
 test('a gravel job lists shop, then pad, then install, in plain words', () => {
   const m = scheduleMessage({ firstName: 'Hank', installs: gravelRows(), trackUrl: TRACK,
-                              address: '123 Main St, Eagle Mountain, UT 84005', shopPhone: '435-232-9516' });
+                              address: '123 Main St, Eagle Mountain, UT 84005', shopPhone: '435-277-0764' });
   assert.deepEqual(m.stages.map((s) => [s.item, s.when]), [
     ['materials', 'Fri Oct 9'], ['shop', 'Mon Oct 12'], ['gravel', 'Tue Oct 13'], ['shed', 'Wed Oct 14']]);
   assert.match(m.text, /^Hi Hank! Here's your ShedPro build schedule:/);
@@ -39,7 +39,7 @@ test('a gravel job lists shop, then pad, then install, in plain words', () => {
   assert.match(m.text, /- Shed built in our shop: Mon Oct 12\n/, 'the shop day does not say "at your place"');
   assert.ok(m.text.indexOf('Gravel pad: Tue') < m.text.indexOf('Shed install: Wed'));
   assert.ok(m.text.indexOf('Follow your build anytime: ' + TRACK) !== -1);
-  assert.match(m.text, /Call or text 435-232-9516/);
+  assert.match(m.text, /Call or text 435-277-0764/);
   assert.equal(m.subject, 'Your ShedPro build schedule');
 });
 

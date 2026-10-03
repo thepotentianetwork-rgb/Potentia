@@ -106,7 +106,7 @@ const DEFAULT_INSTALL_GUESTS = "shedprollc.utah@gmail.com, sandovalcristian64@gm
    because a wrong phone number on a page a customer is already looking at is
    the most expensive typo in the building. */
 const SHOP_EMAIL = "shedprollc.utah@gmail.com";
-const SHOP_PHONE = "435-232-9516";
+const SHOP_PHONE = "435-277-0764";
 function shopEmail(env) { return String((env && env.SHOP_EMAIL) || SHOP_EMAIL); }
 function shopPhone(env) { return String((env && env.SHOP_PHONE) || SHOP_PHONE); }
 
