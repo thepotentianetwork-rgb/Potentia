@@ -91,6 +91,16 @@ db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
             VALUES (?,?,?,?,?)`)
   .run(8, 1, JSON.stringify({ consult: true, bestTime: 'mornings' }), 'new', '2026-09-20');
 
+/* A SECOND WON ORDER, WITH NO DATES ON IT. Without one, "the schedule button
+   only shows once a build is booked" could not fail: every won order in the
+   fixture had bookings, so a version that showed the button on all of them
+   still showed it on exactly one card. */
+db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
+            VALUES (?,?,?,?,?)`)
+  .run(11, 1, JSON.stringify({ redline, quotedPrice: BREAKDOWN.total,
+                               config: { style: 'gable', w: 10, l: 14, h: 8 } }),
+       'won', '2026-08-15');
+
 /* A booking left behind by an order that stopped being won. The schedule no
    longer lists it — but the customer page has to, or there is no way to
    remove it, which is how one got stranded in the first place. Oldest, so it
@@ -290,34 +300,53 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
       window.prompt = realPrompt;
       if (realClip) navigator.clipboard.writeText = realClip;
 
-      var textBtn = trackBtns(won).filter(function(b){return /^text/i.test(txt(b))})[0];
-      R.textBtnFound = !!textBtn;
-      R.textBtnEnabled = textBtn ? !textBtn.disabled : null;
+      /* No sms: button here any more \u2014 this shop sends from Google Voice,
+         so anything handed to the phone's own messages app went out from the
+         wrong line. Nothing on this card may open one. */
+      R.anySmsOnCard = [].slice.call(won.querySelectorAll('a[href^="sms:"]')).length;
     }
 
-    /* ---- Send Build Schedule ------------------------------------------
-       One tap opens the text app with the worker's message, addressed to the
-       customer. openExternal is swapped so the test sees what would open
-       instead of the page navigating away to sms:. */
+    /* ---- the build schedule, as a message ------------------------------
+       One button, and it copies, for the same Google Voice reason. */
     function schedBtns(card){
-      return [].slice.call(card.querySelectorAll('.sched-send button'));
+      return [].slice.call(card.querySelectorAll('button'))
+        .filter(function(b){return /build schedule/i.test(txt(b))});
     }
-    R.schedOnWon = won ? schedBtns(won).filter(function(b){return b.style.display !== 'none'}).map(txt) : [];
+    R.schedOnWon = won ? schedBtns(won).map(txt) : [];
     R.schedOnAnyCard = cards().map(function(c){return schedBtns(c).length});
+    /* The won order with no bookings: find it by the card that has a status
+       dropdown reading "won" but is not the one the planner is on. */
+    var wonCards = cards().filter(function(c){
+      var sel = c.querySelector('select');
+      return sel && sel.value === 'won';
+    });
+    var unbooked = wonCards.filter(function(c){ return c !== won; })[0];
+    R.wonCardCount = wonCards.length;
+    R.schedOnWonUnbooked = unbooked ? schedBtns(unbooked).length : -1;
     if (won) {
       var opened = [];
       var realOpen = window.openExternal;
       window.openExternal = function(u){ opened.push(u); };
-      var sendBtn = schedBtns(won).filter(function(b){return /send build schedule/i.test(txt(b))})[0];
+      var grabbed = null;
+      var realPrompt2 = window.prompt;
+      window.prompt = function(_m, v){ grabbed = v; return v; };
+      var realClip2 = navigator.clipboard && navigator.clipboard.writeText;
+      if (realClip2) {
+        navigator.clipboard.writeText = function(v){ grabbed = v; return Promise.resolve(); };
+      }
+      var sendBtn = schedBtns(won)[0];
       if (sendBtn) {
         sendBtn.click();
-        await until(function(){ return opened.length || /failed|plan/i.test(txt(sendBtn)); }, 8000);
-        R.schedOpened = opened[0] || null;
-        R.schedAfterSend = schedBtns(won).filter(function(b){return b.style.display !== 'none'}).map(txt);
-        var mailBtn = schedBtns(won).filter(function(b){return /email/i.test(txt(b))})[0];
-        if (mailBtn) { mailBtn.click(); await until(function(){ return opened.length > 1; }, 4000); }
-        R.schedMailto = opened[1] || null;
+        await until(function(){ return grabbed || /failed|plan/i.test(txt(sendBtn)); }, 8000);
+        await sleep(200);
+        R.schedCopied = grabbed;
+        R.schedBtnAfter = txt(sendBtn);
       }
+      window.prompt = realPrompt2;
+      if (realClip2) navigator.clipboard.writeText = realClip2;
+      /* Nothing may navigate: a copy button that opens a text app is the bug
+         this replaced. */
+      R.schedOpenedAnything = opened.length;
       window.openExternal = realOpen;
     }
 
@@ -494,10 +523,11 @@ const balanceUncredited = fromCents(buildInvoice(BREAKDOWN, 'balance', []).total
 console.log('\n-- the page loaded and drew the block --');
 check('the browser reported back', !!report, '(nothing came back)');
 check('nothing threw', !R.threw, R.threw);
-check('all three orders rendered', R.cardCount === 3, R.cardCount);
-/* The consult has no price. One block, not two. */
-check('only the live priced order offers invoicing',
-  JSON.stringify(R.blocksPerCard) === '[0,1,0]',
+check('all four orders rendered', R.cardCount === 4, R.cardCount);
+/* The consult has no price and the superseded one is replaced, so neither gets
+   invoicing. Both won, priced orders do. */
+check('only the live priced orders offer invoicing',
+  JSON.stringify(R.blocksPerCard) === '[0,1,1,0]',
   { blocks: R.blocksPerCard, prices: R.orderOfCards });
 check('with a row for each kind',
   JSON.stringify(R.kinds) === '["Deposit","Balance"]', R.kinds);
@@ -574,20 +604,22 @@ check('and saying no sends nothing',
   invoicePosts.map((p) => (p.preview ? 'preview' : 'SEND') + ':' + p.kind));
 
 console.log('\n-- the customer\u2019s tracking link --');
-check('a won order offers both ways of sending it',
-  JSON.stringify(R.trackOnWon) === JSON.stringify(['Copy Tracking Link', 'Text Tracking Link']),
-  R.trackOnWon);
+check('a won order offers one way of getting the link',
+  JSON.stringify(R.trackOnWon) === JSON.stringify(['Copy Tracking Link']), R.trackOnWon);
 check('a quote that has not sold offers neither',
   (R.trackOnQuote || []).length === 0, R.trackOnQuote);
-check('exactly one card has them', (R.trackOnAnyCard || []).filter((n) => n > 0).length === 1,
-  R.trackOnAnyCard);
+/* Both won orders, and only those: a tracking link is a thing a sold job has. */
+check('every won order has it, and nothing else does',
+  JSON.stringify(R.trackOnAnyCard) === '[0,1,1,0]', R.trackOnAnyCard);
 check('pressing Copy produces a real link', R.copyBtnFound === true &&
   /\/track\.html\?t=[0-9a-f]{32}$/.test(R.copiedLink || ''), R.copiedLink);
 check('and the button says it copied', /copied/i.test(R.copyBtnAfter || ''),
   { after: R.copyBtnAfter, link: R.copiedLink });
-check('the Text button is offered and usable, since this customer has a phone',
-  R.textBtnFound === true && R.textBtnEnabled === true,
-  { found: R.textBtnFound, enabled: R.textBtnEnabled });
+/* THE SHOP SENDS FROM GOOGLE VOICE. An sms: link hands the message to the
+   phone's own app, which is a different number — so every one of them went out
+   wrong, or nowhere. None may come back. */
+check('nothing on the card hands a message to the phone\u2019s own text app',
+  R.anySmsOnCard === 0, R.anySmsOnCard);
 
 console.log('\n-- planning a build from one date --');
 check('the won order offers a planner', R.plannerShown === true);
@@ -665,21 +697,24 @@ check('the header fields carry the order and the build',
   (R.fields || []).some((f) => /^Order=#/.test(f)) &&
   (R.fields || []).some((f) => /^Job total=/.test(f)), R.fields);
 
-console.log('\n-- Send Build Schedule --');
-check('a won order with dates offers it', JSON.stringify(R.schedOnWon) === JSON.stringify(['Send Build Schedule']),
-  R.schedOnWon);
+console.log('\n-- the build schedule, as a message --');
+check('a won order with dates offers one button',
+  JSON.stringify(R.schedOnWon) === JSON.stringify(['Copy Build Schedule']), R.schedOnWon);
 check('and no other card does', (R.schedOnAnyCard || []).filter((n) => n > 0).length === 1, R.schedOnAnyCard);
-const smsBody = R.schedOpened && R.schedOpened.indexOf('?&body=') !== -1
-  ? decodeURIComponent(R.schedOpened.slice(R.schedOpened.indexOf('?&body=') + 7)) : '';
-check('one tap opens a text to the customer', /^sms:4355550000\?&body=/.test(R.schedOpened || ''), R.schedOpened);
-check('with their dates in plain words', /Shed install: Thu Oct 15 \(2 days\) - at your place/.test(smsBody), smsBody);
-check('and their tracking link', /track\.html\?t=[0-9a-f]{32}/.test(smsBody), smsBody);
-check('and none of the shop\u2019s notes', !/gate code/.test(smsBody), smsBody);
-check('Copy and Email appear once the message is written',
-  JSON.stringify(R.schedAfterSend) === JSON.stringify(['Send Build Schedule', 'Copy Message', 'Email It']), R.schedAfterSend);
-check('Email opens a mail to the customer with the same message',
-  /^mailto:hank%40roof\.test\?subject=Your%20ShedPro%20build%20schedule&body=/.test(R.schedMailto || '') &&
-  decodeURIComponent((R.schedMailto || '').split('&body=')[1] || '') === smsBody, R.schedMailto);
+/* THE GATE THAT MATTERS: a won order with no dates has no schedule to send,
+   and offering the button there produces "Plan the build first" on a press. */
+check('a won order with no dates does not offer it',
+  R.schedOnWonUnbooked === 0, R.schedOnWonUnbooked);
+const msg = R.schedCopied || '';
+check('one tap puts the message on the clipboard', !!msg, msg);
+check('with their dates in plain words',
+  /Shed install: Thu Oct 15 \(2 days\) - at your place/.test(msg), msg);
+check('and their tracking link', /track\.html\?t=[0-9a-f]{32}/.test(msg), msg);
+check('and none of the shop\u2019s notes', !/gate code/.test(msg), msg);
+check('and it says it copied', /copied/i.test(R.schedBtnAfter || ''), R.schedBtnAfter);
+/* The whole point of the change: it must not navigate anywhere. */
+check('it opens nothing \u2014 no text app, no mail client',
+  R.schedOpenedAnything === 0, R.schedOpenedAnything);
 
 console.log('\n-- the link, as something you can text --');
 check('Copy pay link is offered on an unpaid invoice', R.copyOffered === true);
