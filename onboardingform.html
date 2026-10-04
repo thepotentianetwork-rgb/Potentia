@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client Onboarding — Potentia</title>
+<meta name="description" content="Everything Potentia needs to build your contracting website.">
+<!-- An intake sheet a client is sent a link to. It has no business turning up
+     in search results. -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="Potentia_Logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+/* The form's own structure, wearing the site's clothes. Tokens, fonts and the
+   nav/footer are copied from contact.html so this reads as the same site; the
+   form-specific rules below it (sections, checkbox chips, the services table)
+   are the ones the intake sheet needs and no other page has. */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;--red:#c0675a}
+html{scroll-behavior:smooth}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;overflow-x:hidden;min-height:100vh}
+
+/* NAV — contact.html's, plus the language toggle index.html already carries. */
+nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:24px 48px;background:rgba(4,4,7,0.97);border-bottom:1px solid var(--dim)}
+.nav-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.25em;color:var(--bright);text-decoration:none}
+.nav-logo img{width:32px;height:32px;object-fit:contain}
+.nav-links{display:flex;gap:40px}
+.nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.nav-links a:hover,.nav-links a.active{color:var(--bright)}
+.nav-right{display:flex;align-items:center;gap:16px}
+.lang-toggle{display:flex;border:1px solid var(--dim);overflow:hidden}
+.lang-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--silver);background:none;border:none;padding:8px 12px;cursor:pointer;text-transform:uppercase}
+.lang-btn.active{background:var(--dim);color:var(--bright)}
+.nav-ham{display:none;flex-direction:column;gap:5px;background:none;border:none;padding:6px;cursor:pointer;z-index:2000}
+.nav-ham span{display:block;width:25px;height:2px;background:var(--bright);border-radius:1px}
+.mob-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:#040407;z-index:1500;flex-direction:column;align-items:center;justify-content:center}
+.mob-overlay.open{display:flex}
+.mob-overlay a{font-family:'Syncopate',sans-serif;font-size:28px;letter-spacing:0.08em;color:var(--silver);text-decoration:none;text-transform:uppercase;padding:20px 0;width:80%;text-align:center;border-bottom:1px solid var(--dim);transition:color 0.2s}
+.mob-overlay a:first-child{border-top:1px solid var(--dim)}
+.mob-overlay a:hover,.mob-overlay a.active{color:var(--bright)}
+.mob-cta-btn{margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black)!important;background:var(--chrome);padding:14px 40px!important;border:none!important}
+
+/* PAGE */
+.page{max-width:860px;margin:0 auto;padding:132px 48px 90px}
+.intro{margin-bottom:64px}
+.intro h1{font-size:clamp(40px,5vw,64px);font-weight:300;color:var(--bright);line-height:1.02;margin-bottom:22px;font-style:italic}
+.intro p{color:var(--silver);max-width:56ch;font-size:19px;line-height:1.7;font-weight:300}
+
+.section{margin-bottom:56px}
+.section-header{display:flex;align-items:baseline;gap:16px;margin-bottom:28px;padding-bottom:14px;border-bottom:1px solid var(--dim)}
+.section-num{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);flex-shrink:0;position:relative;top:-2px}
+.section-title{font-size:28px;font-weight:300;color:var(--bright);line-height:1.2}
+.section-sub{font-size:16px;color:var(--silver);margin-top:4px;font-weight:300;line-height:1.5}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.col-full{grid-column:1 / -1}
+.field{display:flex;flex-direction:column;gap:8px}
+
+/* Labels and inputs are contact.html's .form-group rules, so a field here and
+   a field on the contact page are the same object. */
+label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase}
+label .req{color:var(--red);margin-left:2px}
+.hint{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.05em;color:var(--dim);text-transform:none;line-height:1.6;margin-top:-2px}
+
+input[type="text"],input[type="email"],input[type="tel"],textarea,select{
+  background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);
+  font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;padding:13px 16px;
+  width:100%;outline:none;transition:border-color 0.3s;-webkit-appearance:none;appearance:none}
+input:focus,textarea:focus,select:focus{border-color:var(--silver)}
+textarea{resize:vertical;min-height:110px;line-height:1.6}
+select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238a909e' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 16px center;padding-right:40px;cursor:pointer}
+select option{background:#0a0a12;color:var(--bright)}
+::placeholder{color:var(--dim);opacity:1}
+
+/* Checkbox chips — nothing on the site does this, and a 14-trade list needs it. */
+.checkbox-group{display:flex;flex-wrap:wrap;gap:10px;margin-top:2px}
+.checkbox-item{display:flex;align-items:center;gap:9px;cursor:pointer;font-family:'Cormorant Garamond',serif;font-size:17px;font-weight:300;letter-spacing:0;text-transform:none;color:var(--silver);padding:9px 14px;border:1px solid var(--dim);background:rgba(255,255,255,0.03);transition:border-color 0.3s,color 0.3s;user-select:none}
+.checkbox-item:hover{border-color:var(--silver)}
+.checkbox-item:has(input:checked){border-color:var(--chrome);color:var(--bright)}
+.checkbox-item input[type="checkbox"]{width:14px;height:14px;accent-color:var(--chrome);margin:0;flex-shrink:0}
+
+/* Services table */
+.services-table{border:1px solid var(--dim)}
+.services-table-header{display:grid;grid-template-columns:2fr 1.4fr 2fr;background:rgba(255,255,255,0.03);border-bottom:1px solid var(--dim);padding:12px 14px;gap:12px}
+.services-table-header span{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.25em;text-transform:uppercase;color:var(--silver)}
+/* 1.4fr, not 1fr: at 1fr the price placeholder clipped mid-word, which reads
+   as a broken field rather than a hint. */
+.service-row{display:grid;grid-template-columns:2fr 1.4fr 2fr;gap:12px;padding:10px 14px;border-bottom:1px solid var(--dim)}
+.service-row:last-child{border-bottom:none}
+/* Smaller here on purpose: six rows of three at the full field size turns a
+   table you scan into a wall you read. */
+.service-row input{padding:9px 12px;font-size:16px}
+
+.submit-area{margin-top:56px;padding-top:36px;border-top:1px solid var(--dim);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:20px}
+.submit-note{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.05em;color:var(--dim);max-width:40ch;line-height:1.7}
+button[type="submit"]{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--chrome);padding:16px 34px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.3s;flex-shrink:0}
+button[type="submit"]:hover{background:var(--bright)}
+button[type="submit"]:disabled{opacity:0.5;cursor:not-allowed}
+
+.success-screen{display:none;text-align:center;padding:90px 32px}
+.success-screen.visible{display:block}
+.success-mark{width:52px;height:52px;border:1px solid var(--dim);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 28px;font-size:22px;color:var(--silver)}
+.success-screen h2{font-size:40px;font-weight:300;font-style:italic;color:var(--bright);margin-bottom:18px}
+.success-screen p{color:var(--silver);font-size:19px;max-width:44ch;margin:0 auto;line-height:1.7;font-weight:300}
+
+footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:20px}
+.footer-logo{display:flex;align-items:center;gap:12px;font-family:'Syncopate',sans-serif;font-size:11px;letter-spacing:0.25em;color:var(--silver);text-decoration:none}
+.footer-logo img{width:24px;height:24px;object-fit:contain}
+.footer-links{display:flex;gap:32px}
+.footer-links a{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--dim);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
+.footer-links a:hover{color:var(--silver)}
+.footer-copy{font-family:'DM Mono',monospace;font-size:10px;color:var(--dim)}
+
+@media(max-width:768px){
+  nav{padding:18px 20px}
+  .nav-links,.nav-cta{display:none}
+  .nav-ham{display:flex!important}
+  .page{padding:104px 20px 64px}
+  .grid-2{grid-template-columns:1fr}
+  .col-full{grid-column:1}
+  .services-table-header{display:none}
+  /* Stacked, each row needs a rule between it and the next or six services
+     read as eighteen loose boxes. */
+  .service-row{grid-template-columns:1fr;gap:10px;padding:14px}
+  .submit-area{flex-direction:column;align-items:stretch}
+  button[type="submit"]{width:100%}
+  footer{padding:32px 20px;flex-direction:column;text-align:center}
+  .footer-links{justify-content:center}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="index.html" class="nav-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="nav-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="sample.html">Platform</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <div class="nav-right">
+    <div class="lang-toggle">
+      <button class="lang-btn active" id="btnEN" onclick="setLang('en')">EN</button>
+      <button class="lang-btn" id="btnES" onclick="setLang('es')">ES</button>
+    </div>
+  </div>
+  <button class="nav-ham" id="navHam" aria-label="Menu"><span></span><span></span><span></span></button>
+</nav>
+
+<div class="mob-overlay" id="mobOverlay">
+  <a href="index.html">Home</a>
+  <a href="portfolio.html">Portfolio</a>
+  <a href="pricing.html">Pricing</a>
+  <a href="sample.html">Platform</a>
+  <a href="contact.html">Contact</a>
+</div>
+
+<div class="page" id="formPage">
+  <div class="intro">
+    <h1 data-en="Let's get you set up." data-es="Vamos a configurarlo."></h1>
+    <p data-en="This is everything we need to build your website and set up your Google Business Profile correctly the first time. Answer what applies and skip what does not — only a few fields are required."
+       data-es="Esto es todo lo que necesitamos para construir su sitio web y configurar su Perfil de Negocio de Google bien desde la primera vez. Responda lo que aplique y omita lo demás — solo unos pocos campos son obligatorios."></p>
+  </div>
+
+  <form id="onboardingForm" action="https://formspree.io/f/mredlobr" method="POST">
+    <input type="hidden" name="_subject" value="New Potentia Client Onboarding Sheet">
+    <input type="hidden" name="form_type" value="onboarding">
+
+    <!-- Who this sheet is for. The paper version has these three on the top
+         rule, above the numbered sections. -->
+    <div class="section">
+      <div class="grid-2">
+        <div class="field">
+          <label for="f_business_name" data-en="Business name *" data-es="Nombre del negocio *"></label>
+          <input id="f_business_name" type="text" name="business_name" required autocomplete="organization">
+        </div>
+        <div class="field">
+          <label for="f_owner_name" data-en="Owner / contact name *" data-es="Nombre del dueño / contacto *"></label>
+          <input id="f_owner_name" type="text" name="owner_name" required autocomplete="name">
+        </div>
+      </div>
+    </div>
+
+    <!-- 01 · Google Business Profile -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">01</span>
+        <div>
+          <div class="section-title" data-en="Google Business Profile" data-es="Perfil de Negocio de Google"></div>
+          <div class="section-sub" data-en="For local search &amp; Maps" data-es="Para búsqueda local y Maps"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label for="f_legal_name" data-en="Legal / display business name *" data-es="Nombre legal / comercial *"></label>
+          <input id="f_legal_name" type="text" name="legal_name" required
+            data-ph-en="Exactly as it should appear on Google" data-ph-es="Exactamente como debe aparecer en Google">
+        </div>
+        <div class="field">
+          <label for="f_category" data-en="Business category *" data-es="Categoría del negocio *"></label>
+          <input id="f_category" type="text" name="google_category" required
+            data-ph-en="e.g. Auto Detailing Service" data-ph-es="ej. Servicio de Detallado Automotriz">
+          <span class="hint" data-en="Pick the closest Google category — this is most of what decides whether you show up in Maps" data-es="Elija la categoría de Google más cercana — esto define en gran parte si aparece en Maps"></span>
+        </div>
+        <div class="field">
+          <label for="f_phone" data-en="Business phone number *" data-es="Teléfono del negocio *"></label>
+          <input id="f_phone" type="tel" name="phone" required autocomplete="tel">
+        </div>
+        <div class="field">
+          <label for="f_email" data-en="Business email address *" data-es="Correo del negocio *"></label>
+          <input id="f_email" type="email" name="email" required autocomplete="email">
+        </div>
+        <div class="field col-full">
+          <label for="f_address" data-en="Physical address (if applicable)" data-es="Dirección física (si aplica)"></label>
+          <input id="f_address" type="text" name="address" autocomplete="street-address"
+            data-ph-en="Street, city, state, zip" data-ph-es="Calle, ciudad, estado, código postal">
+          <span class="hint" data-en="Leave blank if mobile-only with no public storefront" data-es="Déjelo en blanco si es solo móvil sin local público"></span>
+        </div>
+        <div class="field col-full">
+          <label for="f_service_area" data-en="Service area" data-es="Área de servicio"></label>
+          <input id="f_service_area" type="text" name="service_area"
+            data-ph-en="Cities / zip codes you service, if mobile" data-ph-es="Ciudades / códigos postales que atiende, si es móvil">
+        </div>
+        <div class="field col-full">
+          <label data-en="Where does the work happen?" data-es="¿Dónde ocurre el trabajo?"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="radio" name="location_type" value="in_shop"><span data-en="In-shop location" data-es="En el local"></span></label>
+            <label class="checkbox-item"><input type="radio" name="location_type" value="mobile"><span data-en="Mobile / at customer's location" data-es="Móvil / en el lugar del cliente"></span></label>
+            <label class="checkbox-item"><input type="radio" name="location_type" value="both"><span data-en="Both" data-es="Ambos"></span></label>
+          </div>
+        </div>
+        <div class="field col-full">
+          <label for="f_hours" data-en="Business hours" data-es="Horario"></label>
+          <textarea id="f_hours" name="hours" style="min-height:80px"
+            data-ph-en="Mon-Sun. Include any seasonal changes — if winter hours differ, say so here."
+            data-ph-es="Lun-Dom. Incluya cambios de temporada — si el horario de invierno es distinto, dígalo aquí."></textarea>
+        </div>
+        <div class="field col-full">
+          <label data-en="Photos for your profile" data-es="Fotos para su perfil"></label>
+          <div class="section-sub" style="margin:0 0 8px"><span data-en="Your logo, your storefront or vehicle, and 3-5 of your best work photos. Up to 4 here — send the rest by text or email, or we will use the ones from your photography session. They are resized on your phone before sending, so this works on cell data." data-es="Su logo, su local o vehículo, y 3-5 de sus mejores fotos de trabajo. Hasta 4 aquí — envíe el resto por mensaje o correo, o usaremos las de su sesión de fotografía. Se redimensionan en su teléfono antes de enviarse, así que funciona con datos móviles."></span></div>
+          <!-- capture is deliberately absent: these are photos already in the
+               camera roll, not something taken standing at this form. -->
+          <input type="file" id="f_photos" accept="image/*" multiple
+                 style="font-size:13px" onchange="addProjectPhotos(this)">
+          <div id="photoCount" class="section-sub" style="margin-top:8px"></div>
+          <!-- Failures are written here rather than into an alert: a modal on
+               a phone is dismissed and cannot be re-read, and the message is
+               the one instruction that gets someone unstuck. -->
+          <div id="photoNote" style="display:none;margin-top:8px;font-size:12px;line-height:1.5;
+               padding:8px 10px;border-radius:8px;background:rgba(255,193,7,.12);
+               border:1px solid rgba(255,193,7,.45);color:#ffd970"></div>
+          <div id="photoGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 02 · Business Details -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">02</span>
+        <div>
+          <div class="section-title" data-en="Business Details" data-es="Detalles del Negocio"></div>
+          <div class="section-sub" data-en="For your website" data-es="Para su sitio web"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field col-full">
+          <label for="f_story" data-en="Business story / description *" data-es="Historia / descripción del negocio *"></label>
+          <textarea id="f_story" name="story" required style="min-height:110px"
+            data-ph-en="2-3 sentences: how long you have been in business, and what makes you different."
+            data-ph-es="2-3 oraciones: cuánto tiempo lleva en el negocio y qué lo hace diferente."></textarea>
+        </div>
+        <div class="field col-full">
+          <label for="f_years_exp" data-en="Years in business / experience" data-es="Años en el negocio / experiencia"></label>
+          <input id="f_years_exp" type="text" name="years_exp"
+            data-ph-en="e.g. 12 years, since 2011" data-ph-es="ej. 12 años, desde 2011">
+        </div>
+      </div>
+    </div>
+
+    <!-- 03 · Services & Pricing -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">03</span>
+        <div>
+          <div class="section-title" data-en="Services &amp; Pricing" data-es="Servicios y Precios"></div>
+          <div class="section-sub" data-en="Your main services — add pricing only if you want it public" data-es="Sus servicios principales — agregue precios solo si desea mostrarlos"></div>
+        </div>
+      </div>
+      <div class="services-table">
+        <div class="services-table-header">
+          <span data-en="Service / Package Name" data-es="Servicio / Paquete"></span>
+          <span data-en="Price" data-es="Precio"></span>
+          <span data-en="What's Included" data-es="Qué Incluye"></span>
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_1" data-ph-en="Service or package" data-ph-es="Servicio o paquete">
+          <input type="text" name="svc_price_1" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_1" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_2" data-ph-en="Service or package" data-ph-es="Servicio o paquete">
+          <input type="text" name="svc_price_2" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_2" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_3" data-ph-en="Service or package" data-ph-es="Servicio o paquete">
+          <input type="text" name="svc_price_3" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_3" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_4" data-ph-en="Service or package" data-ph-es="Servicio o paquete">
+          <input type="text" name="svc_price_4" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_4" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_5" data-ph-en="Service or package" data-ph-es="Servicio o paquete">
+          <input type="text" name="svc_price_5" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_5" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+        <div class="service-row">
+          <input type="text" name="svc_name_6" data-ph-en="Service or package" data-ph-es="Servicio o paquete">
+          <input type="text" name="svc_price_6" data-ph-en="$0 or 'Call for quote'" data-ph-es="$0 o 'Llame para cotización'">
+          <input type="text" name="svc_included_6" data-ph-en="Brief description" data-ph-es="Descripción breve">
+        </div>
+      </div>
+    </div>
+
+    <!-- 04 · Contact & Payment -->
+    <div class="section">
+      <div class="section-header">
+        <span class="section-num">04</span>
+        <div>
+          <div class="section-title" data-en="Contact &amp; Payment" data-es="Contacto y Pago"></div>
+          <div class="section-sub" data-en="How enquiries reach you, and how people pay" data-es="Cómo le llegan las consultas y cómo le pagan"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field col-full">
+          <label for="f_contact_pref" data-en="Preferred contact method for inquiries" data-es="Método de contacto preferido para consultas"></label>
+          <select id="f_contact_pref" name="contact_pref">
+            <option value="" data-en="Select one" data-es="Seleccione una"></option>
+            <option value="call" data-en="Phone call" data-es="Llamada telefónica"></option>
+            <option value="text" data-en="Text" data-es="Mensaje de texto"></option>
+            <option value="call_text" data-en="Call or text" data-es="Llamada o mensaje"></option>
+            <option value="email" data-en="Email" data-es="Correo electrónico"></option>
+            <option value="form" data-en="Contact form" data-es="Formulario de contacto"></option>
+          </select>
+          <span class="hint" data-en="This is how the website form routes an enquiry to you" data-es="Así es como el formulario del sitio le envía una consulta"></span>
+        </div>
+        <div class="field col-full">
+          <label for="f_social" data-en="Social media handles" data-es="Redes sociales"></label>
+          <input id="f_social" type="text" name="social"
+            data-ph-en="Instagram, TikTok, Facebook, etc." data-ph-es="Instagram, TikTok, Facebook, etc.">
+        </div>
+        <div class="field col-full">
+          <label data-en="How do people pay you?" data-es="¿Cómo le pagan?"></label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="payment" value="cash"><span data-en="Accepts cash" data-es="Acepta efectivo"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="payment" value="card"><span data-en="Accepts card" data-es="Acepta tarjeta"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="payment" value="zelle_cashapp"><span data-en="Accepts Zelle / CashApp" data-es="Acepta Zelle / CashApp"></span></label>
+            <label class="checkbox-item"><input type="checkbox" name="payment" value="deposit"><span data-en="Requires a deposit to book" data-es="Requiere depósito para reservar"></span></label>
+          </div>
+          <span class="hint" data-en="These show on your Google profile, so customers know before they call" data-es="Esto aparece en su perfil de Google, para que el cliente lo sepa antes de llamar"></span>
+        </div>
+        <div class="field col-full">
+          <label for="f_anything_else" data-en="Anything else we should know?" data-es="¿Algo más que debamos saber?"></label>
+          <textarea id="f_anything_else" name="anything_else" style="min-height:90px"
+            data-ph-en="Anything at all — things you do not want on the site, a name you go by, a competitor you want to beat."
+            data-ph-es="Lo que sea — cosas que no quiere en el sitio, un nombre con el que lo conocen, un competidor al que quiere ganarle."></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="submit-area">
+      <p class="submit-note"
+        data-en="Your responses go directly to the Potentia team. We'll follow up within 24 hours."
+        data-es="Sus respuestas van directamente al equipo de Potentia. Le daremos seguimiento dentro de 24 horas."></p>
+      <button type="submit" id="submitBtn" data-en="Send to Potentia" data-es="Enviar a Potentia"></button>
+    </div>
+  </form>
+
+  <div class="success-screen" id="successScreen">
+    <div class="success-mark">✓</div>
+    <h2 data-en="We've got everything." data-es="Lo tenemos todo."></h2>
+    <p data-en="Your information is on its way to the Potentia team. Expect to hear from us within 24 hours."
+       data-es="Su información está en camino al equipo de Potentia. Espere noticias nuestras en las próximas 24 horas."></p>
+  </div>
+
+</div>
+
+<footer>
+  <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
+  <div class="footer-links">
+    <a href="index.html">Home</a>
+    <a href="portfolio.html">Portfolio</a>
+    <a href="pricing.html">Pricing</a>
+    <a href="contact.html">Contact</a>
+  </div>
+  <p class="footer-copy">&copy; 2026 Potentia Network</p>
+</footer>
+
+<script>
+var ham = document.getElementById('navHam');
+var overlay = document.getElementById('mobOverlay');
+ham.addEventListener('click', function() {
+  overlay.classList.toggle('open');
+  document.body.style.overflow = overlay.classList.contains('open') ? 'hidden' : '';
+});
+overlay.querySelectorAll('a').forEach(function(a) {
+  a.addEventListener('click', function() {
+    overlay.classList.remove('open');
+    document.body.style.overflow = '';
+  });
+});
+</script>
+
+<script>
+  /* Named so a test can point it at a stub. This request carries the photos,
+     and it has now broken twice in ways only a real browser showed. */
+  var CRM_INTAKE_URL = 'https://potentia-assistant.thepotentianetwork.workers.dev/crm/intake';
+
+  let currentLang = 'en';
+
+  function setLang(lang) {
+    currentLang = lang;
+
+    // Toggle button styles
+    document.getElementById('btnEN').classList.toggle('active', lang === 'en');
+    document.getElementById('btnES').classList.toggle('active', lang === 'es');
+
+    // Update html lang attribute
+    document.documentElement.lang = lang;
+
+    // Update all data-en / data-es text nodes
+    document.querySelectorAll('[data-en]').forEach(el => {
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON') {
+        el.value = el.dataset[lang] || '';
+        if (el.tagName === 'BUTTON') el.textContent = el.dataset[lang] || '';
+      } else {
+        el.textContent = el.dataset[lang] || '';
+      }
+    });
+
+    // Update placeholders
+    document.querySelectorAll('[data-ph-en]').forEach(el => {
+      el.placeholder = lang === 'en' ? el.dataset.phEn : el.dataset.phEs;
+    });
+
+    // Update select options
+    document.querySelectorAll('select option[data-en]').forEach(opt => {
+      opt.textContent = opt.dataset[lang] || '';
+      opt.value = opt.dataset.en || ''; // always submit English value
+    });
+  }
+
+  // Init English on load
+  setLang('en');
+
+  // Form submit
+  const form = document.getElementById('onboardingForm');
+  const btn = document.getElementById('submitBtn');
+  const successScreen = document.getElementById('successScreen');
+
+  /* ---- PROJECT PHOTOS -------------------------------------------------
+     Resized in the browser, not on the server, for two reasons. A phone photo
+     is 3-5MB and a contractor filling this in from a job site is on cell
+     data; and the CRM keeps these in D1, which takes text, not files. 1400px
+     on the long edge at JPEG 0.72 lands around 150KB - big enough to look
+     like the work, small enough that ten of them is a megabyte and a half.
+
+     Anything that will not decode is skipped with a word to the person rather
+     than silently: a HEIC off an old iPhone is the usual case, and "nothing
+     happened when I picked my photos" is a terrible thing to leave someone
+     guessing about. */
+  /* Small on purpose. Ten was the number that produced the failures: iOS caps
+     total canvas memory per page, and each extra large photo walks closer to
+     it. A handful covers the gallery, and the rest come in by text — which is
+     what the page says when someone hits this. Change the number here and the
+     copy below follows it; the standing line under the label does not, so
+     change that too. */
+  var MAX_PHOTOS = 4;
+  var projectPhotos = [];
+
+  /* DECODING A PHONE PHOTO IS THE PART THAT FAILS.
+     A contractor reported "the form wouldn't let me submit photos". The
+     picker was fine, the script was fine — his pictures would not decode, and
+     the first version of this quietly dropped them and popped an alert, which
+     reads exactly like being refused.
+
+     Three things changed:
+
+     createImageBitmap FIRST. It decodes formats <img> will not, notably HEIC
+     on Safari, and it does not hold a second full-size copy of the image in
+     memory the way an <img> element does. <img> stays as the fallback for
+     older browsers.
+
+     ONE SHARED CANVAS. iOS caps total canvas memory across a page, and a
+     fresh 1400px canvas per photo walks into that cap after a few large
+     ones — at which point drawImage quietly produces a blank frame rather
+     than throwing. Reusing one canvas keeps the footprint flat.
+
+     AND IT SAYS WHY. A null return told the caller nothing, so the person got
+     a count and no idea what to do about it. */
+  function shrinkPhoto(file) {
+    var MAXPX = 1400, CAP = 650000;
+
+    function encode(src, w, h) {
+      var scale = Math.min(1, MAXPX / Math.max(w, h));
+      var dw = Math.max(1, Math.round(w * scale));
+      var dh = Math.max(1, Math.round(h * scale));
+      var cv = shrinkPhoto._cv || (shrinkPhoto._cv = document.createElement('canvas'));
+      cv.width = dw; cv.height = dh;
+      var g = cv.getContext('2d');
+      g.clearRect(0, 0, dw, dh);
+      g.drawImage(src, 0, 0, dw, dh);
+      var data = cv.toDataURL('image/jpeg', 0.72);
+      if (data.length > CAP) data = cv.toDataURL('image/jpeg', 0.55);
+      if (data.length > CAP) data = cv.toDataURL('image/jpeg', 0.4);
+      return data.length > CAP ? { err: 'toobig' } : { data: data };
+    }
+
+    /* A blank frame is what a canvas that ran out of memory produces, and it
+       encodes to a very small JPEG. Treat a suspiciously tiny result as a
+       failure rather than sending a white rectangle of someone's roof. */
+    function looksBlank(dataUrl) { return dataUrl.length < 2000; }
+
+    return new Promise(function (resolve) {
+      function viaImage() {
+        var url = URL.createObjectURL(file);
+        var img = new Image();
+        img.onload = function () {
+          var out;
+          try { out = encode(img, img.naturalWidth || img.width, img.naturalHeight || img.height); }
+          catch (e) { out = { err: 'canvas' }; }
+          URL.revokeObjectURL(url);
+          if (out.data && looksBlank(out.data)) out = { err: 'canvas' };
+          resolve(out);
+        };
+        img.onerror = function () { URL.revokeObjectURL(url); resolve({ err: 'decode' }); };
+        img.src = url;
+      }
+
+      if (typeof createImageBitmap === 'function') {
+        createImageBitmap(file).then(function (bmp) {
+          var out;
+          try { out = encode(bmp, bmp.width, bmp.height); }
+          catch (e) { out = { err: 'canvas' }; }
+          if (bmp.close) bmp.close();
+          if (out.data && looksBlank(out.data)) out = { err: 'canvas' };
+          resolve(out);
+        }).catch(viaImage);
+        return;
+      }
+      viaImage();
+    });
+  }
+
+  async function addProjectPhotos(input) {
+    var files = Array.prototype.slice.call(input.files || []);
+    input.value = '';                       // so the same file can be re-picked
+    if (!files.length) return;
+    var reasons = { decode: 0, canvas: 0, toobig: 0, full: 0 };
+    photoNote(currentLang === 'en' ? 'Adding photos…' : 'Agregando fotos…');
+    for (var i = 0; i < files.length; i++) {
+      if (projectPhotos.length >= MAX_PHOTOS) { reasons.full++; continue; }
+      var r = await shrinkPhoto(files[i]);
+      if (r && r.data) { projectPhotos.push({ data: r.data }); renderProjectPhotos(); }
+      else { reasons[(r && r.err) || 'decode']++; }
+    }
+    renderProjectPhotos();
+
+    /* Written into the page, not into an alert. An alert on a phone is a
+       modal you dismiss and cannot re-read, which is a poor way to deliver
+       the one instruction that would get someone unstuck. */
+    var msgs = [];
+    var es = currentLang === 'es';
+    if (reasons.full) {
+      msgs.push(es
+        ? 'Solo se pueden subir ' + MAX_PHOTOS + ' fotos aquí. Envíe el resto por mensaje al 435-291-0979.'
+        : 'Only ' + MAX_PHOTOS + ' photos can be uploaded here. Text the rest to 435-291-0979.');
+    }
+    if (reasons.decode) {
+      /* Almost always HEIC off an iPhone. Naming it, and the setting that
+         fixes it, beats "could not be read". */
+      msgs.push(es
+        ? reasons.decode + ' foto(s) no se pudieron abrir — suelen ser fotos HEIC de iPhone. En Ajustes → Cámara → Formatos elija "Más compatible", o envíelas por mensaje al 435-291-0979.'
+        : reasons.decode + " photo(s) couldn't be opened — usually iPhone HEIC files. In Settings → Camera → Formats choose \u201cMost Compatible\u201d, or just text them to 435-291-0979.");
+    }
+    if (reasons.canvas) {
+      msgs.push(es ? reasons.canvas + ' foto(s) fallaron en este teléfono. Intente de nuevo con menos a la vez.'
+                   : reasons.canvas + ' photo(s) failed on this phone. Try again with fewer at a time.');
+    }
+    if (reasons.toobig) {
+      msgs.push(es ? reasons.toobig + ' foto(s) son demasiado grandes incluso reducidas.'
+                   : reasons.toobig + ' photo(s) are too large even after resizing.');
+    }
+    photoNote(msgs.join(' '));
+  }
+
+  function photoNote(text) {
+    var n = document.getElementById('photoNote');
+    if (!n) return;
+    n.textContent = text || '';
+    n.style.display = text ? 'block' : 'none';
+  }
+
+  function removeProjectPhoto(i) { projectPhotos.splice(i, 1); renderProjectPhotos(); }
+
+  function renderProjectPhotos() {
+    var grid = document.getElementById('photoGrid');
+    var count = document.getElementById('photoCount');
+    if (!grid || !count) return;
+    grid.innerHTML = projectPhotos.map(function (p, i) {
+      return '<div style="position:relative">' +
+        '<img src="' + p.data + '" alt="" style="width:100%;height:96px;object-fit:cover;border-radius:8px;display:block">' +
+        '<button type="button" onclick="removeProjectPhoto(' + i + ')" aria-label="Remove" ' +
+        'style="position:absolute;top:4px;right:4px;border:none;border-radius:50%;width:22px;height:22px;' +
+        'background:rgba(0,0,0,.65);color:#fff;font-size:14px;line-height:1;cursor:pointer">&times;</button></div>';
+    }).join('');
+    /* The count said out loud, because ten photos in a grid is something you
+       have to stop and count otherwise. */
+    count.textContent = projectPhotos.length
+      ? (currentLang === 'en'
+          ? projectPhotos.length + ' of ' + MAX_PHOTOS + ' photos added'
+          : projectPhotos.length + ' de ' + MAX_PHOTOS + ' fotos agregadas')
+      : '';
+  }
+  window.addProjectPhotos = addProjectPhotos;
+  window.removeProjectPhoto = removeProjectPhoto;
+
+  /* Everything the sheet collects, as a plain object. Checkboxes share a name
+     (trade, project_type, credentials) so those come back as arrays; the rest
+     are single values. */
+  function formPayload(f) {
+    var data = new FormData(f);
+    var out = {};
+    data.forEach(function (v, k) {
+      if (k.charAt(0) === '_') return;                 // Formspree's own fields
+      if (out[k] === undefined) out[k] = v;
+      else if (Array.isArray(out[k])) out[k].push(v);
+      else out[k] = [out[k], v];
+    });
+    return out;
+  }
+
+  /* Into the CRM as well as to Formspree. Deliberately passive: fired without
+     awaiting, and failures are swallowed. If the CRM is unreachable the
+     Formspree submit below still goes through exactly as it would have, so
+     this can never cost a completed onboarding sheet. */
+  /* NO keepalive. It caps the request body at 64 KiB — one photo is bigger
+     than that, so a sheet WITH photos did not just lose the pictures, the
+     whole request failed with a TypeError and the catch below swallowed it.
+     No sheet reached the CRM at all. Verified in headless Chromium, and kept
+     verified by tests/form-photos.test.mjs: 1.5MB with keepalive is refused
+     by the browser, the same body without it sends.
+
+     keepalive was there to survive the page unloading, and this page does not
+     unload: submit calls preventDefault, fetches Formspree and then hides the
+     form. There was never anything for it to protect.
+
+     Returns the promise now so the caller can wait for it. Still swallows its
+     own failures — a CRM that is down must never cost a completed sheet. */
+  function sendToCrm(f) {
+    try {
+      var p = formPayload(f);
+      if (!p.email && !p.phone) return Promise.resolve();
+      /* Photos go to the CRM, not to Formspree: an email with ten base64
+         images in it is not a useful email, and the CRM is where they are
+         actually looked at. */
+      if (projectPhotos.length) p.project_photos = projectPhotos;
+      return fetch(CRM_INTAKE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(p)
+      }).catch(function () {});
+    } catch (e) { return Promise.resolve(); }
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    /* Awaited, not fired and forgotten. A megabyte of photos over cell data
+       takes a moment, and showing "thanks, we got it" while the request is
+       still in the air — or has already failed — is how this went unnoticed. */
+    await sendToCrm(form);
+    btn.textContent = currentLang === 'en' ? 'Sending...' : 'Enviando...';
+
+    try {
+      const res = await fetch(form.action, {
+        method: 'POST',
+        body: new FormData(form),
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (res.ok) {
+        form.style.display = 'none';
+        successScreen.classList.add('visible');
+        // Translate success screen
+        successScreen.querySelectorAll('[data-en]').forEach(el => {
+          el.textContent = el.dataset[currentLang] || '';
+        });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        btn.disabled = false;
+        btn.textContent = currentLang === 'en' ? 'Send to Potentia' : 'Enviar a Potentia';
+        alert(currentLang === 'en'
+          ? 'Something went wrong. Please try again or text us directly.'
+          : 'Algo salió mal. Por favor intente de nuevo o escríbanos directamente.');
+      }
+    } catch {
+      btn.disabled = false;
+      btn.textContent = currentLang === 'en' ? 'Send to Potentia' : 'Enviar a Potentia';
+      alert(currentLang === 'en'
+        ? 'Something went wrong. Please try again or text us directly.'
+        : 'Algo salió mal. Por favor intente de nuevo o escríbanos directamente.');
+    }
+  });
+</script>
+
+</body>
+</html>
