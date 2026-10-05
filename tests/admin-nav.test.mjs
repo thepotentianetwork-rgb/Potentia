@@ -44,6 +44,27 @@ for (const f of PAGES) {
   check(f + ' hand-writes no links', !/<a\s/.test(bar), bar.trim().slice(0, 120));
 }
 
+/* ---- nobody hand-rolls a phone link ------------------------------------
+   This shop works off Google Voice. tel: dials from whatever SIM is in the
+   phone and sms: texts from the handset's own number, so both are the wrong
+   number to a customer — and both were sitting on three pages at once before
+   admin-voice.js existed. The same drift as the nav, caught the same way. */
+console.log('\n-- calls and texts go through Google Voice --');
+for (const f of PAGES) {
+  const src = files[f];
+  check(f + ' hand-writes no tel: or sms: link',
+    !/["']tel:|["']sms:/.test(src),
+    (/["'](?:tel|sms):[^"']*/.exec(src) || [''])[0]);
+  /* A page that dials has to load the shared helpers, or AdminVoice is
+     undefined and the control silently never renders. */
+  if (/AdminVoice/.test(src)) {
+    check(f + ' loads admin-voice.js',
+      src.includes('<script src="admin-voice.js"></script>'));
+  }
+}
+check('the helpers themselves are one file',
+  readFileSync(path.join(root, 'admin-voice.js'), 'utf8').includes('voice.google.com'));
+
 /* The list of pages lives in one file; every page in it must exist, or the
    menu offers a 404. */
 const nav = readFileSync(path.join(root, 'admin-nav.js'), 'utf8');

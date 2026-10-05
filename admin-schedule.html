@@ -163,6 +163,7 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 </main>
 
 <script src="admin-nav.js"></script>
+<script src="admin-voice.js"></script>
 <script src="admin-activity.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
@@ -390,17 +391,20 @@ function jobRow(i) {
   var acts = document.createElement('div');
   acts.className = 'job-acts';
   if (i.customer_phone) {
+    /* Google Voice, not tel:/sms:. This shop works off the business line, so a
+       tel: dialled from whatever SIM is in the phone and an sms: sent from the
+       handset's own number were both the wrong number to the customer. The
+       helpers are shared with the customer page — see admin-voice.js for the
+       testing behind the two URLs. */
     var call = document.createElement('a');
     call.className = 'act';
-    call.href = 'tel:' + i.customer_phone;
     call.textContent = 'Call';
-    acts.appendChild(call);
+    if (AdminVoice.attach(call, i.customer_phone, 'call')) acts.appendChild(call);
 
     var text = document.createElement('a');
     text.className = 'act';
-    text.href = 'sms:' + i.customer_phone;
     text.textContent = 'Text';
-    acts.appendChild(text);
+    if (AdminVoice.attach(text, i.customer_phone, 'text')) acts.appendChild(text);
   }
   if (i.address) {
     var map = document.createElement('a');

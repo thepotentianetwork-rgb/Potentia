@@ -154,6 +154,7 @@ a.row-name:hover{color:var(--sp-blue)}
 </main>
 
 <script src="admin-nav.js"></script>
+<script src="admin-voice.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_admin_token');
@@ -335,8 +336,16 @@ function followRow(f) {
   main.appendChild(el('div', 'row-sub', f.reason));
   row.appendChild(main);
   row.appendChild(el('div', 'row-when' + (f.urgent ? ' late' : ''), f.ago || ''));
-  var call = el('a', 'row-act' + (f.phone ? '' : ' off'), f.phone ? 'Call' : 'No #');
-  if (f.phone) call.href = 'tel:' + f.phone.replace(/[^0-9+]/g, '');
+  /* Google Voice, so the call goes out on the business line rather than from
+     whatever SIM the phone in your hand has. A number Voice cannot dial is
+     shown as "No #" rather than as a button that does nothing. */
+  var call = el('a', 'row-act', 'Call');
+  if (!AdminVoice.attach(call, f.phone, 'call')) {
+    call.className = 'row-act off';
+    call.textContent = 'No #';
+    call.title = f.phone ? 'That number cannot be dialled: ' + f.phone
+                         : 'No phone number on file.';
+  }
   row.appendChild(call);
   return row;
 }

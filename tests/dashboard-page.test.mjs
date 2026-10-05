@@ -164,7 +164,9 @@ db.prepare(`INSERT INTO invoices (id,customer_id,submission_id,kind,amount,statu
    documents. */
 const FILES = {
   '/admin-nav.js': { type: 'text/javascript',
-                     body: readFileSync(path.join(here, '..', 'admin-nav.js'), 'utf8') }
+                     body: readFileSync(path.join(here, '..', 'admin-nav.js'), 'utf8') },
+  '/admin-voice.js': { type: 'text/javascript',
+                       body: readFileSync(path.join(here, '..', 'admin-voice.js'), 'utf8') }
 };
 
 async function api(req, res) {

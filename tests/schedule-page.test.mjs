@@ -115,9 +115,12 @@ const srv = http.createServer(async (req, res) => {
   /* Served because production serves it. Letting this 404 made AdminNav
      undefined, the page script threw, and every assertion failed for one
      reason that had nothing to do with what was being tested. */
-  if (req.url === '/admin-nav.js') {
+  /* Both shared scripts. Letting either 404 hands the page back as a script,
+     the global comes out undefined, the page throws and EVERY assertion fails
+     for one reason that has nothing to do with what is being tested. */
+  if (req.url === '/admin-nav.js' || req.url === '/admin-voice.js') {
     res.writeHead(200, { 'Content-Type': 'text/javascript' });
-    return res.end(readFileSync(path.join(here, '..', 'admin-nav.js'), 'utf8'));
+    return res.end(readFileSync(path.join(here, '..', req.url.slice(1)), 'utf8'));
   }
   if (req.url === '/' || req.url.startsWith('/?')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });

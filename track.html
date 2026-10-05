@@ -86,6 +86,9 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 /* What a package covers. Indented under its line, quieter than it. */
 .item-inc{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);
   line-height:1.8;padding:2px 0 6px 14px;border-left:1px solid var(--dim);margin:0 0 4px 2px}
+/* Things thrown in free. Marked in the brand blue the quote uses for them, so
+   it reads as a gift rather than as a line with a missing price. */
+.item-free{color:var(--sp-blue);white-space:nowrap}
 .totals{border-top:1px solid var(--dim);margin-top:18px;padding-top:14px}
 .tline{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
   font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);line-height:2}
@@ -242,6 +245,22 @@ function itemsCard(data) {
     });
     card.appendChild(grp);
   });
+
+  /* Comped lines, their own group, reading "Included" rather than "$0" — the
+     same wording as the quote. */
+  if (data.included && data.included.length) {
+    var free = el('div', 'grp');
+    var fh = el('div', 'grp-head');
+    fh.appendChild(el('div', 'grp-name', 'Included at no charge'));
+    free.appendChild(fh);
+    data.included.forEach(function (name) {
+      var row = el('div', 'item');
+      row.appendChild(el('div', 'item-name', name));
+      row.appendChild(el('div', 'item-free', 'Included'));
+      free.appendChild(row);
+    });
+    card.appendChild(free);
+  }
 
   var p = data.pricing;
   if (p) {
