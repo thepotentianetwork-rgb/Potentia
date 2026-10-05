@@ -246,8 +246,10 @@ function itemsCard(data) {
   var p = data.pricing;
   if (p) {
     var tot = el('div', 'totals');
-    if (p.savings > 0) {
-      tot.appendChild(tline('save', 'You saved', '\u2212' + usd(p.savings)));
+    /* Pre-tax and above the subtotal, so the lines above visibly subtract to
+       it. A discount shown after the subtotal reads as money still to come off. */
+    if (p.discount > 0) {
+      tot.appendChild(tline('save', 'Discount', '\u2212' + usd(p.discount)));
     }
     tot.appendChild(tline('', 'Subtotal', usd(p.subtotal)));
     if (p.tax) tot.appendChild(tline('', 'Utah sales tax', usd(p.tax)));

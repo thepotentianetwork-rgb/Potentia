@@ -528,5 +528,128 @@ test('the page serves these fields and no others', async () => {
       assert.deepEqual(Object.keys(l).sort(), ['amount', 'includes', 'label'], Object.keys(l).join(','));
     });
   });
-  assert.deepEqual(Object.keys(d.pricing).sort(), ['savings', 'subtotal', 'tax', 'total']);
+  assert.deepEqual(Object.keys(d.pricing).sort(), ['discount', 'subtotal', 'tax', 'total']);
+});
+
+// ── custom work ─────────────────────────────────────────────────────────────
+
+/* ANYTHING THE CONFIGURATOR HAS NO OPTION FOR is agreed as an adjustment that
+   adds to the price, with a note saying what it is. quoteLines folds that into
+   the subtotal and never names it, so the itemised list used to add up to less
+   than the figure printed under it — measured at $14,819 of lines under a
+   stated $15,269 — with the note explaining the difference dropped entirely. */
+async function withAdjustments(list) {
+  const { db, env } = loadedSetup();
+  db.prepare('UPDATE submissions SET adjustments = ? WHERE id = 7').run(JSON.stringify(list));
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  return { db, env, d };
+}
+function allLines(d) {
+  return (d.items || []).reduce((a, g) => a.concat(g.lines || []), []);
+}
+
+test('a custom charge is named on the tracker, in the words it was written in', async () => {
+  const { d } = await withAdjustments([
+    { kind: 'amount', value: 450, note: 'Built-in workbench along the back wall' }
+  ]);
+  const line = allLines(d).filter((l) => /workbench/i.test(l.label))[0];
+  assert.ok(line, 'the custom work is not listed: ' + allLines(d).map((l) => l.label).join(' | '));
+  assert.equal(line.label, 'Built-in workbench along the back wall');
+  assert.equal(line.amount, 450);
+  assert.ok(d.items.some((g) => g.label === 'Custom work for you'), d.items.map((g) => g.label));
+});
+
+/* THE ARITHMETIC IS THE POINT. A list that does not add up to the figure under
+   it invites exactly the phone call it was built to prevent. */
+test('the lines add up to the subtotal, custom work and discounts included', async () => {
+  for (const list of [
+    [{ kind: 'amount', value: 450, note: 'Workbench' }],
+    [{ kind: 'amount', value: -200, note: 'Repeat customer' }],
+    [{ kind: 'amount', value: 450, note: 'Workbench' },
+     { kind: 'amount', value: -200, note: 'Repeat customer' }],
+    [{ kind: 'percent', value: -10, note: 'Winter rate' }],
+    [{ kind: 'amount', value: 1200, note: 'Dutch door and ramp' },
+     { kind: 'percent', value: -5, note: 'Cash' }],
+    []
+  ]) {
+    const { d } = await withAdjustments(list);
+    const lines = (d.items || []).reduce((t, g) => t + g.amount, 0);
+    const net = lines - (d.pricing.discount || 0);
+    assert.ok(Math.abs(net - d.pricing.subtotal) < 0.02,
+      JSON.stringify(list) + ': lines ' + Math.round(lines) + ' - discount '
+      + Math.round(d.pricing.discount) + ' = ' + Math.round(net)
+      + ', but the page states a subtotal of ' + Math.round(d.pricing.subtotal));
+    assert.ok(Math.abs((d.pricing.subtotal + d.pricing.tax) - d.pricing.total) < 0.02,
+      'subtotal plus tax is not the total');
+  }
+});
+
+test('money off is a discount, not a thing they bought', async () => {
+  const { d } = await withAdjustments([{ kind: 'amount', value: -200, note: 'Repeat customer' }]);
+  assert.ok(!d.items.some((g) => g.label === 'Custom work for you'),
+    'a discount was listed as custom work');
+  assert.equal(Math.round(d.pricing.discount), 200);
+  assert.ok(!allLines(d).some((l) => l.amount < 0), 'a negative line reached the list');
+});
+
+test('a percentage that adds is custom work too', async () => {
+  const { d } = await withAdjustments([{ kind: 'percent', value: 5, note: 'Long haul delivery' }]);
+  const line = allLines(d).filter((l) => /long haul/i.test(l.label))[0];
+  assert.ok(line, allLines(d).map((l) => l.label).join(' | '));
+  assert.ok(line.amount > 0);
+  assert.equal(d.pricing.discount, 0);
+});
+
+/* A charge with no note is still a charge. Silence about it is worse than a
+   vague label. */
+test('a custom charge with no note still gets a line', async () => {
+  const { d } = await withAdjustments([{ kind: 'amount', value: 300 }]);
+  const line = allLines(d).filter((l) => l.label === 'Custom work')[0];
+  assert.ok(line, allLines(d).map((l) => l.label).join(' | '));
+  assert.equal(line.amount, 300);
+});
+
+test('several custom items each get their own line', async () => {
+  const { d } = await withAdjustments([
+    { kind: 'amount', value: 450, note: 'Workbench' },
+    { kind: 'amount', value: 800, note: 'Dutch door' }
+  ]);
+  const grp = d.items.filter((g) => g.label === 'Custom work for you')[0];
+  assert.ok(grp);
+  assert.deepEqual(grp.lines.map((l) => l.label), ['Workbench', 'Dutch door']);
+  assert.equal(grp.amount, 1250);
+});
+
+/* A comp is already removed from the phase row it belongs to, so counting it
+   here as well would take it off twice.
+   The SECOND case is the one that keeps the comp guard honest. A comp carries
+   no `value` today, so the isFinite check alone already skips it and removing
+   the guard failed nothing — until a comp arrives carrying a figure, which is
+   exactly what a stored price on a comped line would look like. */
+test('a comped item is not double-counted as a discount', async () => {
+  for (const comp of [{ kind: 'comp', item: 'Exterior Paint' },
+                      { kind: 'comp', item: 'Exterior Paint', value: -1400 }]) {
+    const { d } = await withAdjustments([comp]);
+    assert.equal(d.pricing.discount, 0,
+      'a comp was subtracted a second time: ' + JSON.stringify(comp));
+    const lines = (d.items || []).reduce((t, g) => t + g.amount, 0);
+    assert.ok(Math.abs(lines - d.pricing.subtotal) < 0.02,
+      JSON.stringify(comp) + ': lines ' + Math.round(lines)
+      + ' vs subtotal ' + Math.round(d.pricing.subtotal));
+    assert.ok(!(d.items || []).some((g) => g.label === 'Custom work for you'),
+      'a comp was listed as custom work');
+  }
+});
+
+/* The note is the shop's own words, typed into the CRM, and it lands on a page
+   a customer reads. */
+test('a note cannot smuggle markup onto the page', async () => {
+  const { d } = await withAdjustments([
+    { kind: 'amount', value: 100, note: '<img src=x onerror=alert(1)>' }
+  ]);
+  const line = allLines(d).filter((l) => l.amount === 100)[0];
+  assert.ok(line);
+  assert.equal(typeof line.label, 'string');
 });

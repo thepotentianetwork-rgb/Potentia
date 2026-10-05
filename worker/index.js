@@ -3596,6 +3596,46 @@ async function handleTrack(request, env, origin, token) {
     lines: (r.subLines || []).map(line)
   })) : [];
 
+  /* CUSTOM WORK — ANYTHING AGREED THAT THE CONFIGURATOR HAS NO OPTION FOR.
+     It is entered as an adjustment that ADDS to the price, with a note saying
+     what it is, and quoteLines folds that into the subtotal without ever naming
+     it. The itemised list then added up to less than the figure printed under
+     it, with the one line explaining the difference dropped on the floor —
+     which is the phone call this list exists to prevent.
+     Anything that adds is something they are buying, so it gets a line.
+     Anything that takes money off is a discount, and shows as one below. */
+  const adjList = breakdown ? adjustmentsOf(sub) : [];
+  const preAdjust = breakdown ? Number(breakdown.subtotal) || 0 : 0;
+  const customLines = [];
+  let discount = 0;
+  adjList.forEach((a) => {
+    if (!a || a.kind === "comp") return;      // comps already left their own phase row
+    const v = Number(a.value);
+    if (!isFinite(v) || !v) return;
+    /* A percentage is a share of the pre-adjustment subtotal, which is the
+       figure quoteLines applies it to. */
+    const amt = a.kind === "percent" ? preAdjust * (v / 100) : v;
+    if (amt > 0) {
+      customLines.push({
+        /* The note is the only record of WHAT the money was for. With none
+           there is still a line: a nameless charge a customer can see beats a
+           silent one they cannot. */
+        label: String(a.note || "").trim() || "Custom work",
+        amount: amt,
+        includes: null
+      });
+    } else {
+      discount += -amt;
+    }
+  });
+  if (customLines.length) {
+    items.push({
+      label: "Custom work for you",
+      amount: customLines.reduce((t, l) => t + l.amount, 0),
+      lines: customLines
+    });
+  }
+
   return json({
     order_id: sub.id,
     first_name: firstName,
@@ -3609,7 +3649,10 @@ async function handleTrack(request, env, origin, token) {
         ? breakdown.adjustedSubtotal : breakdown.subtotal) || 0,
       tax: Number(breakdown.tax) || 0,
       total: Number(breakdown.total) || 0,
-      savings: Number(breakdown.savings) > 0 ? Number(breakdown.savings) : 0
+      /* Pre-tax, and its own line rather than folded into a savings figure, so
+         the lines above visibly subtract to the subtotal below. A customer with
+         a calculator is the one who notices. */
+      discount: discount > 0 ? discount : 0
     } : null,
     design_url: designLinkFor(details),
     total: Number.isFinite(total) ? total : null,

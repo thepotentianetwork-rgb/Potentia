@@ -97,6 +97,13 @@ db.prepare(`INSERT INTO submissions (id,customer_id,details,status,created_at)
               doors: [{ wall: 'front', w: 96, style: 'rollup', color: 'brown' }],
               windows: [{ wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' }] } }));
 
+/* A custom charge the configurator has no option for, and a discount — the two
+   things that used to leave the itemised list not adding up. */
+db.prepare("UPDATE submissions SET adjustments = ? WHERE id = 7").run(JSON.stringify([
+  { kind: 'amount', value: 450, note: 'Built-in workbench along the back wall' },
+  { kind: 'amount', value: -200, note: 'Repeat customer' }
+]));
+
 const env = { DB: makeD1(db), ADMIN_PASSWORD: 'pw', ADMIN_SESSION_SECRET: 'k' };
 
 async function call(method, p, body, tok) {
@@ -260,6 +267,17 @@ check('the totals are spelled out',
   (R.totalLines || []).some((l) => /Subtotal/.test(l)) &&
   (R.totalLines || []).some((l) => /sales tax/i.test(l)), R.totalLines);
 check('and it ends on their price', /^Your price/.test(R.grand || ''), R.grand);
+
+/* THE ONE THE WHOLE ITEMISED LIST TURNS ON. A custom charge the configurator
+   has no option for used to be folded into the subtotal unnamed, leaving the
+   lines adding up to less than the figure printed under them. */
+check('a custom charge is named, in the words it was agreed in',
+  allLines.some((l) => /Built-in workbench along the back wall/.test(l)), allLines);
+check('under its own heading',
+  (R.groups || []).some((g) => /Custom work/i.test(g.name)), (R.groups || []).map((g) => g.name));
+check('and a discount shows as a discount, not as something bought',
+  (R.totalLines || []).some((l) => /Discount/.test(l)) &&
+  !allLines.some((l) => /Repeat customer/.test(l)), { totals: R.totalLines, lines: allLines });
 check('the 3D design is linked', /\?d=a1b2c3d4$/.test(R.threeD || ''), R.threeD);
 
 console.log('\n-- what must never be on it --');
