@@ -69,6 +69,30 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;flex-wrap:wrap}
 .total{font-size:30px;color:var(--bright);font-weight:300}
 
+/* ── the itemised build ─────────────────────────────────────────────────
+   A group per phase of the quote, each with its own lines. Laid out as rows
+   of label-then-price rather than a table: a table with a price column is the
+   first thing to break on a phone, and this is read on a phone. */
+.grp{margin-bottom:22px}
+.grp:last-of-type{margin-bottom:0}
+.grp-head{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
+  border-bottom:1px solid var(--dim);padding-bottom:8px;margin-bottom:10px}
+.grp-name{font-family:'Cormorant Garamond',serif;font-size:20px;color:var(--bright);font-weight:300;line-height:1.25}
+.grp-amt{font-family:'DM Mono',monospace;font-size:13px;color:var(--chrome);white-space:nowrap}
+.item{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
+  font-family:'DM Mono',monospace;font-size:12px;color:var(--chrome);line-height:1.9;padding:3px 0}
+.item-name{flex:1;min-width:0}
+.item-amt{color:var(--silver);white-space:nowrap}
+/* What a package covers. Indented under its line, quieter than it. */
+.item-inc{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);
+  line-height:1.8;padding:2px 0 6px 14px;border-left:1px solid var(--dim);margin:0 0 4px 2px}
+.totals{border-top:1px solid var(--dim);margin-top:18px;padding-top:14px}
+.tline{display:flex;justify-content:space-between;align-items:baseline;gap:14px;
+  font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);line-height:2}
+.tline.save{color:var(--sp-green)}
+.tline.grand{font-family:'Cormorant Garamond',serif;font-size:26px;color:var(--bright);
+  font-weight:300;margin-top:8px}
+
 .btn{display:inline-block;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;padding:12px 22px;border:none;cursor:pointer;text-decoration:none;font-weight:700;background:var(--sp-blue);color:var(--black)}
 .btn:hover{background:#5ad0ff}
 .btn.ghost{background:transparent;border:1px solid var(--dim);color:var(--chrome);font-weight:400}
@@ -194,6 +218,52 @@ function nowCard(data) {
   return box;
 }
 
+/* One group per phase of the quote, each line with what it cost. */
+function itemsCard(data) {
+  var card = el('div', 'card');
+  card.appendChild(el('div', 'card-label', 'Everything in your build'));
+
+  (data.items || []).forEach(function (g) {
+    var grp = el('div', 'grp');
+    var head = el('div', 'grp-head');
+    head.appendChild(el('div', 'grp-name', g.label));
+    head.appendChild(el('div', 'grp-amt', usd(g.amount)));
+    grp.appendChild(head);
+
+    (g.lines || []).forEach(function (l) {
+      var row = el('div', 'item');
+      row.appendChild(el('div', 'item-name', l.label));
+      row.appendChild(el('div', 'item-amt', usd(l.amount)));
+      grp.appendChild(row);
+      /* What the package covers, where the quote spells it out. */
+      if (l.includes && l.includes.length) {
+        grp.appendChild(el('div', 'item-inc', l.includes.join(' \u00b7 ')));
+      }
+    });
+    card.appendChild(grp);
+  });
+
+  var p = data.pricing;
+  if (p) {
+    var tot = el('div', 'totals');
+    if (p.savings > 0) {
+      tot.appendChild(tline('save', 'You saved', '\u2212' + usd(p.savings)));
+    }
+    tot.appendChild(tline('', 'Subtotal', usd(p.subtotal)));
+    if (p.tax) tot.appendChild(tline('', 'Utah sales tax', usd(p.tax)));
+    tot.appendChild(tline('grand', 'Your price', usd(p.total)));
+    card.appendChild(tot);
+  }
+  return card;
+}
+
+function tline(cls, label, amount) {
+  var row = el('div', 'tline' + (cls ? ' ' + cls : ''));
+  row.appendChild(el('div', '', label));
+  row.appendChild(el('div', '', amount));
+  return row;
+}
+
 function changeCard(data) {
   var card = el('div', 'card');
   card.appendChild(el('div', 'card-label', 'Want to change something?'));
@@ -315,14 +385,21 @@ function render(data) {
     var sl = el('ul', 'spec');
     data.spec.forEach(function (line) { sl.appendChild(el('li', '', line)); });
     spec.appendChild(sl);
-    if (data.total != null) {
-      var row = el('div', 'row');
-      row.style.marginTop = '20px';
-      row.appendChild(el('div', 'card-label', 'Your price'));
-      row.appendChild(el('div', 'total', usd(data.total)));
-      spec.appendChild(row);
-    }
     wrap.appendChild(spec);
+  }
+
+  /* EVERY CHOICE THEY MADE, PRICED. The same breakdown as their quote, so the
+     two never disagree. Falls back to the plain total for an older order whose
+     saved design has no priced breakdown to itemise. */
+  if (data.items && data.items.length) {
+    wrap.appendChild(itemsCard(data));
+  } else if (data.total != null) {
+    var only = el('div', 'card');
+    var row = el('div', 'row');
+    row.appendChild(el('div', 'card-label', 'Your price'));
+    row.appendChild(el('div', 'total', usd(data.total)));
+    only.appendChild(row);
+    wrap.appendChild(only);
   }
 
   wrap.appendChild(changeCard(data));

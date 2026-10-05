@@ -34,6 +34,18 @@ function makeD1(db) {
 const { redline } = computePricing({ style: 'barn', w: 10, l: 16, h: 9,
   foundation: 'pad', foundationFinish: 'coated', siding: 'vertical' });
 
+/* A build with things CHOSEN on it — 9ft walls, paint, a loft, a premium
+   window, shelves — so the itemised list has customizations to list rather
+   than a bare shed. */
+const LOADED = computePricing({ style: 'barn', w: 12, l: 20, h: 9,
+  foundation: 'pad', foundationFinish: 'coated', siding: 'vertical',
+  paint: 'two-tone', intFinish: 'painted', floor: 'vinyl', elec: 'standard',
+  loft: '8-ft',
+  doors: [{ wall: 'front', w: 72, style: 'double', color: 'brown' }],
+  windows: [{ wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' },
+            { wall: 'right', w: 48, h: 36, type: 'Black Bi-Fold Bar 48x36' }],
+  shelves: [{ wall: 'back', len: 8 }] }).redline;
+
 function setup(extraEnv = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT,
@@ -377,4 +389,144 @@ test('a change request is still accepted once the build has started', async () =
     'the page still says changes are open');
   assert.equal((await api(env, 'POST', '/track/' + tok + '/change', { text: 'one more shelf?' })).status, 200);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notes').get().n, 1);
+});
+
+// ── the itemised build ──────────────────────────────────────────────────────
+
+/* THE SAME BREAKDOWN AS THE QUOTE, from the same function. If these two ever
+   disagree about what was bought, one of them is lying to a customer who has
+   both open. */
+function loadedSetup() {
+  const { db, env } = setup();
+  db.prepare("UPDATE submissions SET details = ? WHERE id = 7")
+    .run(JSON.stringify({ redline: LOADED, quotedPrice: 24000,
+                          permalink: 'https://shedpro-utah.com/designer.html?d=a1b2c3d4',
+                          config: { w: 12, l: 20, h: 9, style: 'barn' } }));
+  return { db, env };
+}
+
+test('the itemised list carries every choice they made', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+
+  assert.ok((d.items || []).length, 'nothing was itemised');
+  const labels = d.items.reduce((a, g) => a.concat((g.lines || []).map((l) => l.label)), []);
+  /* The options this fixture actually chose — each has to appear by name. */
+  ["9' Walls", 'Exterior Paint', 'Black Bi-Fold Bar Window 48x36',
+   'Black Vinyl Window 24x36'].forEach((want) => {
+    assert.ok(labels.some((l) => l.indexOf(want) !== -1),
+      '"' + want + '" is not on the list: ' + labels.join(' | '));
+  });
+  assert.ok(labels.some((l) => /loft/i.test(l)), 'no loft: ' + labels.join(' | '));
+  assert.ok(labels.some((l) => /shelf/i.test(l)), 'no shelf: ' + labels.join(' | '));
+});
+
+test('each line carries what it cost', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  const lines = d.items.reduce((a, g) => a.concat(g.lines || []), []);
+  assert.ok(lines.length, 'no lines');
+  lines.forEach((l) => {
+    assert.equal(typeof l.amount, 'number', l.label + ' has no amount');
+    assert.ok(isFinite(l.amount), l.label + ' amount is not a number: ' + l.amount);
+  });
+  assert.ok(lines.some((l) => l.amount > 0), 'every line came back free');
+});
+
+/* The tracker draws its OWN four phases on the same screen. Two unrelated
+   things both numbered "Phase 2" is what a customer rings about. */
+test('the quote’s phase numbering is not carried onto the tracker', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  d.items.forEach((g) => {
+    assert.ok(!/^Phase \d/.test(g.label), 'a quote phase number reached the tracker: ' + g.label);
+    assert.ok(g.label.trim().length, 'a group lost its name entirely');
+  });
+  assert.ok(d.items.some((g) => /shed/i.test(g.label)), d.items.map((g) => g.label));
+});
+
+test('the totals add up to the price they were quoted', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  assert.ok(d.pricing, 'no totals');
+  assert.ok(d.pricing.total > 0);
+  /* Subtotal plus tax is the total, to the cent. A customer with a calculator
+     is the one who notices. */
+  assert.ok(Math.abs((d.pricing.subtotal + d.pricing.tax) - d.pricing.total) < 0.02,
+    JSON.stringify(d.pricing));
+  const groups = d.items.reduce((t2, g) => t2 + g.amount, 0);
+  assert.ok(Math.abs(groups - d.pricing.subtotal) < 0.02,
+    'the groups do not add up to the subtotal: ' + groups + ' vs ' + d.pricing.subtotal);
+});
+
+/* THE WHOLE REASON THIS IS COPIED FIELD BY FIELD. quoteLines reads a redline,
+   and a redline is the shop's cost sheet. */
+test('itemising the build does not carry the shop’s cost with it', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  const body = JSON.stringify(d);
+
+  assert.ok(!/redline/i.test(body), 'redline is in the response');
+  assert.ok(!/margin|trueTotalCost|grandBase|helperCost|fuelCost/i.test(body),
+    'a cost field name is in the response');
+
+  const secret = { trueTotalCost: LOADED.trueTotalCost, grandBase: LOADED.grandBase,
+                   marginDollars: LOADED.marginDollars, framing: LOADED.framing,
+                   helperCost: LOADED.helperCost };
+  Object.keys(secret).forEach((k) => {
+    assert.ok(Number(secret[k]) > 0, 'the fixture has no ' + k + ' to leak');
+    [String(secret[k]), String(Math.round(secret[k]))].forEach((n) => {
+      assert.ok(body.indexOf(n) === -1, k + ' (' + n + ') is in the response');
+    });
+  });
+});
+
+/* An order saved before the designer stored a redline still has to render. */
+test('an order with no priced breakdown still gets a page', async () => {
+  const { db, env } = setup();
+  db.prepare("UPDATE submissions SET details = ? WHERE id = 7")
+    .run(JSON.stringify({ quotedPrice: 9000, config: { w: 10, l: 16, style: 'barn' } }));
+  const t = await token(env);
+  await win(env, t);
+  const r = await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)));
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.items, [], 'it invented an itemised list from nothing');
+  assert.equal(r.data.pricing, null);
+  assert.equal(r.data.total, 9000, 'the plain total is still there to fall back on');
+});
+
+/* THE GUARD THAT MAKES "copied field by field" MEAN SOMETHING. Without this,
+   spreading quoteLines' whole result into the response failed nothing — it
+   happens to return only sell-side numbers today, so nothing leaked and nothing
+   complained. Pinning the keys is what turns a careful habit into a rule: a
+   field added to that function later cannot reach a customer's screen without
+   somebody naming it here. */
+test('the page serves these fields and no others', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+
+  assert.deepEqual(Object.keys(d).sort(), [
+    'changes', 'complete', 'design_url', 'first_name', 'items', 'order_id',
+    'phases', 'pricing', 'shop_email', 'shop_phone', 'spec', 'summary', 'total'
+  ].sort(), Object.keys(d).join(','));
+
+  d.items.forEach((g) => {
+    assert.deepEqual(Object.keys(g).sort(), ['amount', 'label', 'lines'], Object.keys(g).join(','));
+    (g.lines || []).forEach((l) => {
+      assert.deepEqual(Object.keys(l).sort(), ['amount', 'includes', 'label'], Object.keys(l).join(','));
+    });
+  });
+  assert.deepEqual(Object.keys(d.pricing).sort(), ['savings', 'subtotal', 'tax', 'total']);
 });

@@ -71,8 +71,13 @@ function wordsFor(iso) {
   return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 }
 
-const COST = computePricing({ style: 'barn', w: 10, l: 16, h: 9, foundation: 'pad',
-                              foundationFinish: 'coated', siding: 'vertical' }).redline;
+const COST = computePricing({ style: 'barn', w: 12, l: 20, h: 9, foundation: 'pad',
+  foundationFinish: 'coated', siding: 'vertical', paint: 'two-tone',
+  intFinish: 'painted', floor: 'vinyl', elec: 'standard', loft: '8-ft',
+  doors: [{ wall: 'front', w: 72, style: 'double', color: 'brown' }],
+  windows: [{ wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' },
+            { wall: 'right', w: 48, h: 36, type: 'Black Bi-Fold Bar 48x36' }],
+  shelves: [{ wall: 'back', len: 8 }] }).redline;
 
 const db = new DatabaseSync(':memory:');
 db.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT,
@@ -165,6 +170,15 @@ const PROBE = `
   });
   R.spec = [].slice.call(document.querySelectorAll('.spec li')).map(txt);
   R.total = txt(document.querySelector('.total'));
+  /* The itemised build: a group per phase of the quote, each with its lines. */
+  R.groups = [].slice.call(document.querySelectorAll('.grp')).map(function(g){
+    return { name: txt(g.querySelector('.grp-name')), amt: txt(g.querySelector('.grp-amt')),
+             lines: [].slice.call(g.querySelectorAll('.item')).map(function(i){
+               return txt(i.querySelector('.item-name')) + ' = ' + txt(i.querySelector('.item-amt'));
+             }) };
+  });
+  R.totalLines = [].slice.call(document.querySelectorAll('.tline')).map(txt);
+  R.grand = txt(document.querySelector('.tline.grand'));
   R.body = document.body.innerText || '';
   R.html = document.body.innerHTML || '';
   R.threeD = ([].slice.call(document.querySelectorAll('a.btn'))
@@ -223,7 +237,29 @@ check('an upcoming phase does not list things that have not happened',
   R.phases[3].stages.length === 0, R.phases[3].stages);
 
 check('the build is spelled out', R.spec.length >= 3, R.spec);
-check('their own price is shown', R.total === '$14,250', R.total);
+
+console.log('\n-- every customization, itemised --');
+check('the build is broken into groups', (R.groups || []).length >= 2,
+  (R.groups || []).map((g) => g.name));
+const allLines = (R.groups || []).reduce((a, g) => a.concat(g.lines), []);
+check('with a line for each thing chosen', allLines.length >= 5, allLines);
+/* The options this fixture actually chose. A tracker that lists the shed and
+   not the £2,495 window is the one that gets a phone call. */
+["9' Walls", 'Exterior Paint', 'Bi-Fold Bar Window', 'Vinyl Window']
+  .forEach((want) => {
+    check('"' + want + '" is listed',
+      allLines.some((l) => l.indexOf(want) !== -1), allLines);
+  });
+check('a loft is listed', allLines.some((l) => /loft/i.test(l)), allLines);
+check('a shelf is listed', allLines.some((l) => /shelf/i.test(l)), allLines);
+check('every line carries a price',
+  allLines.length > 0 && allLines.every((l) => /= \$[\d,]+$/.test(l)), allLines);
+check('no quote phase numbering leaks onto the tracker',
+  (R.groups || []).every((g) => !/^Phase \d/.test(g.name)), (R.groups || []).map((g) => g.name));
+check('the totals are spelled out',
+  (R.totalLines || []).some((l) => /Subtotal/.test(l)) &&
+  (R.totalLines || []).some((l) => /sales tax/i.test(l)), R.totalLines);
+check('and it ends on their price', /^Your price/.test(R.grand || ''), R.grand);
 check('the 3D design is linked', /\?d=a1b2c3d4$/.test(R.threeD || ''), R.threeD);
 
 console.log('\n-- what must never be on it --');

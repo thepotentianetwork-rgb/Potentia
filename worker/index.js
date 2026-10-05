@@ -3545,6 +3545,7 @@ async function handleTrack(request, env, origin, token) {
 
   const sub = await env.DB.prepare(
     `SELECT s.id, s.details, s.status, s.won_at, s.effective_price,
+            s.adjustments, s.price_adjustment, s.adjustment_note,
             c.name AS customer_name
      FROM submissions s JOIN customers c ON s.customer_id = c.id
      WHERE s.track_token = ?`
@@ -3567,11 +3568,49 @@ async function handleTrack(request, env, origin, token) {
   const total = sub.effective_price != null ? Number(sub.effective_price)
               : (details.quotedPrice != null ? Number(details.quotedPrice) : null);
 
+  /* EVERY CUSTOMIZATION THEY CHOSE, PRICED — the same breakdown that is printed
+     on their quote, from the same function, so the two documents can never
+     disagree about what was bought.
+     COPIED FIELD BY FIELD, not spread. quoteLines reads a redline — the shop's
+     cost sheet — and today returns only sell-side numbers, so spreading it
+     would not leak anything as it stands. The point is forward-looking: this is
+     the one page a stranger holding a link can open, and naming the fields means
+     a field added to that function later has to be added here on purpose rather
+     than arriving on a customer's screen by itself. A test pins the response's
+     top-level keys so that stays true. */
+  const breakdown = details.redline ? quoteLines(details.redline, adjustmentsOf(sub)) : null;
+  const line = (l) => ({
+    label: String(l.label || ""),
+    amount: Number(l.amt) || 0,
+    /* What a package covers, where the quote spells it out — "Base Shed"
+       and "Electrical" both carry one. */
+    includes: Array.isArray(l.includes) ? l.includes.map(String) : null
+  });
+  const items = breakdown ? (breakdown.rows || []).map((r) => ({
+    /* quoteLines prefixes its rows "Phase 1 — " for the invoice schedule. The
+       tracker has its own four phases on the same screen, and two unrelated
+       things both called a phase is the sort of thing a customer reads twice
+       and then rings about. The number is dropped; the grouping stays. */
+    label: String(r.label || "").replace(/^Phase \d+ \u2014 /, ""),
+    amount: Number(r.amt) || 0,
+    lines: (r.subLines || []).map(line)
+  })) : [];
+
   return json({
     order_id: sub.id,
     first_name: firstName,
     summary: configSummary(details.config),
     spec: buildSpecLines(details.config),
+    items,
+    /* Subtotal and tax so the itemised list visibly adds up to the figure they
+       were quoted. savings only when something actually came off. */
+    pricing: breakdown ? {
+      subtotal: Number(breakdown.adjustedSubtotal != null
+        ? breakdown.adjustedSubtotal : breakdown.subtotal) || 0,
+      tax: Number(breakdown.tax) || 0,
+      total: Number(breakdown.total) || 0,
+      savings: Number(breakdown.savings) > 0 ? Number(breakdown.savings) : 0
+    } : null,
     design_url: designLinkFor(details),
     total: Number.isFinite(total) ? total : null,
     phases: trackPhases(rows),
