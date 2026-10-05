@@ -34,6 +34,18 @@ function makeD1(db) {
 const { redline } = computePricing({ style: 'barn', w: 10, l: 16, h: 9,
   foundation: 'pad', foundationFinish: 'coated', siding: 'vertical' });
 
+/* A build with things CHOSEN on it — 9ft walls, paint, a loft, a premium
+   window, shelves — so the itemised list has customizations to list rather
+   than a bare shed. */
+const LOADED = computePricing({ style: 'barn', w: 12, l: 20, h: 9,
+  foundation: 'pad', foundationFinish: 'coated', siding: 'vertical',
+  paint: 'two-tone', intFinish: 'painted', floor: 'vinyl', elec: 'standard',
+  loft: '8-ft',
+  doors: [{ wall: 'front', w: 72, style: 'double', color: 'brown' }],
+  windows: [{ wall: 'left', w: 24, h: 36, type: 'Black Vinyl 24x36' },
+            { wall: 'right', w: 48, h: 36, type: 'Black Bi-Fold Bar 48x36' }],
+  shelves: [{ wall: 'back', len: 8 }] }).redline;
+
 function setup(extraEnv = {}) {
   const db = new DatabaseSync(':memory:');
   db.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT,
@@ -377,4 +389,267 @@ test('a change request is still accepted once the build has started', async () =
     'the page still says changes are open');
   assert.equal((await api(env, 'POST', '/track/' + tok + '/change', { text: 'one more shelf?' })).status, 200);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM notes').get().n, 1);
+});
+
+// ── the itemised build ──────────────────────────────────────────────────────
+
+/* THE SAME BREAKDOWN AS THE QUOTE, from the same function. If these two ever
+   disagree about what was bought, one of them is lying to a customer who has
+   both open. */
+function loadedSetup() {
+  const { db, env } = setup();
+  db.prepare("UPDATE submissions SET details = ? WHERE id = 7")
+    .run(JSON.stringify({ redline: LOADED, quotedPrice: 24000,
+                          permalink: 'https://shedpro-utah.com/designer.html?d=a1b2c3d4',
+                          config: { w: 12, l: 20, h: 9, style: 'barn' } }));
+  return { db, env };
+}
+
+test('the itemised list carries every choice they made', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+
+  assert.ok((d.items || []).length, 'nothing was itemised');
+  const labels = d.items.reduce((a, g) => a.concat((g.lines || []).map((l) => l.label)), []);
+  /* The options this fixture actually chose — each has to appear by name. */
+  ["9' Walls", 'Exterior Paint', 'Black Bi-Fold Bar Window 48x36',
+   'Black Vinyl Window 24x36'].forEach((want) => {
+    assert.ok(labels.some((l) => l.indexOf(want) !== -1),
+      '"' + want + '" is not on the list: ' + labels.join(' | '));
+  });
+  assert.ok(labels.some((l) => /loft/i.test(l)), 'no loft: ' + labels.join(' | '));
+  assert.ok(labels.some((l) => /shelf/i.test(l)), 'no shelf: ' + labels.join(' | '));
+});
+
+test('each line carries what it cost', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  const lines = d.items.reduce((a, g) => a.concat(g.lines || []), []);
+  assert.ok(lines.length, 'no lines');
+  lines.forEach((l) => {
+    assert.equal(typeof l.amount, 'number', l.label + ' has no amount');
+    assert.ok(isFinite(l.amount), l.label + ' amount is not a number: ' + l.amount);
+  });
+  assert.ok(lines.some((l) => l.amount > 0), 'every line came back free');
+});
+
+/* The tracker draws its OWN four phases on the same screen. Two unrelated
+   things both numbered "Phase 2" is what a customer rings about. */
+test('the quote’s phase numbering is not carried onto the tracker', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  d.items.forEach((g) => {
+    assert.ok(!/^Phase \d/.test(g.label), 'a quote phase number reached the tracker: ' + g.label);
+    assert.ok(g.label.trim().length, 'a group lost its name entirely');
+  });
+  assert.ok(d.items.some((g) => /shed/i.test(g.label)), d.items.map((g) => g.label));
+});
+
+test('the totals add up to the price they were quoted', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  assert.ok(d.pricing, 'no totals');
+  assert.ok(d.pricing.total > 0);
+  /* Subtotal plus tax is the total, to the cent. A customer with a calculator
+     is the one who notices. */
+  assert.ok(Math.abs((d.pricing.subtotal + d.pricing.tax) - d.pricing.total) < 0.02,
+    JSON.stringify(d.pricing));
+  const groups = d.items.reduce((t2, g) => t2 + g.amount, 0);
+  assert.ok(Math.abs(groups - d.pricing.subtotal) < 0.02,
+    'the groups do not add up to the subtotal: ' + groups + ' vs ' + d.pricing.subtotal);
+});
+
+/* THE WHOLE REASON THIS IS COPIED FIELD BY FIELD. quoteLines reads a redline,
+   and a redline is the shop's cost sheet. */
+test('itemising the build does not carry the shop’s cost with it', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  const body = JSON.stringify(d);
+
+  assert.ok(!/redline/i.test(body), 'redline is in the response');
+  assert.ok(!/margin|trueTotalCost|grandBase|helperCost|fuelCost/i.test(body),
+    'a cost field name is in the response');
+
+  const secret = { trueTotalCost: LOADED.trueTotalCost, grandBase: LOADED.grandBase,
+                   marginDollars: LOADED.marginDollars, framing: LOADED.framing,
+                   helperCost: LOADED.helperCost };
+  Object.keys(secret).forEach((k) => {
+    assert.ok(Number(secret[k]) > 0, 'the fixture has no ' + k + ' to leak');
+    [String(secret[k]), String(Math.round(secret[k]))].forEach((n) => {
+      assert.ok(body.indexOf(n) === -1, k + ' (' + n + ') is in the response');
+    });
+  });
+});
+
+/* An order saved before the designer stored a redline still has to render. */
+test('an order with no priced breakdown still gets a page', async () => {
+  const { db, env } = setup();
+  db.prepare("UPDATE submissions SET details = ? WHERE id = 7")
+    .run(JSON.stringify({ quotedPrice: 9000, config: { w: 10, l: 16, style: 'barn' } }));
+  const t = await token(env);
+  await win(env, t);
+  const r = await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)));
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.data.items, [], 'it invented an itemised list from nothing');
+  assert.equal(r.data.pricing, null);
+  assert.equal(r.data.total, 9000, 'the plain total is still there to fall back on');
+});
+
+/* THE GUARD THAT MAKES "copied field by field" MEAN SOMETHING. Without this,
+   spreading quoteLines' whole result into the response failed nothing — it
+   happens to return only sell-side numbers today, so nothing leaked and nothing
+   complained. Pinning the keys is what turns a careful habit into a rule: a
+   field added to that function later cannot reach a customer's screen without
+   somebody naming it here. */
+test('the page serves these fields and no others', async () => {
+  const { env } = loadedSetup();
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+
+  assert.deepEqual(Object.keys(d).sort(), [
+    'changes', 'complete', 'design_url', 'first_name', 'items', 'order_id',
+    'phases', 'pricing', 'shop_email', 'shop_phone', 'spec', 'summary', 'total'
+  ].sort(), Object.keys(d).join(','));
+
+  d.items.forEach((g) => {
+    assert.deepEqual(Object.keys(g).sort(), ['amount', 'label', 'lines'], Object.keys(g).join(','));
+    (g.lines || []).forEach((l) => {
+      assert.deepEqual(Object.keys(l).sort(), ['amount', 'includes', 'label'], Object.keys(l).join(','));
+    });
+  });
+  assert.deepEqual(Object.keys(d.pricing).sort(), ['discount', 'subtotal', 'tax', 'total']);
+});
+
+// ── custom work ─────────────────────────────────────────────────────────────
+
+/* ANYTHING THE CONFIGURATOR HAS NO OPTION FOR is agreed as an adjustment that
+   adds to the price, with a note saying what it is. quoteLines folds that into
+   the subtotal and never names it, so the itemised list used to add up to less
+   than the figure printed under it — measured at $14,819 of lines under a
+   stated $15,269 — with the note explaining the difference dropped entirely. */
+async function withAdjustments(list) {
+  const { db, env } = loadedSetup();
+  db.prepare('UPDATE submissions SET adjustments = ? WHERE id = 7').run(JSON.stringify(list));
+  const t = await token(env);
+  await win(env, t);
+  const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
+  return { db, env, d };
+}
+function allLines(d) {
+  return (d.items || []).reduce((a, g) => a.concat(g.lines || []), []);
+}
+
+test('a custom charge is named on the tracker, in the words it was written in', async () => {
+  const { d } = await withAdjustments([
+    { kind: 'amount', value: 450, note: 'Built-in workbench along the back wall' }
+  ]);
+  const line = allLines(d).filter((l) => /workbench/i.test(l.label))[0];
+  assert.ok(line, 'the custom work is not listed: ' + allLines(d).map((l) => l.label).join(' | '));
+  assert.equal(line.label, 'Built-in workbench along the back wall');
+  assert.equal(line.amount, 450);
+  assert.ok(d.items.some((g) => g.label === 'Custom work for you'), d.items.map((g) => g.label));
+});
+
+/* THE ARITHMETIC IS THE POINT. A list that does not add up to the figure under
+   it invites exactly the phone call it was built to prevent. */
+test('the lines add up to the subtotal, custom work and discounts included', async () => {
+  for (const list of [
+    [{ kind: 'amount', value: 450, note: 'Workbench' }],
+    [{ kind: 'amount', value: -200, note: 'Repeat customer' }],
+    [{ kind: 'amount', value: 450, note: 'Workbench' },
+     { kind: 'amount', value: -200, note: 'Repeat customer' }],
+    [{ kind: 'percent', value: -10, note: 'Winter rate' }],
+    [{ kind: 'amount', value: 1200, note: 'Dutch door and ramp' },
+     { kind: 'percent', value: -5, note: 'Cash' }],
+    []
+  ]) {
+    const { d } = await withAdjustments(list);
+    const lines = (d.items || []).reduce((t, g) => t + g.amount, 0);
+    const net = lines - (d.pricing.discount || 0);
+    assert.ok(Math.abs(net - d.pricing.subtotal) < 0.02,
+      JSON.stringify(list) + ': lines ' + Math.round(lines) + ' - discount '
+      + Math.round(d.pricing.discount) + ' = ' + Math.round(net)
+      + ', but the page states a subtotal of ' + Math.round(d.pricing.subtotal));
+    assert.ok(Math.abs((d.pricing.subtotal + d.pricing.tax) - d.pricing.total) < 0.02,
+      'subtotal plus tax is not the total');
+  }
+});
+
+test('money off is a discount, not a thing they bought', async () => {
+  const { d } = await withAdjustments([{ kind: 'amount', value: -200, note: 'Repeat customer' }]);
+  assert.ok(!d.items.some((g) => g.label === 'Custom work for you'),
+    'a discount was listed as custom work');
+  assert.equal(Math.round(d.pricing.discount), 200);
+  assert.ok(!allLines(d).some((l) => l.amount < 0), 'a negative line reached the list');
+});
+
+test('a percentage that adds is custom work too', async () => {
+  const { d } = await withAdjustments([{ kind: 'percent', value: 5, note: 'Long haul delivery' }]);
+  const line = allLines(d).filter((l) => /long haul/i.test(l.label))[0];
+  assert.ok(line, allLines(d).map((l) => l.label).join(' | '));
+  assert.ok(line.amount > 0);
+  assert.equal(d.pricing.discount, 0);
+});
+
+/* A charge with no note is still a charge. Silence about it is worse than a
+   vague label. */
+test('a custom charge with no note still gets a line', async () => {
+  const { d } = await withAdjustments([{ kind: 'amount', value: 300 }]);
+  const line = allLines(d).filter((l) => l.label === 'Custom work')[0];
+  assert.ok(line, allLines(d).map((l) => l.label).join(' | '));
+  assert.equal(line.amount, 300);
+});
+
+test('several custom items each get their own line', async () => {
+  const { d } = await withAdjustments([
+    { kind: 'amount', value: 450, note: 'Workbench' },
+    { kind: 'amount', value: 800, note: 'Dutch door' }
+  ]);
+  const grp = d.items.filter((g) => g.label === 'Custom work for you')[0];
+  assert.ok(grp);
+  assert.deepEqual(grp.lines.map((l) => l.label), ['Workbench', 'Dutch door']);
+  assert.equal(grp.amount, 1250);
+});
+
+/* A comp is already removed from the phase row it belongs to, so counting it
+   here as well would take it off twice.
+   The SECOND case is the one that keeps the comp guard honest. A comp carries
+   no `value` today, so the isFinite check alone already skips it and removing
+   the guard failed nothing — until a comp arrives carrying a figure, which is
+   exactly what a stored price on a comped line would look like. */
+test('a comped item is not double-counted as a discount', async () => {
+  for (const comp of [{ kind: 'comp', item: 'Exterior Paint' },
+                      { kind: 'comp', item: 'Exterior Paint', value: -1400 }]) {
+    const { d } = await withAdjustments([comp]);
+    assert.equal(d.pricing.discount, 0,
+      'a comp was subtracted a second time: ' + JSON.stringify(comp));
+    const lines = (d.items || []).reduce((t, g) => t + g.amount, 0);
+    assert.ok(Math.abs(lines - d.pricing.subtotal) < 0.02,
+      JSON.stringify(comp) + ': lines ' + Math.round(lines)
+      + ' vs subtotal ' + Math.round(d.pricing.subtotal));
+    assert.ok(!(d.items || []).some((g) => g.label === 'Custom work for you'),
+      'a comp was listed as custom work');
+  }
+});
+
+/* The note is the shop's own words, typed into the CRM, and it lands on a page
+   a customer reads. */
+test('a note cannot smuggle markup onto the page', async () => {
+  const { d } = await withAdjustments([
+    { kind: 'amount', value: 100, note: '<img src=x onerror=alert(1)>' }
+  ]);
+  const line = allLines(d).filter((l) => l.amount === 100)[0];
+  assert.ok(line);
+  assert.equal(typeof line.label, 'string');
 });
