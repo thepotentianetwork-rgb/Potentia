@@ -518,8 +518,9 @@ test('the page serves these fields and no others', async () => {
   const d = (await api(env, 'GET', '/track/' + tokenOf(await linkFor(env, t)))).data;
 
   assert.deepEqual(Object.keys(d).sort(), [
-    'changes', 'complete', 'design_url', 'first_name', 'items', 'order_id',
-    'phases', 'pricing', 'shop_email', 'shop_phone', 'spec', 'summary', 'total'
+    'changes', 'complete', 'design_url', 'first_name', 'included', 'items',
+    'order_id', 'phases', 'pricing', 'shop_email', 'shop_phone', 'spec',
+    'summary', 'total'
   ].sort(), Object.keys(d).join(','));
 
   d.items.forEach((g) => {
@@ -629,8 +630,8 @@ test('several custom items each get their own line', async () => {
    the guard failed nothing — until a comp arrives carrying a figure, which is
    exactly what a stored price on a comped line would look like. */
 test('a comped item is not double-counted as a discount', async () => {
-  for (const comp of [{ kind: 'comp', item: 'Exterior Paint' },
-                      { kind: 'comp', item: 'Exterior Paint', value: -1400 }]) {
+  for (const comp of [{ kind: 'comp', item: "9' Walls" },
+                      { kind: 'comp', item: "9' Walls", value: -1152 }]) {
     const { d } = await withAdjustments([comp]);
     assert.equal(d.pricing.discount, 0,
       'a comp was subtracted a second time: ' + JSON.stringify(comp));
@@ -652,4 +653,53 @@ test('a note cannot smuggle markup onto the page', async () => {
   const line = allLines(d).filter((l) => l.amount === 100)[0];
   assert.ok(line);
   assert.equal(typeof line.label, 'string');
+});
+
+// ── things thrown in free ───────────────────────────────────────────────────
+
+/* A comp is taken off the phase row it belongs to, which is right for the
+   arithmetic and left the customer seeing neither the item nor the gift. */
+test('a comped item is named as included, not left off', async () => {
+  const { d } = await withAdjustments([{ kind: 'comp', item: "9' Walls" }]);
+  assert.deepEqual(d.included, ["9' Walls"], JSON.stringify(d.included));
+});
+
+test('several comps are all named', async () => {
+  const { d } = await withAdjustments([
+    { kind: 'comp', item: "9' Walls" },
+    { kind: 'comp', item: '16" Shelf 8ft' }
+  ]);
+  assert.equal(d.included.length, 2, JSON.stringify(d.included));
+  assert.ok(d.included.indexOf("9' Walls") !== -1, JSON.stringify(d.included));
+});
+
+/* "Included" is a gift. A price beside it would read as a charge, and a $0
+   would read as a line with its price missing. */
+test('an included item carries no price', async () => {
+  const { d } = await withAdjustments([{ kind: 'comp', item: "9' Walls" }]);
+  d.included.forEach((n) => assert.equal(typeof n, 'string', JSON.stringify(n)));
+  assert.ok(!allLines(d).some((l) => /9' Walls/.test(l.label) && l.amount === 0),
+    'the comped item also appeared as a $0 line');
+});
+
+/* It is already off its phase row, so naming it must not move a number. */
+test('naming the gift does not change what they pay', async () => {
+  const plain = (await withAdjustments([])).d;
+  const comped = (await withAdjustments([{ kind: 'comp', item: "9' Walls" }])).d;
+  assert.ok(comped.pricing.total < plain.pricing.total, 'the comp took nothing off');
+  const lines = (comped.items || []).reduce((t, g) => t + g.amount, 0);
+  assert.ok(Math.abs(lines - comped.pricing.subtotal) < 0.02,
+    'lines ' + Math.round(lines) + ' vs subtotal ' + Math.round(comped.pricing.subtotal));
+});
+
+test('an order with nothing comped has an empty list, not a missing one', async () => {
+  const { d } = await withAdjustments([{ kind: 'amount', value: 450, note: 'Workbench' }]);
+  assert.deepEqual(d.included, []);
+});
+
+/* A comp naming a line this quote does not have buys nothing and must not be
+   announced as a gift. */
+test('a comp for something they did not order is not listed', async () => {
+  const { d } = await withAdjustments([{ kind: 'comp', item: 'Cupola They Never Ordered' }]);
+  assert.deepEqual(d.included, [], JSON.stringify(d.included));
 });

@@ -183,6 +183,15 @@ const srv = http.createServer(async (req, res) => {
     req.on('end', () => { try { report = JSON.parse(b); } catch {} res.writeHead(204).end(); });
     return;
   }
+  /* The shared scripts the page loads. Letting either 404 returns the page
+     itself as a script, the global comes out undefined, the page throws on
+     first render and every assertion below fails for one reason that has
+     nothing to do with what is being tested. */
+  if (req.url === '/admin-nav.js' || req.url === '/admin-voice.js'
+      || req.url === '/admin-activity.js') {
+    res.writeHead(200, { 'Content-Type': 'text/javascript' });
+    return res.end(readFileSync(path.join(here, '..', req.url.slice(1)), 'utf8'));
+  }
   if (req.url === '/' || req.url.startsWith('/?')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     return res.end(pageSrc);

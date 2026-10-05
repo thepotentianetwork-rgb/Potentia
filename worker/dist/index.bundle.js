@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "e565e44";
-const WORKER_BUILT_AT = "2026-10-05T17:30:06.816Z";
+const WORKER_BUILD = "7c96e6e";
+const WORKER_BUILT_AT = "2026-10-05T17:43:43.408Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -9092,14 +9092,26 @@ async function handleTrack(request, env, origin, token) {
     });
   }
 
+  /* THINGS THROWN IN FREE, named rather than silently absent.
+     A comp has already been taken off the phase row it belongs to, so it costs
+     the arithmetic nothing — but it also disappeared, and the customer saw
+     neither the item nor that it was a gift. Listed the way the quote lists
+     them, as "Included" rather than as a discount line: "Cupola — Included" is
+     something you gave them, where "Discount \u2212$600" reads as the price
+     having been soft all along. */
+  const included = breakdown
+    ? Object.keys(compedMap(details.redline, adjList)).map(String)
+    : [];
+
   return json({
     order_id: sub.id,
     first_name: firstName,
     summary: configSummary(details.config),
     spec: buildSpecLines(details.config),
     items,
+    included,
     /* Subtotal and tax so the itemised list visibly adds up to the figure they
-       were quoted. savings only when something actually came off. */
+       were quoted. */
     pricing: breakdown ? {
       subtotal: Number(breakdown.adjustedSubtotal != null
         ? breakdown.adjustedSubtotal : breakdown.subtotal) || 0,
