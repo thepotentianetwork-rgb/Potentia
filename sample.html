@@ -24,6 +24,15 @@ nav{position:sticky;top:0;z-index:1000;display:flex;align-items:center;justify-c
 .nav-links a{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;color:var(--silver);text-decoration:none;text-transform:uppercase;transition:color 0.3s}
 .nav-links a:hover,.nav-links a.active{color:var(--bright)}
 .nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--chrome);padding:10px 20px;text-decoration:none;text-transform:uppercase}
+/* SIX NAV ITEMS, AND NO HAMBURGER TO FALL BACK ON.
+   Unlike the other pages this one has no mobile menu, so hiding the links on a
+   narrow screen would leave it with no navigation at all. It also carries no
+   language toggle, which is the room a sixth link needs - tightening the gaps
+   is enough here. */
+@media(min-width:861px) and (max-width:1200px){
+  nav{padding-left:24px;padding-right:24px}
+  .nav-links{gap:20px}
+}
 @media(max-width:860px){ .nav-links{display:none} nav{padding:16px 20px} }
 
 main{max-width:1180px;margin:0 auto;padding:64px 40px 90px}
@@ -105,6 +114,7 @@ footer{border-top:1px solid var(--dim);padding:40px;display:flex;justify-content
     <a href="pricing.html">Pricing</a>
     <a href="sample.html" class="active">Platform</a>
     <a href="contact.html">Contact</a>
+    <a href="https://portal.potentianetwork.com/login" target="_blank" rel="noopener">Client Login</a>
   </div>
   <a href="contact.html" class="nav-cta">Get Started</a>
 </nav>
