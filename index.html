@@ -90,6 +90,25 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
 .hero-btns{animation:fadeUp 1s 0.8s both}
 
 /* MOBILE */
+/* SIX NAV ITEMS DO NOT FIT A TABLET, SO DON'T TRY.
+   The bar holds a logo, six links and (on some pages) a language toggle and a
+   CTA. Below ~1025px flexbox squeezes the links until they touch the buttons
+   and the logo, and "Client Login" wraps onto two lines - a nav that measures
+   as fitting and reads as broken. The hamburger already carries every link
+   including this one, so it takes over earlier instead.
+   Only the nav changes here: the rest of the tablet layout is left alone,
+   which is why this is its own query and not a wider phone breakpoint. */
+@media(min-width:769px) and (max-width:1024px){
+  .nav-links{display:none}
+  .nav-right{display:none}
+  .nav-ham{display:flex!important}
+}
+/* Just above that, six items fit but only barely - index.html came out at
+   zero clearance. A little off the gaps buys back the breathing room. */
+@media(min-width:1025px) and (max-width:1200px){
+  nav{padding-left:28px;padding-right:28px}
+  .nav-links{gap:24px}
+}
 @media(max-width:768px){
   .promo-banner{padding:10px 16px;gap:8px}
   .promo-text{font-size:9px;letter-spacing:0.12em}
@@ -161,6 +180,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     <a href="pricing.html">Pricing</a>
     <a href="sample.html">Platform</a>
     <a href="contact.html">Contact</a>
+    <a href="https://portal.potentianetwork.com/login" target="_blank" rel="noopener">Client Login</a>
   </div>
   <div class="nav-right">
     <div class="lang-toggle">
@@ -180,6 +200,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <a href="pricing.html">Pricing</a>
   <a href="sample.html">Platform</a>
   <a href="contact.html">Contact</a>
+  <a href="https://portal.potentianetwork.com/login" target="_blank" rel="noopener">Client Login</a>
   <a href="contact.html" class="mob-cta-btn">Get Started</a>
 </div>
 
