@@ -33,6 +33,15 @@
 
   /* One line, in the words you would use out loud. The amount is the point of
      most of these, so it goes in the sentence rather than in a column. */
+  /* Kind: is the first line the public forms put on the question, so a
+     designer submission and a plain info request can share one feed without
+     the server learning a new field. Anything that does not say is left as
+     it always was. */
+  function formKind(e) {
+    var m = /^Kind:\s*(.+)$/m.exec(String(e && e.question || ''));
+    return m ? m[1].trim() : '';
+  }
+
   function describe(e) {
     var who = e.customer_name || 'Someone';
     if (e.kind === 'payment') {
@@ -43,9 +52,14 @@
       var which = e.invoice_kind === 'deposit' ? 'Deposit' : 'Balance';
       return which + ' invoice sent to ' + who + ' — ' + money(e.amount);
     }
-    if (e.kind === 'consult') return who + ' asked for a call back';
+    if (e.kind === 'consult') {
+      var k = formKind(e);
+      if (k === 'Info request') return who + ' sent an info request';
+      if (k === 'Designer') return who + ' sent a designer submission' + (e.summary ? ' — ' + e.summary : '');
+      return who + ' asked for a call back';
+    }
     if (e.kind === 'order') {
-      return who + ' designed a shed' + (e.amount != null ? ' — ' + money(e.amount) : '');
+      return who + ' sent a designer submission' + (e.summary ? ' — ' + e.summary : '') + (e.amount != null ? ' — ' + money(e.amount) : '');
     }
     return who;
   }
@@ -125,6 +139,7 @@
     ago: ago,
     money: money,
     load: load,
-    badge: badge
+    badge: badge,
+    formKind: formKind
   };
 })(typeof window !== 'undefined' ? window : globalThis);

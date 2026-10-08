@@ -80,6 +80,17 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 tr.lead-new{background:linear-gradient(90deg,rgba(246,148,31,0.09),rgba(246,148,31,0.01) 55%)}
 tr.lead-new:hover td{background:rgba(246,148,31,0.05)}
 tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
+tr.lead-fresh{background:linear-gradient(90deg,rgba(43,181,232,0.22),rgba(43,181,232,0.04) 60%);box-shadow:inset 0 0 0 1px rgba(43,181,232,0.85)}
+tr.lead-fresh td:first-child{box-shadow:inset 3px 0 0 #2BB5E8}
+#form-badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;margin-left:10px;padding:0 7px;border-radius:20px;background:#F6941F;color:#0b0b13;font-family:'DM Mono',monospace;font-size:12px;vertical-align:middle}
+#form-badge[hidden]{display:none}
+#form-toasts{position:fixed;right:18px;bottom:18px;z-index:80;display:flex;flex-direction:column;gap:10px;width:min(360px,calc(100vw - 24px))}
+.form-toast{display:block;position:relative;background:#12141c;color:#f4f1ea;border:1px solid rgba(43,181,232,0.55);border-left:4px solid #2BB5E8;border-radius:10px;padding:12px 36px 12px 14px;text-decoration:none;box-shadow:0 12px 32px rgba(0,0,0,0.45);font-family:'Barlow',sans-serif}
+.form-toast strong{display:block;font-size:15px;margin-top:3px}
+.ft-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:#2BB5E8}
+.ft-meta{display:block;font-size:12px;color:rgba(244,241,234,0.7);margin-top:2px}
+.ft-x{position:absolute;top:6px;right:8px;background:none;border:none;color:rgba(244,241,234,0.7);font-size:18px;cursor:pointer}
+.ft-ask{cursor:pointer;font:inherit;color:#2BB5E8;text-align:left}
 .name-cell{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .new-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--sp-orange);background:rgba(246,148,31,0.14);border:1px solid rgba(246,148,31,0.45);padding:3px 9px;border-radius:20px;text-transform:uppercase;animation:new-pulse 2s ease-in-out infinite}
 .new-badge::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--sp-orange)}
@@ -135,7 +146,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
 <main>
   <section>
     <p class="sec-label">ShedPro Partner</p>
-    <h2>Customers</h2>
+    <h2>Customers <span id="form-badge" hidden>0</span></h2>
     <div class="table-wrap">
     <table>
       <thead>
@@ -151,6 +162,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
 
 <script src="admin-nav.js"></script>
 <script src="admin-activity.js"></script>
+<script src="admin-notify.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_admin_token');
@@ -312,6 +324,7 @@ function renderCustomers(list) {
   }
   list.forEach(function (c) {
     var tr = document.createElement('tr');
+    tr.setAttribute('data-cid', c.id);
     var isNew = c.latest_status === 'new';
     if (isNew) tr.className = 'lead-new';
 
@@ -442,6 +455,7 @@ function renderCustomers(list) {
     tr.appendChild(tdView);
     body.appendChild(tr);
   });
+  if (window.FormNotify) FormNotify.paint();
 }
 
 function loadCustomers() {
@@ -466,8 +480,9 @@ if (token) {
 (function () {
   if (!window.AdminActivity) return;
   AdminActivity.load(authFetch, { limit: 80 }).then(function (r) {
-    AdminNav.setCount(r.unseen);
+    if (!window.FormNotify || !FormNotify.unacked()) AdminNav.setCount(r.unseen);
   }).catch(function () {});
+  if (window.FormNotify) FormNotify.start(authFetch);
 })();
 
 AdminNav.render(document.querySelector('.h-actions'));
