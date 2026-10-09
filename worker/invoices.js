@@ -502,7 +502,7 @@ export function phaseParts(bd) {
   const out = bd.rows.map((r, i) => {
     const totalCents = toCents(r.total);
     const depositCents = toCents(r.deposit);
-    return { phase: r.phase || i + 1, name: phaseName(r), totalCents, depositCents,
+    return { phase: r.phase || i + 1, kind: r.kind || null, name: phaseName(r), totalCents, depositCents,
              remainderCents: totalCents - depositCents };
   });
   const drift = toCents(bd.total) - out.reduce((t, p) => t + p.totalCents, 0);
@@ -604,7 +604,7 @@ export function phaseStatus(bd, payments, openParts) {
       return { amountCents: cents, paidCents: paid[k] || 0,
                remainingCents: Math.max(0, cents - (paid[k] || 0)), openInvoice: open[k] || null };
     };
-    return { phase: p.phase, name: p.name, totalCents: p.totalCents,
+    return { phase: p.phase, kind: p.kind, name: p.name, totalCents: p.totalCents,
              deposit: part('deposit', p.depositCents), remainder: part('remainder', p.remainderCents) };
   });
 
@@ -636,141 +636,326 @@ const SHORT_DATE = (v) => {
 const METHOD_TITLE = { cash: 'Cash', check: 'Check', cashiers_check: "Cashier's check", venmo: 'Venmo',
   zelle: 'Zelle', invoice2go: 'Invoice2go', card: 'Card', stripe: 'Stripe', other: 'Other' };
 
-/* ONE STRIPE INVOICE FOR THE PARTS SOMEONE TICKED.
+/* ---------------------------------------------------------------------------
+ * BILLING SEVERAL BUILDS TOGETHER.
  *
- * Written for the customer, who has to understand it without a call:
+ * A customer buying two sheds gets one invoice per step, not two. Phases are
+ * matched by KIND (quoteLines tags each row clearance / foundation / shed /
+ * interior), not by number: one build may have a site-clearance phase in front
+ * and its numbers shifted by one. The combined phases are numbered in build
+ * order over the kinds any of the builds has; a build without a kind (no
+ * interior, say) is simply absent from that phase.
  *
- *   Phase 2: Shed deposit (30%)                                   $5,511.60
+ * Nothing is pooled underneath. Each build keeps its own phases, payments and
+ * allocation, so per-build balances stay exact; the combined view is only a
+ * grouping of them, and a combined invoice records which build and part every
+ * cent covers.
+ * ------------------------------------------------------------------------- */
+export const PHASE_KIND_ORDER = ['clearance', 'foundation', 'shed', 'interior'];
+const KIND_PLURAL = { clearance: 'Site Clearance', foundation: 'Concrete Pads', shed: 'Sheds', interior: 'Interiors' };
+
+/* "Shed (Gable / A-Frame)" -> "Shed": with several builds on one invoice the
+   build is named on the line, so the style in brackets is just noise. */
+function bareName(name) { return String(name || '').replace(/\s*\([^)]*\)/g, '').trim(); }
+
+/* builds: [{ sub, name, bd, payments, openParts }] (name: "10x20 Gable / A-Frame").
+   Returns the groups (combined phases), each with one item per build that has
+   that kind of phase, and what to bill next. */
+export function togetherStatus(builds) {
+  const per = (builds || []).map((b) => ({ b, st: phaseStatus(b.bd, b.payments, b.openParts) }));
+  const single = per.length === 1;
+  const keyOf = (p) => p.kind || ('row' + p.phase);
+  const keys = [];
+  per.forEach(({ st }) => st.phases.forEach((p) => { if (keys.indexOf(keyOf(p)) === -1) keys.push(keyOf(p)); }));
+  const rank = (k) => { const i = PHASE_KIND_ORDER.indexOf(k); return i > -1 ? i : 100 + keys.indexOf(k); };
+  if (!single) keys.sort((a, b) => rank(a) - rank(b));
+
+  const groups = keys.map((k, gi) => {
+    const items = [];
+    per.forEach(({ b, st }) => {
+      const p = st.phases.find((x) => keyOf(x) === k);
+      if (p) items.push({ sub: b.sub, build: b.name || null, phase: p.phase, kind: p.kind, name: p.name,
+                          totalCents: p.totalCents, deposit: p.deposit, remainder: p.remainder });
+    });
+    /* One build: its own numbers, exactly as its quote prints them. */
+    const num = single ? items[0].phase : gi + 1;
+    const names = items.map((i) => bareName(i.name));
+    const same = names.every((n) => n === names[0]);
+    const name = single ? items[0].name
+      : items.length === 1 ? bareName(items[0].name)
+      : same && KIND_PLURAL[items[0].kind] ? KIND_PLURAL[items[0].kind]
+      : same ? names[0] : (KIND_PLURAL[items[0].kind] || names.join(' / '));
+    return { phase: num, kind: items[0].kind, name, items };
+  });
+
+  /* Next bill: the first combined phase with a deposit still owed on ANY build
+     (only those builds), plus the rest of every earlier phase whose deposits
+     are all in. Once every deposit is in, the earliest rest still owed. Parts
+     already on a sent invoice are never suggested again. */
+  const free = (x) => x.remainingCents > 0 && !x.openInvoice;
+  const suggested = [];
+  const next = groups.find((g) => g.items.some((i) => free(i.deposit)));
+  if (next) {
+    suggested.push({ phase: next.phase, part: 'deposit' });
+    groups.filter((g) => g.phase < next.phase && g.items.some((i) => free(i.remainder)) &&
+                         g.items.every((i) => i.deposit.remainingCents === 0))
+      .forEach((g) => suggested.push({ phase: g.phase, part: 'remainder' }));
+  } else {
+    const rem = groups.find((g) => g.items.some((i) => free(i.remainder)));
+    if (rem) suggested.push({ phase: rem.phase, part: 'remainder' });
+  }
+  return {
+    groups, suggested,
+    byBuild: per.map(({ b, st }) => ({ sub: b.sub, name: b.name || null, byPayment: st.byPayment,
+                                       overpaidCents: st.overpaidCents, phases: st.phases })),
+  };
+}
+
+/* Which builds/parts a ticked selection actually bills. selected: [{phase,
+   part, sub?}] — phase is the COMBINED number; sub narrows it to one build.
+   Parts already paid or already on a sent invoice are skipped when another
+   build in the same phase still owes; when nothing in it is billable, say why. */
+function resolveSelection(ts, selected) {
+  const want = [];
+  (selected || []).forEach((s) => {
+    if (!s || !PHASE_PARTS.includes(s.part)) return;
+    const g = ts.groups.find((x) => x.phase === Number(s.phase));
+    if (!g) throw Object.assign(new Error('there is no phase ' + s.phase + ' to bill'), { code: 'bad_phase' });
+    const sub = s.sub != null && s.sub !== '' ? Number(s.sub) : null;
+    want.push({ g, part: s.part, sub });
+  });
+  if (!want.length) throw Object.assign(new Error('pick at least one phase to bill'), { code: 'nothing_selected' });
+
+  const picks = [];                          // { g, item, part }
+  const seen = {};
+  want.forEach(({ g, part, sub }) => {
+    const items = g.items.filter((i) => sub == null || Number(i.sub) === sub);
+    if (!items.length) throw Object.assign(new Error('that build has no phase ' + g.phase), { code: 'bad_phase' });
+    const billable = items.filter((i) => i[part].remainingCents > 0 && !i[part].openInvoice);
+    /* Both halves of a phase ticked and one is already paid: bill the other. */
+    const sibling = want.some((w) => w.g === g && w.part !== part &&
+      g.items.some((i) => (w.sub == null || Number(i.sub) === w.sub) && i[w.part].remainingCents > 0 && !i[w.part].openInvoice));
+    if (!billable.length && sibling) return;
+    if (!billable.length) {
+      const what = 'Phase ' + g.phase + ' ' + (part === 'deposit' ? 'deposit' : 'remainder');
+      if (items.some((i) => i[part].openInvoice)) {
+        throw Object.assign(new Error(what + ' is already on a sent invoice — void it first'), { code: 'already_billed' });
+      }
+      throw Object.assign(new Error(what + ' is already paid'), { code: 'already_paid' });
+    }
+    billable.forEach((item) => {
+      const k = item.sub + ':' + item.phase + ':' + part;
+      if (seen[k]) return;
+      seen[k] = 1;
+      picks.push({ g, item, part });
+    });
+  });
+  return picks;
+}
+
+/* ONE STRIPE INVOICE FOR THE PARTS SOMEONE TICKED — one build or several.
+ *
+ * Written for the customer, who has to understand it without a call. Every
+ * line is what is LEFT to pay on that part, with anything already paid toward
+ * it taken off inside the number, not shown as a separate minus line:
+ *
+ *   Phase 2: Shed (Gable / A-Frame) deposit (30%)                 $5,511.90
  *   Remainder of Phase 1: Concrete Pad (4" slab), due after
- *     completion — phase total                                    $3,217.50
- *   Deposit already paid (Invoice2go, 9/1/2026)                    -$965.25
+ *     completion                                                  $2,252.25
  *
- * A remainder is shown as the PHASE TOTAL less what was already paid toward
- * that phase, one credit per payment, so the customer sees the 30% they paid
- * coming off rather than a bare "70%" they have to take on trust. A deposit is
- * shown as the deposit less anything already paid toward it.
+ * and the memo says what was applied ("Your $965.25 deposit (Invoice2go,
+ * 9/1/2026) has been applied."). Several builds: one line per build per part,
+ * the build named at the end ("Phase 2: Shed deposit (30%) — 10x20 Gable /
+ * A-Frame"), so each number can be found on that build's own quote.
+ *
+ * Every payment on a build folds into one of its parts (allocatePhases never
+ * books past a part's cost), so no separate credit line is needed; money that
+ * cannot fold (not assigned to a build, or more than a build costs) is not
+ * credited here and the CRM warns about it instead.
  *
  * All amounts are tax-inclusive, exactly as the quote's per-phase figures are;
  * Stripe must not add tax (same rule as the deposit/balance invoices).
  *
- * `covers` is what each billed line pays for, net — written onto the stored
- * lines so that when Stripe says this invoice is paid, the payment is booked
- * against these exact parts and nothing is billed twice. */
-export function buildPhaseInvoice(bd, payments, selected, opts = {}) {
-  if (!bd || !Array.isArray(bd.rows) || !bd.rows.length) throw new Error('this submission has no priced phases to invoice');
-  const st = phaseStatus(bd, payments, opts.openParts);
-  const want = {};
-  (selected || []).forEach((s) => {
-    if (!s || !PHASE_PARTS.includes(s.part)) return;
-    want[Number(s.phase) + ':' + s.part] = true;
-  });
-  const lines = [], covers = [];
-  (selected || []).forEach((s) => {
-    if (s && !st.phases.some((p) => p.phase === Number(s.phase))) {
-      throw Object.assign(new Error('this build has no phase ' + s.phase), { code: 'bad_phase' });
-    }
-  });
-  const picked = st.phases.filter((p) => want[p.phase + ':deposit'] || want[p.phase + ':remainder']);
-  if (!picked.length) throw Object.assign(new Error('pick at least one phase to bill'), { code: 'nothing_selected' });
-
-  function credits(phase, parts, labelFor) {
-    st.byPayment.forEach((e) => {
-      const c = e.parts.filter((x) => x.phase === phase && parts.includes(x.part)).reduce((t, x) => t + x.cents, 0);
-      if (!c) return;
-      const p = e.payment;
-      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at)].filter(Boolean).join(', ');
-      const onlyDeposit = e.parts.filter((x) => x.phase === phase && parts.includes(x.part)).every((x) => x.part === 'deposit');
-      lines.push({ label: labelFor(onlyDeposit) + (how ? ' (' + how + ')' : ''), amountCents: -c, fixed: true });
-    });
+ * `covers` says which build and part each billed cent pays for — stored with
+ * the invoice so that when Stripe says it is paid, each build gets a payment
+ * booked against exactly those parts and nothing is billed twice. */
+export function buildTogetherInvoice(builds, selected, opts = {}) {
+  if (!builds || !builds.length || builds.some((b) => !b.bd || !Array.isArray(b.bd.rows) || !b.bd.rows.length)) {
+    throw new Error('this submission has no priced phases to invoice');
   }
+  const ts = togetherStatus(builds);
+  const many = builds.length > 1;
+  const picks = resolveSelection(ts, selected);
 
-  /* Deposits first — that is the phase about to start — then the rest of the
-     phases already under way, in phase order. */
-  const depositOnly = picked.filter((p) => want[p.phase + ':deposit'] && !want[p.phase + ':remainder']);
-  const withRest = picked.filter((p) => want[p.phase + ':remainder']);
-  depositOnly.forEach((p) => {
-    if (p.deposit.openInvoice) throw Object.assign(new Error('Phase ' + p.phase + ' deposit is already on a sent invoice — void it first'), { code: 'already_billed' });
-    if (!p.deposit.remainingCents) throw Object.assign(new Error('Phase ' + p.phase + ' deposit is already paid'), { code: 'already_paid' });
-    lines.push({ label: 'Phase ' + p.phase + ': ' + p.name + ' deposit (30%)', amountCents: p.deposit.amountCents });
-    credits(p.phase, ['deposit'], () => 'Deposit already paid');
-    covers.push({ phase: p.phase, part: 'deposit', cents: p.deposit.remainingCents });
-  });
-  withRest.forEach((p) => {
-    const both = want[p.phase + ':deposit'];
-    if (p.remainder.openInvoice || (both && p.deposit.openInvoice)) {
-      throw Object.assign(new Error('Phase ' + p.phase + ' is already on a sent invoice — void it first'), { code: 'already_billed' });
+  /* Deposits first — the phase about to start — then the rest of the phases
+     already under way. Within that, phase order, then build order. */
+  const both = {};
+  picks.forEach((p) => { both[p.item.sub + ':' + p.item.phase] = (both[p.item.sub + ':' + p.item.phase] || 0) + 1; });
+  const isBoth = (p) => both[p.item.sub + ':' + p.item.phase] === 2;
+  const order = (p) => (p.part === 'deposit' && !isBoth(p) ? 0 : 1) * 1000 + p.g.phase;
+  const sorted = picks.slice().sort((a, b) => order(a) - order(b) ||
+    builds.findIndex((x) => x.sub === a.item.sub) - builds.findIndex((x) => x.sub === b.item.sub));
+
+  const lines = [], covers = [];
+  const done = {};
+  sorted.forEach((p) => {
+    const it = p.item;
+    const k = it.sub + ':' + it.phase;
+    const tag = many && it.build ? ' — ' + it.build : '';
+    const nm = many ? bareName(it.name) : it.name;
+    const head = 'Phase ' + p.g.phase + ': ' + nm;
+    const less = (paidC) => (paidC > 0 ? ', less ' + usd(fromCents(paidC)) + ' already paid' : '');
+    const cover = (part, cents) => covers.push(Object.assign(it.sub != null ? { sub: it.sub } : {},
+                                                 { phase: it.phase, part, cents }));
+    if (isBoth(p)) {
+      if (done[k]) return;
+      done[k] = 1;
+      const cents = it.deposit.remainingCents + it.remainder.remainingCents;
+      lines.push({ label: head + ', full amount (deposit + remainder)' + tag +
+                   less(it.deposit.paidCents + it.remainder.paidCents), amountCents: cents });
+      cover('deposit', it.deposit.remainingCents);
+      cover('remainder', it.remainder.remainingCents);
+      return;
     }
-    const owed = p.remainder.remainingCents + (both ? p.deposit.remainingCents : 0);
-    if (!owed) throw Object.assign(new Error('Phase ' + p.phase + ' is already paid'), { code: 'already_paid' });
-    /* Deposit paid in full: show the PHASE TOTAL and take each deposit payment
-       off it, so the rest reads as "total minus what you paid". Deposit not
-       (fully) paid and not ticked: bill only the 70% — the deposit stays owed
-       on its own line, on its own invoice. */
-    const showTotal = both || p.deposit.remainingCents === 0;
-    const lbl = both
-      ? 'Phase ' + p.phase + ': ' + p.name + ' — whole phase (deposit + rest, due after completion)'
-      : 'Remainder of Phase ' + p.phase + ': ' + p.name + ', due after completion' +
-        (showTotal ? ' — phase total' : ' — 70% of ' + usd(fromCents(p.totalCents)));
-    lines.push({ label: lbl, amountCents: showTotal ? p.totalCents : p.remainder.amountCents });
-    if (showTotal) credits(p.phase, ['deposit'], () => 'Deposit already paid');
-    credits(p.phase, ['remainder'], () => 'Already paid toward Phase ' + p.phase);
-    if (both && p.deposit.remainingCents) covers.push({ phase: p.phase, part: 'deposit', cents: p.deposit.remainingCents });
-    if (p.remainder.remainingCents) covers.push({ phase: p.phase, part: 'remainder', cents: p.remainder.remainingCents });
+    if (p.part === 'deposit') {
+      lines.push({ label: head + ' deposit (30%)' + tag + less(it.deposit.paidCents), amountCents: it.deposit.remainingCents });
+      cover('deposit', it.deposit.remainingCents);
+      return;
+    }
+    /* The rest of a phase whose deposit is in reads simply as what is left.
+       If the deposit is still owed and not on this bill, say this is the 70%. */
+    const seventy = it.deposit.remainingCents > 0 ? ' — 70% of the phase' : '';
+    lines.push({ label: 'Remainder of ' + head + ', due after completion' + seventy + tag + less(it.remainder.paidCents),
+                 amountCents: it.remainder.remainingCents });
+    cover('remainder', it.remainder.remainingCents);
   });
+  /* A part on its own line twice would bill it twice; covers say it once. */
+  const coverCents = covers.filter((c) => c.cents > 0);
 
-
-  const totalCents = covers.reduce((t, c) => t + c.cents, 0);
+  const totalCents = coverCents.reduce((t, c) => t + c.cents, 0);
   const sum = lines.reduce((t, l) => t + l.amountCents, 0);
   if (sum !== totalCents) throw new Error('phase invoice lines (' + sum + ') do not add up to ' + totalCents);
   if (totalCents <= 0) throw Object.assign(new Error('nothing left to bill on those phases'), { code: 'already_paid' });
 
-  const what = describeSelection(covers);
+  const what = describeTogether(ts, sorted, many);
+  const allPayments = builds.reduce((a, b) => a.concat(b.payments || []), []);
+  const jobTotalCents = builds.reduce((t, b) => t + toCents(b.bd.total), 0);
+  const subs = builds.map((b) => b.sub).filter((x) => x != null);
   return {
     kind: 'phase',
     lines: lines.map((l) => ({ ...l, label: clip(l.label, LIMITS.label) })),
     totalCents,
-    jobTotalCents: toCents(bd.total),
-    paidCents: (payments || []).reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
-    covers,
+    jobTotalCents,
+    paidCents: allPayments.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    covers: coverCents,
+    builds: many ? subs : undefined,
     description: what,
-    memo: phaseMemo(st.phases, what, opts),
-    footer: clip('All amounts include Utah sales tax (7.25%). Payments already received are credited above.' +
+    memo: togetherMemo(ts, sorted, what, builds, opts),
+    footer: clip('All amounts include Utah sales tax (7.25%). Payments already received have been applied.' +
       (opts.comped && Object.keys(opts.comped).length ? ' Included at no charge: ' + Object.keys(opts.comped).join(', ') + '.' : ''),
       LIMITS.footer),
     customFields: [
-      ['Order', opts.submissionId ? '#' + opts.submissionId : null],
-      ['Build', opts.summary || null],
+      [many ? 'Orders' : 'Order', many ? subs.map((x) => '#' + x).join(' + ') : (opts.submissionId ? '#' + opts.submissionId : null)],
+      [many ? 'Builds' : 'Build', many ? builds.map((b) => b.summary || b.name).filter(Boolean).join(' + ') : (opts.summary || null)],
       ['This invoice', what],
-      ['Job total', usd(bd.total)]
+      [many ? 'Total, all builds' : 'Job total', usd(fromCents(jobTotalCents))]
     ].filter(([, v]) => v).map(([name, value]) => ({ name: clip(name, LIMITS.fieldName), value: clip(value, LIMITS.fieldValue) }))
   };
 }
 
-/* "Phase 2 deposit + rest of Phase 1" */
-export function describeSelection(covers) {
-  const deps = [], rests = [];
-  const seen = {};
-  (covers || []).forEach((c) => {
-    if (c.part === 'deposit') deps.push(c.phase);
-  });
-  (covers || []).forEach((c) => {
-    if (c.part === 'remainder' && !seen[c.phase]) { seen[c.phase] = 1; rests.push(c.phase); }
-  });
+/* One build — the original entry point, unchanged in what it accepts. */
+export function buildPhaseInvoice(bd, payments, selected, opts = {}) {
+  if (!bd || !Array.isArray(bd.rows) || !bd.rows.length) throw new Error('this submission has no priced phases to invoice');
+  return buildTogetherInvoice([{ sub: opts.submissionId != null ? opts.submissionId : undefined, bd, payments,
+                                 openParts: opts.openParts, summary: opts.summary }], selected, opts);
+}
+
+/* The size alone ("10x20") — enough to tell two sheds apart in a sentence. */
+function shortBuild(name) {
+  const m = /^\s*(\d+(?:\.\d+)?x\d+(?:\.\d+)?)/i.exec(String(name || ''));
+  return m ? m[1] : String(name || '');
+}
+
+/* "Phase 2 deposit + rest of Phase 1"; with several builds, a part billed for
+   only some of them names which ("Phase 1 deposit (8x16)"). */
+function describeTogether(ts, picks, many) {
   const bits = [];
-  deps.filter((p) => rests.indexOf(p) === -1).forEach((p) => bits.push('Phase ' + p + ' deposit'));
-  rests.forEach((p) => bits.push((deps.indexOf(p) > -1 ? 'all of Phase ' : 'rest of Phase ') + p));
+  const did = {};
+  const label = (g, kind, items) => {
+    const all = items.length === g.items.length;
+    return kind + (many && !all ? ' (' + items.map((i) => shortBuild(i.build)).join(', ') + ')' : '');
+  };
+  const byGP = (gp, part) => picks.filter((p) => p.g.phase === gp && p.part === part).map((p) => p.item);
+  const groupsIn = (part) => ts.groups.filter((g) => picks.some((p) => p.g === g && p.part === part));
+  groupsIn('deposit').forEach((g) => {
+    const d = byGP(g.phase, 'deposit'), r = byGP(g.phase, 'remainder');
+    const whole = d.filter((i) => r.indexOf(i) > -1);
+    if (whole.length) { bits.push(label(g, 'all of Phase ' + g.phase, whole)); did[g.phase] = whole; }
+    const depOnly = d.filter((i) => whole.indexOf(i) === -1);
+    if (depOnly.length) bits.push(label(g, 'Phase ' + g.phase + ' deposit' + (many && depOnly.length > 1 ? 's' : ''), depOnly));
+  });
+  groupsIn('remainder').forEach((g) => {
+    const r = byGP(g.phase, 'remainder').filter((i) => (did[g.phase] || []).indexOf(i) === -1);
+    if (r.length) bits.push(label(g, 'rest of Phase ' + g.phase, r));
+  });
   return bits.join(' + ');
 }
 
-/* The plain-words explanation, on every phase invoice. Under Stripe's 500. */
-export function phaseMemo(phases, what, opts = {}) {
-  const head = [opts.summary, opts.submissionId ? 'Order #' + opts.submissionId : null].filter(Boolean).join(' \u00b7 ');
-  const list = phases.map((p) => 'Phase ' + p.phase + ': ' + p.name.replace(/\s*\(.*?\)\s*/g, ' ').trim()).join(', ');
-  const text = [head,
-    'How payment works: your build is done in phases (' + list + '). ' +
-    'Before each phase starts we collect a 30% deposit on that phase. ' +
-    'The rest of a phase is due once that phase is complete, and is added to the next invoice. ' +
-    'Anything you have already paid is credited.',
-    what ? 'This invoice: ' + what + '.' : ''].filter(Boolean).join('\n\n');
-  return clip(text, LIMITS.memo);
+/* "Your $965.25 deposit (Invoice2go, 9/1/2026) has been applied." — the
+   payments that went toward the phases on this bill, so a customer sees why
+   a remainder is what it is without a minus line to reconcile. */
+function appliedSentence(ts, picks, many) {
+  const onBill = {};
+  picks.forEach((p) => { onBill[p.item.sub + ':' + p.item.phase] = 1; });
+  const hits = [];
+  ts.byBuild.forEach((b) => {
+    b.byPayment.forEach((e) => {
+      const parts = e.parts.filter((x) => onBill[b.sub + ':' + x.phase]);
+      if (!parts.length) return;
+      const p = e.payment;
+      const cents = Math.abs(toCents(p.amount));
+      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at)].filter(Boolean).join(', ');
+      const what = parts.every((x) => x.part === 'deposit') ? 'deposit' : 'payment';
+      hits.push({ cents, how, what, build: many ? shortBuild(b.name) : '' });
+    });
+  });
+  if (!hits.length) return '';
+  if (hits.length <= 2) {
+    return hits.map((h) => 'Your ' + usd(fromCents(h.cents)) + ' ' + h.what + (h.how ? ' (' + h.how + ')' : '') +
+      (h.build ? ' on the ' + h.build : '') + ' has been applied.').join(' ');
+  }
+  return 'Your ' + hits.length + ' earlier payments (' + usd(fromCents(hits.reduce((t, h) => t + h.cents, 0))) +
+    ') have been applied.';
+}
+
+/* The plain-words explanation, on every phase invoice. Under Stripe's 500:
+   pieces are dropped, least useful first, until it fits. */
+function togetherMemo(ts, picks, what, builds, opts) {
+  const many = builds.length > 1;
+  const head = many
+    ? 'Orders ' + builds.map((b) => b.sub != null ? '#' + b.sub : null).filter(Boolean).join(' + ')
+    : [opts.summary, opts.submissionId ? 'Order #' + opts.submissionId : null].filter(Boolean).join(' \u00b7 ');
+  const list = () => ts.groups.map((g) => {
+    const nm = bareName(g.name);
+    const only = many && g.items.length < builds.length ? ' (' + g.items.map((i) => shortBuild(i.build)).join(', ') + ' only)' : '';
+    return 'Phase ' + g.phase + ': ' + nm + only;
+  }).join(', ');
+  const intro = many
+    ? 'How payment works: your ' + (builds.length === 2 ? 'two sheds' : builds.length + ' sheds') + ' (' +
+      builds.map((b) => shortBuild(b.name)).filter(Boolean).join(' and ') + ') are billed together, in phases: ' + list() + '. '
+    : 'How payment works: your build is done in phases (' + list() + '). ';
+  const rule = 'Before each phase starts we collect a 30% deposit on that phase. ' +
+    'The rest of a phase is due once that phase is complete, and is added to the next invoice.';
+  const applied = appliedSentence(ts, picks, many);
+  const tail = what ? 'This invoice: ' + what + '.' : '';
+  const tries = [
+    [head, intro + rule + (applied ? ' ' + applied : ''), tail],
+    [intro + rule + (applied ? ' ' + applied : ''), tail],
+    [intro + rule, applied, tail].filter(Boolean),
+  ];
+  for (const t of tries) {
+    const text = t.filter(Boolean).join('\n\n');
+    if (text.length <= LIMITS.memo) return text;
+  }
+  return clip([intro + rule, tail].join('\n\n'), LIMITS.memo);
 }

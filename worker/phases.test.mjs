@@ -11,7 +11,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { computePricing } from './pricing.js';
 import { quoteLines } from './quotelines.js';
-import { phaseParts, phaseStatus, allocatePhases, buildPhaseInvoice, toCents, LIMITS } from './invoices.js';
+import { phaseParts, phaseStatus, allocatePhases, buildPhaseInvoice, buildTogetherInvoice, togetherStatus,
+         toCents, LIMITS } from './invoices.js';
 import worker from './index.js';
 
 /* Three phases: concrete pad, shed, interior. */
@@ -48,10 +49,13 @@ test("Stephanie's case: concrete deposit paid outside Stripe -> Phase 2 deposit 
   assert.equal(sum(inv), inv.totalCents);
   const labels = inv.lines.map((l) => l.label);
   assert.match(labels[0], /^Phase 2: Shed.* deposit \(30%\)$/);
-  assert.match(labels[1], /^Remainder of Phase 1: Concrete.*, due after completion — phase total$/);
-  assert.equal(inv.lines[1].amountCents, P[0].totalCents, 'shown as the phase total...');
-  assert.equal(labels[2], 'Deposit already paid (Invoice2go, 9/1/2026)');
-  assert.equal(inv.lines[2].amountCents, -P[0].depositCents, '...less the deposit paid');
+  /* The rest of Phase 1 is shown as what is LEFT — the deposit she paid is
+     already inside that number, not a minus line to reconcile. */
+  assert.equal(labels[1], 'Remainder of Phase 1: Concrete Pad (4" slab), due after completion');
+  assert.equal(inv.lines[1].amountCents, P[0].remainderCents);
+  assert.equal(inv.lines.length, 2, 'no separate credit line: the payment is folded in');
+  assert.ok(inv.lines.every((l) => l.amountCents > 0));
+  assert.match(inv.memo, /Your \$965\.25 deposit \(Invoice2go, 9\/1\/2026\) has been applied\./);
   assert.match(inv.memo, /30% deposit on that phase/);
   assert.match(inv.memo, /due once that phase is complete/);
   assert.match(inv.memo, /This invoice: Phase 2 deposit \+ rest of Phase 1\./);
@@ -100,7 +104,9 @@ test('a payment tagged to a phase stays on that phase, even out of order', () =>
   const inv = buildPhaseInvoice(BD, [{ amount: 1000, method: 'cash', paid_at: '2026-10-01', phase_alloc: '{"phase":2}' }],
     [{ phase: 2, part: 'deposit' }]);
   assert.equal(inv.totalCents, P[1].depositCents - 100000);
-  assert.equal(inv.lines[1].label, 'Deposit already paid (Cash, 10/1/2026)');
+  assert.equal(inv.lines.length, 1);
+  assert.match(inv.lines[0].label, /^Phase 2: Shed \(Gable \/ A-Frame\) deposit \(30%\), less \$1,000\.00 already paid$/);
+  assert.equal(inv.lines[0].amountCents, P[1].depositCents - 100000);
 });
 
 test('a tagged payment bigger than its phase spills to the rest, never lost', () => {
@@ -126,7 +132,7 @@ test('the whole phase (deposit + rest) can be billed at once', () => {
 test('the rest of a phase without its unpaid deposit bills only the 70%', () => {
   const inv = buildPhaseInvoice(BD, [], [{ phase: 1, part: 'remainder' }]);
   assert.equal(inv.totalCents, P[0].remainderCents);
-  assert.match(inv.lines[0].label, /— 70% of \$/);
+  assert.match(inv.lines[0].label, /, due after completion — 70% of the phase$/);
 });
 
 test('refusals: nothing ticked, unknown phase, already paid, already on an open invoice', () => {
@@ -244,7 +250,8 @@ test('a phase invoice: preview, send, refuse a second bill for the same part, bo
   assert.equal(stripeCalls.length, 0, 'preview never reaches Stripe');
   assert.equal(c(prev.data.amount), P[1].depositCents + P[0].remainderCents);
   assert.equal(prev.data.description, 'Phase 2 deposit + rest of Phase 1');
-  assert.ok(prev.data.lines.some((l) => l.label === 'Deposit already paid (Invoice2go, 9/1/2026)'));
+  assert.ok(prev.data.lines.every((l) => l.amount > 0), 'payments are folded in, not minus lines');
+  assert.match(prev.data.memo, /Your \$[\d,.]+ deposit \(Invoice2go, 9\/1\/2026\) has been applied\./);
 
   const sent = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'phase', parts }, t);
   assert.equal(sent.status, 200, JSON.stringify(sent.data));
@@ -277,4 +284,188 @@ test('a phase invoice: preview, send, refuse a second bill for the same part, bo
   assert.equal(b7.phases[1].deposit.remaining, 0);
   assert.deepEqual(b7.suggested, [{ phase: 3, part: 'deposit' }, { phase: 2, part: 'remainder' }]);
   assert.equal(c(b7.balance_due), toCents(BD.total) - P[0].totalCents - P[1].depositCents, 'total balance agrees');
+});
+
+/* ---------------------------------------------------------------------------
+ * TWO BUILDS, BILLED TOGETHER. A 10x20 with concrete, shed and interior, and an
+ * 8x16 with concrete and shed and a $1,000 discount — the shape of Stephanie
+ * Padilla's two orders. Phases match by kind; each build keeps its own books.
+ * ------------------------------------------------------------------------- */
+const R2 = computePricing({ style: 'gable', w: 8, l: 16, h: 8, foundation: 'pad' }).redline;
+const BD2 = quoteLines(R2, [{ kind: 'amount', value: -1000, note: 'Loyal customer' }]);
+const P2 = phaseParts(BD2);
+const NAME7 = '10x20 Gable / A-Frame', NAME38 = '8x16 Gable / A-Frame';
+const two = (pays7, pays38, open7, open38) => [
+  { sub: 7, name: NAME7, bd: BD, payments: pays7 || [], openParts: open7 },
+  { sub: 38, name: NAME38, bd: BD2, payments: pays38 || [], openParts: open38 }];
+const DEP7 = [{ amount: P[0].depositCents / 100, method: 'invoice2go', paid_at: '2026-09-01T00:00:00.000Z' }];
+
+test('together: phases match by kind, and a build without one is just absent', () => {
+  const ts = togetherStatus(two());
+  assert.deepEqual(ts.groups.map((g) => [g.phase, g.kind, g.name, g.items.map((i) => i.sub)]), [
+    [1, 'foundation', 'Concrete Pads', [7, 38]],
+    [2, 'shed', 'Sheds', [7, 38]],
+    [3, 'interior', P[2].name.replace(/\s*\([^)]*\)/g, ''), [7]],
+  ]);
+  /* A build with site clearance in front still lines its concrete up with the
+     other's concrete, not with its clearance. */
+  const cleared = computePricing({ style: 'gable', w: 8, l: 12, h: 8, foundation: 'pad', addons: { shedRemoval: true } }).redline;
+  const bdc = quoteLines(cleared, []);
+  assert.equal(bdc.rows[0].kind, 'clearance', 'fixture has a clearance phase');
+  {
+    const t2 = togetherStatus([{ sub: 1, name: 'A', bd: BD, payments: [] }, { sub: 2, name: 'B', bd: bdc, payments: [] }]);
+    const conc = t2.groups.find((g) => g.kind === 'foundation');
+    assert.deepEqual(conc.items.map((i) => [i.sub, i.phase]), [[1, 1], [2, 2]]);
+  }
+});
+
+test("together, Stephanie's shape: only the 8x16's concrete deposit is owed first", () => {
+  const ts = togetherStatus(two(DEP7));
+  assert.deepEqual(ts.suggested, [{ phase: 1, part: 'deposit' }]);
+  const inv = buildTogetherInvoice(two(DEP7), ts.suggested);
+  assert.equal(inv.totalCents, P2[0].depositCents, 'the 10x20 concrete deposit is paid, so only the 8x16 one');
+  assert.deepEqual(inv.lines.map((l) => l.label), ['Phase 1: Concrete Pad deposit (30%) — ' + NAME38]);
+  assert.deepEqual(inv.covers, [{ sub: 38, phase: 1, part: 'deposit', cents: P2[0].depositCents }]);
+  assert.equal(inv.description, 'Phase 1 deposit (8x16)');
+  assert.ok(inv.memo.length <= LIMITS.memo);
+  assert.match(inv.memo, /two sheds \(10x20 and 8x16\) are billed together/);
+  assert.match(inv.memo, /Phase 3: .* \(10x20 only\)/);
+});
+
+test('together, the bigger bill: 8x16 concrete deposit + both shed deposits + rest of both concretes', () => {
+  const sel = [{ phase: 1, part: 'deposit' }, { phase: 2, part: 'deposit' }, { phase: 1, part: 'remainder' }];
+  const inv = buildTogetherInvoice(two(DEP7), sel);
+  assert.equal(inv.totalCents, P2[0].depositCents + P[1].depositCents + P2[1].depositCents + P[0].remainderCents + P2[0].remainderCents);
+  assert.equal(sum(inv), inv.totalCents);
+  const labels = inv.lines.map((l) => l.label);
+  assert.deepEqual(labels, [
+    'Phase 2: Shed deposit (30%) — ' + NAME7,
+    'Phase 2: Shed deposit (30%) — ' + NAME38,
+    'Remainder of Phase 1: Concrete Pad, due after completion — ' + NAME7,
+    'Phase 1: Concrete Pad, full amount (deposit + remainder) — ' + NAME38,
+  ]);
+  assert.ok(inv.lines.every((l) => l.amountCents > 0), 'no minus lines: her deposit is inside the 10x20 remainder');
+  assert.match(inv.memo, /Your \$965\.25 deposit \(Invoice2go, 9\/1\/2026\) on the 10x20 has been applied\./);
+  assert.ok(inv.memo.length <= LIMITS.memo, inv.memo.length);
+  const fields = Object.fromEntries(inv.customFields.map((f) => [f.name, f.value]));
+  assert.equal(fields.Orders, '#7 + #38');
+  assert.equal(fields['Total, all builds'], '$' + ((toCents(BD.total) + toCents(BD2.total)) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 }));
+  /* Every cent says which build it is for. */
+  const per = {};
+  inv.covers.forEach((c2) => { per[c2.sub] = (per[c2.sub] || 0) + c2.cents; });
+  assert.equal(per[7], P[1].depositCents + P[0].remainderCents);
+  assert.equal(per[38], P2[0].depositCents + P2[1].depositCents + P2[0].remainderCents);
+});
+
+test('together, start to finish: each build is paid to the cent, and nothing is billed twice', () => {
+  const pays = { 7: DEP7.slice(), 38: [] };
+  const book = (inv) => {
+    const by = {};
+    inv.covers.forEach((c2) => { (by[c2.sub] = by[c2.sub] || []).push({ phase: c2.phase, part: c2.part, cents: c2.cents }); });
+    Object.entries(by).forEach(([sub, parts]) => pays[sub].push({
+      amount: parts.reduce((t, x) => t + x.cents, 0) / 100, method: 'stripe', phase_alloc: JSON.stringify({ parts }) }));
+  };
+  let billed = 0, n = 0;
+  for (;;) {
+    const ts = togetherStatus(two(pays[7], pays[38]));
+    if (!ts.suggested.length) break;
+    const inv = buildTogetherInvoice(two(pays[7], pays[38]), ts.suggested);
+    assert.equal(sum(inv), inv.totalCents);
+    billed += inv.totalCents; book(inv);
+    assert.ok(++n < 10, 'runs out');
+  }
+  const paid = (arr) => arr.reduce((t, p) => t + toCents(p.amount), 0);
+  assert.equal(paid(pays[7]), toCents(BD.total), '10x20 paid exactly its total');
+  assert.equal(paid(pays[38]), toCents(BD2.total), '8x16 paid exactly its total');
+  assert.equal(billed + P[0].depositCents, toCents(BD.total) + toCents(BD2.total), 'the bills are exactly both jobs');
+  /* Concrete deposit for the 8x16; then shed deposits + rest of both pads;
+     then interior deposit + rest of both sheds; then the rest of the interior. */
+  assert.equal(n, 4);
+});
+
+test('together: a part on an open combined invoice is refused for that build, the other build still bills', () => {
+  const open38 = [{ phase: 1, part: 'deposit', invoice_id: 9 }];
+  assert.throws(() => buildTogetherInvoice(two(DEP7, [], null, open38), [{ phase: 1, part: 'deposit' }]),
+    (e) => e.code === 'already_billed');
+  const inv = buildTogetherInvoice(two([], [], null, open38), [{ phase: 1, part: 'deposit' }]);
+  assert.deepEqual(inv.covers.map((x) => x.sub), [7], 'only the build not already billed');
+  assert.throws(() => buildTogetherInvoice(two(), [{ phase: 3, part: 'deposit', sub: 38 }]), (e) => e.code === 'bad_phase');
+  const only = buildTogetherInvoice(two(), [{ phase: 2, part: 'deposit', sub: 38 }]);
+  assert.equal(only.totalCents, P2[1].depositCents);
+});
+
+test('combined invoice end to end: preview, send, refused twice from either build, paid -> one payment per build', async () => {
+  const { db, env } = setup();
+  db.prepare("INSERT INTO submissions (id,customer_id,details,adjustments,status,created_at) VALUES (38,1,?,?,'won','2026-09-20')")
+    .run(JSON.stringify({ redline: R2, config: { w: 8, l: 16, style: 'gable' } }),
+         JSON.stringify([{ kind: 'amount', value: -1000, note: 'Loyal customer' }]));
+  db.prepare("UPDATE submissions SET details = ? WHERE id = 7").run(JSON.stringify({ redline, config: { w: 10, l: 20, style: 'gable' } }));
+  db.prepare("INSERT INTO customers (id,name,email) VALUES (2,'Other','o@test.test')").run();
+  db.prepare("INSERT INTO submissions (id,customer_id,details,status,created_at) VALUES (50,2,?,'won','2026-09-20')").run(JSON.stringify({ redline }));
+  const t = await tokenOf(env);
+  await api(env, 'POST', '/admin/customers/1/payments', { amount: P[0].depositCents / 100, method: 'invoice2go',
+    submission_id: 7, phase: 1, paid_at: '2026-09-01T00:00:00.000Z' }, t);
+
+  let b = (await api(env, 'GET', '/admin/customers/1/balances?together=7,38', null, t)).data;
+  assert.deepEqual(b.together.builds.map((x) => x.name), [NAME7, NAME38]);
+  assert.deepEqual(b.together.suggested, [{ phase: 1, part: 'deposit' }]);
+  assert.equal(b.together.phases[0].items[1].deposit.remaining * 100, P2[0].depositCents);
+
+  const parts = [{ phase: 1, part: 'deposit' }, { phase: 2, part: 'deposit' }, { phase: 1, part: 'remainder' }];
+  const want = P2[0].depositCents + P[1].depositCents + P2[1].depositCents + P[0].remainderCents + P2[0].remainderCents;
+  stripeCalls.length = 0; stub();
+  const prev = await api(env, 'POST', '/admin/invoices', { submission_id: 7, builds: [7, 38], kind: 'phase', parts, preview: true }, t);
+  assert.equal(prev.status, 200, JSON.stringify(prev.data));
+  assert.equal(stripeCalls.length, 0);
+  assert.equal(c(prev.data.amount), want);
+  assert.deepEqual(prev.data.builds, [7, 38]);
+  assert.ok(prev.data.lines.some((l) => l.label === 'Phase 2: Shed deposit (30%) — ' + NAME38));
+
+  const wrong = await api(env, 'POST', '/admin/invoices', { submission_id: 7, builds: [7, 50], kind: 'phase', parts, preview: true }, t);
+  assert.equal(wrong.status, 400, 'another customer\'s build cannot ride along');
+
+  const sent = await api(env, 'POST', '/admin/invoices', { submission_id: 7, builds: [7, 38], kind: 'phase', parts }, t);
+  assert.equal(sent.status, 200, JSON.stringify(sent.data));
+  const items = stripeCalls.filter((x) => x.path === '/v1/invoiceitems').map((x) => Number(x.params.amount));
+  assert.equal(items.reduce((a, x) => a + x, 0), want);
+  const fin = stripeCalls.find((x) => x.path === '/v1/invoices');
+  assert.equal(fin.params['metadata[builds]'], '7,38');
+
+  /* The same part, billed again — from the 8x16 alone, or together. */
+  const again38 = await api(env, 'POST', '/admin/invoices', { submission_id: 38, kind: 'phase', parts: [{ phase: 2, part: 'deposit' }] }, t);
+  assert.equal(again38.status, 409, 'the 8x16 shed deposit is on the open combined bill');
+  const againBoth = await api(env, 'POST', '/admin/invoices', { submission_id: 38, builds: [38, 7], kind: 'phase', preview: true,
+    parts: [{ phase: 1, part: 'remainder' }] }, t);
+  assert.equal(againBoth.status, 409);
+  b = (await api(env, 'GET', '/admin/customers/1/balances?together=7,38', null, t)).data;
+  const b38 = b.builds.find((x) => x.submission_id === 38);
+  assert.ok(b38.phases[1].deposit.open_invoice, 'the 8x16 sees the combined bill');
+  assert.ok(b38.open_invoices.some((o) => o.id === sent.data.id && o.builds), 'listed on the 8x16 too');
+  assert.deepEqual(b.together.suggested, [{ phase: 3, part: 'deposit' }]);
+
+  stripeSays = { status: 'paid', amount_paid: want };
+  await api(env, 'POST', '/admin/invoices/' + sent.data.id + '/sync', null, t);
+  await api(env, 'POST', '/admin/invoices/' + sent.data.id + '/sync', null, t);
+  stripeSays = { status: 'open' }; unstub();
+  const rows = db.prepare("SELECT * FROM payments WHERE method='stripe' ORDER BY submission_id").all();
+  assert.equal(rows.length, 2, 'one payment per build, recorded once');
+  assert.deepEqual(rows.map((r) => [r.submission_id, c(r.amount)]),
+    [[7, P[1].depositCents + P[0].remainderCents], [38, P2[0].depositCents + P2[1].depositCents + P2[0].remainderCents]]);
+  b = (await api(env, 'GET', '/admin/customers/1/balances?together=7,38', null, t)).data;
+  const by = Object.fromEntries(b.builds.map((x) => [x.submission_id, x]));
+  assert.equal(c(by[7].balance_due), toCents(BD.total) - P[0].totalCents - P[1].depositCents);
+  assert.equal(c(by[38].balance_due), toCents(BD2.total) - P2[0].totalCents - P2[1].depositCents);
+  assert.deepEqual(b.together.suggested, [{ phase: 3, part: 'deposit' }, { phase: 2, part: 'remainder' }]);
+});
+
+test("Gable and A-Frame are one style, named 'Gable / A-Frame' to customers — old saved quotes included", async () => {
+  const { shedStyleName } = await import('./quotelines.js');
+  assert.equal(shedStyleName('gable'), 'Gable / A-Frame');
+  assert.equal(shedStyleName('A-Frame'), 'Gable / A-Frame');
+  assert.equal(shedStyleName('barn'), 'barn');
+  const old = quoteLines({ ...redline, baseSheetLabel: 'A-Frame' }, []);
+  assert.equal(old.rows[1].label, 'Phase 2 — Shed (Gable / A-Frame)');
+  assert.equal(BD.rows[1].label, 'Phase 2 — Shed (Gable / A-Frame)', 'new quotes too');
+  const inv = buildPhaseInvoice(BD, [], [{ phase: 2, part: 'deposit' }]);
+  assert.equal(inv.lines[0].label, 'Phase 2: Shed (Gable / A-Frame) deposit (30%)');
 });

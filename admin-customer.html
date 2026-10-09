@@ -259,6 +259,12 @@ select:focus{border-color:var(--sp-blue)}
 .ph-total{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(43,181,232,0.35);font-size:16px;color:var(--bright)}
 .ph-total strong{font-variant-numeric:tabular-nums}
 .ph-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.tg-panel{margin:0 0 18px}
+.tg-panel>summary{cursor:pointer;list-style-position:inside}
+.tg-builds{display:flex;flex-wrap:wrap;gap:6px 16px;margin:0 0 8px}
+.tg-build{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--fg);cursor:pointer}
+.tg-build input{width:16px;height:16px;accent-color:#2bb5e8;margin:0}
+.tg-per div{line-height:1.5}
 .inv-other{margin-top:4px}
 .inv-other summary{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--dim);cursor:pointer;margin-bottom:8px}
 .payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
@@ -791,7 +797,7 @@ function summarizeConfig(config) {
   // The porch is carved out of the shed's own w x l, not added past it —
   // see the matching comment on the Size field in quote.html.
   if (config.w && config.l) parts.push(config.w + 'x' + config.l + ' ft');
-  if (config.style) parts.push(config.style);
+  if (config.style) parts.push(/^(gable|a-?frame)$/i.test(config.style) ? 'Gable / A-Frame' : config.style);
   if (config.siding) parts.push(config.siding);
   return parts.join(' · ');
 }
@@ -1593,7 +1599,9 @@ function renderPhasePanel(block, s, bal) {
   var ex = document.createElement('div');
   ex.className = 'ph-explain';
   ex.textContent = 'Each phase: a 30% deposit before it starts, the rest once it is done (added to the next bill). ' +
-    'Next bill is ticked for you \u2014 change it if you need to.';
+    'Next bill is ticked for you \u2014 change it if you need to.' +
+    (bal.status === 'won' && wonPhaseBuilds().length > 1
+      ? ' Billing this with their other build? Use \u201cBill builds together\u201d at the top of Orders instead.' : '');
   panel.appendChild(ex);
 
   var want = {};
@@ -1731,7 +1739,7 @@ function renderPhasePanel(block, s, bal) {
 
   /* Phase bills already sent for this build. */
   INVOICES.filter(function (i) {
-    return i.kind === 'phase' && Number(i.submission_id) === Number(s.id) && i.status !== 'void' && i.status !== 'draft_failed';
+    return i.kind === 'phase' && invoiceSubsOf(i).indexOf(Number(s.id)) > -1 && i.status !== 'void' && i.status !== 'draft_failed';
   }).forEach(function (inv) {
     var row = document.createElement('div');
     row.className = 'inv-row';
@@ -1739,13 +1747,290 @@ function renderPhasePanel(block, s, bal) {
     var k = document.createElement('span');
     k.className = 'inv-kind';
     k.style.width = 'auto';
-    k.textContent = phaseCoversText(phaseInvoiceCovers(inv)) || 'Phase bill';
+    var subsOf = invoiceSubsOf(inv);
+    k.textContent = subsOf.length > 1
+      ? 'Combined bill (' + subsOf.map(function (n) { return '#' + n; }).join(' + ') + ') · ' + phaseInvoiceAbout(inv)
+      : phaseInvoiceAbout(inv);
     row.appendChild(k);
     fillExistingRow(row, inv, 'phase');
     panel.appendChild(row);
   });
 
   block.appendChild(panel);
+}
+
+/* ---- Bill builds together ------------------------------------------------
+ *
+ * A customer with two (or more) won builds can be billed for them as one job:
+ * one Stripe invoice per step, matching phases side by side (concrete with
+ * concrete, shed with shed, interior with interior — a build without that
+ * phase is just left out of it). Underneath, every build keeps its own
+ * phases and payments; the worker records a paid combined bill as one payment
+ * per build, and a part on any open bill — combined or not — cannot be billed
+ * again from either side.
+ */
+var TOGETHER_SEL = null;          // submission ids ticked in "Bill builds together"
+function wonPhaseBuilds() {
+  return (BALANCES || []).filter(function (b) { return b.status === 'won' && b.phases && b.phases.length; });
+}
+function invoiceSubsOf(inv) {
+  var subs = [Number(inv.submission_id)];
+  phaseInvoiceCovers(inv).forEach(function (c) {
+    var n = Number(c.sub != null ? c.sub : inv.submission_id);
+    if (subs.indexOf(n) === -1) subs.push(n);
+  });
+  return subs;
+}
+function phaseInvoiceAbout(inv) {
+  var holder = (inv.lines || []).filter(function (l) { return l && l.covers; })[0];
+  return (holder && holder.about) || phaseCoversText(phaseInvoiceCovers(inv)) || 'Phase bill';
+}
+
+function renderTogetherPanel(wrap) {
+  var won = wonPhaseBuilds();
+  if (won.length < 2) return;
+  if (!TOGETHER_SEL) TOGETHER_SEL = won.map(function (b) { return Number(b.submission_id); });
+
+  var panel = document.createElement('details');
+  panel.className = 'ph-panel tg-panel';
+  panel.open = true;
+  var sum = document.createElement('summary');
+  sum.className = 'ph-head';
+  sum.textContent = 'Bill builds together';
+  panel.appendChild(sum);
+  var ex = document.createElement('div');
+  ex.className = 'ph-explain';
+  ex.textContent = 'One invoice per step for the builds ticked below: matching phases are billed together ' +
+    '(concrete with concrete, shed with shed). Each build still keeps its own balance.';
+  panel.appendChild(ex);
+
+  var pick = document.createElement('div');
+  pick.className = 'tg-builds';
+  won.forEach(function (b) {
+    var lab = document.createElement('label');
+    lab.className = 'tg-build';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = b.submission_id;
+    cb.checked = TOGETHER_SEL.indexOf(Number(b.submission_id)) > -1;
+    cb.addEventListener('change', function () {
+      TOGETHER_SEL = Array.prototype.slice.call(pick.querySelectorAll('input:checked')).map(function (x) { return Number(x.value); });
+      load();
+    });
+    var t = document.createElement('span');
+    t.textContent = '#' + b.submission_id + ' \u00b7 ' + (b.name || 'Build') + ' \u00b7 ' + money(b.job_total);
+    lab.appendChild(cb); lab.appendChild(t);
+    pick.appendChild(lab);
+  });
+  panel.appendChild(pick);
+
+  var body = document.createElement('div');
+  panel.appendChild(body);
+
+  /* Combined bills already sent. */
+  var sent = document.createElement('div');
+  INVOICES.filter(function (i) {
+    return i.kind === 'phase' && i.status !== 'void' && i.status !== 'draft_failed' && invoiceSubsOf(i).length > 1;
+  }).forEach(function (inv) {
+    var row = document.createElement('div');
+    row.className = 'inv-row';
+    row.style.marginTop = '10px';
+    var k = document.createElement('span');
+    k.className = 'inv-kind';
+    k.style.width = 'auto';
+    k.textContent = invoiceSubsOf(inv).map(function (n) { return '#' + n; }).join(' + ') + ' \u00b7 ' + phaseInvoiceAbout(inv);
+    row.appendChild(k);
+    fillExistingRow(row, inv, 'phase');
+    sent.appendChild(row);
+  });
+  panel.appendChild(sent);
+  wrap.appendChild(panel);
+
+  function load() {
+    body.innerHTML = '';
+    if (TOGETHER_SEL.length < 2) {
+      var n = document.createElement('div');
+      n.className = 'ph-explain';
+      n.textContent = 'Tick at least two builds to bill them together.';
+      body.appendChild(n);
+      return;
+    }
+    var wait = document.createElement('div');
+    wait.className = 'ph-explain';
+    wait.textContent = 'Working it out\u2026';
+    body.appendChild(wait);
+    authFetch('/admin/customers/' + customerId + '/balances?together=' + TOGETHER_SEL.join(','))
+      .then(function (r) {
+        body.innerHTML = '';
+        var tg = r.ok && r.data && r.data.together;
+        if (!tg) {
+          var e = document.createElement('div');
+          e.className = 'inv-err';
+          e.textContent = 'This worker cannot bill builds together yet.';
+          body.appendChild(e);
+          return;
+        }
+        drawTogether(body, tg);
+      })
+      .catch(function () {
+        body.innerHTML = '';
+        var e = document.createElement('div');
+        e.className = 'inv-err';
+        e.textContent = 'Could not reach the server.';
+        body.appendChild(e);
+      });
+  }
+  load();
+}
+
+function drawTogether(body, tg) {
+  var want = {};
+  (tg.suggested || []).forEach(function (x) { want[x.phase + ':' + x.part] = true; });
+  var nextDeposit = (tg.suggested || []).filter(function (x) { return x.part === 'deposit'; })[0];
+  var boxes = [];
+  var short = function (name) { var m = /^\s*(\d+(?:\.\d+)?x\d+(?:\.\d+)?)/.exec(name || ''); return m ? m[1] : (name || ''); };
+
+  tg.phases.forEach(function (g) {
+    var wrap = document.createElement('div');
+    wrap.className = 'ph-phase';
+    var t = document.createElement('div');
+    t.className = 'ph-title';
+    var only = g.items.length < tg.builds.length
+      ? ' (' + g.items.map(function (i) { return short(i.build); }).join(', ') + ' only)' : '';
+    var tn = document.createElement('span'); tn.textContent = 'Phase ' + g.phase + ' \u00b7 ' + g.name + only;
+    var tv = document.createElement('span');
+    tv.textContent = money(g.items.reduce(function (a, i) { return a + Math.round(i.total * 100); }, 0) / 100);
+    t.appendChild(tn); t.appendChild(tv);
+    wrap.appendChild(t);
+
+    [['deposit', '30% deposit (before it starts)'], ['remainder', 'Rest, after it is done (70%)']].forEach(function (pp) {
+      var leftC = 0, anyOpen = false;
+      g.items.forEach(function (i) {
+        var x = i[pp[0]];
+        if (x.open_invoice) anyOpen = true;
+        else if (x.remaining > 0) leftC += Math.round(x.remaining * 100);
+      });
+      var lab = document.createElement('label');
+      lab.className = 'ph-part';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.phase = g.phase;
+      cb.dataset.part = pp[0];
+      cb.dataset.left = leftC / 100;
+      var what = document.createElement('span');
+      what.className = 'ph-what';
+      what.textContent = pp[1];
+      if (pp[0] === 'remainder' && want[g.phase + ':remainder'] && nextDeposit && nextDeposit.phase > g.phase) {
+        var auto = document.createElement('span');
+        auto.className = 'ph-auto';
+        auto.textContent = 'Auto-added';
+        auto.title = 'Phase ' + g.phase + ' has started, so what is left of it goes on the Phase ' + nextDeposit.phase + ' bill. Untick to leave it off.';
+        what.appendChild(auto);
+      }
+      /* One line per build: its amount, and what is paid / left / billed. */
+      var nums = document.createElement('span');
+      nums.className = 'ph-nums tg-per';
+      g.items.forEach(function (i) {
+        var x = i[pp[0]];
+        var d = document.createElement('div');
+        d.textContent = short(i.build) + ': ' + money(x.amount) +
+          (x.open_invoice ? ' \u00b7 billed, awaiting' : !(x.remaining > 0) ? ' \u00b7 paid'
+            : x.paid > 0 ? ' \u00b7 paid ' + money(x.paid) + ' \u00b7 ' + money(x.remaining) + ' left' : '');
+        nums.appendChild(d);
+      });
+      var left = document.createElement('span');
+      left.className = 'ph-left';
+      if (!leftC) {
+        left.className += ' done';
+        if (anyOpen) { left.style.color = 'var(--sp-blue)'; left.textContent = 'Billed \u2014 awaiting'; }
+        else left.textContent = 'Paid';
+        cb.disabled = true;
+        lab.className += ' off';
+      } else {
+        left.textContent = money(leftC / 100);
+        cb.checked = !!want[g.phase + ':' + pp[0]];
+      }
+      lab.appendChild(cb); lab.appendChild(what); lab.appendChild(left); lab.appendChild(nums);
+      wrap.appendChild(lab);
+      boxes.push(cb);
+    });
+    body.appendChild(wrap);
+  });
+
+  var tot = document.createElement('div');
+  tot.className = 'ph-total';
+  var tl = document.createElement('span'); tl.textContent = 'This bill (all ticked builds)';
+  var tv2 = document.createElement('strong');
+  tot.appendChild(tl); tot.appendChild(tv2);
+  body.appendChild(tot);
+
+  var actions = document.createElement('div');
+  actions.className = 'ph-actions';
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'inv-btn send ph-bill tg-bill';
+  var err = document.createElement('div');
+  err.className = 'inv-err';
+  err.style.display = 'none';
+  actions.appendChild(btn);
+  body.appendChild(actions);
+  body.appendChild(err);
+
+  var subs = tg.builds.map(function (b) { return Number(b.submission_id); });
+  function picked() {
+    return boxes.filter(function (b) { return b.checked && !b.disabled; })
+      .map(function (b) { return { phase: Number(b.dataset.phase), part: b.dataset.part }; });
+  }
+  function refresh() {
+    var c = boxes.reduce(function (t, b) { return t + (b.checked && !b.disabled ? Math.round(Number(b.dataset.left) * 100) : 0); }, 0);
+    tv2.textContent = money(c / 100);
+    btn.textContent = c > 0 ? 'Bill ' + money(c / 100) + ' for ' + subs.map(function (n) { return '#' + n; }).join(' + ') + ' with Stripe'
+                            : 'Tick a phase to bill';
+    btn.disabled = !(c > 0);
+  }
+  boxes.forEach(function (b) { b.addEventListener('change', refresh); });
+  refresh();
+
+  btn.addEventListener('click', function () {
+    var parts = picked();
+    if (!parts.length) return;
+    var label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Working it out\u2026';
+    err.style.display = 'none';
+    var req = { submission_id: subs[0], builds: subs, kind: 'phase', parts: parts };
+    authFetch('/admin/invoices', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ preview: true }, req))
+    }).then(function (r) {
+      btn.disabled = false;
+      btn.textContent = label;
+      if (!r.ok) {
+        err.textContent = (r.data && r.data.error) || 'Could not price this one.';
+        err.style.display = 'block';
+        return;
+      }
+      var prev = invPreviewPanel('phase', r.data, function (fail) {
+        authFetch('/admin/invoices', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(req)
+        }).then(function (sent) {
+          if (sent.ok) { loadCustomer(); return; }
+          fail((sent.data && sent.data.error) || 'Stripe would not take it.');
+        }).catch(function () { fail('Could not reach the server. Check before resending \u2014 it may have gone out.'); });
+      }, function () {
+        body.removeChild(prev);
+        actions.style.display = '';
+      });
+      actions.style.display = 'none';
+      body.insertBefore(prev, err);
+    }).catch(function () {
+      btn.disabled = false;
+      btn.textContent = label;
+      err.textContent = 'Could not reach the server.';
+      err.style.display = 'block';
+    });
+  });
 }
 
 /* One row for an invoice already sent: amount, state, where it went, the pay
@@ -1994,6 +2279,7 @@ function renderOrders(submissions, installs) {
     wrap.innerHTML = '<p class="empty">No orders yet.</p>';
     return;
   }
+  renderTogetherPanel(wrap);
   submissions.forEach(function (s) {
     var details = {};
     try { details = JSON.parse(s.details) || {}; } catch (e) {}

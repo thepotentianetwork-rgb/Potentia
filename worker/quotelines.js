@@ -26,11 +26,12 @@
 /* Utah sales tax — applied to the shed and to each separately-billed item
    (concrete, interior finishing) since each is invoiced as its own sale. */
 export const TAX_RATE = 0.0725;
-/* ONE deposit, covering the whole job, collected before work begins. It is
-   worked out per item — 30% of each item's tax-included price, which is what
-   the quote itemises — but the items are billed together, not as each stage
-   starts. This comment and the quote both used to say the opposite, which was
-   a promise on every quote sent that the invoicing never kept. */
+/* 30% of each phase's tax-included price, collected before THAT phase begins;
+   the rest of the phase is due once it is complete (billed by phase from the
+   CRM — see buildPhaseInvoice in invoices.js). The quote's note says exactly
+   this, and invoices.test.mjs fails if the two drift apart again. The
+   whole-job deposit invoice still exists for a job someone wants billed in
+   one go. */
 export const DEPOSIT_RATE = 0.30;
 
 /* What the base shed price covers, named under the Base Shed line. NAMES ONLY,
@@ -44,6 +45,16 @@ export const BASE_SHED_INCLUDES = [
 ];
 
 export const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
+
+/* WHAT A CUSTOMER CALLS THE STYLE. Gable and A-Frame are the same shed: the
+   designer stores it as "gable", the price sheet calls it "A-Frame", and
+   quotes saved before this carry "A-Frame" in their redline. Everything a
+   customer reads says "Gable / A-Frame", whichever of the three it was given.
+   Anything else passes through unchanged. */
+export function shedStyleName(s) {
+  const v = String(s == null ? '' : s).trim();
+  return /^(gable|a-?frame)$/i.test(v) ? 'Gable / A-Frame' : v;
+}
 
 function num(n) { return Number(n) || 0; }
 
@@ -165,6 +176,9 @@ export function quoteLines(redline, adjustments) {
      in first, then the shed, then interior finishing — each its own phase.
      Phase numbers are assigned from position after the rows are built, because
      removal is added at the FRONT when it applies. */
+  /* Each row carries its KIND (clearance / foundation / shed / interior) so two
+     builds billed together can match concrete with concrete and shed with shed
+     even when one has a site-clearance phase in front and its numbers shift. */
   const rows = [];
   function add(label, amt) {
     if (!label || !amt) return null;
@@ -177,6 +191,7 @@ export function quoteLines(redline, adjustments) {
   if (removal.length) {
     const rTotal = removalTotal(redline) - compedIn(REMOVAL_NAMES);
     const rRow = add(removal.length > 1 ? 'Site Clearance' : removal[0].name, rTotal);
+    if (rRow) rRow.kind = 'clearance';
     if (rRow && removal.length > 1) {
       rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) }));
     }
@@ -189,9 +204,12 @@ export function quoteLines(redline, adjustments) {
   if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
     foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
   }
-  add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
-  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
-  add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
+  const foundRow = add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
+  if (foundRow) foundRow.kind = 'foundation';
+  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + shedStyleName(redline.baseSheetLabel) + ')' : ''), shedTotal);
+  if (shedRow) shedRow.kind = 'shed';
+  const intRow = add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
+  if (intRow) intRow.kind = 'interior';
 
   /* Electrical and flooring are still billed and deposited as part of the Shed
      phase (their dollars stay inside shedTotal) — these just break them out so

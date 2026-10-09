@@ -20,7 +20,7 @@
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
-import { quoteLines, compedMap } from "./quotelines.js";
+import { quoteLines, compedMap, shedStyleName } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
@@ -30,7 +30,7 @@ import { scheduleMessage } from "./schedulemsg.js";
 import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
          stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
 import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, balanceSummary,
-         buildPhaseInvoice, phaseStatus, parseAlloc } from "./invoices.js";
+         buildPhaseInvoice, buildTogetherInvoice, togetherStatus, phaseStatus, parseAlloc } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
@@ -620,14 +620,38 @@ async function payCols(env) {
 }
 /* The parts a sent, unpaid phase invoice is collecting — so they are not
    offered, or billed, a second time while it is out. */
+/* A combined invoice (several builds on one bill) is stored against its first
+   build, and each of its covers names the build it is for — so every phase
+   invoice of the customer is read, and a cover counts for the build it names. */
 function openPhaseParts(invRows, submissionId) {
   const out = [];
   (invRows || []).forEach((i) => {
-    if (i.kind !== "phase" || Number(i.submission_id) !== Number(submissionId)) return;
+    if (i.kind !== "phase") return;
     if (["paid", "void", "draft_failed", "uncollectible"].includes(i.status)) return;
-    coversOf(i.lines).forEach((c) => out.push({ phase: c.phase, part: c.part, invoice_id: i.id }));
+    coversOf(i.lines).forEach((c) => {
+      if (coverSub(c, i) !== Number(submissionId)) return;
+      out.push({ phase: c.phase, part: c.part, invoice_id: i.id });
+    });
   });
   return out;
+}
+function coverSub(c, inv) {
+  return Number(c && c.sub != null ? c.sub : inv.submission_id);
+}
+/* Every build a phase invoice bills (one, or several when combined). */
+function invoiceSubs(inv) {
+  const subs = [Number(inv.submission_id)];
+  if (inv.kind === "phase") coversOf(inv.lines).forEach((c) => {
+    const n = coverSub(c, inv);
+    if (subs.indexOf(n) === -1) subs.push(n);
+  });
+  return subs;
+}
+/* "10x20 Gable / A-Frame" — how a build is named on a combined invoice. */
+function buildName(config) {
+  if (!config) return "";
+  return [config.w && config.l ? config.w + "x" + config.l : null,
+          config.style ? shedStyleName(config.style) : null].filter(Boolean).join(" ");
 }
 /* covers ride on the FIRST stored line of a phase invoice (lines is JSON). */
 function coversOf(lines) {
@@ -924,7 +948,7 @@ function configSummary(config) {
   if (!config) return "";
   const parts = [];
   if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
-  if (config.style) parts.push(config.style);
+  if (config.style) parts.push(shedStyleName(config.style));
   if (config.siding) parts.push(config.siding);
   return parts.join(" \u00b7 ");
 }
@@ -1205,7 +1229,7 @@ async function handleSchedule(request, env, origin) {
 /* Everything an invoice needs, gathered and priced, without sending anything.
    Shared by the preview and the send so the figures a person approves are the
    figures that go out — computing them twice would let the two drift. */
-async function invoiceContext(env, submissionId, kind, parts) {
+async function invoiceContext(env, submissionId, kind, parts, together) {
   await ensurePaymentsTable(env);
   await ensureInvoicesTable(env);
 
@@ -1230,22 +1254,53 @@ async function invoiceContext(env, submissionId, kind, parts) {
   const split = splitPayments(payRows || [], sub.id);
 
   if (kind === "phase") {
-    const adjustmentsP = adjustmentsOf(sub);
+    /* Every invoice of this customer, not just this build's: a combined bill
+       is stored against its first build but covers parts of the others. */
     const { results: invRows } = await env.DB.prepare(
-      "SELECT id, submission_id, kind, status, lines FROM invoices WHERE submission_id = ?"
-    ).bind(sub.id).all();
+      "SELECT id, submission_id, kind, status, lines FROM invoices WHERE customer_id = ?"
+    ).bind(sub.customer_id).all();
+    const others = (together || []).map(Number).filter((n) => n && n !== Number(sub.id));
+    const builds = [{ sub: sub.id, details, bd: breakdown, adjustments: adjustmentsOf(sub), payments: split.applied }];
+    for (const id of others) {
+      if (builds.some((b) => Number(b.sub) === id)) continue;
+      const o = await env.DB.prepare(
+        "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+      ).bind(id).first();
+      if (!o) throw Object.assign(new Error("no such order #" + id), { status: 404 });
+      if (Number(o.customer_id) !== Number(sub.customer_id)) {
+        throw Object.assign(new Error("order #" + id + " belongs to a different customer"), { status: 400, code: "other_customer" });
+      }
+      let d = {};
+      try { d = JSON.parse(o.details) || {}; } catch (e) {}
+      const obd = quoteLines(d.redline, adjustmentsOf(o));
+      if (!obd) throw Object.assign(new Error("order #" + id + " has no priced build to invoice"), { status: 400 });
+      builds.push({ sub: o.id, details: d, bd: obd, adjustments: adjustmentsOf(o),
+                    payments: splitPayments(payRows || [], o.id).applied });
+    }
     let invoice;
     try {
-      invoice = buildPhaseInvoice(breakdown, split.applied, parts, {
-        openParts: openPhaseParts(invRows, sub.id),
-        comped: compedMap(details.redline, adjustmentsP),
-        summary: configSummary(details.config),
-        submissionId: sub.id
-      });
+      if (builds.length === 1) {
+        invoice = buildPhaseInvoice(breakdown, split.applied, parts, {
+          openParts: openPhaseParts(invRows, sub.id),
+          comped: compedMap(details.redline, builds[0].adjustments),
+          summary: configSummary(details.config),
+          submissionId: sub.id
+        });
+      } else {
+        const comped = {};
+        builds.forEach((b) => Object.assign(comped, compedMap(b.details.redline, b.adjustments)));
+        invoice = buildTogetherInvoice(builds.map((b) => ({
+          sub: b.sub, bd: b.bd, payments: b.payments,
+          name: buildName(b.details.config) || "Order #" + b.sub,
+          summary: buildName(b.details.config) || null,
+          openParts: openPhaseParts(invRows, b.sub)
+        })), parts, { comped });
+      }
     } catch (e) {
       throw Object.assign(e, { status: e.status || (e.code === "already_billed" ? 409 : 400) });
     }
-    return { sub, customer, breakdown, split, invoice };
+    return { sub, customer, breakdown, split, invoice, builds: builds.map((b) => b.sub),
+             payRows: payRows || [] };
   }
 
   /* Everything the quote page puts around the numbers, handed to the invoice
@@ -1329,31 +1384,49 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   const now = new Date().toISOString();
 
   /* A phase invoice says which parts it collected; the payment is booked
-     against exactly those, in order, up to what actually cleared. */
-  let alloc = null;
-  if (row.kind === "phase" && (await hasPhaseAlloc(env))) {
-    let left = toCents(amount);
-    const parts = [];
-    coversOf(row.lines).forEach((c) => {
-      const take = Math.min(left, Math.max(0, Math.round(Number(c.cents) || 0)));
-      if (take > 0) { parts.push({ phase: Number(c.phase), part: c.part, cents: take }); left -= take; }
-    });
-    if (parts.length) alloc = JSON.stringify({ parts });
-  }
+     against exactly those, in order, up to what actually cleared. A combined
+     invoice (several builds) becomes one payment PER BUILD, so each build's
+     balance stays its own; anything beyond what the covers ask for stays on
+     the first build, where it shows up as overpaid rather than vanishing. */
   const note = row.kind === "deposit" ? "Deposit paid on Stripe"
     : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe";
-  if (alloc) {
-    await env.DB.prepare(
-      "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
-    ).bind(row.customer_id, amount, "stripe", note, now, now, row.submission_id, alloc).run();
-  } else {
-    await env.DB.prepare(
-      "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-    ).bind(row.customer_id, amount, "stripe", note, now, now, row.submission_id).run();
+  const withAlloc = row.kind === "phase" && (await hasPhaseAlloc(env));
+  const shares = [];                        // { sub, cents, parts }
+  if (row.kind === "phase") {
+    let left = toCents(amount);
+    coversOf(row.lines).forEach((c) => {
+      const take = Math.min(left, Math.max(0, Math.round(Number(c.cents) || 0)));
+      if (take <= 0) return;
+      const sub = coverSub(c, row);
+      let sh = shares.find((x) => x.sub === sub);
+      if (!sh) { sh = { sub, cents: 0, parts: [] }; shares.push(sh); }
+      sh.cents += take;
+      sh.parts.push({ phase: Number(c.phase), part: c.part, cents: take });
+      left -= take;
+    });
+    if (left > 0) {
+      if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: 0, parts: [] });
+      shares[0].cents += left;
+    }
   }
-
-  await env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?")
-    .bind(now, row.id).run();
+  if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: toCents(amount), parts: [] });
+  const many = shares.length > 1;
+  const stmts = shares.map((sh) => {
+    const amt = fromCents(sh.cents);
+    const n = many ? note + " (combined invoice, " + shares.map((x) => "#" + x.sub).join(" + ") + ")" : note;
+    if (withAlloc && sh.parts.length) {
+      return env.DB.prepare(
+        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub, JSON.stringify({ parts: sh.parts }));
+    }
+    return env.DB.prepare(
+      "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+    ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub);
+  });
+  /* All the payments and the status flip land together or not at all, so a
+     retry after a failure cannot book a build twice. */
+  stmts.push(env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
+  await env.DB.batch(stmts);
 
   return { already: false, amount };
 }
@@ -1441,10 +1514,14 @@ async function handleCreateInvoice(request, env, origin, actor) {
   /* kind "phase": parts = [{phase, part: "deposit"|"remainder"}] — the boxes
      ticked on the customer page. */
   const parts = kind === "phase" ? (Array.isArray(body.parts) ? body.parts.slice(0, 40) : []) : null;
+  /* builds: [7, 38] — bill several of this customer's builds together, one
+     invoice per step. The first is submission_id; the rest ride along. */
+  const together = kind === "phase" && Array.isArray(body.builds)
+    ? body.builds.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 6) : null;
 
   let ctx;
   try {
-    ctx = await invoiceContext(env, submissionId, kind, parts);
+    ctx = await invoiceContext(env, submissionId, kind, parts, together);
   } catch (e) {
     /* code tells the page WHY there is nothing to bill — "paid_in_full" and
        "deposit_covered" are not failures, and the CRM says so instead of
@@ -1477,9 +1554,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
   /* For a phase invoice every other open invoice counts, phase ones included:
      the parts they cover are already refused above, but the old-style deposit
      and balance invoices do not say which phases they cover. */
-  const { results: outstanding } = await env.DB.prepare(
-    "SELECT id, kind, amount, hosted_url FROM invoices WHERE submission_id = ? AND (kind != ? OR kind = 'phase') AND status NOT IN ('paid','void','draft_failed','uncollectible')"
-  ).bind(sub.id, kind).all();
+  const billedSubs = ctx.builds || [sub.id];
+  const { results: openRows } = await env.DB.prepare(
+    "SELECT id, submission_id, kind, amount, hosted_url, lines FROM invoices WHERE customer_id = ? AND status NOT IN ('paid','void','draft_failed','uncollectible')"
+  ).bind(customer.id).all();
+  const outstanding = (openRows || []).filter((o) =>
+    (o.kind !== kind || kind === "phase") && invoiceSubs(o).some((n) => billedSubs.indexOf(n) > -1));
   (outstanding || []).forEach((o) => {
     const combined = Number(o.amount || 0) + fromCents(invoice.totalCents);
     warnings.push({
@@ -1500,13 +1580,17 @@ async function handleCreateInvoice(request, env, origin, actor) {
     /* Phase invoices: which parts this collects, and the short name of it. */
     covers: invoice.covers || null,
     description: invoice.description || null,
+    builds: billedSubs.length > 1 ? billedSubs : null,
     amount: fromCents(invoice.totalCents),
     job_total: fromCents(invoice.jobTotalCents),
     already_paid: fromCents(invoice.paidCents),
     /* The payments that were credited, so the preview can list them and a
        wrongly-attributed one is visible before anything is sent. */
-    payments: split.applied.map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
-                                          method: p.method, paid_at: p.paid_at, note: p.note || null })),
+    payments: (billedSubs.length > 1
+      ? (ctx.payRows || []).filter((p) => billedSubs.indexOf(Number(p.submission_id)) > -1)
+      : split.applied).map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
+                                     method: p.method, paid_at: p.paid_at, note: p.note || null,
+                                     submission_id: p.submission_id })),
     balance_due: fromCents(Math.max(0, invoice.jobTotalCents - invoice.paidCents)),
     /* Returned on the preview too, so what the CRM shows before sending is
        the whole document and not just its numbers. */
@@ -1572,7 +1656,8 @@ async function handleCreateInvoice(request, env, origin, actor) {
       footer: invoice.footer,
       customFields: invoice.customFields,
       idempotencyKey,
-      metadata: { submission_id: String(sub.id), customer_id: String(customer.id), kind },
+      metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
+                              billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
     });
   } catch (e) {
     return json({ error: e.message || "Stripe would not accept this invoice" }, 502, origin);
@@ -1585,7 +1670,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
        amount, status, lines, created_at, created_by, sent_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
-         JSON.stringify(storedLines(shape.lines, invoice.covers)), now, (actor && actor.name) || null, sentTo).run();
+         JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
@@ -1596,9 +1681,9 @@ async function handleCreateInvoice(request, env, origin, actor) {
 /* The stored copy of the lines. A phase invoice carries what it collects on
    the first line, so recordInvoicePaid can book the payment against exactly
    those parts. No new column needed. */
-function storedLines(lines, covers) {
+function storedLines(lines, covers, about) {
   if (!covers || !covers.length || !lines.length) return lines;
-  return lines.map((l, i) => (i === 0 ? { ...l, covers } : l));
+  return lines.map((l, i) => (i === 0 ? { ...l, covers, ...(about ? { about } : {}) } : l));
 }
 
 async function handleListInvoices(request, env, origin, customerId) {
@@ -1833,6 +1918,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
 
   const money = (c) => fromCents(c);
   const builds = [];
+  const built = [];
   (subs || []).forEach((sub) => {
     let details = {};
     try { details = JSON.parse(sub.details) || {}; } catch (e) {}
@@ -1841,13 +1927,17 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     if (!bd || !bd.rows || !bd.rows.length) return;          // consult / unpriced: nothing to bill
     const split = splitPayments(payRows || [], sub.id);
     const sum = balanceSummary(bd, split.applied);
-    const open = (invRows || []).filter((i) => Number(i.submission_id) === Number(sub.id) && i.status !== "paid");
+    const open = (invRows || []).filter((i) => invoiceSubs(i).indexOf(Number(sub.id)) > -1 && i.status !== "paid");
     const ps = phaseStatus(bd, split.applied, openPhaseParts(invRows, sub.id));
     const cents = (x) => ({ amount: money(x.amountCents), paid: money(x.paidCents),
                             remaining: money(x.remainingCents), open_invoice: x.openInvoice });
+    built.push({ sub: sub.id, bd, payments: split.applied, name: buildName(details.config) || "Order #" + sub.id,
+                 openParts: openPhaseParts(invRows, sub.id) });
     builds.push({
       submission_id: sub.id,
       status: sub.status,
+      /* "10x20 Gable / A-Frame" — how it is named when billed with another. */
+      name: buildName(details.config) || null,
       job_total: money(sum.jobTotalCents),
       deposit_total: money(sum.depositTotalCents),
       paid: money(sum.paidCents),
@@ -1865,19 +1955,43 @@ async function handleCustomerBalances(request, env, origin, customerId) {
       }),
       /* Per phase: the 30% deposit and the rest, each with what is paid and
          what is left, and the parts the CRM suggests billing next. */
-      phases: ps.phases.map((p) => ({ phase: p.phase, name: p.name, total: money(p.totalCents),
+      phases: ps.phases.map((p) => ({ phase: p.phase, kind: p.kind, name: p.name, total: money(p.totalCents),
                                       deposit: cents(p.deposit), remainder: cents(p.remainder) })),
       suggested: ps.suggested,
       /* Sent on Stripe and not paid yet. Not subtracted — it is not money in
          hand — but shown, because a check marked while a Stripe invoice for
          the same thing is still open is how a customer pays twice. */
       open_invoices: open.map((i) => ({ id: i.id, kind: i.kind, amount: Number(i.amount || 0),
-                                        status: i.status, hosted_url: i.hosted_url || null })),
+                                        status: i.status, hosted_url: i.hosted_url || null,
+                                        builds: invoiceSubs(i).length > 1 ? invoiceSubs(i) : null })),
     });
   });
   const unassigned = splitPayments(payRows || [], -1).unassigned;
+
+  /* ?together=7,38 — those builds billed as one: matching phases side by side
+     (concrete with concrete, shed with shed), each build's own amounts under
+     them, and what to bill next across all of them. */
+  let together = null;
+  const want = (new URL(request.url).searchParams.get("together") || "")
+    .split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const chosen = want.map((n) => built.find((b) => Number(b.sub) === n)).filter(Boolean);
+  if (chosen.length > 1) {
+    const ts = togetherStatus(chosen);
+    const cents = (x) => ({ amount: money(x.amountCents), paid: money(x.paidCents),
+                            remaining: money(x.remainingCents), open_invoice: x.openInvoice });
+    together = {
+      builds: chosen.map((b) => ({ submission_id: b.sub, name: b.name })),
+      phases: ts.groups.map((g) => ({
+        phase: g.phase, kind: g.kind, name: g.name,
+        items: g.items.map((i) => ({ submission_id: i.sub, build: i.build, phase: i.phase, name: i.name,
+                                     total: money(i.totalCents), deposit: cents(i.deposit), remainder: cents(i.remainder) }))
+      })),
+      suggested: ts.suggested,
+    };
+  }
   return json({
     builds,
+    together,
     phase_tracking: phaseTracking,
     unassigned: {
       count: unassigned.length,

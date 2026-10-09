@@ -1242,3 +1242,20 @@ Until it runs, everything works except tagging (409 `needs_migration`); untagged
 payments fill phase deposits first, then remainders, in phase order. A paid
 phase invoice books its payment against the parts it billed (stored on the
 invoice's `lines` JSON as `covers`).
+
+### Several builds billed together
+
+`POST /admin/invoices {submission_id, builds:[7,38], kind:"phase", parts:[{phase, part, sub?}]}`
+bills a customer's builds as one job: one Stripe invoice per step. Phases are
+matched by kind (quoteLines tags rows clearance / foundation / shed / interior),
+numbered over the kinds any of the builds has; `phase` in `parts` is that
+combined number, and `sub` narrows a part to one build. Lines are one per build
+per part ("Phase 2: Shed deposit (30%) — 10x20 Gable / A-Frame"). Every cover
+carries its `sub`; the invoice row is stored against the first build.
+Paid -> one payment per build (each with its own `phase_alloc`), written in one
+batch with the status flip. Parts on any open phase invoice — combined or not —
+are refused from every side. `GET /admin/customers/:id/balances?together=7,38`
+returns the combined view and suggestion. Builds must belong to one customer.
+
+Every line is what is LEFT on that part, payments folded in; the memo says what
+was applied. Payments not assigned to a build are never credited (warning).
