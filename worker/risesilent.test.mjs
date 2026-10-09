@@ -40,8 +40,9 @@ test('a raised line price: the row is simply the new price, no old figure, no di
   const up = quoteLines(r, [{ kind: 'override', item: r.foundName, amount: 3900, note: 'Sloped lot' }]);
   const pad = up.rows.find((x) => x.kind === 'foundation');
   assert.equal(pad.regularAmt, 3900);
+  assert.equal(pad.amt, 3400, 'the pad promo still comes off the typed price');
   assert.equal(pad.override, undefined);
-  assert.equal(up.discounts.length, 0);
+  assert.deepEqual(up.discounts.map((d) => d.kind), ['promo'], 'the raise itself is not a discount');
   assert.ok(!JSON.stringify(up).includes('Sloped lot'), 'the reason for a raise is not shown anywhere');
 });
 
@@ -50,11 +51,12 @@ test('a lowered line price: shown at its old price with a discount line giving t
   const was = quoteLines(r, []).rows.find((x) => x.kind === 'foundation');
   const bd = quoteLines(r, [{ kind: 'override', item: r.foundName, amount: 2400, note: 'Site already level' }]);
   const pad = bd.rows.find((x) => x.kind === 'foundation');
-  assert.equal(pad.amt, 2400);
+  assert.equal(pad.amt, 1900, 'the pad promo still comes off the typed price');
   const d = bd.discounts.find((x) => x.kind === 'override');
   assert.equal(d.label, r.foundName + ' \u2014 Site already level');
   assert.equal(toC(pad.regularAmt), toC(2400 + d.amt));
-  assert.equal(toC(d.amt), toC(Number(r.foundSell) - 2400));
+  assert.equal(toC(d.amt), toC(Number(r.foundSell) + Number(r.foundPromo) - 2400));
+  assert.deepEqual(bd.discounts.map((x) => x.kind), ['promo', 'override']);
   assert.ok(was);
   // it counts in "You save"
   assert.equal(toC(bd.savings), toC(bd.discountTotal * (1 + TAX_RATE)));
@@ -95,7 +97,7 @@ test('invoices: a rise has no line of its own; a lowered price is a discount lin
   assert.equal(inv.lines.reduce((t, l) => t + l.amountCents, 0), inv.totalCents);
   assert.ok(!inv.lines.some((l) => /Adjustment|\(5%\)/.test(l.label)), inv.lines.map((l) => l.label).join(' | '));
   const disc = inv.lines.filter((l) => l.discount);
-  assert.deepEqual(disc.map((l) => l.label), [r.foundName + ' \u2014 Site already level']);
+  assert.deepEqual(disc.map((l) => l.label), ['Concrete pad promo', r.foundName + ' \u2014 Site already level']);
   const tax = inv.lines.findIndex((l) => /Sales Tax/.test(l.label));
   assert.ok(inv.lines.indexOf(disc[0]) < tax);
   const bal = buildInvoice(bd, 'balance', [], { adjustments: adj });
@@ -113,7 +115,8 @@ test('quote page: a raise reads only the new price; a cut is explained in the Di
   page.ADJUSTMENTS = [{ kind: 'override', item: r.foundName, amount: 3900, note: 'Sloped lot' }, { kind: 'percent', value: 4 }];
   let bd = page.taxBreakdown(r);
   let t = text(page.buildBreakdown(bd)) + text(page.priceBox(bd, bd.total));
-  assert.doesNotMatch(t, /Sloped lot|Price set|Before|Adjust|Discounts|price-was/);
+  assert.doesNotMatch(t, /Sloped lot|Price set|Adjust|\$3,000/);
+  assert.match(t, /Concrete pad promo/, 'the promo still comes off the raised pad');
   page.ADJUSTMENTS = [{ kind: 'override', item: r.foundName, amount: 2400, note: 'Site already level' }];
   bd = page.taxBreakdown(r);
   t = text(page.buildBreakdown(bd));

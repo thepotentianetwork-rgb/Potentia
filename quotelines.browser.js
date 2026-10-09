@@ -156,6 +156,21 @@ function nameList(redline, which) {
    name -> {was, amt, delta, note}; delta (was - amt) comes off the phase the
    line belongs to, exactly where a comp would. A line that is comped is free,
    and a comp wins over an override. */
+/* THE CONCRETE PROMO SURVIVES A RE-PRICED PAD (Nando, 9 Oct 2026: "Make the
+   promo come off whatever pad price I type"). When the quote carries the pad
+   promo (redline.foundPromo — quotes priced before the promo have none), the
+   figure staff type for the pad is its REGULAR price and the promo still
+   comes off it, never more than the typed price. Shared with the worker's
+   stored effective price (index.js applyAdjustments) so the two agree. */
+function padPromoOf(redline, item) {
+  if (!redline || !item || item !== redline.foundName) return 0;
+  const p = Number(redline.foundPromo);
+  return isFinite(p) && p > 0 ? p : 0;
+}
+function overridePays(typed, promo) {
+  const t = Math.max(0, Number(typed) || 0);
+  return t - Math.min(Math.max(0, Number(promo) || 0), t);
+}
 function overrideMap(redline, adjustments) {
   const prices = compItemPrices(redline);
   const comped = compedMap(redline, adjustments);
@@ -168,7 +183,16 @@ function overrideMap(redline, adjustments) {
        and up the price, don't show the original price just change it. Only
        when I lower it should it explain why." A raise is just the line's
        price; a cut is a discount line with the staff's note as its reason. */
-    out[a.item] = { was: prices[a.item], amt: amt, delta: prices[a.item] - amt, note: a.note || null, up: amt > prices[a.item] };
+    /* typed: what staff entered; regular: the line's regular price (the pad
+       before its promo); amt: what the customer pays for it; promo: what the
+       pad promo takes off the typed price; cut: how far staff LOWERED it
+       below regular (a discount line with their reason), 0 when raised. */
+    const promo = Math.min(padPromoOf(redline, a.item), amt);
+    const regular = prices[a.item] + padPromoOf(redline, a.item);
+    const pays = overridePays(amt, promo);
+    out[a.item] = { was: prices[a.item], typed: amt, regular: regular, amt: pays, promo: promo,
+                    delta: prices[a.item] - pays, cut: Math.max(0, regular - amt),
+                    note: a.note || null, up: amt > regular };
   });
   return out;
 }
@@ -222,7 +246,7 @@ function quoteLines(redline, adjustments) {
     const out = [];
     names.forEach(function (n) {
       if (n && COMPED[n] != null && COMPED[n] > 0) out.push({ label: n + ' \u2014 included free', amt: COMPED[n], kind: 'comp', item: n });
-      else if (n && OVR[n] && OVR[n].delta > 0) out.push({ label: n + ' \u2014 ' + (OVR[n].note ? String(OVR[n].note).trim() : 'price adjusted'), amt: OVR[n].delta, kind: 'override', item: n });
+      else if (n && OVR[n] && OVR[n].cut > 0) out.push({ label: n + ' \u2014 ' + (OVR[n].note ? String(OVR[n].note).trim() : 'price adjusted'), amt: OVR[n].cut, kind: 'override', item: n });
     });
     return out;
   }
@@ -231,14 +255,14 @@ function quoteLines(redline, adjustments) {
      staff lowered it (the cut is then its own discount line). */
   function regularOf(name, amt) {
     const o = name && OVR[name];
-    return num(amt) - (o && o.up ? o.delta : 0);
+    return o && o.up ? o.typed : num(amt);
   }
   /* Rows a comp wiped out entirely (a free concrete pad): no phase, no
      money, but the item is still shown at its regular price with the comp
      among the discounts, so the page still adds up. Display only. */
   const freeRows = [];
-  function discountsFor(row, names, label, kind) {
-    const comps = compsIn(names);
+  function discountsFor(row, names, label, kind, before) {
+    const comps = (before || []).concat(compsIn(names));
     if (row) {
       row.discounts = (row.discounts || []).concat(comps);
     } else if (comps.length) {
@@ -325,12 +349,15 @@ function quoteLines(redline, adjustments) {
   /* Overridden: the staff figure is the price, so the promo arithmetic no
      longer describes it. Raised: the row is just its new price. Lowered: the
      cut is a discount line (compsIn) with the staff's reason. */
-  if (foundRow && !foundOvr && num(redline.foundPromo) > 0) {
-    foundRow.listAmt = foundRow.amt + num(redline.foundPromo);
-    foundRow.promo = { label: redline.foundPromoName || 'Concrete pad promo', amt: num(redline.foundPromo) };
-    foundRow.discounts = [{ label: foundRow.promo.label, amt: foundRow.promo.amt, kind: 'promo' }];
+  /* Re-priced, the promo still comes off the typed price (padPromoOf). */
+  const padPromo = foundOvr ? foundOvr.promo : num(redline.foundPromo);
+  const promoDisc = (COMPED[redline.foundName] == null && padPromo > 0)
+    ? [{ label: redline.foundPromoName || 'Concrete pad promo', amt: padPromo, kind: 'promo' }] : [];
+  if (foundRow && promoDisc.length) {
+    foundRow.listAmt = foundRow.amt + padPromo;
+    foundRow.promo = { label: promoDisc[0].label, amt: padPromo };
   }
-  discountsFor(foundRow, nameList(redline, 'foundation'), foundLabel, 'foundation');
+  discountsFor(foundRow, nameList(redline, 'foundation'), foundLabel, 'foundation', promoDisc);
   let travelTotal = 0;
   const travelLines = [];
   ADJUSTMENTS.forEach(function (a) {
@@ -687,6 +714,8 @@ function withCardPrice(redline, bd) {
   root.travelAmount = travelAmount;
   root.travelLabel = travelLabel;
   root.overrideMap = overrideMap;
+  root.padPromoOf = padPromoOf;
+  root.overridePays = overridePays;
   root.cashDiscountDisclosure = cashDiscountDisclosure;
   root.cashDiscountPctLabel = cashDiscountPctLabel;
   root.CASH_DISCOUNT_LABEL = CASH_DISCOUNT_LABEL;
