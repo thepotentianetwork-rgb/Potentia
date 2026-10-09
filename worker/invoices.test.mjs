@@ -215,7 +215,7 @@ test('each payment shows on the invoice as its own credit', () => {
   const credits = inv.lines.filter((l) => l.amountCents < 0);
   assert.equal(credits.length, 2, 'two payments, two credit lines');
   assert.match(credits[0].label, /Payment received by check 2026-09-01/);
-  assert.match(credits[1].label, /Payment received by stripe 2026-09-14/);
+  assert.match(credits[1].label, /Payment received by Stripe 2026-09-14/);
   assert.equal(credits.reduce((t, l) => t + l.amountCents, 0), -240000);
 });
 

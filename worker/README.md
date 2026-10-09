@@ -1185,3 +1185,33 @@ connected, that same function is what sends it automatically; only delivery
 changes. The customer's calendar links carry no guest list and none of the
 shop's notes, unlike the crew invites on the schedule.
 
+
+---
+
+## Payments come off the Stripe bill
+
+Every payment recorded against a build — marked by hand (cash, check,
+cashier's check, Invoice2go, Venmo, Zelle, card, other) or written by the
+Stripe webhook / Check Stripe when an invoice is paid — is subtracted before
+anything is billed:
+
+- **Balance invoice** = job total (tax incl.) − all payments on that build.
+- **Deposit invoice** = 30% deposit − all payments on that build (it used to
+  ignore them, so a deposit taken by check or on Invoice2go was billed again).
+- Nothing left → no Stripe call; the endpoint answers `code: "paid_in_full"`
+  or `"deposit_covered"` and the CRM shows "Paid in full".
+- All sums are in integer cents; amounts are stored rounded to the cent.
+- A payment with **no build** is not credited anywhere (the CRM asks before
+  saving one). A Stripe invoice that is sent but unpaid is not subtracted.
+
+Endpoints (admin auth):
+
+- `GET /admin/customers/:id/balances` — per priced build: `job_total`,
+  `paid`, `balance_due`, `deposit_due`, `paid_in_full`, `payments[]`,
+  `open_invoices[]`; plus `unassigned {count,total}`. Read-only.
+- `POST /admin/payments/:id` — edit `amount`, `method`, `paid_at`, `note`,
+  `submission_id`. Amount/method of a `stripe` row are refused (409).
+
+No D1 migration: the payments/invoices tables and columns already exist.
+Deploy the worker before the page: `admin-customer.html` falls back to the
+old buttons if `/balances` is missing, but the Edit button needs the new route.

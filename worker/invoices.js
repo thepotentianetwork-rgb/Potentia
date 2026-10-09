@@ -177,10 +177,17 @@ function jobLines(bd, adjustments) {
   return lines;
 }
 
-function depositInvoice(bd, adjustments) {
+/* The deposit, less anything this job has already been paid.
+ *
+ * Money taken outside Stripe — a cashier's check, cash, a deposit collected on
+ * Invoice2go before Stripe — is still money the customer has handed over. A
+ * deposit invoice that ignored it asked them for the full 30% a second time.
+ * So the same credits the balance invoice shows appear here too, one line per
+ * payment, and the figure asked for is what is still owed of the deposit. */
+function depositInvoice(bd, adjustments, payments) {
   const lines = jobLines(bd, adjustments);
-  const totalCents = toCents(bd.depositTotal);
-  const deferred = toCents(bd.total) - totalCents;
+  const depositCents = toCents(bd.depositTotal);
+  const deferred = toCents(bd.total) - depositCents;
   if (deferred > 0) {
     lines.push({
       label: 'Less balance due on completion — ' + pct(1 - depositRateOf(bd)) + '% of each phase',
@@ -188,7 +195,61 @@ function depositInvoice(bd, adjustments) {
       residue: true
     });
   }
+  creditLines(payments).forEach((l) => lines.push(l));
+  const totalCents = depositCents - paidCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
+}
+
+/* One credit line per payment received, exactly as the money arrived. Fixed:
+   reconcile() never nudges a payment by a penny. */
+function creditLines(payments) {
+  const out = [];
+  (payments || []).forEach((p) => {
+    const c = toCents(p.amount);
+    if (!c) return;
+    const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
+    const how = p.method ? ' by ' + methodLabel(p.method) : '';
+    out.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c), fixed: true });
+  });
+  return out;
+}
+
+/* Payments are stored in DOLLARS (REAL) — manual ones as typed, Stripe ones as
+   amount_paid / 100. Every sum is done in integer cents so that 0.1 + 0.2 never
+   leaves a balance of $0.00000000004 that refuses to read as "paid". */
+function paidCentsOf(payments) {
+  return (payments || []).reduce((t, p) => t + Math.abs(toCents(p.amount)), 0);
+}
+
+const METHOD_LABELS = { cash: 'cash', check: 'check', cashiers_check: "cashier's check",
+  venmo: 'Venmo', zelle: 'Zelle', invoice2go: 'Invoice2go', card: 'card', stripe: 'Stripe', other: 'other' };
+function methodLabel(m) { return METHOD_LABELS[m] || m; }
+
+/* WHERE A JOB STANDS: total, what has come in, what is left.
+ *
+ * The one figure the CRM puts beside the Stripe button, so it has to be the
+ * same arithmetic the invoice uses — it is built from the same quoteLines()
+ * breakdown and the same applied payments, in cents.
+ *
+ *   balanceCents   — never below zero. Overpayment is reported separately
+ *                    rather than shown as a negative "balance due".
+ *   depositDueCents — the 30% deposit less everything paid so far, never below
+ *                    zero. A check that covered the deposit makes this 0.
+ */
+export function balanceSummary(breakdown, payments) {
+  const jobTotalCents = toCents(breakdown && breakdown.total);
+  const depositTotalCents = toCents(breakdown && breakdown.depositTotal);
+  const paidCents = paidCentsOf(payments);
+  const owed = jobTotalCents - paidCents;
+  return {
+    jobTotalCents,
+    depositTotalCents,
+    paidCents,
+    balanceCents: Math.max(0, owed),
+    overpaidCents: Math.max(0, -owed),
+    depositDueCents: Math.max(0, depositTotalCents - paidCents),
+    paidInFull: jobTotalCents > 0 && owed <= 0
+  };
 }
 
 /* The balance: the whole job, less what has already been paid.
@@ -204,18 +265,10 @@ function depositInvoice(bd, adjustments) {
  * of buried in a subtraction. */
 function balanceInvoice(bd, adjustments, payments) {
   const lines = jobLines(bd, adjustments);
-
-  (payments || []).forEach((p) => {
-    const c = toCents(p.amount);
-    if (!c) return;
-    const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
-    const how = p.method ? ' by ' + p.method : '';
-    lines.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c), fixed: true });
-  });
+  creditLines(payments).forEach((l) => lines.push(l));
 
   const jobCents = toCents(bd.total);
-  const paidCents = (payments || []).reduce((t, p) => t + Math.abs(toCents(p.amount)), 0);
-  const totalCents = jobCents - paidCents;
+  const totalCents = jobCents - paidCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
@@ -328,13 +381,14 @@ export function buildMemo(bd, opts = {}) {
    block is the reason this is not just a discount line: "Shutters — Included"
    is something you gave them, where "Discount -$60" reads as the price having
    been soft in the first place. */
-export function buildFooter(bd, comped, kind) {
+export function buildFooter(bd, comped, kind, opts = {}) {
   const parts = [];
   const names = Object.keys(comped || {});
   if (names.length) parts.push('Included at no charge: ' + names.join(', ') + '.');
   if (bd.savings > 0.005) parts.push('You save ' + usd(bd.savings) + ' on this build.');
   parts.push(kind === 'deposit'
-    ? 'This invoice collects the deposit. The balance is invoiced on completion.'
+    ? 'This invoice collects the deposit' + (opts.credited ? ', less payments already received (credited above)' : '') +
+      '. The balance is invoiced on completion.'
     : 'This invoice settles the balance. Payments already received are credited above.');
   parts.push('All amounts include Utah sales tax.');
   return clip(parts.join(' '), LIMITS.footer);
@@ -392,22 +446,26 @@ export function buildInvoice(breakdown, kind, payments, opts = {}) {
   const paid = payments || [];
   const adjustments = opts.adjustments || [];
   const out = kind === 'deposit'
-    ? depositInvoice(breakdown, adjustments)
+    ? depositInvoice(breakdown, adjustments, paid)
     : balanceInvoice(breakdown, adjustments, paid);
 
   if (out.totalCents <= 0) {
-    throw new Error(kind === 'balance'
-      ? 'nothing left to invoice — payments already cover this job'
-      : 'the deposit for this job works out to nothing');
+    const e = new Error(kind === 'balance'
+      ? 'Paid in full — payments already cover this job, so there is nothing to bill'
+      : (paid.length
+        ? 'The deposit is already covered by payments received — bill the balance instead'
+        : 'the deposit for this job works out to nothing'));
+    e.code = kind === 'balance' ? 'paid_in_full' : (paid.length ? 'deposit_covered' : 'nothing_to_bill');
+    throw e;
   }
   return {
     kind,
     lines: out.lines.map((l) => ({ ...l, label: clip(l.label, LIMITS.label) })),
     totalCents: out.totalCents,
     jobTotalCents: toCents(breakdown.total),
-    paidCents: paid.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    paidCents: paidCentsOf(paid),
     memo: buildMemo(breakdown, opts),
-    footer: buildFooter(breakdown, opts.comped, kind),
+    footer: buildFooter(breakdown, opts.comped, kind, { credited: paid.length > 0 }),
     customFields: buildCustomFields(breakdown, kind, opts)
   };
 }

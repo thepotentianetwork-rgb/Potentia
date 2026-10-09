@@ -225,6 +225,22 @@ select:focus{border-color:var(--sp-blue)}
 .inv-memo{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);white-space:pre-wrap;margin:8px 0 0;line-height:1.6;overflow-x:auto}
 .inv-warn{margin-top:10px;padding:9px 11px;border:1px solid rgba(224,180,79,0.5);background:rgba(224,180,79,0.08);color:#e0b44f;font-size:12px;line-height:1.5;border-radius:6px}
 .inv-err{margin-top:8px;color:#e0684f;font-size:12px;line-height:1.5}
+/* Where the job stands, above the Stripe buttons: total, what came in, what is left. */
+.bal-box{margin:0 0 12px;padding:12px 14px;border:1px solid var(--dim);border-radius:8px;background:rgba(255,255,255,0.02)}
+.bal-line{display:flex;justify-content:space-between;align-items:baseline;gap:14px;font-size:14px;color:var(--fg);margin-bottom:4px}
+.bal-line span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}
+.bal-sub{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--dim);margin:8px 0 4px}
+.bal-pay{display:flex;justify-content:space-between;gap:14px;font-size:12px;color:var(--silver);padding:2px 0 2px 10px;border-left:2px solid rgba(95,208,138,0.4);margin-bottom:3px}
+.bal-pay span:last-child{color:#5fd08a;white-space:nowrap;font-variant-numeric:tabular-nums}
+.bal-none{font-size:12px;color:var(--dim);padding-left:10px}
+.bal-due{display:flex;justify-content:space-between;align-items:baseline;gap:14px;margin-top:8px;padding-top:8px;border-top:1px solid var(--dim);font-size:17px;color:var(--bright)}
+.bal-due strong{font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+.bal-full{color:#5fd08a}
+.inv-done{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#5fd08a}
+.payment-edit{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.payment-edit input,.payment-edit select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:6px 8px}
+.payment-edit input[type=number]{width:110px}
+.payment-btns{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
 .payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
 
 @media (max-width:760px){
@@ -362,6 +378,7 @@ select:focus{border-color:var(--sp-blue)}
         <option value="">Method…</option>
         <option value="cash">Cash</option>
         <option value="check">Check</option>
+        <option value="cashiers_check">Cashier's check</option>
         <option value="venmo">Venmo</option>
         <option value="zelle">Zelle</option>
         <option value="invoice2go">Invoice2Go</option>
@@ -1361,6 +1378,9 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
   var note = document.createElement('div');
   note.className = 'inv-note';
   note.textContent = 'Job total ' + money(data.job_total) + ' · already paid ' + money(data.already_paid) +
+    (data.payments && data.payments.length
+      ? ' (' + data.payments.map(function (p) { return PAY_LABEL(p.method) + ' ' + money(p.amount); }).join(', ') + ')'
+      : '') +
     '. Sent from Stripe by email, payable by bank transfer or card.';
   box.appendChild(note);
 
@@ -1415,7 +1435,7 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
   var send = document.createElement('button');
   send.type = 'button';
   send.className = 'inv-btn send';
-  send.textContent = 'Send this ' + INV_KIND_LABELS[kind].toLowerCase() + ' invoice';
+  send.textContent = 'Send ' + money(data.amount) + ' ' + INV_KIND_LABELS[kind].toLowerCase() + ' bill with Stripe';
   var cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'inv-btn quiet';
@@ -1448,6 +1468,73 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
   return box;
 }
 
+/* WHERE EACH BUILD STANDS, from GET /admin/customers/:id/balances.
+ *
+ * Worked out by the worker with the same code that builds the Stripe invoice,
+ * so the figure on the button is the figure that would be billed. Null when
+ * that endpoint is not there (an older worker): the page then falls back to
+ * the plain "Work out the …" buttons rather than showing a guessed number. */
+var BALANCES = null;
+function balanceFor(id) {
+  if (!BALANCES) return null;
+  return BALANCES.filter(function (b) { return Number(b.submission_id) === Number(id); })[0] || null;
+}
+var PAY_LABEL = function (m) { return PAYMENT_METHOD_LABELS[m] || m; };
+/* A date typed into the form is stored as midnight UTC, which in Utah is the
+   evening BEFORE — so those read in UTC and show the day that was typed. A real
+   timestamp (a Stripe payment) reads in local time as usual. */
+function shortDate(v) {
+  var d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  var dateOnly = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return d.toLocaleDateString(undefined, dateOnly ? { timeZone: 'UTC' } : {});
+}
+
+function renderBalanceBox(bal) {
+  var box = document.createElement('div');
+  box.className = 'bal-box';
+  function line(cls, a, b) {
+    var r = document.createElement('div'); r.className = cls;
+    var x = document.createElement('span'); x.textContent = a;
+    var y = document.createElement(cls === 'bal-due' ? 'strong' : 'span'); y.textContent = b;
+    r.appendChild(x); r.appendChild(y); return r;
+  }
+  box.appendChild(line('bal-line', 'Total (incl. tax)', money(bal.job_total)));
+  var sub = document.createElement('div'); sub.className = 'bal-sub';
+  sub.textContent = 'Payments received';
+  box.appendChild(sub);
+  if (!bal.payments.length) {
+    var none = document.createElement('div'); none.className = 'bal-none';
+    none.textContent = 'None yet';
+    box.appendChild(none);
+  }
+  bal.payments.forEach(function (p) {
+    var bits = [PAY_LABEL(p.method), shortDate(p.paid_at)];
+    if (p.note) bits.push(p.note);
+    box.appendChild(line('bal-pay', bits.filter(Boolean).join(' \u00b7 '), '\u2212' + money(p.amount)));
+  });
+  if (bal.payments.length > 1) box.appendChild(line('bal-line', 'Total received', money(bal.paid)));
+  var due = line('bal-due', bal.paid_in_full ? 'Paid in full' : 'Balance due',
+                 bal.paid_in_full ? money(0) : money(bal.balance_due));
+  if (bal.paid_in_full) due.classList.add('bal-full');
+  box.appendChild(due);
+  if (bal.overpaid > 0) {
+    var over = document.createElement('div'); over.className = 'inv-warn';
+    over.textContent = 'Payments are ' + money(bal.overpaid) + ' more than the job total. Check for a duplicate entry.';
+    box.appendChild(over);
+  }
+  /* Billed on Stripe and not paid yet. Not subtracted — it is not money in
+     hand — but a check marked while this is open is how someone pays twice. */
+  (bal.open_invoices || []).forEach(function (o) {
+    var w = document.createElement('div'); w.className = 'inv-warn';
+    w.textContent = 'A Stripe ' + o.kind + ' bill for ' + money(o.amount) + ' is still open. ' +
+      (bal.payments.length ? 'If a payment above already covered it, void it below so they are not charged twice.'
+                           : 'It is not counted until it is paid.');
+    box.appendChild(w);
+  });
+  return box;
+}
+
 function renderInvoiceBlock(card, s, details) {
   var block = document.createElement('div');
   block.className = 'inv-block';
@@ -1455,6 +1542,8 @@ function renderInvoiceBlock(card, s, details) {
   label.className = 'inv-label';
   label.textContent = 'Invoice';
   block.appendChild(label);
+  var bal = balanceFor(s.id);
+  if (bal) block.appendChild(renderBalanceBox(bal));
 
   ['deposit', 'balance'].forEach(function (kind) {
     var row = document.createElement('div');
@@ -1589,10 +1678,23 @@ function renderInvoiceBlock(card, s, details) {
       return;
     }
 
+    /* With the balance known, the button says what Stripe will be asked for —
+       and when payments already cover it there is no Stripe button at all. */
+    var due = bal ? (kind === 'deposit' ? bal.deposit_due : bal.balance_due) : null;
+    if (bal && !(due > 0)) {
+      var done = document.createElement('span');
+      done.className = 'inv-done';
+      done.textContent = kind === 'balance' ? 'Paid in full \u2014 nothing to bill'
+        : (bal.paid > 0 ? 'Deposit covered by payments received' : 'Nothing to bill');
+      row.appendChild(done);
+      block.appendChild(row);
+      return;
+    }
+    var btnLabel = bal ? 'Bill ' + kind + ' ' + money(due) + ' with Stripe' : 'Work out the ' + kind;
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'inv-btn';
-    btn.textContent = 'Work out the ' + kind;
+    btn.textContent = btnLabel;
     btn.title = 'Shows you the exact lines and total first. Nothing is sent until you confirm.';
     var err = document.createElement('div');
     err.className = 'inv-err';
@@ -1608,8 +1710,11 @@ function renderInvoiceBlock(card, s, details) {
         body: JSON.stringify({ submission_id: s.id, kind: kind, preview: true })
       }).then(function (r) {
         btn.disabled = false;
-        btn.textContent = 'Work out the ' + kind;
+        btn.textContent = btnLabel;
         if (!r.ok) {
+          /* Paid in full / deposit covered is an answer, not a failure. */
+          var settled = r.data && (r.data.code === 'paid_in_full' || r.data.code === 'deposit_covered');
+          err.style.color = settled ? '#5fd08a' : '';
           err.textContent = (r.data && r.data.error) || 'Could not price this one.';
           err.style.display = 'block';
           return;
@@ -1633,7 +1738,7 @@ function renderInvoiceBlock(card, s, details) {
         block.insertBefore(panel, row);
       }).catch(function () {
         btn.disabled = false;
-        btn.textContent = 'Work out the ' + kind;
+        btn.textContent = btnLabel;
         err.textContent = 'Could not reach the server.';
         err.style.display = 'block';
       });
@@ -1897,9 +2002,10 @@ function renderNotes(notes) {
 }
 
 var PAYMENT_METHOD_LABELS = {
-  cash: 'Cash', check: 'Check', venmo: 'Venmo', zelle: 'Zelle',
-  invoice2go: 'Invoice2Go', card: 'Card', other: 'Other'
+  cash: 'Cash', check: 'Check', cashiers_check: 'Cashier\u2019s check', venmo: 'Venmo', zelle: 'Zelle',
+  invoice2go: 'Invoice2Go', card: 'Card', stripe: 'Stripe', other: 'Other'
 };
+var MANUAL_METHODS = ['cash', 'check', 'cashiers_check', 'venmo', 'zelle', 'invoice2go', 'card', 'other'];
 
 /* The customer's builds, for the picker and for naming a build on a payment
    row. Filled by loadCustomer from the submissions it already fetched, so
@@ -1928,6 +2034,17 @@ function fillSubmissionPicker() {
   /* One build means there is nothing to choose — preselect it, because the
      whole problem this solves is payments going in unattributed. */
   if (SUBMISSIONS.length === 1) sel.value = SUBMISSIONS[0].id;
+  /* Or one build that can still be billed — superseded, lost and consult
+     requests are not where a payment goes. */
+  else {
+    var live = SUBMISSIONS.filter(isBillable);
+    if (live.length === 1) sel.value = live[0].id;
+  }
+}
+function isBillable(sub) {
+  if (sub.status === 'superseded' || sub.status === 'lost') return false;
+  if (BALANCES) return !!balanceFor(sub.id);
+  return true;
 }
 
 function renderPayments(payments) {
@@ -1955,7 +2072,7 @@ function renderPayments(payments) {
     amt.textContent = '$' + Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     var meta = document.createElement('div');
     meta.className = 'payment-meta';
-    meta.textContent = (PAYMENT_METHOD_LABELS[p.method] || p.method) + ' · ' + new Date(p.paid_at).toLocaleDateString();
+    meta.textContent = (PAYMENT_METHOD_LABELS[p.method] || p.method) + ' · ' + shortDate(p.paid_at);
     main.appendChild(amt);
     main.appendChild(meta);
     if (p.note) {
@@ -2003,16 +2120,95 @@ function renderPayments(payments) {
     delBtn.type = 'button';
     delBtn.textContent = 'Remove';
     delBtn.addEventListener('click', function () {
-      if (!confirm('Remove this payment entry?')) return;
+      /* A Stripe row mirrors money Stripe moved; its invoice stays Paid. Removing
+         the row would make the CRM bill that money again. */
+      var msg = p.method === 'stripe'
+        ? 'This payment was recorded from Stripe. Removing it adds ' + money(p.amount) +
+          ' back onto the balance, and the next Stripe bill will ask for it again. Remove anyway?'
+        : 'Remove this ' + money(p.amount) + ' payment? It will no longer come off the balance.';
+      if (!confirm(msg)) return;
       authFetch('/admin/payments/' + p.id, { method: 'DELETE' }).then(function (r) {
         if (r.ok) loadCustomer();
       });
     });
 
+    var btns = document.createElement('div');
+    btns.className = 'payment-btns';
+    /* Fix a typo'd amount, method, date or note. Stripe rows are read-only on
+       amount and method — the worker refuses those — so only note/date show. */
+    var editBtn = document.createElement('button');
+    editBtn.className = 'payment-del';
+    editBtn.type = 'button';
+    editBtn.textContent = 'Edit';
+    editBtn.addEventListener('click', function () {
+      if (main.querySelector('.payment-edit')) return;
+      main.appendChild(paymentEditor(p));
+    });
+    btns.appendChild(editBtn);
+    btns.appendChild(delBtn);
+
     row.appendChild(main);
-    row.appendChild(delBtn);
+    row.appendChild(btns);
     wrap.appendChild(row);
   });
+}
+
+function paymentEditor(p) {
+  var f = document.createElement('form');
+  f.className = 'payment-edit';
+  var stripe = p.method === 'stripe';
+  var amt = document.createElement('input');
+  amt.type = 'number'; amt.step = '0.01'; amt.min = '0.01'; amt.value = Number(p.amount).toFixed(2);
+  amt.setAttribute('aria-label', 'Amount');
+  var meth = document.createElement('select');
+  meth.setAttribute('aria-label', 'Method');
+  MANUAL_METHODS.forEach(function (m) {
+    var o = document.createElement('option'); o.value = m; o.textContent = PAYMENT_METHOD_LABELS[m];
+    meth.appendChild(o);
+  });
+  meth.value = p.method;
+  var date = document.createElement('input');
+  date.type = 'date'; date.value = String(p.paid_at || '').slice(0, 10);
+  date.setAttribute('aria-label', 'Date paid');
+  var note = document.createElement('input');
+  note.type = 'text'; note.value = p.note || ''; note.placeholder = 'Note';
+  /* Which build it pays for — so a payment on the wrong build can be moved,
+     not only one with no build at all. */
+  var build = document.createElement('select');
+  build.setAttribute('aria-label', 'Build');
+  var nb = document.createElement('option'); nb.value = ''; nb.textContent = 'No build';
+  build.appendChild(nb);
+  SUBMISSIONS.forEach(function (sub) {
+    var o = document.createElement('option'); o.value = sub.id; o.textContent = buildLabel(sub.id);
+    build.appendChild(o);
+  });
+  build.value = p.submission_id ? String(p.submission_id) : '';
+  var save = document.createElement('button');
+  save.type = 'submit'; save.className = 'inv-btn'; save.textContent = 'Save';
+  var cancel = document.createElement('button');
+  cancel.type = 'button'; cancel.className = 'inv-btn quiet'; cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', function () { f.remove(); });
+  if (!stripe) { f.appendChild(amt); f.appendChild(meth); }
+  f.appendChild(date); f.appendChild(build); f.appendChild(note); f.appendChild(save); f.appendChild(cancel);
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var body = { note: note.value.trim(), submission_id: build.value ? Number(build.value) : null };
+    if (date.value) body.paid_at = date.value + 'T00:00:00.000Z';
+    if (!stripe) {
+      if (!(Number(amt.value) > 0)) { alert('Enter an amount.'); return; }
+      body.amount = Number(amt.value);
+      body.method = meth.value;
+    }
+    save.disabled = true;
+    authFetch('/admin/payments/' + p.id, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }).then(function (r) {
+      if (r.ok) { loadCustomer(); return; }
+      save.disabled = false;
+      alert((r.data && r.data.error) || 'Could not save that change.');
+    }).catch(function () { save.disabled = false; alert('Could not reach the server.'); });
+  });
+  return f;
 }
 
 var CUSTOMER_NAME = '';
@@ -2166,10 +2362,15 @@ function loadCustomer() {
   Promise.all([
     authFetch('/admin/customers/' + customerId),
     authFetch('/admin/customers/' + customerId + '/invoices')
+      .catch(function () { return { ok: false, data: {} }; }),
+    /* Balances: optional. An older worker answers 404 and the page carries on
+       with the plain buttons. */
+    authFetch('/admin/customers/' + customerId + '/balances')
       .catch(function () { return { ok: false, data: {} }; })
   ]).then(function (both) {
     var r = both[0];
     INVOICES = (both[1].ok && both[1].data.invoices) || [];
+    BALANCES = (both[2] && both[2].ok && both[2].data && both[2].data.builds) || null;
     if (!r.ok) {
       document.getElementById('customer-name').textContent = 'Not found';
       document.getElementById('danger-zone').style.display = 'none';
@@ -2279,6 +2480,11 @@ document.getElementById('payment-form').addEventListener('submit', function (e) 
   var amount = Number(amountInput.value);
   var method = methodInput.value;
   if (!amount || amount <= 0 || !method) return;
+  /* A payment with no build is not taken off any Stripe bill. Allowed — an
+     unrecorded payment is worse — but never by accident. */
+  var pick = document.getElementById('pay-submission');
+  if (pick && !pick.value && SUBMISSIONS.some(isBillable) &&
+      !confirm('No build picked, so this payment will NOT come off any Stripe bill until you assign it. Save it anyway?')) return;
 
   authFetch('/admin/customers/' + customerId + '/payments', {
     method: 'POST',

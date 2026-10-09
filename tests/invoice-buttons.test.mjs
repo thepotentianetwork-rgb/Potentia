@@ -28,7 +28,8 @@ import { quoteLines } from '../worker/quotelines.js';
 import { buildInvoice, fromCents } from '../worker/invoices.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+/* CHROME_BIN overrides, for a box where Chrome lives elsewhere. */
+const CHROME = process.env.CHROME_BIN || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 let fails = 0;
 const check = (n, c, x) => { if (c) console.log('  ok   ' + n); else { fails++; console.log('  FAIL ' + n + (x !== undefined ? '  ' + JSON.stringify(x).slice(0, 260) : '')); } };
@@ -253,6 +254,7 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
 
     var btns = [].slice.call(quoted.querySelectorAll('.inv-btn'));
     R.buttonLabels = btns.map(txt);
+    R.balBoxBefore = txt(quoted.querySelector('.bal-box'));
 
     // ---- planning a build from one date --------------------------------
     var won = cards().filter(function (c) { return c.querySelector('.plan-wrap'); })[0];
@@ -506,6 +508,24 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
       R.balanceAfterPaidNote = bp2 ? txt(bp2.querySelector('.inv-note')) : null;
       R.balanceAfterPaidWarnings = bp2 ? [].slice.call(bp2.querySelectorAll('.inv-warn')).map(txt) : [];
     }
+    R.balBoxAfterPaid = txt(paidCard.querySelector('.bal-box'));
+    R.balBtnAfterPaid = balAfter ? txt(balAfter) : null;
+
+    /* ---- the rest paid by cashier's check, marked by hand ------------- */
+    var cid = new URLSearchParams(location.search).get('id');
+    var rest = await authFetch('/admin/customers/' + cid + '/balances');
+    var b7 = rest.data.builds.filter(function (b) { return b.submission_id === 7; })[0];
+    await authFetch('/admin/customers/' + cid + '/payments', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: b7.balance_due, method: 'cashiers_check', submission_id: 7 }) });
+    loadCustomer();
+    var fullCard = await until(function () {
+      var c = cards().filter(function (x) { return x.querySelector('.inv-block'); })[0];
+      return c && /Paid in full/.test(txt(c.querySelector('.bal-box'))) ? c : null;
+    }, 8000);
+    R.fullBox = fullCard ? txt(fullCard.querySelector('.bal-box')) : null;
+    R.fullButtons = fullCard ? [].slice.call(fullCard.querySelectorAll('.inv-btn')).map(txt) : null;
+    R.fullDone = fullCard ? [].slice.call(fullCard.querySelectorAll('.inv-done')).map(txt) : null;
   } catch (e) { R.threw = String((e && e.stack) || e); }
   fetch('${BASE}/__result', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(R) });
@@ -540,8 +560,13 @@ check('only the live priced orders offer invoicing',
   { blocks: R.blocksPerCard, prices: R.orderOfCards });
 check('with a row for each kind',
   JSON.stringify(R.kinds) === '["Deposit","Balance"]', R.kinds);
-check('and a button for each, before anything is sent',
-  JSON.stringify(R.buttonLabels) === '["Work out the deposit","Work out the balance"]', R.buttonLabels);
+check('and a button for each, naming what Stripe would be asked for',
+  JSON.stringify(R.buttonLabels) === JSON.stringify(['Bill deposit ' + money(depositDue) + ' with Stripe',
+                                                     'Bill balance ' + money(balanceUncredited) + ' with Stripe']),
+  R.buttonLabels);
+check('the balance box shows the total, no payments yet, and the whole job due',
+  /Total \(incl\. tax\)/.test(R.balBoxBefore || '') && (R.balBoxBefore || '').indexOf(money(balanceUncredited)) !== -1 &&
+  /None yet/.test(R.balBoxBefore || '') && /Balance due/.test(R.balBoxBefore || ''), R.balBoxBefore);
 
 console.log('\n-- the preview, which is the whole safety story --');
 check('pressing the button shows a preview', R.previewAppeared === true);
@@ -755,6 +780,19 @@ check('and the deposit shows as money received',
   R.balanceAfterPaidNote);
 check('with the double-bill warning gone',
   (R.balanceAfterPaidWarnings || []).length === 0, R.balanceAfterPaidWarnings);
+
+check('the balance box lists the Stripe deposit as received',
+  /Stripe/.test(R.balBoxAfterPaid || '') && (R.balBoxAfterPaid || '').indexOf(money(depositDue)) !== -1,
+  R.balBoxAfterPaid);
+check('and the balance button names the rest',
+  R.balBtnAfterPaid === 'Bill balance ' + money(balanceUncredited - depositDue) + ' with Stripe', R.balBtnAfterPaid);
+
+console.log('\n-- a cashier\'s check marked by hand covers the rest --');
+check('the box says Paid in full and lists the check',
+  /Paid in full/.test(R.fullBox || '') && /Cashier.s check/.test(R.fullBox || ''), R.fullBox);
+check('and there is NO Stripe bill button left',
+  !(R.fullButtons || []).some((t) => /^Bill /.test(t)), R.fullButtons);
+check('it says so instead', (R.fullDone || []).some((t) => /Paid in full/.test(t)), R.fullDone);
 
 console.log(fails ? '\n' + fails + ' FAILED' : '\nall passed');
 process.exit(fails ? 1 : 0);

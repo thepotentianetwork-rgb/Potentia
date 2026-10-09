@@ -29,7 +29,7 @@ import { trackPhases, trackComplete, trackChangeWindow } from "./tracker.js";
 import { scheduleMessage } from "./schedulemsg.js";
 import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
          stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
-import { buildInvoice, splitPayments, fromCents, usd, fingerprint } from "./invoices.js";
+import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, balanceSummary } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
@@ -1364,7 +1364,10 @@ async function handleCreateInvoice(request, env, origin, actor) {
   try {
     ctx = await invoiceContext(env, submissionId, kind);
   } catch (e) {
-    return json({ error: e.message }, e.status || 400, origin);
+    /* code tells the page WHY there is nothing to bill — "paid_in_full" and
+       "deposit_covered" are not failures, and the CRM says so instead of
+       showing them as an error. */
+    return json({ error: e.message, code: e.code || null }, e.status || 400, origin);
   }
   const { sub, customer, split, invoice } = ctx;
 
@@ -1412,6 +1415,11 @@ async function handleCreateInvoice(request, env, origin, actor) {
     amount: fromCents(invoice.totalCents),
     job_total: fromCents(invoice.jobTotalCents),
     already_paid: fromCents(invoice.paidCents),
+    /* The payments that were credited, so the preview can list them and a
+       wrongly-attributed one is visible before anything is sent. */
+    payments: split.applied.map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
+                                          method: p.method, paid_at: p.paid_at, note: p.note || null })),
+    balance_due: fromCents(Math.max(0, invoice.jobTotalCents - invoice.paidCents)),
     /* Returned on the preview too, so what the CRM shows before sending is
        the whole document and not just its numbers. */
     memo: invoice.memo,
@@ -1544,14 +1552,25 @@ async function handleVoidInvoice(request, env, origin, id) {
 // A single collection is sometimes split across two methods (e.g. part cash,
 // part Venmo) — the UI handles that by just logging two separate entries
 // rather than needing a special multi-method row.
-const PAYMENT_METHODS = ["cash", "check", "venmo", "zelle", "invoice2go", "card", "other"];
+const PAYMENT_METHODS = ["cash", "check", "cashiers_check", "venmo", "zelle", "invoice2go", "card", "other"];
+
+/* Dollars in, dollars stored — but always a whole number of cents. A typed
+   "1250.005" would otherwise sit in the table as a value no invoice can credit
+   exactly, and the balance would never quite reach zero. */
+function paymentAmount(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const cents = toCents(n);
+  return cents > 0 ? fromCents(cents) : null;
+}
+
 async function handleAddPayment(request, env, origin, customerId) {
   const body = await request.json().catch(() => ({}));
-  const amount = Number(body.amount);
+  const amount = paymentAmount(body.amount);
   const method = String(body.method || "").toLowerCase().trim();
   const note = String(body.note || "").slice(0, 500);
   const paidAt = body.paid_at ? String(body.paid_at).slice(0, 40) : new Date().toISOString();
-  if (!Number.isFinite(amount) || amount <= 0) return json({ error: "valid amount required" }, 400, origin);
+  if (amount == null) return json({ error: "valid amount required" }, 400, origin);
   if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
 
   await ensurePaymentsTable(env);
@@ -1605,6 +1624,130 @@ async function handleSetPaymentSubmission(request, env, origin, paymentId) {
   await env.DB.prepare("UPDATE payments SET submission_id = ? WHERE id = ?")
     .bind(submissionId, paymentId).run();
   return json({ ok: true, id: paymentId, submission_id: submissionId }, 200, origin);
+}
+
+/* POST /admin/payments/:id — correct a payment someone typed in.
+ *
+ * Amount, method, date, note and build can all be fixed. Payments recorded
+ * FROM Stripe are refused on amount and method: they mirror money Stripe moved,
+ * and the invoice row they belong to is already marked paid, so editing the
+ * copy here would leave the two disagreeing with no way to notice. A Stripe
+ * mistake is a refund, done in Stripe. Its note and build can still be fixed.
+ *
+ * Nothing stores a running balance, so there is nothing else to update: every
+ * balance and every invoice is worked out from the payments table on demand. */
+async function handleUpdatePayment(request, env, origin, paymentId) {
+  const body = await request.json().catch(() => ({}));
+  await ensurePaymentsTable(env);
+  const pay = await env.DB.prepare("SELECT * FROM payments WHERE id = ?").bind(paymentId).first();
+  if (!pay) return json({ error: "no such payment" }, 404, origin);
+
+  const sets = [], args = [];
+  if (body.amount !== undefined || body.method !== undefined) {
+    if (pay.method === "stripe") {
+      return json({ error: "this payment came from Stripe — refund or adjust it in Stripe, not here" }, 409, origin);
+    }
+  }
+  if (body.amount !== undefined) {
+    const amount = paymentAmount(body.amount);
+    if (amount == null) return json({ error: "valid amount required" }, 400, origin);
+    sets.push("amount = ?"); args.push(amount);
+  }
+  if (body.method !== undefined) {
+    const method = String(body.method || "").toLowerCase().trim();
+    if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
+    sets.push("method = ?"); args.push(method);
+  }
+  if (body.paid_at !== undefined) {
+    const paidAt = String(body.paid_at || "").slice(0, 40);
+    if (!paidAt || isNaN(new Date(paidAt).getTime())) return json({ error: "valid paid_at required" }, 400, origin);
+    sets.push("paid_at = ?"); args.push(paidAt);
+  }
+  if (body.note !== undefined) {
+    sets.push("note = ?"); args.push(String(body.note || "").slice(0, 500) || null);
+  }
+  if (body.submission_id !== undefined) {
+    let submissionId = null;
+    if (body.submission_id !== null && body.submission_id !== "") {
+      submissionId = Number(body.submission_id);
+      if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+      const owns = await env.DB.prepare(
+        "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+      ).bind(submissionId, pay.customer_id).first();
+      if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+    }
+    sets.push("submission_id = ?"); args.push(submissionId);
+  }
+  if (!sets.length) return json({ error: "nothing to change" }, 400, origin);
+
+  await env.DB.prepare("UPDATE payments SET " + sets.join(", ") + " WHERE id = ?")
+    .bind(...args, paymentId).run();
+  const row = await env.DB.prepare(
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id FROM payments WHERE id = ?"
+  ).bind(paymentId).first();
+  return json({ ok: true, payment: row }, 200, origin);
+}
+
+/* GET /admin/customers/:id/balances — where every billable build stands.
+ *
+ * Total (tax included, from the same quoteLines() the quote and the invoice
+ * use), the payments credited to it, and what is left. This is the figure the
+ * CRM prints on the Stripe button, so it is computed here, once, by the same
+ * code that builds the invoice — the page never does its own arithmetic.
+ *
+ * Read-only. Works out everything from the payments table on every call, so
+ * adding, editing, reassigning or deleting a payment changes it immediately. */
+async function handleCustomerBalances(request, env, origin, customerId) {
+  await ensurePaymentsTable(env);
+  await ensureInvoicesTable(env);
+  const { results: subs } = await env.DB.prepare(
+    "SELECT id, status, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE customer_id = ?"
+  ).bind(customerId).all();
+  const { results: payRows } = await env.DB.prepare(
+    "SELECT id, amount, method, note, paid_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+  ).bind(customerId).all();
+  const { results: invRows } = await env.DB.prepare(
+    "SELECT id, submission_id, kind, amount, status, hosted_url FROM invoices WHERE customer_id = ? AND status NOT IN ('void','draft_failed')"
+  ).bind(customerId).all();
+
+  const money = (c) => fromCents(c);
+  const builds = [];
+  (subs || []).forEach((sub) => {
+    let details = {};
+    try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+    let bd = null;
+    try { bd = quoteLines(details.redline, adjustmentsOf(sub)); } catch (e) { bd = null; }
+    if (!bd || !bd.rows || !bd.rows.length) return;          // consult / unpriced: nothing to bill
+    const split = splitPayments(payRows || [], sub.id);
+    const sum = balanceSummary(bd, split.applied);
+    const open = (invRows || []).filter((i) => Number(i.submission_id) === Number(sub.id) && i.status !== "paid");
+    builds.push({
+      submission_id: sub.id,
+      status: sub.status,
+      job_total: money(sum.jobTotalCents),
+      deposit_total: money(sum.depositTotalCents),
+      paid: money(sum.paidCents),
+      balance_due: money(sum.balanceCents),
+      deposit_due: money(sum.depositDueCents),
+      overpaid: money(sum.overpaidCents),
+      paid_in_full: sum.paidInFull,
+      payments: split.applied.map((p) => ({ id: p.id, amount: money(toCents(p.amount)), method: p.method,
+                                            paid_at: p.paid_at, note: p.note || null })),
+      /* Sent on Stripe and not paid yet. Not subtracted — it is not money in
+         hand — but shown, because a check marked while a Stripe invoice for
+         the same thing is still open is how a customer pays twice. */
+      open_invoices: open.map((i) => ({ id: i.id, kind: i.kind, amount: Number(i.amount || 0),
+                                        status: i.status, hosted_url: i.hosted_url || null })),
+    });
+  });
+  const unassigned = splitPayments(payRows || [], -1).unassigned;
+  return json({
+    builds,
+    unassigned: {
+      count: unassigned.length,
+      total: money(unassigned.reduce((t, p) => t + toCents(p.amount), 0)),
+    },
+  }, 200, origin);
 }
 
 async function handleDeletePayment(request, env, origin, id) {
@@ -4923,6 +5066,20 @@ export default {
         const id = Number(path.slice("/admin/customers/".length, -"/payments".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleAddPayment(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/balances") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const cid = Number(path.split("/")[3]);
+        if (!cid) return json({ error: "bad customer id" }, 400, origin);
+        return await handleCustomerBalances(request, env, origin, cid);
+      }
+      /* Exactly /admin/payments/<id> — the /submission route above is matched
+         first, and anything else under this prefix falls through. */
+      if (/^\/admin\/payments\/\d+$/.test(path) && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.slice("/admin/payments/".length));
+        if (!pid) return json({ error: "Invalid id" }, 400, origin);
+        return await handleUpdatePayment(request, env, origin, pid);
       }
       if (path.startsWith("/admin/payments/") && request.method === "DELETE") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
