@@ -164,7 +164,11 @@ function overrideMap(redline, adjustments) {
     if (!a || a.kind !== 'override' || prices[a.item] == null || comped[a.item] != null) return;
     const amt = Math.max(0, Math.round(Number(a.amount) * 100) / 100);
     if (!isFinite(amt)) return;
-    out[a.item] = { was: prices[a.item], amt: amt, delta: prices[a.item] - amt, note: a.note || null };
+    /* up: the price was RAISED. Nando, 9 Oct 2026: "If I edit line pricing
+       and up the price, don't show the original price just change it. Only
+       when I lower it should it explain why." A raise is just the line's
+       price; a cut is a discount line with the staff's note as its reason. */
+    out[a.item] = { was: prices[a.item], amt: amt, delta: prices[a.item] - amt, note: a.note || null, up: amt > prices[a.item] };
   });
   return out;
 }
@@ -210,14 +214,24 @@ function quoteLines(redline, adjustments) {
     });
     return t;
   }
-  /* The comps alone (not overrides — an override is the job's price, not a
-     discount), named, for the Discounts section. */
+  /* The comps, and any line price staff LOWERED, named, for the Discounts
+     section. A lowered price is a discount that says why (the staff note); a
+     RAISED price is not here at all: it is simply the line's price, with no
+     trace of what it was (Nando, 9 Oct 2026). */
   function compsIn(names) {
     const out = [];
     names.forEach(function (n) {
       if (n && COMPED[n] != null && COMPED[n] > 0) out.push({ label: n + ' \u2014 included free', amt: COMPED[n], kind: 'comp', item: n });
+      else if (n && OVR[n] && OVR[n].delta > 0) out.push({ label: n + ' \u2014 ' + (OVR[n].note ? String(OVR[n].note).trim() : 'price adjusted'), amt: OVR[n].delta, kind: 'override', item: n });
     });
     return out;
+  }
+  /* What a line shows at its "regular" price: its own price, or the raised
+     price when staff raised it (never the old one), or the old price when
+     staff lowered it (the cut is then its own discount line). */
+  function regularOf(name, amt) {
+    const o = name && OVR[name];
+    return num(amt) - (o && o.up ? o.delta : 0);
   }
   /* Rows a comp wiped out entirely (a free concrete pad): no phase, no
      money, but the item is still shown at its regular price with the comp
@@ -283,12 +297,12 @@ function quoteLines(redline, adjustments) {
     const rRow = add(removal.length > 1 ? multiName : removal[0].name, rTotal);
     if (rRow) rRow.kind = 'clearance';
     if (rRow) {
-      rRow.estimate = removal.some((l) => !REMOVAL_NAMES.includes(l.name));
-      const o = removal.length === 1 && OVR[removal[0].name];
-      if (o) rRow.override = { was: o.was, note: o.note };
+      /* A price staff set after seeing the site is no longer an estimate. */
+      rRow.estimate = removal.some((l) => !REMOVAL_NAMES.includes(l.name) && !OVR[l.name]);
     }
     if (rRow && removal.length > 1) {
       rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) - (OVR[l.name] ? OVR[l.name].delta : 0) }));
+      rRow.regularSubLines = removal.map((l) => ({ label: l.name, amt: regularOf(l.name, l.amt) }));
     }
     discountsFor(rRow, removal.map((l) => l.name), removal.length > 1 ? multiName : removal[0].name, 'clearance');
   }
@@ -306,12 +320,12 @@ function quoteLines(redline, adjustments) {
      only so the page can show the list price struck through and the promo
      as its own line. A comped pad has no row, so nothing to show. */
   /* Concrete is an estimate (site conditions); the quote says so beside it. */
-  if (foundRow && /^Concrete/i.test(foundLabel)) foundRow.estimate = true;
   const foundOvr = OVR[redline.foundName];
+  if (foundRow && /^Concrete/i.test(foundLabel) && !foundOvr) foundRow.estimate = true;
   /* Overridden: the staff figure is the price, so the promo arithmetic no
-     longer describes it; the row says what it was instead. */
-  if (foundRow && foundOvr) foundRow.override = { was: foundOvr.was, note: foundOvr.note };
-  else if (foundRow && num(redline.foundPromo) > 0) {
+     longer describes it. Raised: the row is just its new price. Lowered: the
+     cut is a discount line (compsIn) with the staff's reason. */
+  if (foundRow && !foundOvr && num(redline.foundPromo) > 0) {
     foundRow.listAmt = foundRow.amt + num(redline.foundPromo);
     foundRow.promo = { label: redline.foundPromoName || 'Concrete pad promo', amt: num(redline.foundPromo) };
     foundRow.discounts = [{ label: foundRow.promo.label, amt: foundRow.promo.amt, kind: 'promo' }];
@@ -356,7 +370,7 @@ function quoteLines(redline, adjustments) {
   function shedItem(label, amt) {
     if (!label) return;
     const ovr = OVR[label] ? OVR[label].delta : 0;
-    shedSubLine(num(amt) - (COMPED[label] || 0) - ovr, label, null, num(amt) - ovr);
+    shedSubLine(num(amt) - (COMPED[label] || 0) - ovr, label, null, regularOf(label, amt));
   }
   function shedItemsFrom(lines, nameKey, amtKey) {
     (lines || []).forEach(function (l) {
@@ -443,6 +457,14 @@ function quoteLines(redline, adjustments) {
      carries what came off it (regularTotal - total, tax included) so a phase
      bill can show its own discounts at the end too. */
   const adjDiscounts = [], charges = [];
+  /* A PRICE RISE IS NOT SHOWN AS ONE (Nando, 9 Oct 2026: "If I edit line
+     pricing and up the price, don't show the original price just change it").
+     An adjustment that raises the price with no note saying what it buys is
+     a plain rise: folded into the phase lines (fold), so the quote just reads
+     at the higher prices. One WITH a note is something they are buying
+     (custom glass, removing an old shed, a greenhouse fan, long-haul
+     delivery) and keeps its own line, named by its note (charges). */
+  let foldTotal = 0;
   ADJUSTMENTS.forEach(function (a) {
     if (!a) return;
     const v = Number(a.value);
@@ -456,15 +478,39 @@ function quoteLines(redline, adjustments) {
       label = a.note || (v < 0 ? 'Discount' : 'Adjustment');
     } else return;
     if (amt < 0) adjDiscounts.push({ label: label, amt: -amt, kind: a.kind === 'percent' ? 'percent' : 'amount' });
+    else if (amt > 0 && !String(a.note || '').trim()) foldTotal += amt;
     else if (amt > 0) charges.push({ label: label, amt: amt, kind: a.kind === 'percent' ? 'percent' : 'amount' });
   });
+  /* The folded rise spread over the phases in cents, by the share of
+     each phase in what a percentage is worked out on (travel excluded), so
+     the lines still add up to the cent. Display only: r.amt, the deposits and
+     every total are untouched. */
+  (function () {
+    rows.forEach(function (r) { r.foldAmt = 0; });
+    const want = Math.round(foldTotal * 100);
+    if (want <= 0) return;
+    const w = rows.map(function (r) { return Math.max(0, r.amt - (r.kind === 'shed' ? travelTotal : 0)); });
+    let W = w.reduce(function (t, x) { return t + x; }, 0);
+    if (W <= 0) { rows.forEach(function (r, i) { w[i] = Math.max(0, r.amt); }); W = w.reduce(function (t, x) { return t + x; }, 0); }
+    if (W <= 0) return;
+    const raw = w.map(function (x) { return want * x / W; });
+    const c = raw.map(Math.floor);
+    let left = want - c.reduce(function (t, x) { return t + x; }, 0);
+    raw.map(function (x, i) { return [x - c[i], i]; }).sort(function (a, b) { return b[0] - a[0] || a[1] - b[1]; })
+      .forEach(function (p) { if (left > 0) { c[p[1]]++; left--; } });
+    rows.forEach(function (r, i) { r.foldAmt = c[i] / 100; });
+    /* Any fraction of a cent (a percentage) rides on the largest share, so
+       regular prices + charges - discounts is still the subtotal exactly. */
+    let big = 0; c.forEach(function (x, i) { if (x > c[big]) big = i; });
+    rows[big].foldAmt += foldTotal - want / 100;
+  })();
   /* Of a net-negative adjustment, how much came off each phase: the same
      ratio the deposits were scaled by. A net increase is a charge, not a
      discount, and stays inside the phase figures exactly as before. */
   rows.forEach(function (r) {
     r.discounts = (r.discounts || []).map(function (d) { return Object.assign({ phase: r.phase }, d); });
     const own = r.discounts.reduce(function (t, d) { return t + d.amt; }, 0);
-    r.regularAmt = r.amt + own;
+    r.regularAmt = r.amt + own + r.foldAmt;
     const share = ratio < 1 ? r.amt * (1 - ratio) : 0;
     r.discountTotal = (own + share) * (1 + TAX_RATE);
     r.regularTotal = r.total + r.discountTotal;
@@ -472,6 +518,25 @@ function quoteLines(redline, adjustments) {
     r.discountNames = r.discounts.map(function (d) { return d.label; })
       .concat(share > 0 ? adjDiscounts.map(function (d) { return d.label; }) : []);
     if (!r.regularSubLines && r.subLines) r.regularSubLines = r.subLines.map(function (l) { return Object.assign({}, l); });
+    /* A folded rise is in each item's price too, so the items still add up
+       to their phase: every line just reads at the new price. */
+    if (r.foldAmt && r.regularSubLines && r.regularSubLines.length) {
+      const subs = r.regularSubLines.filter(function (l) { return num(l.amt) > 0 && !/^Travel/i.test(l.label || ''); });
+      const W = subs.reduce(function (t, l) { return t + num(l.amt); }, 0);
+      if (W > 0) {
+        const want = Math.round(r.foldAmt * 100);
+        const raw = subs.map(function (l) { return want * num(l.amt) / W; });
+        const c = raw.map(Math.floor);
+        let left = want - c.reduce(function (t, x) { return t + x; }, 0);
+        raw.map(function (x, i) { return [x - c[i], i]; }).sort(function (x, y) { return y[0] - x[0] || x[1] - y[1]; })
+          .forEach(function (q) { if (left > 0) { c[q[1]]++; left--; } });
+        let big = 0; c.forEach(function (x, i) { if (x > c[big]) big = i; });
+        r.regularSubLines = r.regularSubLines.map(function (l) {
+          const i = subs.indexOf(l);
+          return i < 0 ? l : Object.assign({}, l, { amt: num(l.amt) + c[i] / 100 + (i === big ? r.foldAmt - want / 100 : 0) });
+        });
+      }
+    }
   });
   const discounts = [];
   rows.forEach(function (r) { r.discounts.forEach(function (d) { discounts.push(d); }); });
@@ -488,6 +553,8 @@ function quoteLines(redline, adjustments) {
      own box and its own "You save". A quote with no discount at all keeps the
      old figures (a price rise still shows what it was before the rise). */
   const chargeTotal = charges.reduce(function (t, c) { return t + c.amt; }, 0);
+  /* regularSubtotal already carries any folded rise, so this is the same
+     figure as before the fold. */
   const totalBefore = discounts.length
     ? (regularSubtotal + chargeTotal) * (1 + TAX_RATE)
     : subtotal * (1 + TAX_RATE);
@@ -577,9 +644,8 @@ function withCardPrice(redline, bd) {
   bd.rows.forEach(function (r) {
     ['amt', 'tax', 'total', 'deposit', 'listAmt'].forEach(function (f) { if (r[f] != null) r[f] = sc(r[f]); });
     if (r.promo) r.promo = Object.assign({}, r.promo, { amt: sc(Number(r.promo.amt) || 0) });
-    if (r.override && r.override.was != null) r.override = Object.assign({}, r.override, { was: sc(Number(r.override.was) || 0) });
     if (r.subLines) r.subLines = r.subLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
-    ['regularAmt', 'discountTotal', 'regularTotal', 'regularDeposit'].forEach(function (f) { if (r[f] != null) r[f] = sc(r[f]); });
+    ['regularAmt', 'foldAmt', 'discountTotal', 'regularTotal', 'regularDeposit'].forEach(function (f) { if (r[f] != null) r[f] = sc(r[f]); });
     if (r.regularSubLines) r.regularSubLines = r.regularSubLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
     if (r.discounts) r.discounts = r.discounts.map(function (d) { return Object.assign({}, d, { amt: sc(d.amt) }); });
   });

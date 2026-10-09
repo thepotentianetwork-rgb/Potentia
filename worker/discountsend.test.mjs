@@ -226,14 +226,15 @@ test('quote page: regular prices, then the Discounts section, then tax and the t
   bd.rows.forEach((r) => assert.ok(t.includes('Phase ' + r.phase + ' Deposit (30%)\u00a6\u00a6' + money(r.deposit))));
 });
 
-test('quote page: a rise is a charge above the discounts; with no discounts there is no section', () => {
+test('quote page: a noted extra is an item above the subtotal; with no discounts there is no section', () => {
   const page = loadQuotePage();
   page.ADJUSTMENTS = [{ kind: 'amount', value: 800, note: 'Rush build' }];
   const plain = { marginPrice: 7000, baseSheetLabel: 'A-Frame' };
   const t = text(page.buildBreakdown(page.taxBreakdown(plain)));
-  assert.match(t, /Rush build\u00a6\u00a6\+\$800/);
-  assert.doesNotMatch(t, /Discounts/);
-  assert.match(t, /Adjusted Subtotal \(before tax\)\u00a6\u00a6\$7,800/);
+  assert.match(t, /Rush build\u00a6\u00a6\$800/);
+  assert.ok(t.indexOf('Rush build') < t.indexOf('Subtotal (before tax)'));
+  assert.doesNotMatch(t, /Discounts|Adjusted|adjustment/i);
+  assert.match(t, /Subtotal \(before tax\)\u00a6\u00a6\$7,800/);
 });
 
 test('quote page at regular prices: the cash discount stays the very last thing, under the total', () => {

@@ -332,7 +332,11 @@ test('override: the pad re-priced for this job moves only the concrete phase', (
   const bd = quoteLines(redline, adj);
   const pad = bd.rows.find((r) => r.kind === 'foundation');
   assert.equal(pad.amt, 3600);
-  assert.deepEqual(pad.override, { was: 3000, note: 'Sloped lot, extra forms' });
+  /* Raised: just the new price, no trace of the old one (Nando, 9 Oct 2026). */
+  assert.equal(pad.override, undefined);
+  assert.equal(pad.regularAmt, 3600);
+  assert.ok(!bd.discounts.length, 'a raise is not a discount');
+  assert.ok(!pad.estimate, 'a price set after seeing the site is not an estimate');
   assert.equal(pad.promo, undefined, 'the staff price replaces the promo arithmetic');
   near(pad.deposit, 3600 * (1 + TAX_RATE) * 0.3);
   near(bd.subtotal - bd0.subtotal, 600);
@@ -345,11 +349,14 @@ test('override: the sprinkler job re-priced, down as well as up', () => {
   const bd = quoteLines(redline, [{ kind: 'override', item: 'Sprinkler Relocation \u2014 3 heads', amount: 650 }]);
   assert.equal(bd.rows[0].kind, 'clearance');
   assert.equal(bd.rows[0].amt, 650);
-  assert.equal(bd.rows[0].override.was, 900);
+  /* Lowered: the row at its old price, the cut a discount with the reason. */
+  assert.equal(bd.rows[0].regularAmt, 900);
+  assert.deepEqual(bd.discounts.filter((d) => d.kind === 'override').map((d) => [d.label, d.amt]), [['Sprinkler Relocation \u2014 3 heads \u2014 price adjusted', 250]]);
   const r2 = computePricing({ ...PAD, sprinklers: [5], addons: { shedRemoval: true } }).redline;
   const row = quoteLines(r2, [{ kind: 'override', item: 'Sprinkler Relocation \u2014 1 head', amount: 450 }]).rows[0];
   assert.equal(row.amt, 1450);
   assert.deepEqual(row.subLines.map((s) => s.amt), [1000, 450], 'the sub-line shows the new price');
+  assert.deepEqual(row.regularSubLines.map((s) => s.amt), [1000, 450], 'raised: the customer sees only the new price');
 });
 
 test('concrete and sprinkler phases are flagged as estimates; removals alone are not', () => {

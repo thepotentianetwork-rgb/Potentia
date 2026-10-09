@@ -605,11 +605,15 @@ test('a percentage that adds is custom work too', async () => {
 
 /* A charge with no note is still a charge. Silence about it is worse than a
    vague label. */
-test('a custom charge with no note still gets a line', async () => {
+test('an amount added with no note is a price rise, folded into the items', async () => {
+  /* Nando, 9 Oct 2026: "If I edit line pricing and up the price, don't show
+     the original price just change it." No note = nothing bought = a rise. */
   const { d } = await withAdjustments([{ kind: 'amount', value: 300 }]);
-  const line = allLines(d).filter((l) => l.label === 'Custom work')[0];
-  assert.ok(line, allLines(d).map((l) => l.label).join(' | '));
-  assert.equal(line.amount, 300);
+  const { d: d0 } = await withAdjustments([]);
+  assert.ok(!allLines(d).some((l) => l.label === 'Custom work'));
+  const sum = (x) => x.items.reduce((t, g) => t + g.amount, 0);
+  assert.equal(Math.round((sum(d) - sum(d0)) * 100), 30000);
+  assert.equal(Math.round(sum(d) * 100), Math.round(d.pricing.subtotal * 100));
 });
 
 test('several custom items each get their own line', async () => {

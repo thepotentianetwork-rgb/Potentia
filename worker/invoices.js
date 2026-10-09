@@ -117,6 +117,8 @@ function adjustmentLines(bd, adjustments) {
     if (!isFinite(v) || !v) return;
     if (a.kind === 'percent') {
       named.push({
+        /* fold: a rise, carried in the phase lines rather than shown (quoteLines). */
+        fold: v > 0 && !String(a.note || '').trim(),
         label: (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)',
         /* Of the subtotal less any travel surcharge — the base quoteLines
            worked the percentage out on. Same as subtotal without one. */
@@ -125,7 +127,7 @@ function adjustmentLines(bd, adjustments) {
     } else if (a.kind === 'amount') {
       /* On a regular (card) price quote a typed flat amount reads at the same
          scale as everything else (quoteLines bd.priceScale). */
-      named.push({ label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (Number(bd.priceScale) || 1)) });
+      named.push({ fold: v > 0 && !String(a.note || '').trim(), label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (Number(bd.priceScale) || 1)) });
     }
   });
 
@@ -208,13 +210,15 @@ function jobLines(bd, adjustments) {
   const rowDisc = rowDiscountLines(bd);
   const lines = bd.rows
     .map((r) => ({ label: phaseLabel(r),
-                   amountCents: toCents(r.amt) - rowDisc.filter((d) => d.phase === r.phase).reduce((t, d) => t + d.amountCents, 0) }))
+                   amountCents: toCents(r.amt) + toCents(r.foldAmt || 0) - rowDisc.filter((d) => d.phase === r.phase).reduce((t, d) => t + d.amountCents, 0) }))
     .filter((l) => l.amountCents !== 0);
   (bd.freeRows || []).forEach((f) => {
     const c = -rowDisc.filter((d) => d.free === f).reduce((t, d) => t + d.amountCents, 0);
     if (c) lines.push({ label: f.label, amountCents: c, fixed: true });
   });
-  const adj = adjustmentLines(bd, adjustments);
+  /* A rise is already in the phase lines (r.foldAmt), never a line of its own
+     (Nando, 9 Oct 2026); a priced extra with a note keeps its line. */
+  const adj = adjustmentLines(bd, adjustments).filter((l) => !l.fold);
   adj.filter((l) => l.amountCents > 0).forEach((l) => lines.push({ ...l, fixed: true }));
   rowDisc.forEach((d) => lines.push({ label: d.label, amountCents: d.amountCents, fixed: true, discount: true }));
   adj.filter((l) => l.amountCents < 0).forEach((l) => lines.push({ ...l, fixed: true, discount: true }));
