@@ -405,8 +405,11 @@ test('the footer no longer repeats what was thrown in free; the lines carry it',
 
 test('the footer states the saving when there is one', () => {
   const bd = quoteLines(RICH, [{ kind: 'amount', value: -1500 }]);
-  assert.match(buildFooter(bd, {}, 'deposit'), /You save \$1,6\d\d\.\d\d/);
-  assert.doesNotMatch(buildFooter(quoteLines(RICH, []), {}, 'deposit'), /You save/);
+  /* Every discount counts (Nando, 9 Oct 2026): the $1,500 and RICH's $500
+     pad promo, tax included = $2,145.00. */
+  assert.match(buildFooter(bd, {}, 'deposit'), /You save \$2,145\.00/);
+  assert.match(buildFooter(quoteLines(RICH, []), {}, 'deposit'), /You save \$536\.25/, 'the promo alone is a saving');
+  assert.doesNotMatch(buildFooter(quoteLines({ ...RICH, foundPromo: 0 }, []), {}, 'deposit'), /You save/);
 });
 
 test('the header fields stay inside what Stripe accepts', () => {

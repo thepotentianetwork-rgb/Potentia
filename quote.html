@@ -370,14 +370,22 @@ function taxBreakdown(redline) {
    An adjustment that raises the price still shows the before figure, because
    hiding it would be the same document telling the customer two different
    things, but it claims no saving. */
+/* Every discount counts (Nando, 9 Oct 2026: "yes count them all"): with any
+   line in the Discounts section — pad promo, item included free, loyalty,
+   staff discount — the box reads "Before discounts" (regular prices plus
+   anything added, tax included) and "You save" the Discounts total with its
+   tax, so before - save = Total Due. A quote whose only change is a price
+   rise still shows "Before adjustment" with no saving. The cash, check & bank
+   transfer discount is not counted here; it has its own box below. */
 function priceBox(bd, totalDue) {
-  var hasAdjust = !!(bd && bd.adjust);
+  var hasDisc = !!(bd && bd.discounts && bd.discounts.length);
+  var hasAdjust = hasDisc || !!(bd && bd.adjust);
   var saved = (bd && bd.savings > 0.005) ? bd.savings : 0;
   return '<div class="doc-section">'
     + '<div class="price-box' + (saved ? ' price-box-deal' : '') + '">'
     +   '<div class="price-side">'
-    +     '<span class="price-label">Total Due' + (hasAdjust ? ' After Adjustment' : '') + ' (Tax Included)</span>'
-    +     (hasAdjust ? '<span class="price-was' + (saved ? ' is-saving' : '') + '">Before adjustment '
+    +     '<span class="price-label">Total Due' + (hasDisc ? ' After Discounts' : hasAdjust ? ' After Adjustment' : '') + ' (Tax Included)</span>'
+    +     (hasAdjust ? '<span class="price-was' + (saved ? ' is-saving' : '') + '">' + (hasDisc ? 'Before discounts ' : 'Before adjustment ')
             + money2(bd.totalBefore) + '</span>' : '')
     +   '</div>'
     +   '<div class="price-side price-side-right">'
