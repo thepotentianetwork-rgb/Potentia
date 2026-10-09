@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "20a6879-dirty";
-const WORKER_BUILT_AT = "2026-10-09T18:34:28.513Z";
+const WORKER_BUILD = "f0c8ea6";
+const WORKER_BUILT_AT = "2026-10-09T20:50:14.923Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3703,6 +3703,28 @@ function quoteLines(redline, adjustments) {
     });
     return t;
   }
+  /* The comps alone (not overrides — an override is the job's price, not a
+     discount), named, for the Discounts section. */
+  function compsIn(names) {
+    const out = [];
+    names.forEach(function (n) {
+      if (n && COMPED[n] != null && COMPED[n] > 0) out.push({ label: n + ' \u2014 included free', amt: COMPED[n], kind: 'comp', item: n });
+    });
+    return out;
+  }
+  /* Rows a comp wiped out entirely (a free concrete pad): no phase, no
+     money, but the item is still shown at its regular price with the comp
+     among the discounts, so the page still adds up. Display only. */
+  const freeRows = [];
+  function discountsFor(row, names, label, kind) {
+    const comps = compsIn(names);
+    if (row) {
+      row.discounts = (row.discounts || []).concat(comps);
+    } else if (comps.length) {
+      const amt = comps.reduce(function (t, c) { return t + c.amt; }, 0);
+      freeRows.push({ label: label, kind: kind, regularAmt: amt, discounts: comps });
+    }
+  }
 
   /* Everything about the shed itself is rolled into one "Shed" line; only
      foundation and interior finishing are broken out.
@@ -3761,6 +3783,7 @@ function quoteLines(redline, adjustments) {
     if (rRow && removal.length > 1) {
       rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) - (OVR[l.name] ? OVR[l.name].delta : 0) }));
     }
+    discountsFor(rRow, removal.map((l) => l.name), removal.length > 1 ? multiName : removal[0].name, 'clearance');
   }
 
   /* The pad spec (4" poured slab) belongs on every quote regardless of when its
@@ -3784,7 +3807,9 @@ function quoteLines(redline, adjustments) {
   else if (foundRow && num(redline.foundPromo) > 0) {
     foundRow.listAmt = foundRow.amt + num(redline.foundPromo);
     foundRow.promo = { label: redline.foundPromoName || 'Concrete pad promo', amt: num(redline.foundPromo) };
+    foundRow.discounts = [{ label: foundRow.promo.label, amt: foundRow.promo.amt, kind: 'promo' }];
   }
+  discountsFor(foundRow, nameList(redline, 'foundation'), foundLabel, 'foundation');
   let travelTotal = 0;
   const travelLines = [];
   ADJUSTMENTS.forEach(function (a) {
@@ -3795,6 +3820,8 @@ function quoteLines(redline, adjustments) {
   if (shedRow) shedRow.kind = 'shed';
   const intRow = add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
   if (intRow) intRow.kind = 'interior';
+  discountsFor(shedRow, nameList(redline, 'shed'), 'Shed', 'shed');
+  discountsFor(intRow, nameList(redline, 'interior'), redline.intSellName || 'Interior Finishing', 'interior');
 
   /* Electrical and flooring are still billed and deposited as part of the Shed
      phase (their dollars stay inside shedTotal) — these just break them out so
@@ -3802,11 +3829,18 @@ function quoteLines(redline, adjustments) {
      invoicing or deposit schedule. Appended rather than assigned: electrical
      used to claim this slot outright, so anything added alongside it silently
      replaced it. */
-  function shedSubLine(amt, label, includes) {
-    if (!shedRow || !amt) return;
+  function shedSubLine(amt, label, includes, regularAmt) {
+    if (!shedRow) return;
+    const inc = Array.isArray(includes) ? includes : null;
+    /* regularSubLines: the same list at REGULAR prices — a comped item at
+       what it costs, its comp listed with the discounts. What the quote and
+       the invoices show; subLines (net) is kept for the tracker. */
+    const reg = regularAmt == null ? amt : regularAmt;
+    if (reg) (shedRow.regularSubLines = shedRow.regularSubLines || []).push({ label: label, amt: num(reg), includes: inc });
+    if (!amt) return;
     (shedRow.subLines = shedRow.subLines || []).push({
       label: label, amt: num(amt),
-      includes: Array.isArray(includes) ? includes : null
+      includes: inc
     });
   }
   /* Each is net of anything comped on it, because a comped line is already
@@ -3814,7 +3848,8 @@ function quoteLines(redline, adjustments) {
      it there would show the customer the same item twice at two prices. */
   function shedItem(label, amt) {
     if (!label) return;
-    shedSubLine(num(amt) - (COMPED[label] || 0) - (OVR[label] ? OVR[label].delta : 0), label);
+    const ovr = OVR[label] ? OVR[label].delta : 0;
+    shedSubLine(num(amt) - (COMPED[label] || 0) - ovr, label, null, num(amt) - ovr);
   }
   function shedItemsFrom(lines, nameKey, amtKey) {
     (lines || []).forEach(function (l) {
@@ -3886,6 +3921,57 @@ function quoteLines(redline, adjustments) {
 
   const tax = adjustedSubtotal * TAX_RATE;
   const depositTotal = rows.reduce((t, r) => t + r.deposit, 0);
+
+  /* ── DISCOUNTS, LISTED LAST (Nando, 9 Oct 2026: "make sure discounts go at
+     the very end"). DISPLAY ONLY: nothing above is changed by any of this.
+     Every row is shown at its REGULAR price (before promo and comps), and
+     every discount — the pad promo, each item included free, each staff
+     discount — is its own line in one Discounts section, after any added
+     charges and BEFORE tax, because tax is owed on what they actually pay:
+
+       regularSubtotal + charges - discountTotal = adjustedSubtotal
+
+     The discounts still reduce the phase they belong to (r.amt is unchanged),
+     which is what the deposits and phase bills are worked from; each row
+     carries what came off it (regularTotal - total, tax included) so a phase
+     bill can show its own discounts at the end too. */
+  const adjDiscounts = [], charges = [];
+  ADJUSTMENTS.forEach(function (a) {
+    if (!a) return;
+    const v = Number(a.value);
+    if (!isFinite(v) || !v) return;
+    let amt, label;
+    if (a.kind === 'percent') {
+      amt = percentBase * (v / 100);
+      label = (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)';
+    } else if (a.kind === 'amount') {
+      amt = v;
+      label = a.note || (v < 0 ? 'Discount' : 'Adjustment');
+    } else return;
+    if (amt < 0) adjDiscounts.push({ label: label, amt: -amt, kind: a.kind === 'percent' ? 'percent' : 'amount' });
+    else if (amt > 0) charges.push({ label: label, amt: amt, kind: a.kind === 'percent' ? 'percent' : 'amount' });
+  });
+  /* Of a net-negative adjustment, how much came off each phase: the same
+     ratio the deposits were scaled by. A net increase is a charge, not a
+     discount, and stays inside the phase figures exactly as before. */
+  rows.forEach(function (r) {
+    r.discounts = (r.discounts || []).map(function (d) { return Object.assign({ phase: r.phase }, d); });
+    const own = r.discounts.reduce(function (t, d) { return t + d.amt; }, 0);
+    r.regularAmt = r.amt + own;
+    const share = ratio < 1 ? r.amt * (1 - ratio) : 0;
+    r.discountTotal = (own + share) * (1 + TAX_RATE);
+    r.regularTotal = r.total + r.discountTotal;
+    r.regularDeposit = r.regularTotal * DEPOSIT_RATE;
+    r.discountNames = r.discounts.map(function (d) { return d.label; })
+      .concat(share > 0 ? adjDiscounts.map(function (d) { return d.label; }) : []);
+    if (!r.regularSubLines && r.subLines) r.regularSubLines = r.subLines.map(function (l) { return Object.assign({}, l); });
+  });
+  const discounts = [];
+  rows.forEach(function (r) { r.discounts.forEach(function (d) { discounts.push(d); }); });
+  freeRows.forEach(function (f) { f.discounts.forEach(function (d) { discounts.push(Object.assign({ phase: null }, d)); }); });
+  adjDiscounts.forEach(function (d) { discounts.push(Object.assign({ phase: null }, d)); });
+  const regularSubtotal = rows.reduce(function (t, r) { return t + r.regularAmt; }, 0)
+    + freeRows.reduce(function (t, f) { return t + f.regularAmt; }, 0);
   return withCardPrice(redline, {
     rows: rows,
     subtotal: subtotal,
@@ -3905,7 +3991,13 @@ function quoteLines(redline, adjustments) {
        would otherwise report a saving larger than the price. */
     totalBefore: subtotal * (1 + TAX_RATE),
     savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
-    depositTotal: depositTotal
+    depositTotal: depositTotal,
+    /* Display only — see DISCOUNTS, LISTED LAST above. */
+    regularSubtotal: regularSubtotal,
+    freeRows: freeRows,
+    charges: charges,
+    discounts: discounts,
+    discountTotal: discounts.reduce(function (t, d) { return t + d.amt; }, 0)
   });
 }
 
@@ -3963,7 +4055,16 @@ function withCardPrice(redline, bd) {
     if (r.promo) r.promo = Object.assign({}, r.promo, { amt: sc(Number(r.promo.amt) || 0) });
     if (r.override && r.override.was != null) r.override = Object.assign({}, r.override, { was: sc(Number(r.override.was) || 0) });
     if (r.subLines) r.subLines = r.subLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
+    ['regularAmt', 'discountTotal', 'regularTotal', 'regularDeposit'].forEach(function (f) { if (r[f] != null) r[f] = sc(r[f]); });
+    if (r.regularSubLines) r.regularSubLines = r.regularSubLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
+    if (r.discounts) r.discounts = r.discounts.map(function (d) { return Object.assign({}, d, { amt: sc(d.amt) }); });
   });
+  const scList = (list, f) => (list || []).map(function (x) { const o = Object.assign({}, x); o[f] = sc(o[f]); if (o.discounts) o.discounts = o.discounts.map(function (d) { return Object.assign({}, d, { amt: sc(d.amt) }); }); return o; });
+  bd.freeRows = scList(bd.freeRows, 'regularAmt');
+  bd.charges = scList(bd.charges, 'amt');
+  bd.discounts = scList(bd.discounts, 'amt');
+  if (bd.regularSubtotal != null) bd.regularSubtotal = sc(bd.regularSubtotal);
+  if (bd.discountTotal != null) bd.discountTotal = sc(bd.discountTotal);
   ['subtotal', 'percentBase', 'travel', 'adjust', 'percentAdjust', 'amountAdjust', 'adjustedSubtotal',
    'tax', 'total', 'totalBefore', 'savings', 'depositTotal'].forEach(function (f) { bd[f] = sc(bd[f]); });
   /* What a flat adjustment typed by staff becomes on this quote (the page and
@@ -4160,20 +4261,51 @@ function promoNote(row, short) {
   if (short) return ' (' + usd(row.promo.amt) + ' ' + what + ' applied)';
   return ' (list ' + usd(row.listAmt) + ', less ' + usd(row.promo.amt) + ' ' + what + ')';
 }
+/* Named from the REGULAR-price sub-lines, so an item included free is still
+   named in its phase; the promo is no longer written into the phase line —
+   it is its own discount line at the end (Nando, 9 Oct 2026). */
 function phaseLabel(row) {
-  const parts = (row.subLines || []).map((s) => s.label).filter(Boolean);
-  if (!parts.length) return row.label + promoNote(row);
+  const parts = (row.regularSubLines || row.subLines || []).map((s) => s.label).filter(Boolean);
+  if (!parts.length) return row.label;
   /* Not clipped here. buildInvoice clips every line label on the way out, and
      a second cap at this spot is a line that looks load-bearing but cannot be
      made to fail — removing it changed no test, which is the tell. */
   return row.label + ': ' + parts.join(', ');
 }
 
+/* DISCOUNTS GO AT THE END (Nando, 9 Oct 2026). Each phase is billed on its
+   line at its REGULAR price (before the pad promo and anything included
+   free); then any added charge; then every discount on its own line — the
+   promo, each item included free, each staff discount — and only then sales
+   tax, because tax is on what they actually pay. The phase line is the
+   phase's own cents plus exactly the cents of its discount lines, so the
+   lines still sum to the same total and reconcile() behaves as before. */
+function rowDiscountLines(bd) {
+  const out = [];
+  (bd.rows || []).forEach((r) => (r.discounts || []).forEach((d) => {
+    const c = toCents(d.amt);
+    if (c) out.push({ label: d.label, amountCents: -c, phase: r.phase });
+  }));
+  (bd.freeRows || []).forEach((f) => (f.discounts || []).forEach((d) => {
+    const c = toCents(d.amt);
+    if (c) out.push({ label: d.label, amountCents: -c, free: f });
+  }));
+  return out;
+}
 function jobLines(bd, adjustments) {
+  const rowDisc = rowDiscountLines(bd);
   const lines = bd.rows
-    .map((r) => ({ label: phaseLabel(r), amountCents: toCents(r.amt) }))
+    .map((r) => ({ label: phaseLabel(r),
+                   amountCents: toCents(r.amt) - rowDisc.filter((d) => d.phase === r.phase).reduce((t, d) => t + d.amountCents, 0) }))
     .filter((l) => l.amountCents !== 0);
-  adjustmentLines(bd, adjustments).forEach((l) => lines.push({ ...l, fixed: true }));
+  (bd.freeRows || []).forEach((f) => {
+    const c = -rowDisc.filter((d) => d.free === f).reduce((t, d) => t + d.amountCents, 0);
+    if (c) lines.push({ label: f.label, amountCents: c, fixed: true });
+  });
+  const adj = adjustmentLines(bd, adjustments);
+  adj.filter((l) => l.amountCents > 0).forEach((l) => lines.push({ ...l, fixed: true }));
+  rowDisc.forEach((d) => lines.push({ label: d.label, amountCents: d.amountCents, fixed: true, discount: true }));
+  adj.filter((l) => l.amountCents < 0).forEach((l) => lines.push({ ...l, fixed: true, discount: true }));
   const taxCents = toCents(bd.tax);
   if (taxCents) lines.push({ label: 'Sales Tax (' + pct(taxRateOf(bd)) + '%)', amountCents: taxCents, fixed: true });
   return lines;
@@ -4205,7 +4337,7 @@ function depositInvoice(bd, adjustments, payments) {
 /* One credit line per payment received, exactly as the money arrived. Fixed:
    reconcile() never nudges a payment by a penny. */
 function creditLines(payments) {
-  const out = [];
+  const out = [], disc = [];
   (payments || []).forEach((p) => {
     const c = toCents(p.amount);
     if (!c) return;
@@ -4215,9 +4347,11 @@ function creditLines(payments) {
     /* The cash, check & bank transfer discount that payment earned: a
        reduction of the job, not money — so its own line, never folded in. */
     const d = discountCentsOf(p);
-    if (d) out.push({ label: CASH_DISCOUNT_LABEL + ' on that payment', amountCents: -d, fixed: true, discount: true });
+    /* Listed after every payment, not under its own: discounts go at the
+       end. The label names the payment it was earned on. */
+    if (d) disc.push({ label: CASH_DISCOUNT_LABEL + ' on the ' + usd(fromCents(c)) + ' ' + (p.method ? methodLabel(p.method) + ' ' : '') + 'payment' + when, amountCents: -d, fixed: true, discount: true });
   });
-  return out;
+  return out.concat(disc);
 }
 
 /* What a payment takes off a job: the money, plus any cash, check & bank
@@ -4380,26 +4514,34 @@ function buildMemo(bd, opts = {}) {
   if (opts.submissionId) head.push('Order #' + opts.submissionId);
   const heading = head.join(' \u00b7 ');
 
-  function render(withIncludes, withSubLines) {
+  function render(withIncludes, withSubLines, withDiscounts) {
     const out = [];
     if (heading) out.push(heading, '');
     bd.rows.forEach((r) => {
-      out.push(r.label + ' \u2014 ' + usd(r.amt));
+      out.push(r.label + ' \u2014 ' + usd(r.regularAmt != null ? r.regularAmt : r.amt));
       if (!withSubLines) return;
-      (r.subLines || []).forEach((s) => {
+      (r.regularSubLines || r.subLines || []).forEach((s) => {
         out.push('   + ' + s.label + ' \u2014 ' + usd(s.amt));
         if (!withIncludes) return;
         (s.includes || []).forEach((item) => out.push('       \u2014 ' + item));
       });
     });
+    (bd.freeRows || []).forEach((f) => out.push(f.label + ' \u2014 ' + usd(f.regularAmt)));
+    (bd.charges || []).forEach((c) => out.push(c.label + ' \u2014 ' + usd(c.amt)));
+    /* The discounts, last — dropped before the sub-lines when space is
+       short, because they are also lines on the invoice itself. */
+    if (withDiscounts && (bd.discounts || []).length) {
+      out.push('Discounts:');
+      bd.discounts.forEach((d) => out.push('   ' + d.label + ' \u2212' + usd(d.amt)));
+    }
     return out.join('\n').trim();
   }
 
-  for (const [inc, sub] of [[true, true], [false, true], [false, false]]) {
-    const text = render(inc, sub);
+  for (const [inc, sub, disc] of [[true, true, true], [false, true, true], [false, true, false], [false, false, true], [false, false, false]]) {
+    const text = render(inc, sub, disc);
     if (text.length <= LIMITS.memo) return text;
   }
-  return clip(render(false, false), LIMITS.memo);
+  return clip(render(false, false, false), LIMITS.memo);
 }
 
 /* Comped items, what they saved, and how the two payments work. The comped
@@ -4408,8 +4550,9 @@ function buildMemo(bd, opts = {}) {
    been soft in the first place. */
 function buildFooter(bd, comped, kind, opts = {}) {
   const parts = [];
-  const names = Object.keys(comped || {});
-  if (names.length) parts.push('Included at no charge: ' + names.join(', ') + '.');
+  /* Items included free used to be named here; they are now discount lines
+     on the invoice itself (each "— included free"), so naming them again
+     would list the same gift twice. */
   if (bd.savings > 0.005) parts.push('You save ' + usd(bd.savings) + ' on this build.');
   parts.push(kind === 'deposit'
     ? 'This invoice collects the deposit' + (opts.credited ? ', less payments already received (credited above)' : '') +
@@ -4528,8 +4671,14 @@ function phaseParts(bd) {
   const out = bd.rows.map((r, i) => {
     const totalCents = toCents(r.total);
     const depositCents = toCents(r.deposit);
+    /* What the phase's discounts took off each part (tax included), so a
+       phase bill can show the part at its regular price and the discount at
+       the end. Display only: totalCents/depositCents are what is billed. */
+    const discTotal = r.regularTotal != null ? Math.max(0, toCents(r.regularTotal) - totalCents) : 0;
+    const discDeposit = r.regularDeposit != null ? Math.min(discTotal, Math.max(0, toCents(r.regularDeposit) - depositCents)) : 0;
     return { phase: r.phase || i + 1, kind: r.kind || null, name: phaseName(r), promo: promoNote(r, true), totalCents, depositCents,
-             remainderCents: totalCents - depositCents };
+             remainderCents: totalCents - depositCents,
+             discount: { depositCents: discDeposit, remainderCents: discTotal - discDeposit, names: (r.discountNames || []).slice() } };
   });
   const drift = toCents(bd.total) - out.reduce((t, p) => t + p.totalCents, 0);
   if (drift && out.length) {
@@ -4634,7 +4783,8 @@ function phaseStatus(bd, payments, openParts) {
                remainingCents: Math.max(0, cents - (paid[k] || 0)), openInvoice: open[k] || null };
     };
     return { phase: p.phase, kind: p.kind, name: p.name, promo: p.promo || '', totalCents: p.totalCents,
-             deposit: part('deposit', p.depositCents), remainder: part('remainder', p.remainderCents) };
+             deposit: part('deposit', p.depositCents), remainder: part('remainder', p.remainderCents),
+             discount: p.discount || null };
   });
 
   /* The suggestion: the first phase whose deposit is still owed, plus every
@@ -4704,7 +4854,7 @@ function togetherStatus(builds) {
     per.forEach(({ b, st }) => {
       const p = st.phases.find((x) => keyOf(x) === k);
       if (p) items.push({ sub: b.sub, build: b.name || null, phase: p.phase, kind: p.kind, name: p.name, promo: p.promo || '',
-                          totalCents: p.totalCents, deposit: p.deposit, remainder: p.remainder });
+                          totalCents: p.totalCents, deposit: p.deposit, remainder: p.remainder, discount: p.discount || null });
     });
     /* One build: its own numbers, exactly as its quote prints them. */
     const num = single ? items[0].phase : gi + 1;
@@ -4825,8 +4975,19 @@ function buildTogetherInvoice(builds, selected, opts = {}) {
   const sorted = picks.slice().sort((a, b) => order(a) - order(b) ||
     builds.findIndex((x) => x.sub === a.item.sub) - builds.findIndex((x) => x.sub === b.item.sub));
 
-  const lines = [], covers = [];
+  const lines = [], covers = [], discLines = [];
   const done = {};
+  /* The part's discount, shown at the END of the bill (Nando, 9 Oct 2026):
+     the part's line carries its regular price and a matching discount line
+     comes off at the bottom, so the bill still asks for exactly the same
+     cents. Only on a part that still has something to bill. */
+  const discOf = (it, part) => (it.discount && it[part].remainingCents > 0 ? (it.discount[part + 'Cents'] || 0) : 0);
+  const addDisc = (it, what, tag, cents) => {
+    if (!(cents > 0)) return;
+    const names = (it.discount && it.discount.names || []).filter(Boolean);
+    discLines.push({ label: 'Discount' + (names.length > 1 ? 's' : '') + ' on ' + what +
+      (names.length ? ' (' + names.join(', ') + ')' : '') + tag, amountCents: -cents, discount: true });
+  };
   sorted.forEach((p) => {
     const it = p.item;
     const k = it.sub + ':' + it.phase;
@@ -4834,7 +4995,9 @@ function buildTogetherInvoice(builds, selected, opts = {}) {
     const nm = many ? bareName(it.name) : it.name;
     /* One build: the promo is named on its phase. Several: the lines already
        carry the build, and Stripe's label budget is better spent on that. */
-    const head = 'Phase ' + p.g.phase + ': ' + nm + (many ? '' : (it.promo || ''));
+    /* The promo is no longer written into the phase name: it is a discount
+       line at the end of the bill. */
+    const head = 'Phase ' + p.g.phase + ': ' + nm;
     const less = (paidC) => (paidC > 0 ? ', less ' + usd(fromCents(paidC)) + ' already paid' : '');
     const cover = (part, cents) => covers.push(Object.assign(it.sub != null ? { sub: it.sub } : {},
                                                  { phase: it.phase, part, cents }));
@@ -4842,24 +5005,31 @@ function buildTogetherInvoice(builds, selected, opts = {}) {
       if (done[k]) return;
       done[k] = 1;
       const cents = it.deposit.remainingCents + it.remainder.remainingCents;
+      const dc = discOf(it, 'deposit') + discOf(it, 'remainder');
       lines.push({ label: head + ', full amount (deposit + remainder)' + tag +
-                   less(it.deposit.paidCents + it.remainder.paidCents), amountCents: cents });
+                   less(it.deposit.paidCents + it.remainder.paidCents), amountCents: cents + dc });
+      addDisc(it, 'all of Phase ' + p.g.phase, tag, dc);
       cover('deposit', it.deposit.remainingCents);
       cover('remainder', it.remainder.remainingCents);
       return;
     }
     if (p.part === 'deposit') {
-      lines.push({ label: head + ' deposit (30%)' + tag + less(it.deposit.paidCents), amountCents: it.deposit.remainingCents });
+      const dc = discOf(it, 'deposit');
+      lines.push({ label: head + ' deposit (30%)' + tag + less(it.deposit.paidCents), amountCents: it.deposit.remainingCents + dc });
+      addDisc(it, 'Phase ' + p.g.phase + ' deposit', tag, dc);
       cover('deposit', it.deposit.remainingCents);
       return;
     }
     /* The rest of a phase whose deposit is in reads simply as what is left.
        If the deposit is still owed and not on this bill, say this is the 70%. */
     const seventy = it.deposit.remainingCents > 0 ? ' — 70% of the phase' : '';
+    const dcr = discOf(it, 'remainder');
     lines.push({ label: 'Remainder of ' + head + ', due after completion' + seventy + tag + less(it.remainder.paidCents),
-                 amountCents: it.remainder.remainingCents });
+                 amountCents: it.remainder.remainingCents + dcr });
+    addDisc(it, 'the rest of Phase ' + p.g.phase, tag, dcr);
     cover('remainder', it.remainder.remainingCents);
   });
+  discLines.forEach((l) => lines.push(l));
   /* A part on its own line twice would bill it twice; covers say it once. */
   const coverCents = covers.filter((c) => c.cents > 0);
 
@@ -4883,8 +5053,10 @@ function buildTogetherInvoice(builds, selected, opts = {}) {
     builds: many ? subs : undefined,
     description: what,
     memo: togetherMemo(ts, sorted, what, builds, opts),
+    /* Items included free are discount lines on the bill now (each "—
+       included free"), so the footer no longer names them a second time. */
     footer: clip('All amounts include Utah sales tax (7.25%). Payments already received have been applied.' +
-      (opts.comped && Object.keys(opts.comped).length ? ' Included at no charge: ' + Object.keys(opts.comped).join(', ') + '.' : ''),
+      (discLines.length ? ' Phase amounts are shown at regular prices; discounts are listed at the end.' : ''),
       LIMITS.footer),
     customFields: [
       [many ? 'Orders' : 'Order', many ? subs.map((x) => '#' + x).join(' + ') : (opts.submissionId ? '#' + opts.submissionId : null)],
@@ -8308,7 +8480,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
 
   const shape = {
     kind, submission_id: sub.id, customer_id: customer.id,
-    lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+    lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), discount: !!l.discount })),
     /* Phase invoices: which parts this collects, and the short name of it. */
     covers: invoice.covers || null,
     description: invoice.description || null,
