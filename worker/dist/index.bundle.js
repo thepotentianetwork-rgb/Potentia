@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "f0c8ea6";
-const WORKER_BUILT_AT = "2026-10-09T20:50:14.923Z";
+const WORKER_BUILD = "57fcaf4";
+const WORKER_BUILT_AT = "2026-10-09T21:01:57.340Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3972,6 +3972,23 @@ function quoteLines(redline, adjustments) {
   adjDiscounts.forEach(function (d) { discounts.push(Object.assign({ phase: null }, d)); });
   const regularSubtotal = rows.reduce(function (t, r) { return t + r.regularAmt; }, 0)
     + freeRows.reduce(function (t, f) { return t + f.regularAmt; }, 0);
+  /* THE "BEFORE / YOU SAVE" FIGURES COUNT EVERY DISCOUNT (Nando, 9 Oct 2026:
+     "yes count them all"): the pad promo, items included free and staff
+     discounts alike, so "You save" is the Discounts section's total with tax
+     on it, and before - save = Total Due to the cent. The before figure is
+     the job at regular prices plus anything added. The cash, check & bank
+     transfer discount is NOT in it: it depends on how they pay, and has its
+     own box and its own "You save". A quote with no discount at all keeps the
+     old figures (a price rise still shows what it was before the rise). */
+  const chargeTotal = charges.reduce(function (t, c) { return t + c.amt; }, 0);
+  const totalBefore = discounts.length
+    ? (regularSubtotal + chargeTotal) * (1 + TAX_RATE)
+    : subtotal * (1 + TAX_RATE);
+  /* Clamped like the total: a discount bigger than the shed never reports a
+     saving larger than the price. */
+  const savings = discounts.length
+    ? Math.max(0, totalBefore - (adjustedSubtotal + tax))
+    : Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE);
   return withCardPrice(redline, {
     rows: rows,
     subtotal: subtotal,
@@ -3989,8 +4006,8 @@ function quoteLines(redline, adjustments) {
        exactly. Derived from adjustedSubtotal rather than from `adjust`, because
        adjustedSubtotal is clamped at zero — a discount bigger than the shed
        would otherwise report a saving larger than the price. */
-    totalBefore: subtotal * (1 + TAX_RATE),
-    savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
+    totalBefore: totalBefore,
+    savings: savings,
     depositTotal: depositTotal,
     /* Display only — see DISCOUNTS, LISTED LAST above. */
     regularSubtotal: regularSubtotal,
