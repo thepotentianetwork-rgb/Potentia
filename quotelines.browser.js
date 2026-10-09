@@ -393,7 +393,7 @@ function quoteLines(redline, adjustments) {
 
   const tax = adjustedSubtotal * TAX_RATE;
   const depositTotal = rows.reduce((t, r) => t + r.deposit, 0);
-  return {
+  return withCardPrice(redline, {
     rows: rows,
     subtotal: subtotal,
     /* What a percentage adjustment is a percentage OF: the subtotal less any
@@ -413,7 +413,81 @@ function quoteLines(redline, adjustments) {
     totalBefore: subtotal * (1 + TAX_RATE),
     savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
     depositTotal: depositTotal
+  });
+}
+
+/* ── REGULAR (CARD) PRICE AND THE CASH, CHECK & BANK TRANSFER DISCOUNT ──────
+ *
+ * Nando, 9 Oct 2026: card payers pay 3% more than everyone else, done the way
+ * the card networks allow — the POSTED price is the card price and paying any
+ * other way earns a discount. A quote priced while the switch was on carries
+ * redline.cardUplift (0.03); every money figure here is then today's figure x
+ * (1 + uplift): each phase, sub-line, promo, adjustment, the tax and every
+ * deposit. One uniform factor, applied once, at the end — so the quote reads
+ * as plain regular prices with no "card" line anywhere, and the arithmetic
+ * above (comps, overrides, adjustments, rounding) is untouched.
+ *
+ * The discount is uplift / (1 + uplift) of the regular price (2.913% for 3%),
+ * which takes a non-card payer back to EXACTLY today's figure:
+ *   today $10,000.00 -> regular (card) $10,300.00 -> discount $300.00 -> $10,000.00
+ *
+ * A redline without cardUplift (every quote priced before the switch, or while
+ * it is off) comes back exactly as before — no cashDiscount key at all. */
+const CARD_UPLIFT_MAX = 0.10;
+function cardUpliftOf(redline) {
+  const u = Number(redline && redline.cardUplift);
+  return Number.isFinite(u) && u > 0 ? Math.min(CARD_UPLIFT_MAX, u) : 0;
+}
+/* The share of the REGULAR price that comes off: 0.03 -> 0.029126... */
+function cashDiscountFraction(uplift) {
+  const u = Number(uplift) || 0;
+  return u > 0 ? u / (1 + u) : 0;
+}
+/* How the saving is written for customers: the true share of the regular
+   price, to one decimal (3% uplift -> "2.9"). Not "3": $300 off $10,300 is
+   2.91%, and an advertised discount has to be the real one. */
+function cashDiscountPctLabel(uplift) {
+  const f = cashDiscountFraction(uplift) * 100;
+  return String(Math.round(f * 10) / 10);
+}
+const CASH_DISCOUNT_LABEL = 'Cash, check & bank transfer discount';
+function cashDiscountDisclosure(uplift, amount) {
+  const pct = cashDiscountPctLabel(uplift);
+  const amt = Number(amount) > 0 ? ' (' + qlMoney(amount) + ')' : '';
+  return 'Prices shown are our regular prices. Pay by cash, check, cashier\u2019s check or bank transfer (ACH) and save ' + pct + '%' + amt + '.';
+}
+function qlMoney(n) {
+  return '$' + (Math.round(Number(n) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function withCardPrice(redline, bd) {
+  const u = cardUpliftOf(redline);
+  if (!u) return bd;
+  const k = 1 + u;
+  const sc = (v) => (typeof v === 'number' ? v * k : v);
+  bd.rows.forEach(function (r) {
+    ['amt', 'tax', 'total', 'deposit', 'listAmt'].forEach(function (f) { if (r[f] != null) r[f] = sc(r[f]); });
+    if (r.promo) r.promo = Object.assign({}, r.promo, { amt: sc(Number(r.promo.amt) || 0) });
+    if (r.override && r.override.was != null) r.override = Object.assign({}, r.override, { was: sc(Number(r.override.was) || 0) });
+    if (r.subLines) r.subLines = r.subLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
+  });
+  ['subtotal', 'percentBase', 'travel', 'adjust', 'percentAdjust', 'amountAdjust', 'adjustedSubtotal',
+   'tax', 'total', 'totalBefore', 'savings', 'depositTotal'].forEach(function (f) { bd[f] = sc(bd[f]); });
+  /* What a flat adjustment typed by staff becomes on this quote (the page and
+     the invoice multiply the typed figure by this). */
+  bd.priceScale = k;
+  const cashTotal = bd.total / k;
+  bd.cashDiscount = {
+    uplift: u,
+    percentLabel: cashDiscountPctLabel(u),
+    fraction: cashDiscountFraction(u),
+    /* Tax-inclusive, like Total Due: what comes off, and what is left to pay
+       by cash, check, cashier's check or bank transfer. */
+    amount: bd.total - cashTotal,
+    cashTotal: cashTotal,
+    cashDepositTotal: bd.depositTotal / k
   };
+  return bd;
 }
 
   root.TAX_RATE = TAX_RATE;
@@ -429,4 +503,10 @@ function quoteLines(redline, adjustments) {
   root.travelAmount = travelAmount;
   root.travelLabel = travelLabel;
   root.overrideMap = overrideMap;
+  root.cashDiscountDisclosure = cashDiscountDisclosure;
+  root.cashDiscountPctLabel = cashDiscountPctLabel;
+  root.CASH_DISCOUNT_LABEL = CASH_DISCOUNT_LABEL;
+  root.CARD_UPLIFT_MAX = CARD_UPLIFT_MAX;
+  root.cardUpliftOf = cardUpliftOf;
+  root.cashDiscountFraction = cashDiscountFraction;
 })(typeof window !== 'undefined' ? window : globalThis);

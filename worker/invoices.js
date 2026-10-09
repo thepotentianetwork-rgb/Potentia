@@ -1,3 +1,4 @@
+import { CASH_DISCOUNT_LABEL, cashDiscountFraction, cashDiscountPctLabel } from "./quotelines.js";
 /* WHAT AN INVOICE ACTUALLY CHARGES, WORKED OUT BEFORE STRIPE IS INVOLVED.
  *
  * Kept apart from the Stripe calls on purpose: this is the half that decides
@@ -122,7 +123,9 @@ function adjustmentLines(bd, adjustments) {
         amountCents: toCents((bd.percentBase != null ? bd.percentBase : bd.subtotal) * (v / 100))
       });
     } else if (a.kind === 'amount') {
-      named.push({ label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v) });
+      /* On a regular (card) price quote a typed flat amount reads at the same
+         scale as everything else (quoteLines bd.priceScale). */
+      named.push({ label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (Number(bd.priceScale) || 1)) });
     }
   });
 
@@ -208,7 +211,7 @@ function depositInvoice(bd, adjustments, payments) {
     });
   }
   creditLines(payments).forEach((l) => lines.push(l));
-  const totalCents = depositCents - paidCentsOf(payments);
+  const totalCents = depositCents - creditedCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
@@ -222,8 +225,26 @@ function creditLines(payments) {
     const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
     const how = p.method ? ' by ' + methodLabel(p.method) : '';
     out.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c), fixed: true });
+    /* The cash, check & bank transfer discount that payment earned: a
+       reduction of the job, not money — so its own line, never folded in. */
+    const d = discountCentsOf(p);
+    if (d) out.push({ label: CASH_DISCOUNT_LABEL + ' on that payment', amountCents: -d, fixed: true, discount: true });
   });
   return out;
+}
+
+/* What a payment takes off a job: the money, plus any cash, check & bank
+   transfer discount it earned (payments.discount_amount, dollars). Every
+   balance, deposit and phase figure works off THIS; "paid" (money only) is
+   reported separately. A payment with no discount is exactly its amount. */
+export function discountCentsOf(p) {
+  return Math.abs(toCents(p && p.discount_amount));
+}
+export function creditCentsOf(p) {
+  return Math.abs(toCents(p && p.amount)) + discountCentsOf(p);
+}
+function creditedCentsOf(payments) {
+  return (payments || []).reduce((t, p) => t + creditCentsOf(p), 0);
 }
 
 /* Payments are stored in DOLLARS (REAL) — manual ones as typed, Stripe ones as
@@ -252,14 +273,19 @@ export function balanceSummary(breakdown, payments) {
   const jobTotalCents = toCents(breakdown && breakdown.total);
   const depositTotalCents = toCents(breakdown && breakdown.depositTotal);
   const paidCents = paidCentsOf(payments);
-  const owed = jobTotalCents - paidCents;
+  /* Cash discounts earned so far: they reduce what the job costs, they are
+     not money received. */
+  const discountCents = (payments || []).reduce((t, p) => t + discountCentsOf(p), 0);
+  const credited = paidCents + discountCents;
+  const owed = jobTotalCents - credited;
   return {
     jobTotalCents,
     depositTotalCents,
     paidCents,
+    discountCents,
     balanceCents: Math.max(0, owed),
     overpaidCents: Math.max(0, -owed),
-    depositDueCents: Math.max(0, depositTotalCents - paidCents),
+    depositDueCents: Math.max(0, depositTotalCents - credited),
     paidInFull: jobTotalCents > 0 && owed <= 0
   };
 }
@@ -280,7 +306,7 @@ function balanceInvoice(bd, adjustments, payments) {
   creditLines(payments).forEach((l) => lines.push(l));
 
   const jobCents = toCents(bd.total);
-  const totalCents = jobCents - paidCentsOf(payments);
+  const totalCents = jobCents - creditedCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
@@ -476,6 +502,7 @@ export function buildInvoice(breakdown, kind, payments, opts = {}) {
     totalCents: out.totalCents,
     jobTotalCents: toCents(breakdown.total),
     paidCents: paidCentsOf(paid),
+    earnedDiscountCents: paid.reduce((t, p) => t + discountCentsOf(p), 0),
     memo: buildMemo(breakdown, opts),
     footer: buildFooter(breakdown, opts.comped, kind, { credited: paid.length > 0 }),
     customFields: buildCustomFields(breakdown, kind, opts)
@@ -579,7 +606,10 @@ export function allocatePhases(phases, payments) {
     if (same) same.cents += take; else entry.parts.push({ phase, part, cents: take });
     return cents - take;
   }
-  const leftover = byPayment.map((e) => Math.abs(toCents(e.payment.amount)));
+  /* A payment fills phases by what it takes off the job: money plus any cash
+     discount it earned (a $3,000 check on a 3% regular-price job covers
+     $3,090 of the $3,090 deposit). */
+  const leftover = byPayment.map((e) => creditCentsOf(e.payment));
 
   byPayment.forEach((e, i) => {                              // 1. from a phase invoice
     const a = parseAlloc(e.payment.phase_alloc);
@@ -861,6 +891,7 @@ export function buildTogetherInvoice(builds, selected, opts = {}) {
     totalCents,
     jobTotalCents,
     paidCents: allPayments.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    earnedDiscountCents: allPayments.reduce((t, p) => t + discountCentsOf(p), 0),
     covers: coverCents,
     builds: many ? subs : undefined,
     description: what,
@@ -928,7 +959,9 @@ function appliedSentence(ts, picks, many) {
       if (!parts.length) return;
       const p = e.payment;
       const cents = Math.abs(toCents(p.amount));
-      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at)].filter(Boolean).join(', ');
+      const disc = discountCentsOf(p);
+      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at),
+                   disc ? 'plus ' + usd(fromCents(disc)) + ' cash discount' : null].filter(Boolean).join(', ');
       const what = parts.every((x) => x.part === 'deposit') ? 'deposit' : 'payment';
       hits.push({ cents, how, what, build: many ? shortBuild(b.name) : '' });
     });
@@ -1025,4 +1058,100 @@ export function splitFee(paidCents, totalCents, feeCents) {
   if (!fee || !tot) return { creditCents: paid, feeCents: 0 };
   const feePart = paid >= tot ? fee : Math.round(paid * fee / tot);
   return { creditCents: paid - feePart, feeCents: feePart };
+}
+
+/* ---------------------------------------------------------------------------
+ * CASH, CHECK & BANK TRANSFER DISCOUNT (replaces the card surcharge above,
+ * which Stripe-hosted invoices cannot carry).
+ *
+ * A quote priced while the switch was on is at REGULAR (card) prices
+ * (quoteLines: redline.cardUplift). Every bill, phase and balance stays in
+ * those prices. Paying by anything but a card earns a discount of
+ * uplift / (1 + uplift) of what that payment covers, so a non-card payer pays
+ * exactly what the job cost before the switch:
+ *
+ *   card  bill: regular price, card only.
+ *   ACH   bill: regular price less the discount line, bank transfer only.
+ *   check/cash: recorded as typed; the discount it earned is stored beside it
+ *               (payments.discount_amount) and shown as its own line.
+ *
+ * The discount is a REDUCTION OF THE JOB for the part paid that way, never a
+ * payment: creditCentsOf() above adds it to what the payment covers, so a
+ * check on the deposit and a card on the balance each settle their own part.
+ * A build without cardUplift (every quote priced before the switch) earns no
+ * discount anywhere and bills exactly as it always has.
+ * ------------------------------------------------------------------------- */
+export function cashDiscountCents(cardCents, uplift) {
+  return Math.round(Math.max(0, Number(cardCents) || 0) * cashDiscountFraction(uplift));
+}
+
+/* Methods typed in the CRM that earn the discount. "card" never does, and
+   Venmo is left out because it can be card-funded; staff can untick the
+   discount on any single payment. */
+export const DISCOUNT_METHODS = ['cash', 'check', 'cashiers_check', 'invoice2go', 'zelle', 'other'];
+
+/* The discount a manual (check / cash ...) payment earns on a regular-price
+   job: payment x uplift, never more than what is left of the job beyond the
+   payment itself, and snapped to close the job exactly when the payment is
+   the full cash price of what was owed. */
+export function manualDiscountCents(payCents, uplift, remainingCardCents) {
+  const u = Number(uplift) || 0;
+  const pay = Math.max(0, Math.round(Number(payCents) || 0));
+  if (!(u > 0) || !pay) return 0;
+  const room = Math.max(0, Math.round(Number(remainingCardCents) || 0) - pay);
+  let d = Math.round(pay * u);
+  if (Math.abs(room - d) <= 2) d = room;
+  return Math.max(0, Math.min(d, room));
+}
+
+/* The ACH version of a bill: the same lines plus the discount line. upliftFor
+   (sub) gives each build's uplift (0 = priced before the switch), because a
+   combined bill can hold one build of each kind; each cover carries the
+   discount it earned (disc) so the payment can be booked per build. Returns
+   null when nothing on the bill earns a discount. */
+export function addCashDiscount(invoice, upliftFor, defaultSub) {
+  const covers = Array.isArray(invoice.covers) && invoice.covers.length
+    ? invoice.covers.map((c) => ({ ...c })) : null;
+  let disc = 0;
+  const pcts = {};
+  if (covers) {
+    covers.forEach((c) => {
+      const u = upliftFor(c.sub != null ? c.sub : defaultSub);
+      const d = cashDiscountCents(c.cents, u);
+      if (d) { c.disc = d; disc += d; pcts[cashDiscountPctLabel(u)] = 1; }
+    });
+  } else {
+    const u = upliftFor(defaultSub);
+    disc = cashDiscountCents(invoice.totalCents, u);
+    if (disc) pcts[cashDiscountPctLabel(u)] = 1;
+  }
+  if (!disc) return null;
+  const pl = Object.keys(pcts);
+  const label = CASH_DISCOUNT_LABEL + (pl.length === 1 ? ' (' + pl[0] + '%)' : '') + ' \u2014 paying by bank transfer (ACH)';
+  return {
+    ...invoice,
+    covers: covers || invoice.covers,
+    lines: invoice.lines.concat([{ label: clip(label, LIMITS.label), amountCents: -disc, fixed: true, discount: true }]),
+    totalCents: invoice.totalCents - disc,
+    discountCents: disc,
+    discountPct: pl.length === 1 ? pl[0] : null
+  };
+}
+
+/* What part of an ACH bill's discount a payment earned: all of it when the
+   bill is paid in full, in proportion when it is paid in part. */
+export function paidDiscountCents(clearedCents, billedCents, discountCents) {
+  const d = Math.max(0, Math.round(Number(discountCents) || 0));
+  const billed = Math.max(0, Number(billedCents) || 0);
+  if (!d || !billed) return 0;
+  return Math.round(d * Math.min(1, Math.max(0, Number(clearedCents) || 0) / billed));
+}
+
+export function cardBillFooterNote(pctLabel) {
+  return 'Prices shown are our regular prices. This bill is for payment by card. Pay by cash, check, cashier\u2019s check or bank transfer (ACH) and save ' +
+    pctLabel + '% \u2014 ask us for a bank-transfer bill.';
+}
+export function bankBillFooterNote(pctLabel) {
+  return 'This bill is for payment by bank transfer (ACH) and includes our ' + pctLabel +
+    '% cash, check & bank transfer discount. Card payments are billed at our regular price.';
 }

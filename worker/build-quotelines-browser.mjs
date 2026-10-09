@@ -25,7 +25,9 @@ const OUT = path.join(dir, '..', 'quotelines.browser.js');
 
 export const EXPORTED = ['TAX_RATE', 'DEPOSIT_RATE', 'BASE_SHED_INCLUDES',
   'REMOVAL_NAMES', 'compItemPrices', 'compedMap', 'nameList', 'quoteLines',
-  'shedStyleName', 'isSitePrep', 'travelAmount', 'travelLabel', 'overrideMap'];
+  'shedStyleName', 'isSitePrep', 'travelAmount', 'travelLabel', 'overrideMap',
+  'cashDiscountDisclosure', 'cashDiscountPctLabel', 'CASH_DISCOUNT_LABEL', 'CARD_UPLIFT_MAX',
+  'cardUpliftOf', 'cashDiscountFraction'];
 
 export function generate(source) {
   const body = source.replace(/^export /gm, '');
