@@ -342,22 +342,27 @@ test('before, saving and total subtract to each other exactly', () => {
     `${bd.totalBefore} - ${bd.savings} should be ${bd.total}`);
 });
 
+/* The fixture build carries the concrete pad promo, and every discount now
+   counts toward "You save" (Nando, 9 Oct 2026: "yes count them all"). The
+   tests about a single adjustment use the same build without the promo. */
+const NO_PROMO = () => ({ ...computePricing(BUILDS['barn, everything on']).redline, foundPromo: 0 });
+
 test('the saving is the discount plus the tax no longer owed on it', () => {
-  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const redline = NO_PROMO();
   const { bd } = withAdjust(redline, [{ kind: 'amount', value: -1500 }]);
   assert.ok(Math.abs(bd.savings - 1500 * (bd.total / bd.adjustedSubtotal)) < 0.01,
     'the customer saves the tax on the discount too');
 });
 
 test('a percentage discount works the same way', () => {
-  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const redline = NO_PROMO();
   const { bd } = withAdjust(redline, [{ kind: 'percent', value: -10 }]);
   assert.ok(Math.abs(bd.savings - bd.subtotal * 0.10 * (bd.total / bd.adjustedSubtotal)) < 0.01);
   assert.ok(Math.abs((bd.totalBefore - bd.savings) - bd.total) < 0.005);
 });
 
 test('an adjustment that raises the price claims no saving', () => {
-  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const redline = NO_PROMO();
   const { bd } = withAdjust(redline, [{ kind: 'amount', value: 800 }]);
   assert.equal(bd.savings, 0, 'nothing was saved');
   assert.ok(bd.total > bd.totalBefore, 'the price went up, and says so');
@@ -375,7 +380,7 @@ test('an over-sized discount cannot save more than the shed cost', () => {
 });
 
 test('with no adjustment there is no saving and no before figure to show', () => {
-  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const redline = NO_PROMO();
   const { bd } = withAdjust(redline, []);
   assert.equal(bd.savings, 0);
   assert.equal(bd.adjust, 0);
@@ -406,14 +411,54 @@ test('the price box shows the before figure and the saving', () => {
   const { redline } = computePricing(BUILDS['barn, everything on']);
   const { page, bd } = withAdjust(redline, [{ kind: 'amount', value: -1500 }]);
   const html = page.priceBox(bd, bd.total);
-  assert.match(html, /Total Due After Adjustment/);
-  assert.match(html, /Before adjustment/);
+  assert.match(html, /Total Due After Discounts/);
+  assert.match(html, /Before discounts/);
   assert.match(html, /You save/);
   assert.match(html, /price-box-deal/);
 });
 
-test('the price box is unchanged when nothing was adjusted', () => {
+test('"You save" counts every discount: pad promo, free item, loyalty, staff discount', () => {
   const { redline } = computePricing(BUILDS['barn, everything on']);
+  assert.ok(Number(redline.foundPromo) > 0, 'fixture has the pad promo');
+  const adj = [{ kind: 'comp', item: 'Skylight' }, { kind: 'amount', value: -1000, note: 'Loyalty discount' },
+               { kind: 'percent', value: -5, note: 'Staff adjustment' }];
+  const { page, bd } = withAdjust(redline, adj);
+  const sectionTotal = bd.discounts.reduce((t, d) => t + d.amt, 0);
+  assert.ok(bd.discounts.length >= 4, 'promo, free item, loyalty and staff discount are all listed');
+  assert.ok(Math.abs(bd.savings - sectionTotal * (1 + page.TAX_RATE)) < 0.005, 'You save = the Discounts section, tax included');
+  assert.ok(Math.abs((bd.totalBefore - bd.savings) - bd.total) < 0.005, 'before - save = Total Due');
+  assert.ok(Math.abs(bd.totalBefore - bd.regularSubtotal * (1 + page.TAX_RATE)) < 0.005, 'before = regular prices, tax included');
+  const html = page.priceBox(bd, bd.total);
+  assert.ok(html.includes('You save ' + page.money2(bd.savings)));
+  assert.ok(html.includes('Before discounts ' + page.money2(bd.totalBefore)));
+});
+
+test('a promo alone (no staff adjustment) now shows the before figure and the saving', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { page, bd } = withAdjust(redline, []);
+  assert.ok(Math.abs(bd.savings - Number(redline.foundPromo) * (1 + page.TAX_RATE)) < 0.005);
+  const html = page.priceBox(bd, bd.total);
+  assert.match(html, /Total Due After Discounts/);
+  assert.match(html, /You save/);
+});
+
+test('a rise alongside a discount: before includes the rise, the saving is only the discounts', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { page, bd } = withAdjust(redline, [{ kind: 'amount', value: 800, note: 'Rush build' }]);
+  assert.ok(Math.abs(bd.savings - Number(redline.foundPromo) * (1 + page.TAX_RATE)) < 0.005);
+  assert.ok(Math.abs((bd.totalBefore - bd.savings) - bd.total) < 0.005);
+});
+
+test('the cash, check & bank transfer discount is not in "You save"; it keeps its own box', () => {
+  const { redline } = computePricing(BUILDS['barn, everything on']);
+  const { page, bd } = withAdjust({ ...redline, cardUplift: 0.03 }, []);
+  assert.ok(Math.abs(bd.savings - Number(redline.foundPromo) * 1.03 * (1 + page.TAX_RATE)) < 0.005, 'promo only, at regular prices');
+  const html = page.priceBox(bd, bd.total);
+  assert.ok(html.includes('You save ' + page.money2(bd.cashDiscount.amount)), 'the cash discount has its own You save');
+});
+
+test('the price box is unchanged when nothing was adjusted', () => {
+  const redline = NO_PROMO();
   const { page, bd } = withAdjust(redline, []);
   const html = page.priceBox(bd, bd.total);
   assert.match(html, /Total Due \(Tax Included\)/);
@@ -440,7 +485,7 @@ test('the before figure is struck through only when the price came down', () => 
   const downHtml = down.page.priceBox(down.bd, down.bd.total);
   assert.match(downHtml, /price-was is-saving/, 'a discount strikes the old higher price');
 
-  const up = withAdjust(redline, [{ kind: 'amount', value: 500 }]);
+  const up = withAdjust(NO_PROMO(), [{ kind: 'amount', value: 500 }]);
   const upHtml = up.page.priceBox(up.bd, up.bd.total);
   assert.match(upHtml, /Before adjustment/, 'a rise still shows what it was');
   assert.ok(!/is-saving/.test(upHtml), 'but does not strike the cheaper figure through');
