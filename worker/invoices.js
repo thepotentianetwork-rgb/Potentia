@@ -469,3 +469,308 @@ export function buildInvoice(breakdown, kind, payments, opts = {}) {
     customFields: buildCustomFields(breakdown, kind, opts)
   };
 }
+
+/* ---------------------------------------------------------------------------
+ * BILLING BY PHASE.
+ *
+ * The quote already splits every job into phases (quoteLines rows: Phase 1 —
+ * Concrete Pad, Phase 2 — Shed, Phase 3 — Interior, with site clearance first
+ * when there is any) and prints a 30% deposit per phase. Billing by phase uses
+ * exactly those figures — nothing here invents a percentage:
+ *
+ *   each phase = its 30% DEPOSIT (collected before the phase starts)
+ *              + its REMAINDER   (the other 70%, due once the phase is done)
+ *
+ * and the schedule is: Phase 1 deposit; then Phase 2 deposit + what is left of
+ * Phase 1; then Phase 3 deposit + what is left of Phase 2; then what is left of
+ * the last phase on completion. The CRM suggests that and lets a person tick
+ * any other combination.
+ * ------------------------------------------------------------------------- */
+
+export const PHASE_PARTS = ['deposit', 'remainder'];
+
+/* "Phase 2 — Shed (A-Frame)" -> "Shed (A-Frame)". */
+function phaseName(row) {
+  return String(row.label || '').replace(/^Phase\s+\d+\s+—\s+/, '');
+}
+
+/* Every phase in integer cents. Deposit and remainder are reconciled so the
+   phases add up to the job total to the penny; any rounding cent lands on the
+   LAST phase's remainder, the final amount billed. */
+export function phaseParts(bd) {
+  if (!bd || !Array.isArray(bd.rows)) return [];
+  const out = bd.rows.map((r, i) => {
+    const totalCents = toCents(r.total);
+    const depositCents = toCents(r.deposit);
+    return { phase: r.phase || i + 1, name: phaseName(r), totalCents, depositCents,
+             remainderCents: totalCents - depositCents };
+  });
+  const drift = toCents(bd.total) - out.reduce((t, p) => t + p.totalCents, 0);
+  if (drift && out.length) {
+    const last = out[out.length - 1];
+    last.totalCents += drift; last.remainderCents += drift;
+  }
+  return out;
+}
+
+/* What a payment says it was for. Stored as JSON in payments.phase_alloc:
+     {"phase": 2}                                        typed by a person
+     {"parts": [{"phase":1,"part":"remainder","cents":225225}, ...]}
+                                                         written when a phase
+                                                         invoice is paid
+   Anything else (including null — every payment before this existed) is
+   untagged. */
+export function parseAlloc(v) {
+  if (!v) return null;
+  let o = v;
+  if (typeof v === 'string') { try { o = JSON.parse(v); } catch (e) { return null; } }
+  if (!o || typeof o !== 'object') return null;
+  if (Array.isArray(o.parts)) {
+    const parts = o.parts.filter((p) => p && Number(p.phase) > 0 && PHASE_PARTS.includes(p.part))
+      .map((p) => ({ phase: Number(p.phase), part: p.part, cents: Math.max(0, Math.round(Number(p.cents) || 0)) }));
+    return parts.length ? { parts } : null;
+  }
+  if (Number(o.phase) > 0) return { phase: Number(o.phase) };
+  return null;
+}
+
+/* WHICH PART OF WHICH PHASE EACH PAYMENT PAID.
+ *
+ *  1. Payments from a phase invoice go to the parts that invoice billed.
+ *  2. Payments a person tagged with a phase go to that phase: deposit first,
+ *     then its remainder.
+ *  3. Everything else — untagged payments and anything left over from 1 or 2 —
+ *     fills DEPOSITS first, in phase order, then remainders in phase order.
+ *     That is what an untagged payment has always meant here: before phases,
+ *     "the deposit" was all the phase deposits together, so a paid old-style
+ *     deposit invoice lands on exactly the deposits it covered.
+ *
+ * Nothing is ever allocated past what a part costs; money beyond the whole job
+ * is reported as overpaid, never as a negative balance. */
+export function allocatePhases(phases, payments) {
+  const key = (ph, part) => ph + ':' + part;
+  const cost = {}, paid = {};
+  phases.forEach((p) => {
+    cost[key(p.phase, 'deposit')] = p.depositCents;
+    cost[key(p.phase, 'remainder')] = p.remainderCents;
+    paid[key(p.phase, 'deposit')] = 0;
+    paid[key(p.phase, 'remainder')] = 0;
+  });
+  const room = (k) => (cost[k] == null ? 0 : Math.max(0, cost[k] - paid[k]));
+  const byPayment = (payments || []).map((p) => ({ payment: p, parts: [] }));
+  function put(entry, phase, part, cents) {
+    const k = key(phase, part);
+    const take = Math.min(cents, room(k));
+    if (take <= 0) return cents;
+    paid[k] += take;
+    const same = entry.parts.find((x) => x.phase === phase && x.part === part);
+    if (same) same.cents += take; else entry.parts.push({ phase, part, cents: take });
+    return cents - take;
+  }
+  const leftover = byPayment.map((e) => Math.abs(toCents(e.payment.amount)));
+
+  byPayment.forEach((e, i) => {                              // 1. from a phase invoice
+    const a = parseAlloc(e.payment.phase_alloc);
+    if (!a || !a.parts) return;
+    a.parts.forEach((x) => {
+      const want = Math.min(x.cents, leftover[i]);
+      leftover[i] -= want - put(e, x.phase, x.part, want);
+    });
+  });
+  byPayment.forEach((e, i) => {                              // 2. tagged by a person
+    const a = parseAlloc(e.payment.phase_alloc);
+    if (!a || !a.phase) return;
+    leftover[i] = put(e, a.phase, 'deposit', leftover[i]);
+    leftover[i] = put(e, a.phase, 'remainder', leftover[i]);
+  });
+  const order = phases.map((p) => [p.phase, 'deposit']).concat(phases.map((p) => [p.phase, 'remainder']));
+  byPayment.forEach((e, i) => {                              // 3. everything else
+    order.forEach(([ph, part]) => { if (leftover[i] > 0) leftover[i] = put(e, ph, part, leftover[i]); });
+  });
+  return { paid, byPayment, overpaidCents: leftover.reduce((t, c) => t + c, 0) };
+}
+
+/* Where each phase stands, and what the CRM should suggest billing next.
+ * openParts: parts already on a sent, unpaid phase invoice — not suggested
+ * again, so a second invoice cannot ask for the same money. */
+export function phaseStatus(bd, payments, openParts) {
+  const phases = phaseParts(bd);
+  const { paid, byPayment, overpaidCents } = allocatePhases(phases, payments);
+  const open = {};
+  (openParts || []).forEach((o) => { open[o.phase + ':' + o.part] = o.invoice_id || true; });
+  const rows = phases.map((p) => {
+    const part = (name, cents) => {
+      const k = p.phase + ':' + name;
+      return { amountCents: cents, paidCents: paid[k] || 0,
+               remainingCents: Math.max(0, cents - (paid[k] || 0)), openInvoice: open[k] || null };
+    };
+    return { phase: p.phase, name: p.name, totalCents: p.totalCents,
+             deposit: part('deposit', p.depositCents), remainder: part('remainder', p.remainderCents) };
+  });
+
+  /* The suggestion: the first phase whose deposit is still owed, plus every
+     earlier phase's unpaid remainder (those phases have started, so the work
+     is done or under way). If every deposit is in, the earliest unpaid
+     remainder — on the last phase that is the bill on completion. */
+  const free = (x) => x.remainingCents > 0 && !x.openInvoice;
+  const suggested = [];
+  const next = rows.find((r) => free(r.deposit));
+  if (next) {
+    suggested.push({ phase: next.phase, part: 'deposit' });
+    /* Only phases whose deposit is in — a phase that never started has no
+       "rest" to collect yet. */
+    rows.filter((r) => r.phase < next.phase && free(r.remainder) && r.deposit.remainingCents === 0)
+      .forEach((r) => suggested.push({ phase: r.phase, part: 'remainder' }));
+  } else {
+    const rem = rows.find((r) => free(r.remainder));
+    if (rem) suggested.push({ phase: rem.phase, part: 'remainder' });
+  }
+  return { phases: rows, byPayment, overpaidCents, suggested };
+}
+
+const SHORT_DATE = (v) => {
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '/' + d.getUTCFullYear();
+};
+const METHOD_TITLE = { cash: 'Cash', check: 'Check', cashiers_check: "Cashier's check", venmo: 'Venmo',
+  zelle: 'Zelle', invoice2go: 'Invoice2go', card: 'Card', stripe: 'Stripe', other: 'Other' };
+
+/* ONE STRIPE INVOICE FOR THE PARTS SOMEONE TICKED.
+ *
+ * Written for the customer, who has to understand it without a call:
+ *
+ *   Phase 2: Shed deposit (30%)                                   $5,511.60
+ *   Remainder of Phase 1: Concrete Pad (4" slab), due after
+ *     completion — phase total                                    $3,217.50
+ *   Deposit already paid (Invoice2go, 9/1/2026)                    -$965.25
+ *
+ * A remainder is shown as the PHASE TOTAL less what was already paid toward
+ * that phase, one credit per payment, so the customer sees the 30% they paid
+ * coming off rather than a bare "70%" they have to take on trust. A deposit is
+ * shown as the deposit less anything already paid toward it.
+ *
+ * All amounts are tax-inclusive, exactly as the quote's per-phase figures are;
+ * Stripe must not add tax (same rule as the deposit/balance invoices).
+ *
+ * `covers` is what each billed line pays for, net — written onto the stored
+ * lines so that when Stripe says this invoice is paid, the payment is booked
+ * against these exact parts and nothing is billed twice. */
+export function buildPhaseInvoice(bd, payments, selected, opts = {}) {
+  if (!bd || !Array.isArray(bd.rows) || !bd.rows.length) throw new Error('this submission has no priced phases to invoice');
+  const st = phaseStatus(bd, payments, opts.openParts);
+  const want = {};
+  (selected || []).forEach((s) => {
+    if (!s || !PHASE_PARTS.includes(s.part)) return;
+    want[Number(s.phase) + ':' + s.part] = true;
+  });
+  const lines = [], covers = [];
+  (selected || []).forEach((s) => {
+    if (s && !st.phases.some((p) => p.phase === Number(s.phase))) {
+      throw Object.assign(new Error('this build has no phase ' + s.phase), { code: 'bad_phase' });
+    }
+  });
+  const picked = st.phases.filter((p) => want[p.phase + ':deposit'] || want[p.phase + ':remainder']);
+  if (!picked.length) throw Object.assign(new Error('pick at least one phase to bill'), { code: 'nothing_selected' });
+
+  function credits(phase, parts, labelFor) {
+    st.byPayment.forEach((e) => {
+      const c = e.parts.filter((x) => x.phase === phase && parts.includes(x.part)).reduce((t, x) => t + x.cents, 0);
+      if (!c) return;
+      const p = e.payment;
+      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at)].filter(Boolean).join(', ');
+      const onlyDeposit = e.parts.filter((x) => x.phase === phase && parts.includes(x.part)).every((x) => x.part === 'deposit');
+      lines.push({ label: labelFor(onlyDeposit) + (how ? ' (' + how + ')' : ''), amountCents: -c, fixed: true });
+    });
+  }
+
+  /* Deposits first — that is the phase about to start — then the rest of the
+     phases already under way, in phase order. */
+  const depositOnly = picked.filter((p) => want[p.phase + ':deposit'] && !want[p.phase + ':remainder']);
+  const withRest = picked.filter((p) => want[p.phase + ':remainder']);
+  depositOnly.forEach((p) => {
+    if (p.deposit.openInvoice) throw Object.assign(new Error('Phase ' + p.phase + ' deposit is already on a sent invoice — void it first'), { code: 'already_billed' });
+    if (!p.deposit.remainingCents) throw Object.assign(new Error('Phase ' + p.phase + ' deposit is already paid'), { code: 'already_paid' });
+    lines.push({ label: 'Phase ' + p.phase + ': ' + p.name + ' deposit (30%)', amountCents: p.deposit.amountCents });
+    credits(p.phase, ['deposit'], () => 'Deposit already paid');
+    covers.push({ phase: p.phase, part: 'deposit', cents: p.deposit.remainingCents });
+  });
+  withRest.forEach((p) => {
+    const both = want[p.phase + ':deposit'];
+    if (p.remainder.openInvoice || (both && p.deposit.openInvoice)) {
+      throw Object.assign(new Error('Phase ' + p.phase + ' is already on a sent invoice — void it first'), { code: 'already_billed' });
+    }
+    const owed = p.remainder.remainingCents + (both ? p.deposit.remainingCents : 0);
+    if (!owed) throw Object.assign(new Error('Phase ' + p.phase + ' is already paid'), { code: 'already_paid' });
+    /* Deposit paid in full: show the PHASE TOTAL and take each deposit payment
+       off it, so the rest reads as "total minus what you paid". Deposit not
+       (fully) paid and not ticked: bill only the 70% — the deposit stays owed
+       on its own line, on its own invoice. */
+    const showTotal = both || p.deposit.remainingCents === 0;
+    const lbl = both
+      ? 'Phase ' + p.phase + ': ' + p.name + ' — whole phase (deposit + rest, due after completion)'
+      : 'Remainder of Phase ' + p.phase + ': ' + p.name + ', due after completion' +
+        (showTotal ? ' — phase total' : ' — 70% of ' + usd(fromCents(p.totalCents)));
+    lines.push({ label: lbl, amountCents: showTotal ? p.totalCents : p.remainder.amountCents });
+    if (showTotal) credits(p.phase, ['deposit'], () => 'Deposit already paid');
+    credits(p.phase, ['remainder'], () => 'Already paid toward Phase ' + p.phase);
+    if (both && p.deposit.remainingCents) covers.push({ phase: p.phase, part: 'deposit', cents: p.deposit.remainingCents });
+    if (p.remainder.remainingCents) covers.push({ phase: p.phase, part: 'remainder', cents: p.remainder.remainingCents });
+  });
+
+
+  const totalCents = covers.reduce((t, c) => t + c.cents, 0);
+  const sum = lines.reduce((t, l) => t + l.amountCents, 0);
+  if (sum !== totalCents) throw new Error('phase invoice lines (' + sum + ') do not add up to ' + totalCents);
+  if (totalCents <= 0) throw Object.assign(new Error('nothing left to bill on those phases'), { code: 'already_paid' });
+
+  const what = describeSelection(covers);
+  return {
+    kind: 'phase',
+    lines: lines.map((l) => ({ ...l, label: clip(l.label, LIMITS.label) })),
+    totalCents,
+    jobTotalCents: toCents(bd.total),
+    paidCents: (payments || []).reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    covers,
+    description: what,
+    memo: phaseMemo(st.phases, what, opts),
+    footer: clip('All amounts include Utah sales tax (7.25%). Payments already received are credited above.' +
+      (opts.comped && Object.keys(opts.comped).length ? ' Included at no charge: ' + Object.keys(opts.comped).join(', ') + '.' : ''),
+      LIMITS.footer),
+    customFields: [
+      ['Order', opts.submissionId ? '#' + opts.submissionId : null],
+      ['Build', opts.summary || null],
+      ['This invoice', what],
+      ['Job total', usd(bd.total)]
+    ].filter(([, v]) => v).map(([name, value]) => ({ name: clip(name, LIMITS.fieldName), value: clip(value, LIMITS.fieldValue) }))
+  };
+}
+
+/* "Phase 2 deposit + rest of Phase 1" */
+export function describeSelection(covers) {
+  const deps = [], rests = [];
+  const seen = {};
+  (covers || []).forEach((c) => {
+    if (c.part === 'deposit') deps.push(c.phase);
+  });
+  (covers || []).forEach((c) => {
+    if (c.part === 'remainder' && !seen[c.phase]) { seen[c.phase] = 1; rests.push(c.phase); }
+  });
+  const bits = [];
+  deps.filter((p) => rests.indexOf(p) === -1).forEach((p) => bits.push('Phase ' + p + ' deposit'));
+  rests.forEach((p) => bits.push((deps.indexOf(p) > -1 ? 'all of Phase ' : 'rest of Phase ') + p));
+  return bits.join(' + ');
+}
+
+/* The plain-words explanation, on every phase invoice. Under Stripe's 500. */
+export function phaseMemo(phases, what, opts = {}) {
+  const head = [opts.summary, opts.submissionId ? 'Order #' + opts.submissionId : null].filter(Boolean).join(' \u00b7 ');
+  const list = phases.map((p) => 'Phase ' + p.phase + ': ' + p.name.replace(/\s*\(.*?\)\s*/g, ' ').trim()).join(', ');
+  const text = [head,
+    'How payment works: your build is done in phases (' + list + '). ' +
+    'Before each phase starts we collect a 30% deposit on that phase. ' +
+    'The rest of a phase is due once that phase is complete, and is added to the next invoice. ' +
+    'Anything you have already paid is credited.',
+    what ? 'This invoice: ' + what + '.' : ''].filter(Boolean).join('\n\n');
+  return clip(text, LIMITS.memo);
+}

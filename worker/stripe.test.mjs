@@ -218,7 +218,11 @@ test('a deposit is due on receipt, a balance in seven days', async () => {
   assert.equal(calls[0].params.days_until_due, '0');
   const b = await sendOne({ kind: 'balance' });
   assert.equal(b.calls[0].params.days_until_due, '7');
-  assert.deepEqual(DAYS_UNTIL_DUE, { deposit: 0, balance: 7 });
+  /* A phase invoice carries the next phase's deposit, which gates that phase
+     starting — due on receipt, like a deposit. */
+  const ph = await sendOne({ kind: 'phase' });
+  assert.equal(ph.calls[0].params.days_until_due, '0');
+  assert.deepEqual(DAYS_UNTIL_DUE, { deposit: 0, balance: 7, phase: 0 });
 });
 
 test('the lines arrive with their labels and exact cents', async () => {

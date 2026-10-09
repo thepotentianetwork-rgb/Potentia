@@ -380,7 +380,7 @@ function payRow(p) {
   name.href = 'admin-customer.html?id=' + p.customer_id;
   main.appendChild(name);
   main.appendChild(el('div', 'row-sub',
-    [p.kind === 'deposit' ? 'Deposit' : 'Balance', usd(p.amount)].join(' · ')));
+    [p.kind === 'deposit' ? 'Deposit' : p.kind === 'phase' ? 'Phase' : 'Balance', usd(p.amount)].join(' · ')));
   row.appendChild(main);
   /* SENT, not overdue. Nothing records payment terms, so the honest word is
      how long it has been out. */

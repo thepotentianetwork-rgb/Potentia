@@ -81,7 +81,7 @@ export const STRIPE_PAYMENT_METHODS = ['us_bank_account', 'card'];
 
 /* Days until due, per kind. A deposit gates the build starting, so it is due
    when it arrives; the balance is billed against work already done. */
-export const DAYS_UNTIL_DUE = { deposit: 0, balance: 7 };
+export const DAYS_UNTIL_DUE = { deposit: 0, balance: 7, phase: 0 };
 
 /* Create a customer, or reuse one we already recorded.
    Stripe will happily create a second customer with the same email, which is

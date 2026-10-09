@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import worker from '../worker/index.js';
 import { computePricing } from '../worker/pricing.js';
 import { quoteLines } from '../worker/quotelines.js';
-import { buildInvoice, fromCents } from '../worker/invoices.js';
+import { buildInvoice, fromCents, phaseParts } from '../worker/invoices.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 /* CHROME_BIN overrides, for a box where Chrome lives elsewhere. */
@@ -253,7 +253,13 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
     R.kinds = [].slice.call(quoted.querySelectorAll('.inv-kind')).map(txt);
 
     var btns = [].slice.call(quoted.querySelectorAll('.inv-btn'));
-    R.buttonLabels = btns.map(txt);
+    /* The whole-job deposit / balance buttons, under "Other ways to bill". */
+    R.buttonLabels = btns.filter(function (b) { return !b.classList.contains('ph-bill'); }).map(txt);
+    R.otherOpenBefore = !!(quoted.querySelector('.inv-other') && quoted.querySelector('.inv-other').open);
+    /* The bill-by-phase panel: what is ticked, and the button. */
+    R.phaseBill = txt(quoted.querySelector('.ph-bill'));
+    R.phaseTicked = [].slice.call(quoted.querySelectorAll('.ph-part input')).filter(function (b) { return b.checked; })
+      .map(function (b) { return b.dataset.phase + b.dataset.part; });
     R.balBoxBefore = txt(quoted.querySelector('.bal-box'));
 
     // ---- planning a build from one date --------------------------------
@@ -509,6 +515,9 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
       R.balanceAfterPaidWarnings = bp2 ? [].slice.call(bp2.querySelectorAll('.inv-warn')).map(txt) : [];
     }
     R.balBoxAfterPaid = txt(paidCard.querySelector('.bal-box'));
+    R.otherOpenAfter = !!(paidCard.querySelector('.inv-other') && paidCard.querySelector('.inv-other').open);
+    R.phaseTickedAfterPaid = [].slice.call(paidCard.querySelectorAll('.ph-part input')).filter(function (b) { return b.checked; })
+      .map(function (b) { return b.dataset.phase + b.dataset.part; });
     R.balBtnAfterPaid = balAfter ? txt(balAfter) : null;
 
     /* ---- the rest paid by cashier's check, marked by hand ------------- */
@@ -786,6 +795,15 @@ check('the balance box lists the Stripe deposit as received',
   R.balBoxAfterPaid);
 check('and the balance button names the rest',
   R.balBtnAfterPaid === 'Bill balance ' + money(balanceUncredited - depositDue) + ' with Stripe', R.balBtnAfterPaid);
+
+console.log('\n-- bill by phase --');
+const PH = phaseParts(BREAKDOWN);
+check('the phase panel ticks Phase 1 deposit first', JSON.stringify(R.phaseTicked) === '["1deposit"]', R.phaseTicked);
+check('and its button names that amount', R.phaseBill === 'Bill ' + money(PH[0].depositCents / 100) + ' with Stripe', R.phaseBill);
+check('whole-job buttons are tucked away until one is used', R.otherOpenBefore === false && R.otherOpenAfter === true,
+  [R.otherOpenBefore, R.otherOpenAfter]);
+check('after the whole-job deposit is paid, the next phase bill is the rest of Phase 1',
+  JSON.stringify(R.phaseTickedAfterPaid) === '["1remainder"]', R.phaseTickedAfterPaid);
 
 console.log('\n-- a cashier\'s check marked by hand covers the rest --');
 check('the box says Paid in full and lists the check',
