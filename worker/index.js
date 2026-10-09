@@ -1686,7 +1686,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
 
   const shape = {
     kind, submission_id: sub.id, customer_id: customer.id,
-    lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+    lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), discount: !!l.discount })),
     /* Phase invoices: which parts this collects, and the short name of it. */
     covers: invoice.covers || null,
     description: invoice.description || null,

@@ -210,6 +210,28 @@ function quoteLines(redline, adjustments) {
     });
     return t;
   }
+  /* The comps alone (not overrides — an override is the job's price, not a
+     discount), named, for the Discounts section. */
+  function compsIn(names) {
+    const out = [];
+    names.forEach(function (n) {
+      if (n && COMPED[n] != null && COMPED[n] > 0) out.push({ label: n + ' \u2014 included free', amt: COMPED[n], kind: 'comp', item: n });
+    });
+    return out;
+  }
+  /* Rows a comp wiped out entirely (a free concrete pad): no phase, no
+     money, but the item is still shown at its regular price with the comp
+     among the discounts, so the page still adds up. Display only. */
+  const freeRows = [];
+  function discountsFor(row, names, label, kind) {
+    const comps = compsIn(names);
+    if (row) {
+      row.discounts = (row.discounts || []).concat(comps);
+    } else if (comps.length) {
+      const amt = comps.reduce(function (t, c) { return t + c.amt; }, 0);
+      freeRows.push({ label: label, kind: kind, regularAmt: amt, discounts: comps });
+    }
+  }
 
   /* Everything about the shed itself is rolled into one "Shed" line; only
      foundation and interior finishing are broken out.
@@ -268,6 +290,7 @@ function quoteLines(redline, adjustments) {
     if (rRow && removal.length > 1) {
       rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) - (OVR[l.name] ? OVR[l.name].delta : 0) }));
     }
+    discountsFor(rRow, removal.map((l) => l.name), removal.length > 1 ? multiName : removal[0].name, 'clearance');
   }
 
   /* The pad spec (4" poured slab) belongs on every quote regardless of when its
@@ -291,7 +314,9 @@ function quoteLines(redline, adjustments) {
   else if (foundRow && num(redline.foundPromo) > 0) {
     foundRow.listAmt = foundRow.amt + num(redline.foundPromo);
     foundRow.promo = { label: redline.foundPromoName || 'Concrete pad promo', amt: num(redline.foundPromo) };
+    foundRow.discounts = [{ label: foundRow.promo.label, amt: foundRow.promo.amt, kind: 'promo' }];
   }
+  discountsFor(foundRow, nameList(redline, 'foundation'), foundLabel, 'foundation');
   let travelTotal = 0;
   const travelLines = [];
   ADJUSTMENTS.forEach(function (a) {
@@ -302,6 +327,8 @@ function quoteLines(redline, adjustments) {
   if (shedRow) shedRow.kind = 'shed';
   const intRow = add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
   if (intRow) intRow.kind = 'interior';
+  discountsFor(shedRow, nameList(redline, 'shed'), 'Shed', 'shed');
+  discountsFor(intRow, nameList(redline, 'interior'), redline.intSellName || 'Interior Finishing', 'interior');
 
   /* Electrical and flooring are still billed and deposited as part of the Shed
      phase (their dollars stay inside shedTotal) — these just break them out so
@@ -309,11 +336,18 @@ function quoteLines(redline, adjustments) {
      invoicing or deposit schedule. Appended rather than assigned: electrical
      used to claim this slot outright, so anything added alongside it silently
      replaced it. */
-  function shedSubLine(amt, label, includes) {
-    if (!shedRow || !amt) return;
+  function shedSubLine(amt, label, includes, regularAmt) {
+    if (!shedRow) return;
+    const inc = Array.isArray(includes) ? includes : null;
+    /* regularSubLines: the same list at REGULAR prices — a comped item at
+       what it costs, its comp listed with the discounts. What the quote and
+       the invoices show; subLines (net) is kept for the tracker. */
+    const reg = regularAmt == null ? amt : regularAmt;
+    if (reg) (shedRow.regularSubLines = shedRow.regularSubLines || []).push({ label: label, amt: num(reg), includes: inc });
+    if (!amt) return;
     (shedRow.subLines = shedRow.subLines || []).push({
       label: label, amt: num(amt),
-      includes: Array.isArray(includes) ? includes : null
+      includes: inc
     });
   }
   /* Each is net of anything comped on it, because a comped line is already
@@ -321,7 +355,8 @@ function quoteLines(redline, adjustments) {
      it there would show the customer the same item twice at two prices. */
   function shedItem(label, amt) {
     if (!label) return;
-    shedSubLine(num(amt) - (COMPED[label] || 0) - (OVR[label] ? OVR[label].delta : 0), label);
+    const ovr = OVR[label] ? OVR[label].delta : 0;
+    shedSubLine(num(amt) - (COMPED[label] || 0) - ovr, label, null, num(amt) - ovr);
   }
   function shedItemsFrom(lines, nameKey, amtKey) {
     (lines || []).forEach(function (l) {
@@ -393,6 +428,57 @@ function quoteLines(redline, adjustments) {
 
   const tax = adjustedSubtotal * TAX_RATE;
   const depositTotal = rows.reduce((t, r) => t + r.deposit, 0);
+
+  /* ── DISCOUNTS, LISTED LAST (Nando, 9 Oct 2026: "make sure discounts go at
+     the very end"). DISPLAY ONLY: nothing above is changed by any of this.
+     Every row is shown at its REGULAR price (before promo and comps), and
+     every discount — the pad promo, each item included free, each staff
+     discount — is its own line in one Discounts section, after any added
+     charges and BEFORE tax, because tax is owed on what they actually pay:
+
+       regularSubtotal + charges - discountTotal = adjustedSubtotal
+
+     The discounts still reduce the phase they belong to (r.amt is unchanged),
+     which is what the deposits and phase bills are worked from; each row
+     carries what came off it (regularTotal - total, tax included) so a phase
+     bill can show its own discounts at the end too. */
+  const adjDiscounts = [], charges = [];
+  ADJUSTMENTS.forEach(function (a) {
+    if (!a) return;
+    const v = Number(a.value);
+    if (!isFinite(v) || !v) return;
+    let amt, label;
+    if (a.kind === 'percent') {
+      amt = percentBase * (v / 100);
+      label = (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)';
+    } else if (a.kind === 'amount') {
+      amt = v;
+      label = a.note || (v < 0 ? 'Discount' : 'Adjustment');
+    } else return;
+    if (amt < 0) adjDiscounts.push({ label: label, amt: -amt, kind: a.kind === 'percent' ? 'percent' : 'amount' });
+    else if (amt > 0) charges.push({ label: label, amt: amt, kind: a.kind === 'percent' ? 'percent' : 'amount' });
+  });
+  /* Of a net-negative adjustment, how much came off each phase: the same
+     ratio the deposits were scaled by. A net increase is a charge, not a
+     discount, and stays inside the phase figures exactly as before. */
+  rows.forEach(function (r) {
+    r.discounts = (r.discounts || []).map(function (d) { return Object.assign({ phase: r.phase }, d); });
+    const own = r.discounts.reduce(function (t, d) { return t + d.amt; }, 0);
+    r.regularAmt = r.amt + own;
+    const share = ratio < 1 ? r.amt * (1 - ratio) : 0;
+    r.discountTotal = (own + share) * (1 + TAX_RATE);
+    r.regularTotal = r.total + r.discountTotal;
+    r.regularDeposit = r.regularTotal * DEPOSIT_RATE;
+    r.discountNames = r.discounts.map(function (d) { return d.label; })
+      .concat(share > 0 ? adjDiscounts.map(function (d) { return d.label; }) : []);
+    if (!r.regularSubLines && r.subLines) r.regularSubLines = r.subLines.map(function (l) { return Object.assign({}, l); });
+  });
+  const discounts = [];
+  rows.forEach(function (r) { r.discounts.forEach(function (d) { discounts.push(d); }); });
+  freeRows.forEach(function (f) { f.discounts.forEach(function (d) { discounts.push(Object.assign({ phase: null }, d)); }); });
+  adjDiscounts.forEach(function (d) { discounts.push(Object.assign({ phase: null }, d)); });
+  const regularSubtotal = rows.reduce(function (t, r) { return t + r.regularAmt; }, 0)
+    + freeRows.reduce(function (t, f) { return t + f.regularAmt; }, 0);
   return withCardPrice(redline, {
     rows: rows,
     subtotal: subtotal,
@@ -412,7 +498,13 @@ function quoteLines(redline, adjustments) {
        would otherwise report a saving larger than the price. */
     totalBefore: subtotal * (1 + TAX_RATE),
     savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
-    depositTotal: depositTotal
+    depositTotal: depositTotal,
+    /* Display only — see DISCOUNTS, LISTED LAST above. */
+    regularSubtotal: regularSubtotal,
+    freeRows: freeRows,
+    charges: charges,
+    discounts: discounts,
+    discountTotal: discounts.reduce(function (t, d) { return t + d.amt; }, 0)
   });
 }
 
@@ -470,7 +562,16 @@ function withCardPrice(redline, bd) {
     if (r.promo) r.promo = Object.assign({}, r.promo, { amt: sc(Number(r.promo.amt) || 0) });
     if (r.override && r.override.was != null) r.override = Object.assign({}, r.override, { was: sc(Number(r.override.was) || 0) });
     if (r.subLines) r.subLines = r.subLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
+    ['regularAmt', 'discountTotal', 'regularTotal', 'regularDeposit'].forEach(function (f) { if (r[f] != null) r[f] = sc(r[f]); });
+    if (r.regularSubLines) r.regularSubLines = r.regularSubLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
+    if (r.discounts) r.discounts = r.discounts.map(function (d) { return Object.assign({}, d, { amt: sc(d.amt) }); });
   });
+  const scList = (list, f) => (list || []).map(function (x) { const o = Object.assign({}, x); o[f] = sc(o[f]); if (o.discounts) o.discounts = o.discounts.map(function (d) { return Object.assign({}, d, { amt: sc(d.amt) }); }); return o; });
+  bd.freeRows = scList(bd.freeRows, 'regularAmt');
+  bd.charges = scList(bd.charges, 'amt');
+  bd.discounts = scList(bd.discounts, 'amt');
+  if (bd.regularSubtotal != null) bd.regularSubtotal = sc(bd.regularSubtotal);
+  if (bd.discountTotal != null) bd.discountTotal = sc(bd.discountTotal);
   ['subtotal', 'percentBase', 'travel', 'adjust', 'percentAdjust', 'amountAdjust', 'adjustedSubtotal',
    'tax', 'total', 'totalBefore', 'savings', 'depositTotal'].forEach(function (f) { bd[f] = sc(bd[f]); });
   /* What a flat adjustment typed by staff becomes on this quote (the page and

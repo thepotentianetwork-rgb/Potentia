@@ -112,17 +112,27 @@ test("a quote saved before the promo (no foundPromo) reads exactly as it did", (
   near(bd.total, 10000 * (1 + TAX_RATE));
 });
 
-test('invoices name the promo; the amounts are unchanged', () => {
+/* Discounts go at the END (Nando, 9 Oct 2026): the pad is billed at its list
+   price and the promo is its own line after the phases, before tax. */
+test('invoices list the pad at list price and the promo last; the amounts are unchanged', () => {
   const { redline } = computePricing(PAD);
   const bd = quoteLines(redline, []);
   const inv = buildInvoice(bd, 'deposit', [], { adjustments: [] });
   const padLine = inv.lines.find((l) => /Concrete Pad/.test(l.label));
-  assert.match(padLine.label, /\(list \$3,500\.00, less \$500\.00 concrete pad promo\)/);
-  assert.equal(padLine.amountCents, 300000);
+  assert.doesNotMatch(padLine.label, /promo/);
+  assert.equal(padLine.amountCents, 350000);
+  const promo = inv.lines.find((l) => l.label === 'Concrete pad promo');
+  assert.equal(promo.amountCents, -50000);
+  assert.equal(promo.discount, true);
+  const iTax = inv.lines.findIndex((l) => /Sales Tax/.test(l.label));
+  assert.ok(inv.lines.indexOf(promo) > inv.lines.indexOf(padLine) && inv.lines.indexOf(promo) < iTax, 'after the phases, before tax');
   assert.equal(inv.lines.reduce((t, l) => t + l.amountCents, 0), inv.totalCents);
   const st = phaseStatus(bd, []);
   const ph = buildPhaseInvoice(bd, [], st.suggested);
-  assert.equal(ph.lines[0].label, 'Phase 1: Concrete Pad (4" slab) ($500.00 concrete pad promo applied) deposit (30%)');
+  assert.equal(ph.lines[0].label, 'Phase 1: Concrete Pad (4" slab) deposit (30%)');
+  assert.equal(ph.lines[0].amountCents, toCents(3500 * (1 + TAX_RATE) * 0.30));
+  assert.equal(ph.lines[ph.lines.length - 1].label, 'Discount on Phase 1 deposit (Concrete pad promo)');
+  assert.equal(ph.lines.reduce((t, l) => t + l.amountCents, 0), ph.totalCents);
   assert.equal(ph.totalCents, toCents(965.25));
 });
 

@@ -312,7 +312,7 @@ test('MIXED: deposit by check, balance by card — discount only on the check\'s
   const { r } = await sendAndPay(env, db, t, { submission_id: 8, kind: 'balance', pay_by: 'card' });
   assert.equal(c(r.data.amount), c(BD.total) - c(BD.depositTotal), 'card pays the rest at the regular price');
   assert.ok(!r.data.lines.some((l) => /bank transfer discount \(/.test(l.label)), 'no ACH discount on a card bill');
-  assert.ok(r.data.lines.some((l) => /discount on that payment/.test(l.label)), 'the check\'s earned discount is shown');
+  assert.ok(r.data.lines.some((l) => /discount on the \$[\d,.]+ check payment/.test(l.label)), 'the check\'s earned discount is shown');
   sm = summary(db, 8, BD);
   assert.equal(sm.paidInFull, true); assert.equal(sm.overpaidCents, 0);
   // what they paid in money: today's deposit + the rest at x1.03

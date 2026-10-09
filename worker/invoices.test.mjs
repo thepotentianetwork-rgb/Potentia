@@ -37,6 +37,13 @@ const ADJUSTMENTS = [
   ['percent and amount', [{ kind: 'percent', value: -7.5 }, { kind: 'amount', value: -250 }]],
 ];
 
+/* A phase line carries the phase at its REGULAR price — its own cents plus
+   the cents of its own discount lines (pad promo, items included free),
+   which are listed at the end (Nando, 9 Oct 2026: discounts go last). */
+function regC(r) {
+  return toCents(r.amt) + (r.discounts || []).reduce((t, d) => t + toCents(d.amt), 0);
+}
+
 function cases() {
   const out = [];
   for (const [b, config] of Object.entries(BUILDS)) {
@@ -87,8 +94,8 @@ test('the deposit invoice shows the whole quote, then defers the rest', () => {
          characters. The phase's own name still has to lead. */
       assert.ok(inv.lines[i].label.startsWith(r.label),
         `${label}: "${inv.lines[i].label}" should lead with "${r.label}"`);
-      assert.equal(inv.lines[i].amountCents, toCents(r.amt),
-        `${label}: "${r.label}" should be the quote's pre-tax figure`);
+      assert.equal(inv.lines[i].amountCents, regC(r),
+        `${label}: "${r.label}" should be the quote's pre-tax regular figure`);
     });
 
     const tax = inv.lines.filter((l) => /Sales Tax/.test(l.label));
@@ -99,6 +106,14 @@ test('the deposit invoice shows the whole quote, then defers the rest', () => {
     const adjLines = inv.lines.filter((l) => /Discount|Adjustment/.test(l.label));
     assert.equal(adjLines.reduce((t, l) => t + l.amountCents, 0), toCents(bd.adjust),
       `${label}: the adjustment lines must come to what the quote took off`);
+
+    /* Every discount sits together, after the phases and before tax. */
+    const iTax = inv.lines.findIndex((l) => /Sales Tax/.test(l.label));
+    const disc = inv.lines.map((l, i) => (l.discount ? i : -1)).filter((i) => i > -1);
+    disc.forEach((i) => assert.ok(i > phases.length - 1 && i < iTax, `${label}: discount line ${i} out of place`));
+    if (disc.length) assert.equal(disc[disc.length - 1] - disc[0] + 1, disc.length, `${label}: discounts are not grouped`);
+    const wantDisc = bd.rows.reduce((t, r) => t + (r.discounts || []).reduce((u, d) => u + toCents(d.amt), 0), 0) - Math.min(0, toCents(bd.adjust));
+    assert.equal(0 - disc.reduce((t, i) => t + inv.lines[i].amountCents, 0) + 0, wantDisc + 0, `${label}: the discount lines`);
 
     const last = inv.lines[inv.lines.length - 1];
     assert.match(last.label, /Less balance due on completion/, `${label}: last line`);
@@ -122,7 +137,7 @@ test('an invoice built without the adjustment list still matches the quote', () 
     const inv = buildInvoice(bd, 'deposit', []);              // no opts at all
     const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
     phases.forEach((r, i) => {
-      assert.equal(inv.lines[i].amountCents, toCents(r.amt), `${label}: "${r.label}" drifted`);
+      assert.equal(inv.lines[i].amountCents, regC(r), `${label}: "${r.label}" drifted`);
     });
     const adjLines = inv.lines.filter((l) => /Discount|Adjustment/.test(l.label));
     assert.equal(adjLines.reduce((t, l) => t + l.amountCents, 0), toCents(bd.adjust), label);
@@ -187,8 +202,8 @@ test('the balance invoice shows the same quote, then credits what was paid', () 
          characters. The phase's own name still has to lead. */
       assert.ok(inv.lines[i].label.startsWith(r.label),
         `${label}: "${inv.lines[i].label}" should lead with "${r.label}"`);
-      assert.ok(Math.abs(inv.lines[i].amountCents - toCents(r.amt)) <= 2,
-        `${label}: "${r.label}" is ${inv.lines[i].amountCents}, the quote says ${toCents(r.amt)}`);
+      assert.ok(Math.abs(inv.lines[i].amountCents - regC(r)) <= 2,
+        `${label}: "${r.label}" is ${inv.lines[i].amountCents}, the quote says ${regC(r)}`);
     });
     const tax = inv.lines.find((l) => /Sales Tax/.test(l.label));
     assert.equal(tax.amountCents, toCents(bd.tax), `${label}: tax`);
@@ -198,7 +213,7 @@ test('the balance invoice shows the same quote, then credits what was paid', () 
     /* Nothing on a balance invoice may be the tax-inclusive phase figure: that
        would double-count the separate tax line. */
     phases.forEach((r, i) => {
-      if (Math.abs(toCents(r.total) - toCents(r.amt)) > 5) {
+      if (Math.abs(toCents(r.total) - regC(r)) > 5) {
         assert.notEqual(inv.lines[i].amountCents, toCents(r.total),
           `${label}: "${r.label}" is tax-inclusive AND there is a tax line`);
       }
@@ -347,9 +362,11 @@ test('the memo lists the build the way the quote lists it', () => {
 
   /* The breakout is the point — "Shed" on its own tells a customer nothing
      about what they are paying for. */
-  const subs = bd.rows.reduce((t, r) => t + (r.subLines || []).length, 0);
+  const subs = bd.rows.reduce((t, r) => t + (r.regularSubLines || []).length, 0);
   assert.ok(subs > 3, 'fixture should have sub-lines to show');
-  bd.rows.forEach((r) => (r.subLines || []).forEach((s) => {
+  /* At regular prices: the phase figure before its promo / free items. */
+  bd.rows.forEach((r) => assert.ok(memo.includes(r.label + ' \u2014 $' + r.regularAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), 'phase not at its regular price: ' + r.label));
+  bd.rows.forEach((r) => (r.regularSubLines || []).forEach((s) => {
     assert.ok(memo.includes(s.label), 'missing item: ' + s.label);
   }));
   assert.ok(memo.length <= LIMITS.memo, 'memo is ' + memo.length + ' chars');
@@ -370,10 +387,13 @@ test('a build too detailed to fit drops detail, never the phases', () => {
   fat.rows.forEach((r) => assert.ok(memo.includes(r.label), 'lost phase: ' + r.label));
 });
 
-test('the footer names what was thrown in free', () => {
+/* Items thrown in free are discount lines on the invoice now ("Shutters —
+   included free"), at the end with the other discounts, so the footer does
+   not name them a second time. */
+test('the footer no longer repeats what was thrown in free; the lines carry it', () => {
   const bd = quoteLines(RICH, []);
   const footer = buildFooter(bd, { Shutters: 60, Skylight: 184 }, 'deposit');
-  assert.match(footer, /Included at no charge: Shutters, Skylight\./);
+  assert.doesNotMatch(footer, /Included at no charge/);
   assert.match(footer, /balance is invoiced on completion/);
   assert.match(footer, /include Utah sales tax/i);
   assert.ok(footer.length <= LIMITS.footer);
@@ -413,7 +433,6 @@ test('buildInvoice hands all three back, ready to send', () => {
   const inv = buildInvoice(bd, 'deposit', [], { summary: '10x16 ft', submissionId: 7,
     comped: { Shutters: 60 } });
   assert.ok(inv.memo.includes('Order #7'));
-  assert.match(inv.footer, /Shutters/);
   assert.ok(inv.customFields.length >= 2);
   inv.lines.forEach((l) => assert.ok(l.label.length <= LIMITS.label, l.label));
 });

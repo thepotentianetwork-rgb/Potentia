@@ -88,6 +88,11 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .br-row.br-promo{padding-left:20px;font-size:13px;border-bottom-style:dashed}
 .br-row.br-save .br-amt{font-size:18px}
 .br-row.br-save{background:rgba(61,220,151,0.07);margin:0 -12px;padding-left:12px;padding-right:12px}
+/* The Discounts section: a heading, then one line each, right above tax. */
+.br-row.br-dischead{border-bottom:none;padding-top:14px}
+.br-row.br-dischead .br-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--sp-green);text-transform:uppercase}
+.br-row.br-disc{border-bottom-style:dashed}
+.br-row.br-total .br-label,.br-row.br-total .br-amt{color:var(--bright);font-weight:600}
 .br-sub-note{font-size:11px;color:var(--chrome);opacity:.8;padding:0 0 8px;line-height:1.5}
 .br-label{color:var(--chrome)}
 .br-amt{color:var(--bright);font-family:'DM Mono',monospace;font-size:13px}
@@ -411,25 +416,29 @@ function cardFeeNote() {
   if (!(CARD_FEE_PCT > 0)) return '';
   return '<div class="br-note br-cardfee">A ' + CARD_FEE_PCT + '% surcharge applies to credit card payments through Stripe (debit and prepaid cards are not accepted for card bills). Bank transfer (ACH), checks and cashier\u2019s checks have no fee.</div>';
 }
+/* DISCOUNTS GO AT THE VERY END (Nando, 9 Oct 2026: "On the quotes can we make
+   sure discounts go at the very end"). Every line is shown at its REGULAR
+   price — the pad before its promo, an item included free at what it costs —
+   and every discount is its own line in one Discounts section, after any
+   added charge and BEFORE sales tax, because tax is owed on what they
+   actually pay (quoteLines: regularSubtotal + charges - discounts =
+   adjustedSubtotal). The figures are quoteLines' own; this only arranges
+   them. The cash, check & bank transfer discount depends on how they pay, so
+   it stays the last thing on the page, under the total. */
+function money2s(n) { return '\u2212' + money2(n); }
 function buildBreakdown(bd) {
   if (!bd) return '';
+  function reg(r) { return r.regularAmt != null ? r.regularAmt : r.amt; }
   var rowsHtml = bd.rows.map(function (r) {
-    var hasPromo = r.promo && Number(r.promo.amt) > 0 && Number(r.listAmt) > 0;
     var html = '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
-      + '<span class="br-amt">' + (hasPromo ? '<span class="br-was">' + money2(r.listAmt) + '</span>' : '')
-      + money2(r.amt) + '</span></div>';
-    /* Already inside the phase figure above — shown so the customer sees the
-       promo as a line, not just a lower number. */
+      + '<span class="br-amt">' + money2(reg(r)) + '</span></div>';
     /* A line staff re-priced for this job (site seen): the old figure, and
-       the reason they gave, so the change is not a silent new number. */
+       the reason they gave, so the change is not a silent new number. A
+       re-price is the job's price, not a discount, so it stays here. */
     if (r.override) {
       html += '<div class="br-row br-promo"><span class="br-label">&nbsp;&nbsp;Price set for this job'
         + (r.override.note ? ' \u2014 ' + esc(r.override.note) : '') + '</span>'
         + '<span class="br-amt"><span class="br-was">' + money2(r.override.was) + '</span></span></div>';
-    }
-    if (hasPromo) {
-      html += '<div class="br-row br-promo br-save"><span class="br-label">&nbsp;&nbsp;\u2212 ' + esc(r.promo.label) + '</span>'
-        + '<span class="br-amt">\u2212' + money2(r.promo.amt) + '</span></div>';
     }
     // Sub-lines (e.g. Electrical inside the Shed phase) are shown indented,
     // already-included-in-the-row-above dollars — not their own deposit
@@ -439,7 +448,7 @@ function buildBreakdown(bd) {
     if (r.estimate && !r.override) {
       html += '<div class="br-row br-inc br-est">Estimate. Final price may vary based on site conditions.</div>';
     }
-    (r.subLines || []).forEach(function (s) {
+    (r.regularSubLines || r.subLines || []).forEach(function (s) {
       html += '<div class="br-row" style="padding-left:20px;font-size:13px;color:var(--silver)">'
         + '<span class="br-label">&nbsp;&nbsp;+ ' + esc(s.label) + '</span>'
         + '<span class="br-amt">' + money2(s.amt) + '</span></div>';
@@ -453,36 +462,36 @@ function buildBreakdown(bd) {
     });
     return html;
   }).join('');
-  rowsHtml += '<div class="br-row br-sum"><span class="br-label">Subtotal (before tax)</span><span class="br-amt">' + money2(bd.subtotal) + '</span></div>';
-  // Each adjustment on its own line, with the subtotal left above them. The
-  // customer sees what the shed prices at and what came off — a total that had
-  // quietly absorbed it would invite the question anyway.
-  ADJUSTMENTS.forEach(function (a) {
-    if (!a) return;
-    var v = Number(a.value);
-    if (a.kind === 'percent' && isFinite(v)) {
-      /* Of the subtotal less any travel surcharge, as quoteLines works it. */
-      var pAmt = (bd.percentBase != null ? bd.percentBase : bd.subtotal) * (v / 100);
-      /* Not hardcoded "Discount": a percentage can go up as well as down, and
-         "Discount (10%)" beside a +$500 figure is the kind of contradiction a
-         customer reads as a mistake on the whole quote. */
-      var pLabel = (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)';
-      rowsHtml += '<div class="br-row' + (pAmt < 0 ? ' br-save' : '') + '"><span class="br-label">' + esc(pLabel) + '</span>'
-        + '<span class="br-amt">' + (pAmt < 0 ? '\u2212' : '+') + money2(Math.abs(pAmt)) + '</span></div>';
-    } else if (a.kind === 'amount' && isFinite(v)) {
-      /* At regular prices a typed amount reads at the same scale as the rest
-         (quoteLines bd.priceScale; 1 on every older quote). */
-      v = v * (Number(bd.priceScale) || 1);
-      var aLabel = a.note || (v < 0 ? 'Discount' : 'Adjustment');
-      rowsHtml += '<div class="br-row' + (v < 0 ? ' br-save' : '') + '"><span class="br-label">' + esc(aLabel) + '</span>'
-        + '<span class="br-amt">' + (v < 0 ? '\u2212' : '+') + money2(Math.abs(v)) + '</span></div>';
-    }
+  /* A whole phase given away (a free pad) has no phase or deposit, but it is
+     still shown at its price, with its comp among the discounts below. */
+  (bd.freeRows || []).forEach(function (f) {
+    rowsHtml += '<div class="br-row br-free"><span class="br-label">' + esc(f.label) + '</span>'
+      + '<span class="br-amt">' + money2(f.regularAmt) + '</span></div>';
   });
-  if (bd.adjust) {
-    rowsHtml += '<div class="br-row br-sum"><span class="br-label">Adjusted Subtotal (before tax)</span>'
+  var discounts = bd.discounts || [];
+  var charges = bd.charges || [];
+  var regularSub = bd.regularSubtotal != null ? bd.regularSubtotal : bd.subtotal;
+  rowsHtml += '<div class="br-row br-sum"><span class="br-label">Subtotal' + (discounts.length ? ' at regular prices' : '') + ' (before tax)</span><span class="br-amt">' + money2(regularSub) + '</span></div>';
+  /* Anything that ADDS (custom work, a percentage up) is a charge, not a
+     discount: its own line, ahead of the discounts. Not hardcoded
+     "Discount": a figure that goes up must not read as one. */
+  charges.forEach(function (c) {
+    rowsHtml += '<div class="br-row br-charge"><span class="br-label">' + esc(c.label) + '</span>'
+      + '<span class="br-amt">+' + money2(c.amt) + '</span></div>';
+  });
+  if (discounts.length) {
+    rowsHtml += '<div class="br-row br-dischead"><span class="br-label">Discounts</span><span class="br-amt"></span></div>';
+    discounts.forEach(function (d) {
+      rowsHtml += '<div class="br-row br-save br-disc"><span class="br-label">' + esc(d.label) + '</span>'
+        + '<span class="br-amt">' + money2s(d.amt) + '</span></div>';
+    });
+  }
+  if (discounts.length || charges.length) {
+    rowsHtml += '<div class="br-row br-sum"><span class="br-label">' + (discounts.length ? 'Subtotal after discounts' : 'Adjusted Subtotal') + ' (before tax)</span>'
       + '<span class="br-amt">' + money2(bd.adjustedSubtotal) + '</span></div>';
   }
   rowsHtml += '<div class="br-row br-tax"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';
+  rowsHtml += '<div class="br-row br-sum br-total"><span class="br-label">Total (tax included)</span><span class="br-amt">' + money2(bd.total) + '</span></div>';
 
   var depositRowsHtml = bd.rows.map(function (r) {
     return '<div class="br-row"><span class="br-label">Phase ' + r.phase + ' Deposit (' + PCT_LABEL(DEPOSIT_RATE) + '%)</span>'
@@ -490,22 +499,10 @@ function buildBreakdown(bd) {
   }).join('');
   depositRowsHtml += '<div class="br-row"><span class="br-label">Total Deposit Due</span><span class="br-amt">' + money2(bd.depositTotal) + '</span></div>';
 
-  // Comped lines get their own block reading "Included", not a discount line.
-  // Same money either way, but "Skylight — Included" is a thing you gave the
-  // customer, where "Discount −$184" reads as the price having been soft.
-  var compHtml = '';
-  var compNames = Object.keys(COMPED);
-  if (compNames.length) {
-    compHtml = '<div class="doc-section"><div class="doc-label">Included at No Charge</div>'
-      + compNames.map(function (n) {
-          return '<div class="br-row"><span class="br-label">' + esc(n) + '</span>'
-            + '<span class="br-amt" style="color:var(--sp-blue)">Included</span></div>';
-        }).join('')
-      + '</div>';
-  }
-
+  /* Items given away used to have their own "Included at No Charge" block
+     here. They are discount lines now ("Skylight \u2014 included free"),
+     listed with the other discounts at the end. */
   return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>'
-    + compHtml
     + '<div class="doc-section"><div class="doc-label">Deposits Due</div>' + depositRowsHtml
     +   '<div class="br-note">A 30% deposit (tax included) is collected before each phase begins, and the rest of each phase is due once it\u2019s complete.</div>'
     +   cardFeeNote()

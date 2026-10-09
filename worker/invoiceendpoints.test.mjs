@@ -141,7 +141,7 @@ test("the balance on shed two is not credited with shed one's payments", async (
   const r = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'balance', preview: true }, t);
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.already_paid, 1000, 'only shed two’s payment counts');
-  const credits = r.data.lines.filter((l) => l.amount < 0);
+  const credits = r.data.lines.filter((l) => l.amount < 0 && !l.discount);   // discounts are their own (flagged) lines
   assert.equal(credits.length, 1, 'one credit line, not two');
 });
 
