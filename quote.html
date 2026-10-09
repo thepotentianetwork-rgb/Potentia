@@ -548,6 +548,14 @@ function render(submission, customer) {
   // W/L minus the porch depth and hang the porch off the freed-up strip).
   if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
   if (config.style) fields += field('Style', shedStyleName(config.style));
+  /* Footprint is what was bought; the room is what gets framed. With a porch
+     they differ, so show both — and the porch's own size. */
+  var _pg = porchGeom(config);
+  if (_pg) {
+    fields += field('Enclosed', _pg.enclosedSqft + ' sq ft');
+    fields += field('Porch', _pg.depth + '’ x ' + _pg.len + '’ ' + (_pg.loc === 'front' ? 'front' : 'side') +
+      (_pg.partial ? ' (' + _pg.where + ')' : '') + ' · ' + (_pg.depth * _pg.len) + ' sq ft');
+  }
   if (config.siding) fields += field('Siding', config.siding);
   if (config.roofType) fields += field('Roof', config.roofType);
   if (Array.isArray(config.doors)) fields += field('Doors', config.doors.length);
@@ -771,6 +779,82 @@ function roomRect(w, l, porchLoc, porchDepth) {
   var eatL = (porchLoc === 'front') ? porchDepth : 0;
   return { x0: -w / 2, x1: w / 2 - eatW, z0: -l / 2, z1: l / 2 - eatL };
 }
+/* PARTIAL PORCH. config.porchLen shorter than the wall it runs along makes
+   the porch a notch out of the room rather than a strip off it: the room
+   stays the full w x l (the main roof spans it) and only depth x len, at
+   config.porchOff feet from the wall's start corner, is porch. Start corner
+   = local 0 in wallPointAtLocal: the LEFT end of the front wall, the BACK
+   end of the right wall — the same axis the designer's porchOff runs on.
+   porchLen 0 (every design saved before partial porches) is full length.
+   Returns null when there is no porch. */
+function porchGeom(config) {
+  var w = Number(config.w), l = Number(config.l);
+  var loc = config.porchLoc, depth = Number(config.porchDepth) || 0;
+  if (!(w > 0 && l > 0) || (loc !== 'front' && loc !== 'side') || !(depth > 0)) return null;
+  if (config.style && config.style !== 'gable') return null;
+  var span = (loc === 'front') ? w : l;
+  var lenIn = Number(config.porchLen) || 0;
+  var partial = lenIn > 0 && lenIn < span;
+  var len = partial ? lenIn : span;
+  var off = partial ? Math.max(0, Math.min(span - len, Number(config.porchOff) || 0)) : 0;
+  var rect;
+  if (loc === 'front') rect = { x0: -w / 2 + off, x1: -w / 2 + off + len, z0: l / 2 - depth, z1: l / 2 };
+  else rect = { x0: w / 2 - depth, x1: w / 2, z0: -l / 2 + off, z1: -l / 2 + off + len };
+  var fromLeft = (loc === 'side') ? span - len - off : off, fromRight = span - len - fromLeft;
+  var where = fromLeft < 0.5 ? 'left end' : fromRight < 0.5 ? 'right end'
+    : Math.abs(fromLeft - fromRight) < 0.5 ? 'centered' : fromLeft + '’ from left';
+  return { loc: loc, depth: depth, span: span, len: len, off: off, partial: partial, rect: rect,
+    wall: loc === 'side' ? 'right' : 'front', where: where, enclosedSqft: w * l - depth * len };
+}
+/* Where a partial porch cuts each OUTER wall, in that wall's local feet.
+   The porch wall loses [off, off+len]; a wall the notch reaches at a corner
+   loses the porch depth at that end. {} for a full-length porch. */
+function porchWallGaps(pg, w, l) {
+  var g = {};
+  if (!pg || !pg.partial) return g;
+  g[pg.wall] = [pg.off, pg.off + pg.len];
+  var atStart = pg.off < 0.001, atEnd = pg.off + pg.len > pg.span - 0.001;
+  if (pg.loc === 'side') {
+    if (atEnd) g.front = [w - pg.depth, w];     // front local = x - x0
+    if (atStart) g.back = [0, pg.depth];        // back local = x1 - x
+  } else {
+    if (atStart) g.left = [0, pg.depth];        // left local = z1 - z
+    if (atEnd) g.right = [l - pg.depth, l];     // right local = z - z0
+  }
+  return g;
+}
+/* Post seats along one open edge, from a to b (local feet): one at each end
+   that is a free corner, plus intermediates once a span passes maxSpan —
+   nudged sideways so none lands in front of a door. Same rule as the
+   designer's porchPostSeats. */
+function porchPostSeatsFt(a, b, endA, endB, maxSpan, doorSpans) {
+  var seats = [];
+  if (endA) seats.push(a);
+  if (endB) seats.push(b);
+  var n = Math.max(0, Math.ceil((b - a) / maxSpan - 1e-6) - 1);
+  /* Evenly spaced first; if that lands a post on a door, one or two more
+     posts evenly spaced before nudging (a 16ft porch with a centred door gets
+     posts at the thirds). Same as the designer. */
+  function hits(m) {
+    for (var j = 1; j <= m; j++) {
+      var u = a + (b - a) * j / (m + 1);
+      for (var k = 0; k < (doorSpans || []).length; k++) if (u > doorSpans[k][0] - 0.4 && u < doorSpans[k][1] + 0.4) return true;
+    }
+    return false;
+  }
+  if (n > 0 && hits(n)) { if (!hits(n + 1)) n = n + 1; else if (!hits(n + 2)) n = n + 2; }
+  for (var i = 1; i <= n; i++) {
+    var t = a + (b - a) * i / (n + 1);
+    (doorSpans || []).forEach(function (d) {
+      if (t > d[0] - 0.4 && t < d[1] + 0.4) {
+        var left = d[0] - 0.4, right = d[1] + 0.4;
+        t = (Math.abs(t - left) <= Math.abs(right - t) && left > a + 0.5) ? left : (right < b - 0.5 ? right : left);
+      }
+    });
+    seats.push(t);
+  }
+  return seats;
+}
 // "local" is distance in feet from the wall's own start corner (pos=0), the
 // same reference designer.html's openingDims() uses for its "from the
 // left"/"from the right" callouts, EXCEPT here it stays purely in local
@@ -806,7 +890,11 @@ function buildFloorPlan(config, frontWall) {
   var porchDepth = Number(config.porchDepth) || 0;
   var hasPorch = (config.porchLoc === 'front' || config.porchLoc === 'side') && porchDepth > 0;
   var porchWall = config.porchLoc === 'side' ? 'right' : 'front';
-  var room = roomRect(w, l, hasPorch ? config.porchLoc : 'none', porchDepth);
+  var pg = hasPorch ? porchGeom(config) : null;
+  var partialPorch = !!(pg && pg.partial);
+  // A partial porch is a notch: the room keeps the full w x l outline.
+  var room = roomRect(w, l, (hasPorch && !partialPorch) ? config.porchLoc : 'none', porchDepth);
+  var gaps = porchWallGaps(pg, w, l);
 
   // Loft: "<depthFt>-<front|back|dual>", full ROOM width, depth in from a
   // gable end of the ROOM (not the outer w/l — the designer's own loft code
@@ -838,7 +926,7 @@ function buildFloorPlan(config, frontWall) {
     // reviewer would flag as not matching the drawing.
     var displayedWall = (WALL_ROTATIONS[frontWall] || WALL_ROTATIONS.front)[porchWall];
     var porchKind = displayedWall === 'front' ? 'Front Porch' : displayedWall === 'back' ? 'Back Porch' : 'Side Porch';
-    var porchName = porchDepth + "' " + porchKind +
+    var porchName = porchDepth + "' " + (partialPorch ? '× ' + pg.len + "' " : '') + porchKind +
       (config.porchTier && config.porchTier !== 'standard' ? ' — ' + config.porchTier : '');
     legendItems.push({ code: 'C1', desc: porchName });
   }
@@ -933,15 +1021,23 @@ function buildFloorPlan(config, frontWall) {
   // Walls are measured against the ROOM (shrunk by any porch), not the
   // outer w/l — the wall the porch opens onto is physically shorter/set
   // back by the porch depth, same as the designer's own wallFrame().
-  function wallOpenings(wall) {
+  /* inset: true lists only the openings that sit INSIDE a partial porch
+     (they are on the stepped-in wall); false lists everything else, plus the
+     porch's own gap in this outer wall as a 'porch' item. */
+  function wallOpenings(wall, inset) {
     var lenFt = wallLenFt(wall, room);
     var items = [];
+    var gap = gaps[wall] || null;
+    var pgap = (partialPorch && wall === porchWall) ? gap : null;
     doors.concat(windows).forEach(function (o) {
       if (o.wall !== wall) return;
       var widthFt = (Number(o.w) || (o._code[0] === 'D' ? 36 : 24)) / 12;
       var centerFt = openingLocalFt(wall, o.pos, widthFt, room);
+      var inPorch = !!(pgap && centerFt > pgap[0] && centerFt < pgap[1]);
+      if (!!inset !== inPorch) return;
       items.push({ code: o._code, kind: o._code[0] === 'D' ? 'door' : 'window', start: centerFt - widthFt / 2, end: centerFt + widthFt / 2, widthFt: widthFt });
     });
+    if (!inset && gap) items.push({ code: '', kind: 'porch', start: gap[0], end: gap[1], widthFt: gap[1] - gap[0] });
     items.sort(function (a, b) { return a.start - b.start; });
     return { lenFt: lenFt, items: items };
   }
@@ -981,13 +1077,17 @@ function buildFloorPlan(config, frontWall) {
 
     // Wall line itself: solid where closed, a gap at each opening (window
     // gets a thin line across the gap to read as glazing, a door gets none).
+    /* From where the last opening ended to where this one starts. This was
+       pt(max(cursor, start)) to pt(start) — a zero-length line — so every
+       stretch of wall before an opening was never drawn and only the last
+       one after the final opening showed. */
     var cursor = 0;
     geo.items.forEach(function (o) {
-      var a = pt(Math.max(cursor, o.start)), b = pt(o.start);
+      var a = pt(cursor), b = pt(Math.max(cursor, o.start));
       line(a.x, a.y, b.x, b.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
       var oa = pt(o.start), ob = pt(o.end);
       if (o.kind === 'window') line(oa.x, oa.y, ob.x, ob.y, { stroke: '#f6941f', w: 1.5 });
-      cursor = o.end;
+      cursor = Math.max(cursor, o.end);
     });
     var endPt = pt(geo.lenFt), curPt = pt(cursor);
     line(curPt.x, curPt.y, endPt.x, endPt.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
@@ -995,6 +1095,7 @@ function buildFloorPlan(config, frontWall) {
     // Opening code labels, centered on each opening, offset slightly INWARD
     // (away from the outside dimension chain) so the two never overlap.
     geo.items.forEach(function (o) {
+      if (o.kind === 'porch') return;
       var c = pt((o.start + o.end) / 2);
       var offX = horiz ? 0 : -outward * 12, offY = horiz ? -outward * 12 : 0;
       dimText(o.code, c.x + offX, c.y + offY + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
@@ -1034,14 +1135,54 @@ function buildFloorPlan(config, frontWall) {
   }
 
   // ---- Building outline (drawn via drawWall so openings break the line) ----
-  validWalls.forEach(drawWall);
+  validWalls.forEach(function (wl) { drawWall(wl); });
+
+  /* ---- Partial porch: the stepped-in wall and its returns ----
+     The inset wall runs the porch's length at the porch depth in from the
+     porch wall, carrying whatever doors/windows sit inside the porch; a
+     return wall closes each end that is not at a corner of the building. */
+  if (partialPorch) {
+    var R = pg.rect;
+    var insetA, insetB;   // world endpoints of the inset wall
+    if (pg.loc === 'side') { insetA = { x: R.x0, z: R.z0 }; insetB = { x: R.x0, z: R.z1 }; }
+    else { insetA = { x: R.x0, z: R.z0 }; insetB = { x: R.x1, z: R.z0 }; }
+    function insetPt(localFt) {
+      var t = (localFt - pg.off) / pg.len;
+      return project(insetA.x + (insetB.x - insetA.x) * t, insetA.z + (insetB.z - insetA.z) * t);
+    }
+    var ig = wallOpenings(porchWall, true);
+    var icur = pg.off;
+    ig.items.forEach(function (o) {
+      var a = insetPt(icur), b = insetPt(Math.max(icur, o.start));
+      line(a.x, a.y, b.x, b.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
+      var oa = insetPt(o.start), ob = insetPt(o.end);
+      if (o.kind === 'window') line(oa.x, oa.y, ob.x, ob.y, { stroke: '#f6941f', w: 1.5 });
+      icur = Math.max(icur, o.end);
+    });
+    var ia = insetPt(icur), ib = insetPt(pg.off + pg.len);
+    line(ia.x, ia.y, ib.x, ib.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
+    ig.items.forEach(function (o) {
+      var c = insetPt((o.start + o.end) / 2);
+      var inward = (pg.loc === 'side') ? project(insetA.x - 0.75, (insetA.z + insetB.z) / 2) : project((insetA.x + insetB.x) / 2, insetA.z - 0.75);
+      var mid = insetPt(pg.off + pg.len / 2);
+      dimText(o.code, c.x + (inward.x - mid.x), c.y + (inward.y - mid.y) + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+    });
+    var returns = [];
+    if (pg.off > 0.001) returns.push(pg.loc === 'side' ? [{ x: R.x0, z: R.z0 }, { x: R.x1, z: R.z0 }] : [{ x: R.x0, z: R.z0 }, { x: R.x0, z: R.z1 }]);
+    if (pg.off + pg.len < pg.span - 0.001) returns.push(pg.loc === 'side' ? [{ x: R.x0, z: R.z1 }, { x: R.x1, z: R.z1 }] : [{ x: R.x1, z: R.z0 }, { x: R.x1, z: R.z1 }]);
+    returns.forEach(function (rw) {
+      var a = project(rw[0].x, rw[0].z), b = project(rw[1].x, rw[1].z);
+      line(a.x, a.y, b.x, b.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
+    });
+  }
 
   // ---- Porch: its own dashed room (posts-and-roof, not a closed wall),
   // filling the strip between the ROOM's wall and the building's true outer
   // edge — it does not extend past the shed's own w/l. ----
   if (hasPorch) {
     var pRect;
-    if (porchWall === 'front') pRect = { x0: room.x0, x1: room.x1, z0: room.z1, z1: l / 2 };
+    if (partialPorch) pRect = pg.rect;
+    else if (porchWall === 'front') pRect = { x0: room.x0, x1: room.x1, z0: room.z1, z1: l / 2 };
     else pRect = { x0: room.x1, x1: w / 2, z0: room.z0, z1: room.z1 };
     var pa = project(pRect.x0, pRect.z0), pb = project(pRect.x1, pRect.z1);
     var pr = svgEl('rect', { x: Math.min(pa.x, pb.x), y: Math.min(pa.y, pb.y), width: Math.abs(pb.x - pa.x), height: Math.abs(pb.y - pa.y), fill: 'rgba(44,192,253,0.05)', stroke: '#2cc0fd', 'stroke-width': 1.25 });
@@ -1066,8 +1207,20 @@ function buildFloorPlan(config, frontWall) {
     // eats depth); a side porch's run its depth, for the same reason.
     var postSpan = (porchWall === 'front') ? w : l; // the axis the porch does NOT eat into
     var postInset = (porchWall === 'front') ? 0.25 : 0.5; // ft — matches the designer's fp/sp post seating
-    var postSeats = [-postSpan / 2 + postInset, postSpan / 2 - postInset];
-    if (postSpan > (porchWall === 'front' ? 11 : 13)) postSeats.push(0);
+    /* Doors on the wall the porch opens onto, as world spans along the post
+       line — a middle post is never drawn in front of one (the designer's
+       porchPostSeats moves it aside the same way). */
+    var doorSpans = doors.filter(function (d) { return d.wall === porchWall; }).map(function (d) {
+      var wf = (Number(d.w) || 36) / 12;
+      var c = openingLocalFt(porchWall, d.pos, wf, room) - (porchWall === 'front' ? w / 2 : l / 2);
+      return [c - wf / 2, c + wf / 2];
+    });
+    var maxSpan = (porchWall === 'front' ? 11 : 13);
+    var lo = partialPorch ? (pg.off - pg.span / 2) : (-postSpan / 2 + postInset);
+    var hi = partialPorch ? (pg.off + pg.len - pg.span / 2) : (postSpan / 2 - postInset);
+    var postSeats = partialPorch
+      ? porchPostSeatsFt(lo, hi, true, true, maxSpan, doorSpans)   // both ends, as the designer
+      : porchPostSeatsFt(lo, hi, true, true, (postSpan > maxSpan ? (hi - lo) / 2 + 0.01 : 1e9), doorSpans);
     postSeats.forEach(function (t) {
       var pt = (porchWall === 'front') ? project(t, l / 2) : project(w / 2, t);
       svg.appendChild(svgEl('rect', { x: pt.x - 2.5, y: pt.y - 2.5, width: 5, height: 5, fill: '#2cc0fd' }));

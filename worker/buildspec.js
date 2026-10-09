@@ -68,16 +68,48 @@ function specFoundationLine(c) {
   return "Foundation: " + base + (fin ? " (" + fin + ")" : "");
 }
 
+/* Partial porch: where along its wall it sits, as the crew standing outside
+   that wall would say it. pos runs from the wall's start corner (front: the
+   left end; right side: the BACK end, which is on your right as you face it),
+   so the side wall reads the other way round. */
+function specPorchWhere(c, span, len) {
+  const off = Math.max(0, Math.min(span - len, Number(c.porchOff) || 0));
+  const fromLeft = sv(c.porchLoc) === "side" ? span - len - off : off;
+  const fromRight = span - len - fromLeft;
+  if (fromLeft < 0.5) return "left end";
+  if (fromRight < 0.5) return "right end";
+  if (Math.abs(fromLeft - fromRight) < 0.5) return "centered";
+  return fromLeft + "ft from the left end";
+}
 function specPorchLine(c) {
   const loc = sv(c.porchLoc);
   if (!loc || loc === "none") return "";
   const bits = [specCap(loc)];
-  if (c.porchDepth) bits.push(c.porchDepth + "ft deep");
+  const depth = Number(c.porchDepth) || 0;
+  const span = loc === "front" ? Number(c.w) || 0 : Number(c.l) || 0;
+  const len = Number(c.porchLen) || 0;
+  if (depth && len > 0 && len < span) {
+    bits.push(depth + "ft deep × " + len + "ft long");
+    bits.push(specPorchWhere(c, span, len));
+  } else if (depth) bits.push(depth + "ft deep");
   const deck = SPEC_DECK[sv(c.porchDeck)];
   if (deck) bits.push(deck);
   const tier = sv(c.porchTier);
   if (tier && tier !== "standard") bits.push(tier);
   return "Porch: " + bits.join(" · ");
+}
+
+function specEnclosedLine(c) {
+  const loc = sv(c.porchLoc), depth = Number(c.porchDepth) || 0;
+  const w = Number(c.w) || 0, l = Number(c.l) || 0;
+  if (!w || !l || (loc !== "front" && loc !== "side") || !(depth > 0)) return "";
+  if (c.style && sv(c.style) !== "gable") return "";
+  const span = loc === "front" ? w : l;
+  const len = (Number(c.porchLen) > 0 && Number(c.porchLen) < span) ? Number(c.porchLen) : span;
+  const porch = depth * len;
+  const room = w * l - porch;
+  const shape = len < span ? "" : (loc === "front" ? " (" + w + "x" + (l - depth) + ")" : " (" + (w - depth) + "x" + l + ")");
+  return "Enclosed: " + room + " sq ft" + shape + " · Porch: " + depth + "x" + len + " ft (" + porch + " sq ft)";
 }
 
 /* Interior, floor and electrical on one line — they are three short answers
@@ -110,6 +142,9 @@ export function buildSpecLines(config) {
   const out = [];
 
   const s = specShell(c); if (s) out.push(s);
+  /* With a porch, the footprint is not the room: say both, because the crew
+     frames the room and the customer bought the footprint. */
+  const enc = specEnclosedLine(c); if (enc) out.push(enc);
   /* sidingDisplayName already ends in "Siding" — "Siding: Board & Batten
      Siding" is the kind of thing that reads fine in code and looks careless on
      a page someone else is working from. */
