@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "d4f14d7";
-const WORKER_BUILT_AT = "2026-10-09T17:55:03.823Z";
+const WORKER_BUILD = "20a6879-dirty";
+const WORKER_BUILT_AT = "2026-10-09T18:34:28.513Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -493,6 +493,16 @@ let SELL = {
      When on, a Stripe bill is EITHER bank transfer (ACH) with no fee, OR card
      with this surcharge on its own line; never both on one bill. */
   cardFee: { enabled: 0, percent: 3 },
+  /* CASH, CHECK & BANK TRANSFER DISCOUNT (Nando, 9 Oct 2026: "build the cash or
+     check or ACH discount. If credit card charge a 3% fee"). Replaces the card
+     surcharge above, which Stripe-hosted invoices cannot carry.
+     The posted price becomes the CARD price: a quote priced while this is on is
+     stamped (redline.cardUplift = percent/100) and every figure on it reads at
+     today's price x (1 + percent/100). Paying by anything but a card takes it
+     back off — the discount is percent/(100+percent) of the regular price, so a
+     non-card payer pays exactly today's price. OFF until Nando switches it on;
+     a quote priced while it is off is never stamped and never changes. */
+  cashDiscount: { enabled: 0, percent: 3 },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
   // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
@@ -2007,7 +2017,7 @@ function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel','cardFee'];
+  'concretePromo','sprinkler','travel','cardFee','cashDiscount'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".
@@ -2074,11 +2084,28 @@ function mergedPricingConfig(saved){
    Stripe's standard 2.9% + 30c a 3% fee on the pre-fee amount is 2.91% of the
    charge, so the setting must come down if the Stripe rate ever does. */
 const CARD_FEE_MAX_PERCENT = 3;
+/* RETIRED 9 Oct 2026, kept in code: Stripe support confirmed hosted Invoices
+   cannot surcharge (that needs Checkout / Payment Links / PaymentIntents plus a
+   provider app). CARD_FEE_AVAILABLE pins it off whatever a saved config says,
+   so a stale "enabled: 1" can never put a surcharge on a bill. The cash
+   discount below is what replaced it. */
+const CARD_FEE_AVAILABLE = false;
 function cardFeeSettings() {
   const c = (SELL && SELL.cardFee) || {};
   const pct = Math.min(CARD_FEE_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
-  const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
+  const on = CARD_FEE_AVAILABLE && (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
   return { enabled: on, percent: pct, rate: on ? pct / 100 : 0 };
+}
+
+/* The cash discount switch as the quote code wants it. percent is the CARD
+   PRICE UPLIFT (3 = card price is today's price x 1.03); held to 0..10.
+   uplift is what gets stamped on a new quote's redline. */
+const CASH_DISCOUNT_MAX_PERCENT = 10;
+function cashDiscountSettings() {
+  const c = (SELL && SELL.cashDiscount) || {};
+  const pct = Math.min(CASH_DISCOUNT_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
+  const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
+  return { enabled: on, percent: pct, uplift: on ? pct / 100 : 0 };
 }
 
 // ---- end inlined pricing.js ----
@@ -3859,7 +3886,7 @@ function quoteLines(redline, adjustments) {
 
   const tax = adjustedSubtotal * TAX_RATE;
   const depositTotal = rows.reduce((t, r) => t + r.deposit, 0);
-  return {
+  return withCardPrice(redline, {
     rows: rows,
     subtotal: subtotal,
     /* What a percentage adjustment is a percentage OF: the subtotal less any
@@ -3879,7 +3906,81 @@ function quoteLines(redline, adjustments) {
     totalBefore: subtotal * (1 + TAX_RATE),
     savings: Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE),
     depositTotal: depositTotal
+  });
+}
+
+/* ── REGULAR (CARD) PRICE AND THE CASH, CHECK & BANK TRANSFER DISCOUNT ──────
+ *
+ * Nando, 9 Oct 2026: card payers pay 3% more than everyone else, done the way
+ * the card networks allow — the POSTED price is the card price and paying any
+ * other way earns a discount. A quote priced while the switch was on carries
+ * redline.cardUplift (0.03); every money figure here is then today's figure x
+ * (1 + uplift): each phase, sub-line, promo, adjustment, the tax and every
+ * deposit. One uniform factor, applied once, at the end — so the quote reads
+ * as plain regular prices with no "card" line anywhere, and the arithmetic
+ * above (comps, overrides, adjustments, rounding) is untouched.
+ *
+ * The discount is uplift / (1 + uplift) of the regular price (2.913% for 3%),
+ * which takes a non-card payer back to EXACTLY today's figure:
+ *   today $10,000.00 -> regular (card) $10,300.00 -> discount $300.00 -> $10,000.00
+ *
+ * A redline without cardUplift (every quote priced before the switch, or while
+ * it is off) comes back exactly as before — no cashDiscount key at all. */
+const CARD_UPLIFT_MAX = 0.10;
+function cardUpliftOf(redline) {
+  const u = Number(redline && redline.cardUplift);
+  return Number.isFinite(u) && u > 0 ? Math.min(CARD_UPLIFT_MAX, u) : 0;
+}
+/* The share of the REGULAR price that comes off: 0.03 -> 0.029126... */
+function cashDiscountFraction(uplift) {
+  const u = Number(uplift) || 0;
+  return u > 0 ? u / (1 + u) : 0;
+}
+/* How the saving is written for customers: the true share of the regular
+   price, to one decimal (3% uplift -> "2.9"). Not "3": $300 off $10,300 is
+   2.91%, and an advertised discount has to be the real one. */
+function cashDiscountPctLabel(uplift) {
+  const f = cashDiscountFraction(uplift) * 100;
+  return String(Math.round(f * 10) / 10);
+}
+const CASH_DISCOUNT_LABEL = 'Cash, check & bank transfer discount';
+function cashDiscountDisclosure(uplift, amount) {
+  const pct = cashDiscountPctLabel(uplift);
+  const amt = Number(amount) > 0 ? ' (' + qlMoney(amount) + ')' : '';
+  return 'Prices shown are our regular prices. Pay by cash, check, cashier\u2019s check or bank transfer (ACH) and save ' + pct + '%' + amt + '.';
+}
+function qlMoney(n) {
+  return '$' + (Math.round(Number(n) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function withCardPrice(redline, bd) {
+  const u = cardUpliftOf(redline);
+  if (!u) return bd;
+  const k = 1 + u;
+  const sc = (v) => (typeof v === 'number' ? v * k : v);
+  bd.rows.forEach(function (r) {
+    ['amt', 'tax', 'total', 'deposit', 'listAmt'].forEach(function (f) { if (r[f] != null) r[f] = sc(r[f]); });
+    if (r.promo) r.promo = Object.assign({}, r.promo, { amt: sc(Number(r.promo.amt) || 0) });
+    if (r.override && r.override.was != null) r.override = Object.assign({}, r.override, { was: sc(Number(r.override.was) || 0) });
+    if (r.subLines) r.subLines = r.subLines.map(function (l) { return Object.assign({}, l, { amt: sc(Number(l.amt) || 0) }); });
+  });
+  ['subtotal', 'percentBase', 'travel', 'adjust', 'percentAdjust', 'amountAdjust', 'adjustedSubtotal',
+   'tax', 'total', 'totalBefore', 'savings', 'depositTotal'].forEach(function (f) { bd[f] = sc(bd[f]); });
+  /* What a flat adjustment typed by staff becomes on this quote (the page and
+     the invoice multiply the typed figure by this). */
+  bd.priceScale = k;
+  const cashTotal = bd.total / k;
+  bd.cashDiscount = {
+    uplift: u,
+    percentLabel: cashDiscountPctLabel(u),
+    fraction: cashDiscountFraction(u),
+    /* Tax-inclusive, like Total Due: what comes off, and what is left to pay
+       by cash, check, cashier's check or bank transfer. */
+    amount: bd.total - cashTotal,
+    cashTotal: cashTotal,
+    cashDepositTotal: bd.depositTotal / k
   };
+  return bd;
 }
 
 // ---- end inlined quotelines.js ----
@@ -4009,7 +4110,9 @@ function adjustmentLines(bd, adjustments) {
         amountCents: toCents((bd.percentBase != null ? bd.percentBase : bd.subtotal) * (v / 100))
       });
     } else if (a.kind === 'amount') {
-      named.push({ label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v) });
+      /* On a regular (card) price quote a typed flat amount reads at the same
+         scale as everything else (quoteLines bd.priceScale). */
+      named.push({ label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (Number(bd.priceScale) || 1)) });
     }
   });
 
@@ -4095,7 +4198,7 @@ function depositInvoice(bd, adjustments, payments) {
     });
   }
   creditLines(payments).forEach((l) => lines.push(l));
-  const totalCents = depositCents - paidCentsOf(payments);
+  const totalCents = depositCents - creditedCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
@@ -4109,8 +4212,26 @@ function creditLines(payments) {
     const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
     const how = p.method ? ' by ' + methodLabel(p.method) : '';
     out.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c), fixed: true });
+    /* The cash, check & bank transfer discount that payment earned: a
+       reduction of the job, not money — so its own line, never folded in. */
+    const d = discountCentsOf(p);
+    if (d) out.push({ label: CASH_DISCOUNT_LABEL + ' on that payment', amountCents: -d, fixed: true, discount: true });
   });
   return out;
+}
+
+/* What a payment takes off a job: the money, plus any cash, check & bank
+   transfer discount it earned (payments.discount_amount, dollars). Every
+   balance, deposit and phase figure works off THIS; "paid" (money only) is
+   reported separately. A payment with no discount is exactly its amount. */
+function discountCentsOf(p) {
+  return Math.abs(toCents(p && p.discount_amount));
+}
+function creditCentsOf(p) {
+  return Math.abs(toCents(p && p.amount)) + discountCentsOf(p);
+}
+function creditedCentsOf(payments) {
+  return (payments || []).reduce((t, p) => t + creditCentsOf(p), 0);
 }
 
 /* Payments are stored in DOLLARS (REAL) — manual ones as typed, Stripe ones as
@@ -4139,14 +4260,19 @@ function balanceSummary(breakdown, payments) {
   const jobTotalCents = toCents(breakdown && breakdown.total);
   const depositTotalCents = toCents(breakdown && breakdown.depositTotal);
   const paidCents = paidCentsOf(payments);
-  const owed = jobTotalCents - paidCents;
+  /* Cash discounts earned so far: they reduce what the job costs, they are
+     not money received. */
+  const discountCents = (payments || []).reduce((t, p) => t + discountCentsOf(p), 0);
+  const credited = paidCents + discountCents;
+  const owed = jobTotalCents - credited;
   return {
     jobTotalCents,
     depositTotalCents,
     paidCents,
+    discountCents,
     balanceCents: Math.max(0, owed),
     overpaidCents: Math.max(0, -owed),
-    depositDueCents: Math.max(0, depositTotalCents - paidCents),
+    depositDueCents: Math.max(0, depositTotalCents - credited),
     paidInFull: jobTotalCents > 0 && owed <= 0
   };
 }
@@ -4167,7 +4293,7 @@ function balanceInvoice(bd, adjustments, payments) {
   creditLines(payments).forEach((l) => lines.push(l));
 
   const jobCents = toCents(bd.total);
-  const totalCents = jobCents - paidCentsOf(payments);
+  const totalCents = jobCents - creditedCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
@@ -4363,6 +4489,7 @@ function buildInvoice(breakdown, kind, payments, opts = {}) {
     totalCents: out.totalCents,
     jobTotalCents: toCents(breakdown.total),
     paidCents: paidCentsOf(paid),
+    earnedDiscountCents: paid.reduce((t, p) => t + discountCentsOf(p), 0),
     memo: buildMemo(breakdown, opts),
     footer: buildFooter(breakdown, opts.comped, kind, { credited: paid.length > 0 }),
     customFields: buildCustomFields(breakdown, kind, opts)
@@ -4466,7 +4593,10 @@ function allocatePhases(phases, payments) {
     if (same) same.cents += take; else entry.parts.push({ phase, part, cents: take });
     return cents - take;
   }
-  const leftover = byPayment.map((e) => Math.abs(toCents(e.payment.amount)));
+  /* A payment fills phases by what it takes off the job: money plus any cash
+     discount it earned (a $3,000 check on a 3% regular-price job covers
+     $3,090 of the $3,090 deposit). */
+  const leftover = byPayment.map((e) => creditCentsOf(e.payment));
 
   byPayment.forEach((e, i) => {                              // 1. from a phase invoice
     const a = parseAlloc(e.payment.phase_alloc);
@@ -4748,6 +4878,7 @@ function buildTogetherInvoice(builds, selected, opts = {}) {
     totalCents,
     jobTotalCents,
     paidCents: allPayments.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    earnedDiscountCents: allPayments.reduce((t, p) => t + discountCentsOf(p), 0),
     covers: coverCents,
     builds: many ? subs : undefined,
     description: what,
@@ -4815,7 +4946,9 @@ function appliedSentence(ts, picks, many) {
       if (!parts.length) return;
       const p = e.payment;
       const cents = Math.abs(toCents(p.amount));
-      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at)].filter(Boolean).join(', ');
+      const disc = discountCentsOf(p);
+      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at),
+                   disc ? 'plus ' + usd(fromCents(disc)) + ' cash discount' : null].filter(Boolean).join(', ');
       const what = parts.every((x) => x.part === 'deposit') ? 'deposit' : 'payment';
       hits.push({ cents, how, what, build: many ? shortBuild(b.name) : '' });
     });
@@ -4912,6 +5045,102 @@ function splitFee(paidCents, totalCents, feeCents) {
   if (!fee || !tot) return { creditCents: paid, feeCents: 0 };
   const feePart = paid >= tot ? fee : Math.round(paid * fee / tot);
   return { creditCents: paid - feePart, feeCents: feePart };
+}
+
+/* ---------------------------------------------------------------------------
+ * CASH, CHECK & BANK TRANSFER DISCOUNT (replaces the card surcharge above,
+ * which Stripe-hosted invoices cannot carry).
+ *
+ * A quote priced while the switch was on is at REGULAR (card) prices
+ * (quoteLines: redline.cardUplift). Every bill, phase and balance stays in
+ * those prices. Paying by anything but a card earns a discount of
+ * uplift / (1 + uplift) of what that payment covers, so a non-card payer pays
+ * exactly what the job cost before the switch:
+ *
+ *   card  bill: regular price, card only.
+ *   ACH   bill: regular price less the discount line, bank transfer only.
+ *   check/cash: recorded as typed; the discount it earned is stored beside it
+ *               (payments.discount_amount) and shown as its own line.
+ *
+ * The discount is a REDUCTION OF THE JOB for the part paid that way, never a
+ * payment: creditCentsOf() above adds it to what the payment covers, so a
+ * check on the deposit and a card on the balance each settle their own part.
+ * A build without cardUplift (every quote priced before the switch) earns no
+ * discount anywhere and bills exactly as it always has.
+ * ------------------------------------------------------------------------- */
+function cashDiscountCents(cardCents, uplift) {
+  return Math.round(Math.max(0, Number(cardCents) || 0) * cashDiscountFraction(uplift));
+}
+
+/* Methods typed in the CRM that earn the discount. "card" never does, and
+   Venmo is left out because it can be card-funded; staff can untick the
+   discount on any single payment. */
+const DISCOUNT_METHODS = ['cash', 'check', 'cashiers_check', 'invoice2go', 'zelle', 'other'];
+
+/* The discount a manual (check / cash ...) payment earns on a regular-price
+   job: payment x uplift, never more than what is left of the job beyond the
+   payment itself, and snapped to close the job exactly when the payment is
+   the full cash price of what was owed. */
+function manualDiscountCents(payCents, uplift, remainingCardCents) {
+  const u = Number(uplift) || 0;
+  const pay = Math.max(0, Math.round(Number(payCents) || 0));
+  if (!(u > 0) || !pay) return 0;
+  const room = Math.max(0, Math.round(Number(remainingCardCents) || 0) - pay);
+  let d = Math.round(pay * u);
+  if (Math.abs(room - d) <= 2) d = room;
+  return Math.max(0, Math.min(d, room));
+}
+
+/* The ACH version of a bill: the same lines plus the discount line. upliftFor
+   (sub) gives each build's uplift (0 = priced before the switch), because a
+   combined bill can hold one build of each kind; each cover carries the
+   discount it earned (disc) so the payment can be booked per build. Returns
+   null when nothing on the bill earns a discount. */
+function addCashDiscount(invoice, upliftFor, defaultSub) {
+  const covers = Array.isArray(invoice.covers) && invoice.covers.length
+    ? invoice.covers.map((c) => ({ ...c })) : null;
+  let disc = 0;
+  const pcts = {};
+  if (covers) {
+    covers.forEach((c) => {
+      const u = upliftFor(c.sub != null ? c.sub : defaultSub);
+      const d = cashDiscountCents(c.cents, u);
+      if (d) { c.disc = d; disc += d; pcts[cashDiscountPctLabel(u)] = 1; }
+    });
+  } else {
+    const u = upliftFor(defaultSub);
+    disc = cashDiscountCents(invoice.totalCents, u);
+    if (disc) pcts[cashDiscountPctLabel(u)] = 1;
+  }
+  if (!disc) return null;
+  const pl = Object.keys(pcts);
+  const label = CASH_DISCOUNT_LABEL + (pl.length === 1 ? ' (' + pl[0] + '%)' : '') + ' \u2014 paying by bank transfer (ACH)';
+  return {
+    ...invoice,
+    covers: covers || invoice.covers,
+    lines: invoice.lines.concat([{ label: clip(label, LIMITS.label), amountCents: -disc, fixed: true, discount: true }]),
+    totalCents: invoice.totalCents - disc,
+    discountCents: disc,
+    discountPct: pl.length === 1 ? pl[0] : null
+  };
+}
+
+/* What part of an ACH bill's discount a payment earned: all of it when the
+   bill is paid in full, in proportion when it is paid in part. */
+function paidDiscountCents(clearedCents, billedCents, discountCents) {
+  const d = Math.max(0, Math.round(Number(discountCents) || 0));
+  const billed = Math.max(0, Number(billedCents) || 0);
+  if (!d || !billed) return 0;
+  return Math.round(d * Math.min(1, Math.max(0, Number(clearedCents) || 0) / billed));
+}
+
+function cardBillFooterNote(pctLabel) {
+  return 'Prices shown are our regular prices. This bill is for payment by card. Pay by cash, check, cashier\u2019s check or bank transfer (ACH) and save ' +
+    pctLabel + '% \u2014 ask us for a bank-transfer bill.';
+}
+function bankBillFooterNote(pctLabel) {
+  return 'This bill is for payment by bank transfer (ACH) and includes our ' + pctLabel +
+    '% cash, check & bank transfer discount. Card payments are billed at our regular price.';
 }
 
 // ---- end inlined invoices.js ----
@@ -6997,6 +7226,13 @@ async function ensurePaymentsTable(env) {
   if (names.indexOf("submission_id") === -1) {
     await env.DB.prepare("ALTER TABLE payments ADD COLUMN submission_id INTEGER").run();
   }
+  /* The cash, check & bank transfer discount a payment earned on a
+     regular-price (card price) job, in dollars. Not money received: it is
+     what that payment took off the job beyond its own amount. Null/0 on every
+     payment before the discount existed, which is exactly right for them. */
+  if (names.indexOf("discount_amount") === -1) {
+    await env.DB.prepare("ALTER TABLE payments ADD COLUMN discount_amount REAL").run();
+  }
 }
 
 // Lazily creates the installs table on first use — same reasoning as
@@ -7147,7 +7383,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensurePaymentsTable(env);
   const { results: payments } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+    "SELECT id, amount, discount_amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -7350,6 +7586,14 @@ async function ensureInvoicesTable(env) {
   }
   if (invNames.length && invNames.indexOf("fee_paid_cents") === -1) {
     await env.DB.prepare("ALTER TABLE invoices ADD COLUMN fee_paid_cents INTEGER").run();
+  }
+  /* Cash discount on a bank-transfer (ACH) bill: what the bill took off
+     (discount_cents) and how it was paid for (pay_by: 'card' | 'bank'). */
+  if (invNames.length && invNames.indexOf("discount_cents") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN discount_cents INTEGER").run();
+  }
+  if (invNames.length && invNames.indexOf("pay_by") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN pay_by TEXT").run();
   }
 }
 
@@ -7660,9 +7904,10 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
   const breakdown = quoteLines(details.redline, adjustmentsOf(sub));
   if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
+  const uplift = cardUpliftOf(details.redline);
 
   const { results: payRows } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+    "SELECT id, amount, discount_amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
   ).bind(sub.customer_id).all();
   const split = splitPayments(payRows || [], sub.id);
 
@@ -7713,7 +7958,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
       throw Object.assign(e, { status: e.status || (e.code === "already_billed" ? 409 : 400) });
     }
     return { sub, customer, breakdown, split, invoice, builds: builds.map((b) => b.sub),
-             payRows: payRows || [] };
+             payRows: payRows || [], uplift };
   }
 
   /* Everything the quote page puts around the numbers, handed to the invoice
@@ -7727,7 +7972,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     summary: configSummary(details.config),
     submissionId: sub.id
   });
-  return { sub, customer, breakdown, split, invoice };
+  return { sub, customer, breakdown, split, invoice, uplift };
 }
 
 /* POST /stripe/webhook — public, and the only thing standing between it and a
@@ -7799,6 +8044,11 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
      build; the fee is recorded on the invoice row (fee_paid_cents). */
   const fee = splitFee(toCents(cleared), toCents(row.amount), Number(row.fee_cents) || 0);
   const amount = fromCents(fee.creditCents);
+  /* A bank-transfer (ACH) bill on a regular-price job carried the cash
+     discount as a line. Paying it takes that discount off the job too — in
+     full, or in proportion to a part payment — and it is booked BESIDE the
+     money (payments.discount_amount), never as money. */
+  const discCents = paidDiscountCents(fee.creditCents, toCents(row.amount), Number(row.discount_cents) || 0);
 
   /* A phase invoice says which parts it collected; the payment is booked
      against exactly those, in order, up to what actually cleared. A combined
@@ -7807,11 +8057,16 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
      the first build, where it shows up as overpaid rather than vanishing. */
   const note = (row.kind === "deposit" ? "Deposit paid on Stripe"
     : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe") +
-    (fee.feeCents ? " by card (+" + usd(fromCents(fee.feeCents)) + " card surcharge, kept separately)" : "");
+    (fee.feeCents ? " by card (+" + usd(fromCents(fee.feeCents)) + " card surcharge, kept separately)" : "") +
+    (discCents ? " by bank transfer (ACH), with " + usd(fromCents(discCents)) + " cash, check & bank transfer discount" : "");
   const withAlloc = row.kind === "phase" && (await hasPhaseAlloc(env));
   const shares = [];                        // { sub, cents, parts }
+  /* What the payment covers: money plus the discount it earned. Shared over
+     the bill's covers in those terms, then each build's share is split back
+     into money and discount in proportion. */
+  const creditTotal = toCents(amount) + discCents;
   if (row.kind === "phase") {
-    let left = toCents(amount);
+    let left = creditTotal;
     coversOf(row.lines).forEach((c) => {
       const take = Math.min(left, Math.max(0, Math.round(Number(c.cents) || 0)));
       if (take <= 0) return;
@@ -7827,19 +8082,45 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
       shares[0].cents += left;
     }
   }
-  if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: toCents(amount), parts: [] });
+  if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: creditTotal, parts: [] });
+  /* Discount per build: by the covers it was worked out on when the bill was
+     made (each carries disc), scaled to what was paid; the money is the rest.
+     A bill without covers (deposit / balance) has one build. */
+  let discLeft = discCents;
+  if (discCents) {
+    const byCover = {};
+    let coverDisc = 0;
+    coversOf(row.lines).forEach((c) => {
+      const d = Math.max(0, Math.round(Number(c.disc) || 0));
+      if (!d) return;
+      const sub = coverSub(c, row);
+      byCover[sub] = (byCover[sub] || 0) + d;
+      coverDisc += d;
+    });
+    shares.forEach((sh, i) => {
+      let d;
+      if (i === shares.length - 1) d = discLeft;
+      else if (coverDisc) d = Math.round(discCents * (byCover[sh.sub] || 0) / coverDisc);
+      else d = Math.round(discCents * sh.cents / Math.max(1, creditTotal));
+      d = Math.max(0, Math.min(d, discLeft, sh.cents));
+      sh.disc = d;
+      discLeft -= d;
+    });
+  }
   const many = shares.length > 1;
   const stmts = shares.map((sh) => {
-    const amt = fromCents(sh.cents);
+    const disc = sh.disc || 0;
+    const amt = fromCents(sh.cents - disc);
+    const dAmt = disc ? fromCents(disc) : null;
     const n = many ? note + " (combined invoice, " + shares.map((x) => "#" + x.sub).join(" + ") + ")" : note;
     if (withAlloc && sh.parts.length) {
       return env.DB.prepare(
-        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
-      ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub, JSON.stringify({ parts: sh.parts }));
+        "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?,?)"
+      ).bind(row.customer_id, amt, dAmt, "stripe", n, now, now, sh.sub, JSON.stringify({ parts: sh.parts }));
     }
     return env.DB.prepare(
-      "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-    ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub);
+      "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?,?)"
+    ).bind(row.customer_id, amt, dAmt, "stripe", n, now, now, sh.sub);
   });
   /* All the payments and the status flip land together or not at all, so a
      retry after a failure cannot book a build twice. */
@@ -7848,7 +8129,7 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
     : env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
   await env.DB.batch(stmts);
 
-  return { already: false, amount, fee: fromCents(fee.feeCents) };
+  return { already: false, amount, fee: fromCents(fee.feeCents), discount: fromCents(discCents) };
 }
 
 /* POST /admin/invoices/:id/sync — ask Stripe what it thinks and believe it.
@@ -7951,19 +8232,35 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const { sub, customer, split } = ctx;
   const baseInvoice = ctx.invoice;
 
-  /* CREDIT CARD SURCHARGE. Off: nothing changes. On: the bill is bank-only
-     with no fee (the default), or — pay_by "card" — card-only with the
-     surcharge as its own line. Both versions go back on the preview so the
-     CRM can show the choice; the one chosen is what gets sent. */
-  let feeCfg = { enabled: false, rate: 0, percent: 0 };
-  try { await applySavedPricing(env); feeCfg = cardFeeSettings(); } catch (e) {}
-  const payBy = feeCfg.enabled && String(body.pay_by || "").toLowerCase() === "card" ? "card" : "bank";
-  const withFee = feeCfg.enabled ? addCardFee(baseInvoice, feeCfg.rate) : null;
-  const invoice = payBy === "card" ? withFee
-    : (feeCfg.enabled ? Object.assign({}, baseInvoice, {
-        footer: String((bankFooterNote(feeCfg.rate) + (baseInvoice.footer ? " " + baseInvoice.footer : ""))).slice(0, LIMITS.footer) })
-      : baseInvoice);
-  const methods = invoiceMethods(feeCfg.enabled, payBy);
+  /* CASH, CHECK & BANK TRANSFER DISCOUNT. Decided by the BUILD, not by the
+     switch: only a quote priced while the discount was on is at regular (card)
+     prices (redline.cardUplift), so only it earns a discount. For such a bill
+     the CRM picks how it will be paid —
+       card: the regular price, card only;
+       bank: the regular price less the discount line, bank transfer only —
+     and both versions go back on the preview so the picker can switch without
+     asking again. Every other bill is exactly what it always was: one bill,
+     card or bank, same amount. (The retired card surcharge is pinned off in
+     pricing.js and no longer reaches a bill.) */
+  const upliftBySub = {};
+  const builtSubs = ctx.builds || [sub.id];
+  for (const sid of builtSubs) {
+    if (Number(sid) === Number(sub.id)) { upliftBySub[sid] = ctx.uplift || 0; continue; }
+    const o = await env.DB.prepare("SELECT details FROM submissions WHERE id = ?").bind(sid).first();
+    let d = {};
+    try { d = JSON.parse((o && o.details) || "{}") || {}; } catch (e) {}
+    upliftBySub[sid] = cardUpliftOf(d.redline);
+  }
+  const upliftFor = (sid) => upliftBySub[Number(sid)] || upliftBySub[String(sid)] || 0;
+  const withDiscount = addCashDiscount(baseInvoice, upliftFor, sub.id);
+  const discountOn = !!withDiscount;
+  const payBy = discountOn ? (String(body.pay_by || "").toLowerCase() === "card" ? "card" : "bank") : null;
+  const pctLabel = discountOn ? withDiscount.discountPct || cashDiscountPctLabel(upliftFor(sub.id)) : null;
+  const clipFooter = (note, f) => String(note + (f ? " " + f : "")).slice(0, LIMITS.footer);
+  const cardInvoice = discountOn ? Object.assign({}, baseInvoice, { footer: clipFooter(cardBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
+  const bankInvoice = discountOn ? Object.assign({}, withDiscount, { footer: clipFooter(bankBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
+  const invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
+  const methods = invoiceMethods(discountOn, payBy);
 
   /* Payments nobody attributed to a job. Not applied and not ignored — both
      are wrong in a way that costs a customer money — so they ride along on
@@ -8026,26 +8323,30 @@ async function handleCreateInvoice(request, env, origin, actor) {
       : split.applied).map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
                                      method: p.method, paid_at: p.paid_at, note: p.note || null,
                                      submission_id: p.submission_id })),
-    balance_due: fromCents(Math.max(0, invoice.jobTotalCents - invoice.paidCents)),
+    /* Discounts already earned by earlier cash / check / ACH payments take the
+       job down too; they are not "paid", so they are listed separately. */
+    discounts_earned: fromCents(baseInvoice.earnedDiscountCents || 0),
+    balance_due: fromCents(Math.max(0, baseInvoice.jobTotalCents - baseInvoice.paidCents - (baseInvoice.earnedDiscountCents || 0))),
     /* Returned on the preview too, so what the CRM shows before sending is
        the whole document and not just its numbers. */
     memo: invoice.memo,
     footer: invoice.footer,
     custom_fields: invoice.customFields,
-    pay_by: feeCfg.enabled ? payBy : null,
+    pay_by: payBy,
     payment_methods: methods,
-    fee: fromCents(invoice.feeCents || 0),
+    discount: fromCents(invoice.discountCents || 0),
     /* Both versions, so the preview can switch without asking again. */
-    card_fee: feeCfg.enabled ? {
-      percent: feeCfg.percent,
-      fee: fromCents(withFee.feeCents),
-      amount_with_fee: fromCents(withFee.totalCents),
-      amount_without_fee: fromCents(baseInvoice.totalCents),
-      lines_with_fee: withFee.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), fee: !!l.fee })),
-      lines_without_fee: baseInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
-      footer_card: withFee.footer,
-      footer_bank: payBy === "card" ? null : invoice.footer
+    cash_discount: discountOn ? {
+      percent_label: pctLabel,
+      discount: fromCents(withDiscount.discountCents),
+      amount_card: fromCents(cardInvoice.totalCents),
+      amount_bank: fromCents(bankInvoice.totalCents),
+      lines_card: cardInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+      lines_bank: bankInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), discount: !!l.discount })),
+      footer_card: cardInvoice.footer,
+      footer_bank: bankInvoice.footer
     } : null,
+    card_fee: null,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -8117,11 +8418,11 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const sentTo = sent.customerEmail || customer.email || null;
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
-       amount, status, lines, created_at, created_by, sent_to, fee_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+       amount, status, lines, created_at, created_by, sent_to, fee_cents, discount_cents, pay_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
          JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo,
-         invoice.feeCents || 0).run();
+         invoice.feeCents || 0, invoice.discountCents || 0, payBy).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
@@ -8141,7 +8442,7 @@ async function handleListInvoices(request, env, origin, customerId) {
   await ensureInvoicesTable(env);
   const { results } = await env.DB.prepare(
     `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
-            lines, created_at, created_by, paid_at, sent_to, fee_cents, fee_paid_cents
+            lines, created_at, created_by, paid_at, sent_to, fee_cents, fee_paid_cents, discount_cents, pay_by
      FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
   ).bind(customerId).all();
   const invoices = (results || []).map((r) => {
@@ -8199,6 +8500,34 @@ function paymentAmount(v) {
   return cents > 0 ? fromCents(cents) : null;
 }
 
+/* THE DISCOUNT A CHECK / CASH / CASHIER'S CHECK PAYMENT EARNS.
+ *
+ * Only on a build quoted at regular (card) prices (redline.cardUplift), only
+ * for a method in DISCOUNT_METHODS, and only when the payment is placed on a
+ * build — without one there is no price to discount. payment x uplift, capped
+ * by what is left of that build beyond the payment (manualDiscountCents).
+ * want === false is staff unticking it for this one payment. Returns dollars
+ * or null. */
+async function manualDiscountFor(env, submissionId, method, amount, excludeId, want) {
+  if (want === false || !submissionId || DISCOUNT_METHODS.indexOf(method) === -1) return null;
+  const sub = await env.DB.prepare(
+    "SELECT id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+  ).bind(submissionId).first();
+  if (!sub) return null;
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+  const uplift = cardUpliftOf(details.redline);
+  if (!uplift) return null;
+  const bd = quoteLines(details.redline, adjustmentsOf(sub));
+  if (!bd) return null;
+  const { results } = await env.DB.prepare(
+    "SELECT id, amount, discount_amount FROM payments WHERE submission_id = ? AND id != ?"
+  ).bind(submissionId, excludeId || 0).all();
+  const credited = (results || []).reduce((t, p) => t + creditCentsOf(p), 0);
+  const d = manualDiscountCents(toCents(amount), uplift, toCents(bd.total) - credited);
+  return d ? fromCents(d) : null;
+}
+
 async function handleAddPayment(request, env, origin, customerId) {
   const body = await request.json().catch(() => ({}));
   const amount = paymentAmount(body.amount);
@@ -8233,14 +8562,15 @@ async function handleAddPayment(request, env, origin, customerId) {
   }
 
   const now = new Date().toISOString();
+  const discount = await manualDiscountFor(env, submissionId, method, amount, 0, body.cash_discount === false ? false : true);
   const res = tag
     ? await env.DB.prepare(
-        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
-      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId, tag).run()
+        "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, discount, method, note || null, paidAt, now, submissionId, tag).run()
     : await env.DB.prepare(
-        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId).run();
-  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+        "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, discount, method, note || null, paidAt, now, submissionId).run();
+  return json({ ok: true, id: res.meta.last_row_id, discount_amount: discount }, 200, origin);
 }
 
 /* PUT the shed onto a payment that has none — or move one that went on the
@@ -8265,9 +8595,16 @@ async function handleSetPaymentSubmission(request, env, origin, paymentId) {
     if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
   }
 
-  await env.DB.prepare("UPDATE payments SET submission_id = ? WHERE id = ?")
-    .bind(submissionId, paymentId).run();
-  return json({ ok: true, id: paymentId, submission_id: submissionId }, 200, origin);
+  /* Moving a typed payment onto (or off) a regular-price build changes the
+     discount it earns. A Stripe payment keeps whatever its bill gave it. */
+  const full = await env.DB.prepare("SELECT * FROM payments WHERE id = ?").bind(paymentId).first();
+  let discount = full ? full.discount_amount : null;
+  if (full && full.method !== "stripe") {
+    discount = await manualDiscountFor(env, submissionId, full.method, full.amount, paymentId, true);
+  }
+  await env.DB.prepare("UPDATE payments SET submission_id = ?, discount_amount = ? WHERE id = ?")
+    .bind(submissionId, discount == null ? null : discount, paymentId).run();
+  return json({ ok: true, id: paymentId, submission_id: submissionId, discount_amount: discount == null ? null : discount }, 200, origin);
 }
 
 /* POST /admin/payments/:id — correct a payment someone typed in.
@@ -8334,12 +8671,25 @@ async function handleUpdatePayment(request, env, origin, paymentId) {
     if (tag && !willHaveBuild) return json({ error: "pick the build before the phase" }, 400, origin);
     sets.push("phase_alloc = ?"); args.push(tag);
   }
+  /* Amount, method or build changed (or the discount box was ticked or
+     unticked): the discount is worked out again for the payment as it now
+     stands. Stripe payments keep the discount their bill gave them. */
+  if (pay.method !== "stripe" && (body.amount !== undefined || body.method !== undefined ||
+      body.submission_id !== undefined || body.cash_discount !== undefined)) {
+    const nAmount = body.amount !== undefined ? paymentAmount(body.amount) : pay.amount;
+    const nMethod = body.method !== undefined ? String(body.method || "").toLowerCase().trim() : pay.method;
+    const nSub = body.submission_id !== undefined
+      ? (body.submission_id === null || body.submission_id === "" ? null : Number(body.submission_id))
+      : pay.submission_id;
+    const d = await manualDiscountFor(env, nSub, nMethod, nAmount, paymentId, body.cash_discount === false ? false : true);
+    sets.push("discount_amount = ?"); args.push(d);
+  }
   if (!sets.length) return json({ error: "nothing to change" }, 400, origin);
 
   await env.DB.prepare("UPDATE payments SET " + sets.join(", ") + " WHERE id = ?")
     .bind(...args, paymentId).run();
   const row = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE id = ?"
+    "SELECT id, amount, discount_amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE id = ?"
   ).bind(paymentId).first();
   return json({ ok: true, payment: row }, 200, origin);
 }
@@ -8353,6 +8703,10 @@ async function handleUpdatePayment(request, env, origin, paymentId) {
  *
  * Read-only. Works out everything from the payments table on every call, so
  * adding, editing, reassigning or deleting a payment changes it immediately. */
+function cashDiscountCentsFor(cents, uplift) {
+  return uplift > 0 ? Math.round(Math.max(0, cents) * uplift / (1 + uplift)) : 0;
+}
+
 async function handleCustomerBalances(request, env, origin, customerId) {
   await ensurePaymentsTable(env);
   await ensureInvoicesTable(env);
@@ -8360,7 +8714,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     "SELECT id, status, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE customer_id = ?"
   ).bind(customerId).all();
   const { results: payRows } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+    "SELECT id, amount, discount_amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
   ).bind(customerId).all();
   const { results: invRows } = await env.DB.prepare(
     "SELECT id, submission_id, kind, amount, status, hosted_url, lines FROM invoices WHERE customer_id = ? AND status NOT IN ('void','draft_failed')"
@@ -8384,9 +8738,18 @@ async function handleCustomerBalances(request, env, origin, customerId) {
                             remaining: money(x.remainingCents), open_invoice: x.openInvoice });
     built.push({ sub: sub.id, bd, payments: split.applied, name: buildName(details.config) || "Order #" + sub.id,
                  openParts: openPhaseParts(invRows, sub.id) });
+    /* Quoted at regular (card) prices? Then what is left reads two ways: by
+       card as it stands, and by cash / check / bank transfer less the discount
+       — the figure to ask for when someone says they'll bring a check. */
+    const uplift = cardUpliftOf(details.redline);
+    const cashOf = (c) => c - cashDiscountCentsFor(c, uplift);
     builds.push({
       submission_id: sub.id,
       status: sub.status,
+      cash_discount: uplift ? { percent_label: cashDiscountPctLabel(uplift), uplift,
+                                balance_due_cash: money(cashOf(sum.balanceCents)),
+                                deposit_due_cash: money(cashOf(sum.depositDueCents)),
+                                discounts_earned: money(sum.discountCents) } : null,
       /* "10x20 Gable / A-Frame" — how it is named when billed with another. */
       name: buildName(details.config) || null,
       job_total: money(sum.jobTotalCents),
@@ -8399,7 +8762,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
       payments: split.applied.map((p) => {
         const a = parseAlloc(p.phase_alloc);
         const used = (ps.byPayment.find((e) => e.payment === p) || { parts: [] }).parts;
-        return { id: p.id, amount: money(toCents(p.amount)), method: p.method, paid_at: p.paid_at, note: p.note || null,
+        return { id: p.id, amount: money(toCents(p.amount)), discount: money(discountCentsOf(p)), method: p.method, paid_at: p.paid_at, note: p.note || null,
                  phase: a && a.phase ? a.phase : null,
                  /* Where the money actually landed, tagged or not. */
                  applied_to: used.map((u) => ({ phase: u.phase, part: u.part, amount: money(u.cents) })) };
@@ -8650,7 +9013,7 @@ async function handleBackfillQuoteRedline(request, env, origin) {
     }
     let result;
     try {
-      ({ result } = await computeQuoteResult(d.config, undefined, env));
+      ({ result } = await computeQuoteResult(d.config, undefined, env, true));
     } catch (e) {
       failed++;
       continue;
@@ -10143,14 +10506,42 @@ async function applySavedPricing(env) {
   if (saved) applyPricingOverrides(saved);
 }
 
-async function computeQuoteResult(rawConfig, overrides, env) {
+async function computeQuoteResult(rawConfig, overrides, env, keepToday) {
   const cfg = validateShedConfig(rawConfig);
 
   await applySavedPricing(env);
 
   const opts = overrides && typeof overrides === "object" ? overrides : undefined;
   const result = computePricing(cfg, opts);
+  /* CASH DISCOUNT ON: this quote is priced at REGULAR (card) prices. The
+     redline is stamped with the uplift (quoteLines scales every figure by it)
+     and the total moves with it, so the designer, the stored quotedPrice and
+     the quote document all read the same regular price. keepToday is for the
+     one caller comparing against a price quoted before (the redline backfill). */
+  const cd = keepToday ? { enabled: false } : cashDiscountSettings();
+  if (cd.enabled && result && result.redline) {
+    result.redline.cardUplift = cd.uplift;
+    result.customer = result.customer * (1 + cd.uplift);
+    result.cashDiscount = cd;
+  }
   return { cfg, result };
+}
+
+/* Every money figure the designer's tiles show, at the regular (card) price
+   when the cash discount is on, so a tile reading +$500 moves a regular-price
+   total by $500 and not $485.44. Sizes, feet and the sprinkler rule's steps are
+   not money and are left alone. */
+const OPTION_PRICE_NOT_MONEY = { limits: 1, areaSqft: 1, includedFt: 1, stepFt: 1 };
+function scaleOptionPrices(v, k, key) {
+  if (key && OPTION_PRICE_NOT_MONEY[key]) return v;
+  if (typeof v === "number") return Math.round(v * k * 100) / 100;
+  if (Array.isArray(v)) return v.map((x) => scaleOptionPrices(x, k));
+  if (v && typeof v === "object") {
+    const out = {};
+    Object.keys(v).forEach((kk) => { out[kk] = scaleOptionPrices(v[kk], k, kk); });
+    return out;
+  }
+  return v;
 }
 
 async function handleShedQuote(request, env, origin) {
@@ -10175,11 +10566,26 @@ async function handleShedQuote(request, env, origin) {
     return json({ error: "Could not price this build" }, 400, origin);
   }
 
+  /* The designer shows regular prices and says so, with what paying any
+     other way saves on THIS build (pre-tax, like the total it sits under).
+     Staff (redline) see the same line the customer does. */
+  const cd = result.cashDiscount;
+  const cashDiscount = cd && cd.enabled ? (() => {
+    const cashTotal = result.customer / (1 + cd.uplift);
+    return { percentLabel: cashDiscountPctLabel(cd.uplift), cashTotal,
+             saving: result.customer - cashTotal, disclosure: cashDiscountDisclosure(cd.uplift) };
+  })() : null;
+
   if (wantsRedline) {
     if (!staff) return json({ error: "Unauthorized" }, 401, origin);
-    return json({ total: result.customer, redline: result.redline }, 200, origin);
+    return json(cashDiscount ? { total: result.customer, redline: result.redline, cashDiscount }
+                             : { total: result.customer, redline: result.redline }, 200, origin);
   }
 
+  if (cashDiscount) {
+    return json({ total: result.customer, optionPrices: scaleOptionPrices(computeOptionPrices(cfg), 1 + cd.uplift),
+                  cashDiscount }, 200, origin);
+  }
   return json({ total: result.customer, optionPrices: computeOptionPrices(cfg) }, 200, origin);
 }
 
