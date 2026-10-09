@@ -47,14 +47,21 @@ test("Stephanie's case: concrete deposit paid outside Stripe -> Phase 2 deposit 
   const inv = buildPhaseInvoice(BD, pays, st.suggested, { submissionId: 7 });
   assert.equal(inv.totalCents, P[1].depositCents + P[0].remainderCents);
   assert.equal(sum(inv), inv.totalCents);
-  const labels = inv.lines.map((l) => l.label);
+  const parts = inv.lines.filter((l) => !l.discount);
+  const labels = parts.map((l) => l.label);
   assert.match(labels[0], /^Phase 2: Shed.* deposit \(30%\)$/);
   /* The rest of Phase 1 is shown as what is LEFT — the deposit she paid is
-     already inside that number, not a minus line to reconcile. */
-  assert.equal(labels[1], 'Remainder of Phase 1: Concrete Pad (4" slab) ($500.00 concrete pad promo applied), due after completion');
-  assert.equal(inv.lines[1].amountCents, P[0].remainderCents);
-  assert.equal(inv.lines.length, 2, 'no separate credit line: the payment is folded in');
-  assert.ok(inv.lines.every((l) => l.amountCents > 0));
+     already inside that number, not a minus line to reconcile. The promo is
+     no longer written into it: discounts go at the END (Nando, 9 Oct 2026),
+     so the part is at its regular price and the promo comes off below. */
+  assert.equal(labels[1], 'Remainder of Phase 1: Concrete Pad (4" slab), due after completion');
+  assert.equal(parts.length, 2, 'no separate credit line: the payment is folded in');
+  assert.ok(parts.every((l) => l.amountCents > 0));
+  const disc = inv.lines.filter((l) => l.discount);
+  assert.deepEqual(inv.lines.slice(-disc.length), disc, 'the discounts are the last lines');
+  assert.ok(disc.some((l) => /^Discount.* on the rest of Phase 1 \(.*Concrete pad promo/.test(l.label)), JSON.stringify(disc));
+  assert.equal(inv.lines[1].amountCents + disc.filter((l) => /Phase 1/.test(l.label)).reduce((t, l) => t + l.amountCents, 0), P[0].remainderCents,
+    'the remainder less its discount is still exactly the phase remainder');
   assert.match(inv.memo, /Your \$965\.25 deposit \(Invoice2go, 9\/1\/2026\) has been applied\./);
   assert.match(inv.memo, /30% deposit on that phase/);
   assert.match(inv.memo, /due once that phase is complete/);
@@ -125,7 +132,7 @@ test('overpaid never goes negative', () => {
 test('the whole phase (deposit + rest) can be billed at once', () => {
   const inv = buildPhaseInvoice(BD, [], [{ phase: 1, part: 'deposit' }, { phase: 1, part: 'remainder' }]);
   assert.equal(inv.totalCents, P[0].totalCents);
-  assert.equal(inv.lines.length, 1);
+  assert.equal(inv.lines.filter((l) => !l.discount).length, 1);
   assert.match(inv.description, /all of Phase 1/);
 });
 
@@ -250,7 +257,8 @@ test('a phase invoice: preview, send, refuse a second bill for the same part, bo
   assert.equal(stripeCalls.length, 0, 'preview never reaches Stripe');
   assert.equal(c(prev.data.amount), P[1].depositCents + P[0].remainderCents);
   assert.equal(prev.data.description, 'Phase 2 deposit + rest of Phase 1');
-  assert.ok(prev.data.lines.every((l) => l.amount > 0), 'payments are folded in, not minus lines');
+  assert.ok(prev.data.lines.filter((l) => !l.discount).every((l) => l.amount > 0), 'payments are folded in, not minus lines');
+  assert.ok(prev.data.lines.filter((l) => l.amount < 0).every((l) => l.discount), 'the only minus lines are the discounts, flagged');
   assert.match(prev.data.memo, /Your \$[\d,.]+ deposit \(Invoice2go, 9\/1\/2026\) has been applied\./);
 
   const sent = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'phase', parts }, t);
@@ -324,7 +332,8 @@ test("together, Stephanie's shape: only the 8x16's concrete deposit is owed firs
   assert.deepEqual(ts.suggested, [{ phase: 1, part: 'deposit' }]);
   const inv = buildTogetherInvoice(two(DEP7), ts.suggested);
   assert.equal(inv.totalCents, P2[0].depositCents, 'the 10x20 concrete deposit is paid, so only the 8x16 one');
-  assert.deepEqual(inv.lines.map((l) => l.label), ['Phase 1: Concrete Pad deposit (30%) — ' + NAME38]);
+  assert.deepEqual(inv.lines.filter((l) => !l.discount).map((l) => l.label), ['Phase 1: Concrete Pad deposit (30%) — ' + NAME38]);
+  assert.deepEqual(inv.lines.filter((l) => l.discount).map((l) => l.label), ['Discounts on Phase 1 deposit (Concrete pad promo, Loyal customer) — ' + NAME38]);
   assert.deepEqual(inv.covers, [{ sub: 38, phase: 1, part: 'deposit', cents: P2[0].depositCents }]);
   assert.equal(inv.description, 'Phase 1 deposit (8x16)');
   assert.ok(inv.memo.length <= LIMITS.memo);
@@ -343,8 +352,13 @@ test('together, the bigger bill: 8x16 concrete deposit + both shed deposits + re
     'Phase 2: Shed deposit (30%) — ' + NAME38,
     'Remainder of Phase 1: Concrete Pad, due after completion — ' + NAME7,
     'Phase 1: Concrete Pad, full amount (deposit + remainder) — ' + NAME38,
+    /* Discounts last, each naming the part and what it is. */
+    'Discount on Phase 2 deposit (Loyal customer) — ' + NAME38,
+    'Discount on the rest of Phase 1 (Concrete pad promo) — ' + NAME7,
+    'Discounts on all of Phase 1 (Concrete pad promo, Loyal customer) — ' + NAME38,
   ]);
-  assert.ok(inv.lines.every((l) => l.amountCents > 0), 'no minus lines: her deposit is inside the 10x20 remainder');
+  assert.ok(inv.lines.filter((l) => !l.discount).every((l) => l.amountCents > 0), 'no minus lines: her deposit is inside the 10x20 remainder');
+  assert.ok(inv.lines.filter((l) => l.discount).every((l) => l.amountCents < 0));
   assert.match(inv.memo, /Your \$965\.25 deposit \(Invoice2go, 9\/1\/2026\) on the 10x20 has been applied\./);
   assert.ok(inv.memo.length <= LIMITS.memo, inv.memo.length);
   const fields = Object.fromEntries(inv.customFields.map((f) => [f.name, f.value]));
