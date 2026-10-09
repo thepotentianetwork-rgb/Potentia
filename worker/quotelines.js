@@ -46,6 +46,37 @@ export const BASE_SHED_INCLUDES = [
 
 export const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 
+/* SITE PREP: what is done to the site before the pad goes down, billed as its
+   own phase in front of the concrete. The two removals, plus sprinkler
+   relocation, whose line carries the head count in its name
+   ("Sprinkler Relocation — 3 heads"), so it is matched by prefix. */
+export function isSitePrep(name) {
+  const n = String(name == null ? '' : name);
+  return REMOVAL_NAMES.indexOf(n) !== -1 || /^Sprinkler Relocation\b/.test(n);
+}
+
+/* TRAVEL & FUEL SURCHARGE — an adjustment of kind "travel" ({days, rate}),
+   added from the CRM. Unlike a discount it is real work billed, so it lands
+   INSIDE the Shed phase as its own sub-line (the crew's driving happens over
+   the build days) and is taxed with that phase, the same way every other
+   line on the quote is. Percentage adjustments are worked out on the
+   subtotal WITHOUT it: "10% off" is off the shed, not off the fuel. */
+export function travelAmount(a) {
+  if (!a || a.kind !== 'travel') return 0;
+  const d = Number(a.days), r = Number(a.rate);
+  if (!isFinite(d) || !isFinite(r) || d <= 0 || r <= 0) return 0;
+  return Math.round(d * r * 100) / 100;
+}
+function qlNum(n) {
+  const v = Number(n) || 0;
+  return (Math.round(v * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
+}
+export function travelLabel(a) {
+  const d = Number(a && a.days) || 0;
+  return 'Travel & fuel surcharge \u2014 ' + qlNum(d) + ' day' + (d === 1 ? '' : 's') +
+    ' \u00d7 $' + qlNum(a && a.rate);
+}
+
 /* WHAT A CUSTOMER CALLS THE STYLE. Gable and A-Frame are the same shed: the
    designer stores it as "gable", the price sheet calls it "A-Frame", and
    quotes saved before this carry "A-Frame" in their redline. Everything a
@@ -96,7 +127,7 @@ export function nameList(redline, which) {
   if (which === 'foundation') return [redline.foundName].filter(Boolean);
   const out = [];
   (redline.addonLines || []).forEach(function (l) {
-    if (l && l.name && REMOVAL_NAMES.indexOf(l.name) === -1) out.push(l.name);
+    if (l && l.name && !isSitePrep(l.name)) out.push(l.name);
   });
   (redline.doorUpLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
   (redline.windowSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
@@ -105,6 +136,26 @@ export function nameList(redline, which) {
   [redline.porchSellName, redline.porchDeckSellName, redline.sidingSellName,
    redline.heightSellName, redline.elecSellName, redline.loftSellName]
     .forEach(function (n) { if (n) out.push(n); });
+  return out;
+}
+
+/* PRICE OVERRIDES — an adjustment {kind:'override', item, amount, note} that
+   sets one line to a different price for THIS quote: the concrete pad or the
+   sprinkler relocation once the site has been seen ("price may vary depending
+   on conditions of the site"), or any other line on the quote. Returns
+   name -> {was, amt, delta, note}; delta (was - amt) comes off the phase the
+   line belongs to, exactly where a comp would. A line that is comped is free,
+   and a comp wins over an override. */
+export function overrideMap(redline, adjustments) {
+  const prices = compItemPrices(redline);
+  const comped = compedMap(redline, adjustments);
+  const out = {};
+  (adjustments || []).forEach(function (a) {
+    if (!a || a.kind !== 'override' || prices[a.item] == null || comped[a.item] != null) return;
+    const amt = Math.max(0, Math.round(Number(a.amount) * 100) / 100);
+    if (!isFinite(amt)) return;
+    out[a.item] = { was: prices[a.item], amt: amt, delta: prices[a.item] - amt, note: a.note || null };
+  });
   return out;
 }
 
@@ -122,7 +173,7 @@ export function compedMap(redline, adjustments) {
 
 function removalLines(redline) {
   if (!redline || !Array.isArray(redline.addonLines)) return [];
-  return redline.addonLines.filter((l) => l && REMOVAL_NAMES.indexOf(l.name) !== -1);
+  return redline.addonLines.filter((l) => l && isSitePrep(l.name));
 }
 function removalTotal(redline) {
   return removalLines(redline).reduce((t, l) => t + num(l.amt), 0);
@@ -135,6 +186,7 @@ function removalTotal(redline) {
 export function quoteLines(redline, adjustments) {
   if (!redline || typeof redline !== 'object') return null;
   const COMPED = compedMap(redline, adjustments);
+  const OVR = overrideMap(redline, adjustments);
   const ADJUSTMENTS = adjustments || [];
 
   /* How much of a given row is being comped, so the reduction lands on the
@@ -142,7 +194,10 @@ export function quoteLines(redline, adjustments) {
      bottom line. */
   function compedIn(names) {
     let t = 0;
-    names.forEach(function (n) { if (n && COMPED[n] != null) t += COMPED[n]; });
+    names.forEach(function (n) {
+      if (n && COMPED[n] != null) t += COMPED[n];
+      else if (n && OVR[n]) t += OVR[n].delta;   // an override moves the same phase
+    });
     return t;
   }
 
@@ -189,11 +244,19 @@ export function quoteLines(redline, adjustments) {
 
   const removal = removalLines(redline);
   if (removal.length) {
-    const rTotal = removalTotal(redline) - compedIn(REMOVAL_NAMES);
-    const rRow = add(removal.length > 1 ? 'Site Clearance' : removal[0].name, rTotal);
+    const rTotal = removalTotal(redline) - compedIn(removal.map((l) => l.name));
+    /* Two removals have always read "Site Clearance"; with sprinkler work in
+       the mix it is more than clearing, so it reads "Site Prep". */
+    const multiName = removal.some((l) => REMOVAL_NAMES.indexOf(l.name) === -1) ? 'Site Prep' : 'Site Clearance';
+    const rRow = add(removal.length > 1 ? multiName : removal[0].name, rTotal);
     if (rRow) rRow.kind = 'clearance';
+    if (rRow) {
+      rRow.estimate = removal.some((l) => !REMOVAL_NAMES.includes(l.name));
+      const o = removal.length === 1 && OVR[removal[0].name];
+      if (o) rRow.override = { was: o.was, note: o.note };
+    }
     if (rRow && removal.length > 1) {
-      rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) }));
+      rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) - (OVR[l.name] ? OVR[l.name].delta : 0) }));
     }
   }
 
@@ -206,7 +269,26 @@ export function quoteLines(redline, adjustments) {
   }
   const foundRow = add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
   if (foundRow) foundRow.kind = 'foundation';
-  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + shedStyleName(redline.baseSheetLabel) + ')' : ''), shedTotal);
+  /* A promo on the pad: the row's amount is already what they pay; this is
+     only so the page can show the list price struck through and the promo
+     as its own line. A comped pad has no row, so nothing to show. */
+  /* Concrete is an estimate (site conditions); the quote says so beside it. */
+  if (foundRow && /^Concrete/i.test(foundLabel)) foundRow.estimate = true;
+  const foundOvr = OVR[redline.foundName];
+  /* Overridden: the staff figure is the price, so the promo arithmetic no
+     longer describes it; the row says what it was instead. */
+  if (foundRow && foundOvr) foundRow.override = { was: foundOvr.was, note: foundOvr.note };
+  else if (foundRow && num(redline.foundPromo) > 0) {
+    foundRow.listAmt = foundRow.amt + num(redline.foundPromo);
+    foundRow.promo = { label: redline.foundPromoName || 'Concrete pad promo', amt: num(redline.foundPromo) };
+  }
+  let travelTotal = 0;
+  const travelLines = [];
+  ADJUSTMENTS.forEach(function (a) {
+    const t = travelAmount(a);
+    if (t > 0) { travelTotal += t; travelLines.push({ label: travelLabel(a), amt: t }); }
+  });
+  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + shedStyleName(redline.baseSheetLabel) + ')' : ''), shedTotal + travelTotal);
   if (shedRow) shedRow.kind = 'shed';
   const intRow = add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
   if (intRow) intRow.kind = 'interior';
@@ -229,11 +311,11 @@ export function quoteLines(redline, adjustments) {
      it there would show the customer the same item twice at two prices. */
   function shedItem(label, amt) {
     if (!label) return;
-    shedSubLine(num(amt) - (COMPED[label] || 0), label);
+    shedSubLine(num(amt) - (COMPED[label] || 0) - (OVR[label] ? OVR[label].delta : 0), label);
   }
   function shedItemsFrom(lines, nameKey, amtKey) {
     (lines || []).forEach(function (l) {
-      if (!l || REMOVAL_NAMES.indexOf(l[nameKey]) > -1) return;   // its own phase
+      if (!l || isSitePrep(l[nameKey])) return;   // its own phase
       shedItem(l[nameKey], l[amtKey]);
     });
   }
@@ -258,6 +340,7 @@ export function quoteLines(redline, adjustments) {
 
   shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical', redline.elecIncludes);
   shedSubLine(redline.floorSell, redline.floorSellName || 'Flooring');
+  travelLines.forEach(function (t) { shedSubLine(t.amt, t.label); });
 
   if (!rows.length) return null;
   rows.forEach(function (r, i) {
@@ -270,6 +353,7 @@ export function quoteLines(redline, adjustments) {
     r.deposit = r.total * DEPOSIT_RATE;
   });
   const subtotal = rows.reduce((t, r) => t + r.amt, 0);
+  const percentBase = subtotal - travelTotal;
 
   /* Percentages and flat amounts, applied BEFORE tax because tax is owed on
      what they actually pay, and scaled through the per-phase deposits by the
@@ -282,7 +366,7 @@ export function quoteLines(redline, adjustments) {
   ADJUSTMENTS.forEach(function (a) {
     if (!a) return;
     const v = Number(a.value);
-    if (a.kind === 'percent' && isFinite(v)) percentAdjust += subtotal * (v / 100);
+    if (a.kind === 'percent' && isFinite(v)) percentAdjust += percentBase * (v / 100);
     else if (a.kind === 'amount' && isFinite(v)) amountAdjust += v;
   });
   const adjust = percentAdjust + amountAdjust;
@@ -302,6 +386,10 @@ export function quoteLines(redline, adjustments) {
   return {
     rows: rows,
     subtotal: subtotal,
+    /* What a percentage adjustment is a percentage OF: the subtotal less any
+       travel surcharge. Equal to subtotal on every quote without one. */
+    percentBase: percentBase,
+    travel: travelTotal,
     adjust: adjust,
     percentAdjust: percentAdjust,
     amountAdjust: amountAdjust,

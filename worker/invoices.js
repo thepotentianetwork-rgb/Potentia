@@ -117,7 +117,9 @@ function adjustmentLines(bd, adjustments) {
     if (a.kind === 'percent') {
       named.push({
         label: (a.note || (v < 0 ? 'Discount' : 'Adjustment')) + ' (' + Math.abs(v) + '%)',
-        amountCents: toCents(bd.subtotal * (v / 100))
+        /* Of the subtotal less any travel surcharge — the base quoteLines
+           worked the percentage out on. Same as subtotal without one. */
+        amountCents: toCents((bd.percentBase != null ? bd.percentBase : bd.subtotal) * (v / 100))
       });
     } else if (a.kind === 'amount') {
       named.push({ label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v) });
@@ -158,9 +160,19 @@ function adjustmentLines(bd, adjustments) {
  * and, better, where they sit beside the money they explain. No prices: the
  * sub-items add up to the phase total on the same line, and printing both
  * invites a customer to check one against the other. */
+/* A promo on the row (the concrete pad): an invoice line cannot strike a
+   price through, so it says it in words beside the amount it explains. */
+export function promoNote(row, short) {
+  if (!row || !row.promo || !(Number(row.promo.amt) > 0) || !(Number(row.listAmt) > 0)) return '';
+  const what = String(row.promo.label || 'promo').toLowerCase();
+  /* Short form for a phase bill, whose line is a deposit or a remainder and
+     not the phase price, so quoting the list price there would mislead. */
+  if (short) return ' (' + usd(row.promo.amt) + ' ' + what + ' applied)';
+  return ' (list ' + usd(row.listAmt) + ', less ' + usd(row.promo.amt) + ' ' + what + ')';
+}
 function phaseLabel(row) {
   const parts = (row.subLines || []).map((s) => s.label).filter(Boolean);
-  if (!parts.length) return row.label;
+  if (!parts.length) return row.label + promoNote(row);
   /* Not clipped here. buildInvoice clips every line label on the way out, and
      a second cap at this spot is a line that looks load-bearing but cannot be
      made to fail — removing it changed no test, which is the tell. */
@@ -502,7 +514,7 @@ export function phaseParts(bd) {
   const out = bd.rows.map((r, i) => {
     const totalCents = toCents(r.total);
     const depositCents = toCents(r.deposit);
-    return { phase: r.phase || i + 1, kind: r.kind || null, name: phaseName(r), totalCents, depositCents,
+    return { phase: r.phase || i + 1, kind: r.kind || null, name: phaseName(r), promo: promoNote(r, true), totalCents, depositCents,
              remainderCents: totalCents - depositCents };
   });
   const drift = toCents(bd.total) - out.reduce((t, p) => t + p.totalCents, 0);
@@ -604,7 +616,7 @@ export function phaseStatus(bd, payments, openParts) {
       return { amountCents: cents, paidCents: paid[k] || 0,
                remainingCents: Math.max(0, cents - (paid[k] || 0)), openInvoice: open[k] || null };
     };
-    return { phase: p.phase, kind: p.kind, name: p.name, totalCents: p.totalCents,
+    return { phase: p.phase, kind: p.kind, name: p.name, promo: p.promo || '', totalCents: p.totalCents,
              deposit: part('deposit', p.depositCents), remainder: part('remainder', p.remainderCents) };
   });
 
@@ -674,7 +686,7 @@ export function togetherStatus(builds) {
     const items = [];
     per.forEach(({ b, st }) => {
       const p = st.phases.find((x) => keyOf(x) === k);
-      if (p) items.push({ sub: b.sub, build: b.name || null, phase: p.phase, kind: p.kind, name: p.name,
+      if (p) items.push({ sub: b.sub, build: b.name || null, phase: p.phase, kind: p.kind, name: p.name, promo: p.promo || '',
                           totalCents: p.totalCents, deposit: p.deposit, remainder: p.remainder });
     });
     /* One build: its own numbers, exactly as its quote prints them. */
@@ -803,7 +815,9 @@ export function buildTogetherInvoice(builds, selected, opts = {}) {
     const k = it.sub + ':' + it.phase;
     const tag = many && it.build ? ' — ' + it.build : '';
     const nm = many ? bareName(it.name) : it.name;
-    const head = 'Phase ' + p.g.phase + ': ' + nm;
+    /* One build: the promo is named on its phase. Several: the lines already
+       carry the build, and Stripe's label budget is better spent on that. */
+    const head = 'Phase ' + p.g.phase + ': ' + nm + (many ? '' : (it.promo || ''));
     const less = (paidC) => (paidC > 0 ? ', less ' + usd(fromCents(paidC)) + ' already paid' : '');
     const cover = (part, cents) => covers.push(Object.assign(it.sub != null ? { sub: it.sub } : {},
                                                  { phase: it.phase, part, cents }));

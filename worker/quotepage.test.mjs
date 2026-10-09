@@ -395,7 +395,11 @@ test('a price rise is not dressed up as a saving', () => {
   const { redline } = computePricing(BUILDS['barn, everything on']);
   const { page } = withAdjust(redline, [{ kind: 'amount', value: 800, note: 'Rush build' }]);
   const html = page.buildBreakdown(page.taxBreakdown(redline));
-  assert.ok(!/br-save/.test(html), 'no savings styling on a line that costs more');
+  /* The concrete pad promo on this build IS a saving and is styled as one;
+     the Rush build line is what must not be. */
+  const m = /<div class="br-row([^"]*)"><span class="br-label">Rush build/.exec(html);
+  assert.ok(m, 'the rise has its own line');
+  assert.ok(!/br-save/.test(m[1]), 'no savings styling on a line that costs more');
 });
 
 test('the price box shows the before figure and the saving', () => {

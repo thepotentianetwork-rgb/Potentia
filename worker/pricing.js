@@ -111,7 +111,8 @@ let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
       weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
       doorAwning:false, fbColor:'brown', shutterColor:'brown',
       shedRemoval:false, concreteRemoval:false },
-    doorsData=[], windowsData=[], ventsData=[], shelvesData=[];
+    doorsData=[], windowsData=[], ventsData=[], shelvesData=[],
+    SPRINKLERS=[];   // feet each sprinkler head is moved, one entry per head
 
 /* Maps the client's getDesignConfig() shape onto the module state above.
    Field names match getDesignConfig() exactly (see designer.html) so the
@@ -150,6 +151,7 @@ export function setConfig(cfg){
   windowsData = Array.isArray(cfg.windows) ? cfg.windows : [];
   ventsData   = Array.isArray(cfg.vents)   ? cfg.vents   : [];
   shelvesData = Array.isArray(cfg.shelves) ? cfg.shelves : [];
+  SPRINKLERS  = sprinklerFeet(cfg.sprinklers);
 }
 /* Every field back to its designer.html default (see the top-level `var`
    declarations there). Call this before setConfig() on each request so a
@@ -170,6 +172,40 @@ export function resetConfig(){
     doorAwning:false, fbColor:'brown', shutterColor:'brown',
     shedRemoval:false, concreteRemoval:false };
   doorsData=[]; windowsData=[]; ventsData=[]; shelvesData=[];
+  SPRINKLERS=[];
+}
+
+/* SPRINKLER RELOCATION — the single implementation, used by computePricing for
+   the quote and served (as prices per distance) to the designer's picker.
+   ft is how far that one head moves. Up to includedFt pays base; every
+   started stepFt past it adds stepAmt. 6 ft -> 1 step, 7 ft -> 1 step,
+   8 ft -> 2 steps. A head with no distance given is priced as moving the
+   included distance (the "up to 5 ft" default the designer offers). */
+export function sprinklerHeadPrice(ft){
+  var sp=SELL.sprinkler||{};
+  var base=+sp.base||0, inc=+sp.includedFt||0, step=+sp.stepFt||0, amt=+sp.stepAmt||0;
+  var d=+ft; if(!(d>0)) d=inc;
+  var over=Math.max(0, d-inc);
+  var steps=(step>0 && over>0) ? Math.ceil(over/step - 1e-9) : 0;
+  return base + steps*amt;
+}
+/* What a config's `sprinklers` field means: one entry per head, the number of
+   feet it moves (or {ft}). Anything unreadable is a head at the default
+   distance — the customer asked for it to be moved, so it is not dropped. */
+export function sprinklerFeet(raw){
+  if(!Array.isArray(raw)) return [];
+  return raw.slice(0, 20).map(function(v){
+    var n=(v && typeof v==='object') ? +v.ft : +v;
+    return (n>0 && isFinite(n)) ? Math.min(100, Math.round(n*10)/10) : 0;
+  });
+}
+/* The quote line for a set of heads: "Sprinkler Relocation — 3 heads". */
+export function sprinklerLineFor(feet){
+  var f=sprinklerFeet(feet); if(!f.length) return null;
+  var each=f.map(sprinklerHeadPrice);
+  var amt=each.reduce(function(t,v){ return t+v; }, 0);
+  return { name: 'Sprinkler Relocation \u2014 '+f.length+' head'+(f.length===1?'':'s'),
+           amt: amt, heads: f, each: each };
 }
 
 /* Ported verbatim from designer.html (porchEatFt/encWft/encLft/MIN_ENCLOSED)
@@ -316,6 +352,12 @@ export function flooringPrice(tier, areaSqft){
    break points as the interior drywall tiers, inclusive at the bottom the
    same way: exactly 125 pays SELL.broomTiers.mid, exactly 175 pays .over).
    'plain'/'coated' are flat, from SELL.foundationFinish. */
+/* The promo taken off a pad whose list price is padList: never more than the
+   pad itself, never negative. */
+export function concretePromoAmount(padList){
+  var a=+((SELL.concretePromo||{}).amount)||0;
+  return Math.max(0, Math.min(a, +padList||0));
+}
 export function foundationFinishPrice(kind, sqft){
   if(kind==='broom'){
     var t=SELL.broomTiers;
@@ -415,7 +457,30 @@ export let SELL = {
   // ── FOUNDATION (flat) ── Levelling on blocks is complimentary. Gravel is
   // blocks levelling PLUS pouring gravel over the site first — tiered by
   // shed sqft, see gravelTiers below, not this table.
-  foundation: { pad: 3000, blocks: 0, existing: 0 },
+  /* pad is the LIST price of the pour. Nando, 9 Oct 2026: "Make the prices on
+     concrete $3,500 instead, but with the promo discount $500 to make it
+     $3000." The promo is its own group below so it can be switched off (0) or
+     changed from Admin Pricing without touching the list price, and the quote
+     shows both: $3,500 struck through, -$500 promo, $3,000 to pay. */
+  foundation: { pad: 3500, blocks: 0, existing: 0 },
+
+  // ── CONCRETE PAD PROMO ── taken off the pad's list price above, never off
+  // the floor finish. Clamped to the pad price. 0 = no promo (the customer
+  // pays the full list price).
+  concretePromo: { amount: 500 },
+
+  /* ── SPRINKLER RELOCATION ── per sprinkler head, by how far it moves.
+     Nando, 9 Oct 2026: $300 to relocate a head up to 5 ft; past that, $100
+     for every further 2 ft, a part of 2 ft counting as a whole one:
+       up to 5 ft $300 · 6-7 ft $400 · 8-9 ft $500 · 10-11 ft $600 ...
+     Billed in the site-prep phase (it happens before the pad goes down). */
+  sprinkler: { base: 300, includedFt: 5, stepFt: 2, stepAmt: 100 },
+
+  /* ── TRAVEL & FUEL SURCHARGE ── the default per-day amount offered in the
+     CRM's adjustment tool. Staff enter the days (and may change the amount)
+     per quote; nothing is charged unless they add one. Starts at 0 because no
+     rate has been set yet — the CRM then asks for the amount every time. */
+  travel: { perDay: 0 },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
   // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
@@ -1727,6 +1792,11 @@ export function computePricing(cfgIn, opts){
     // happen before the pad goes down, not as part of the shed.
     _flat(ADDONS.shedRemoval,'Shed Removal');
     _flat(ADDONS.concreteRemoval,'Concrete Removal');
+    /* Sprinkler relocation is site prep too: quotelines.js pulls it into the
+       same phase as the removals, before the pad. In addonLines so it can be
+       comped from the CRM like any other line. */
+    var _spr=sprinklerLineFor(SPRINKLERS);
+    if(_spr && _spr.amt>0){ addonSell+=_spr.amt; addonLines.push({name:_spr.name, amt:_spr.amt, heads:_spr.heads, each:_spr.each}); }
     function _sq(on,name){ if(on){ var p=Math.round(sellPerSqft(name,Wf,Df,Hf)); addonSell+=p; addonLines.push({name:name,amt:p}); } }
     _sq(ADDONS.weatherGuard,'Floor Weather Guard');
     _sq(ADDONS.radiantBarrier,'Radiant Roof Barrier');
@@ -1736,10 +1806,16 @@ export function computePricing(cfgIn, opts){
   customerPrice += addonSell;
 
   // ── FOUNDATION (flat price, from SELL.foundation / SELL.foundationFinish) ──
-  var foundSell=0, foundName='';
+  var foundSell=0, foundName='', foundPromo=0;
   // Levelling on blocks is complimentary, so only the pad adds anything.
   if(typeof FOUNDATION!=='undefined' && FOUNDATION==='pad'){
-    foundSell = SELL.foundation.pad||0;
+    /* foundSell is what the customer PAYS (list less promo), so every total,
+       phase and deposit downstream is right without knowing a promo exists;
+       foundPromo/foundList are carried alongside purely so the quote can show
+       the list price struck through and the promo as its own line. */
+    var _padList = SELL.foundation.pad||0;
+    foundPromo = concretePromoAmount(_padList);
+    foundSell = _padList - foundPromo;
     foundName = 'Concrete Pad (4" slab)';   // the pad spec belongs on every quote, not just the price
     if(typeof FOUNDATION_FINISH!=='undefined'){
       var _sq=(typeof padSqft==='function')?padSqft():(Wf*Df);
@@ -1760,6 +1836,7 @@ export function computePricing(cfgIn, opts){
       : 'Gravel Pad + Leveled on Cinder Blocks ('+_gsq+' sqft)';
   }
   customerPrice += foundSell;
+  var foundList = foundPromo>0 ? foundSell + foundPromo : 0;
 
   var profit = customerPrice - trueTotalCost;
 
@@ -1801,6 +1878,8 @@ export function computePricing(cfgIn, opts){
       loftSell: loftSell, loftSellName: loftSellName,
       addonSell: addonSell, addonLines: addonLines,
       foundSell: foundSell, foundName: foundName,
+      foundPromo: foundPromo, foundList: foundList,
+      foundPromoName: foundPromo>0 ? 'Concrete pad promo' : '',
       customerPrice: customerPrice,
       marginDollars: profit,
       framingLines: fr.lines,
@@ -1915,7 +1994,8 @@ export function elecIncludesFor(sellName){
 }
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
-  'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
+  'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
+  'concretePromo','sprinkler','travel'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".

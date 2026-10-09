@@ -51,7 +51,7 @@ test("Stephanie's case: concrete deposit paid outside Stripe -> Phase 2 deposit 
   assert.match(labels[0], /^Phase 2: Shed.* deposit \(30%\)$/);
   /* The rest of Phase 1 is shown as what is LEFT — the deposit she paid is
      already inside that number, not a minus line to reconcile. */
-  assert.equal(labels[1], 'Remainder of Phase 1: Concrete Pad (4" slab), due after completion');
+  assert.equal(labels[1], 'Remainder of Phase 1: Concrete Pad (4" slab) ($500.00 concrete pad promo applied), due after completion');
   assert.equal(inv.lines[1].amountCents, P[0].remainderCents);
   assert.equal(inv.lines.length, 2, 'no separate credit line: the payment is folded in');
   assert.ok(inv.lines.every((l) => l.amountCents > 0));
