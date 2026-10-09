@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap, shedStyleName } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
@@ -3359,6 +3359,8 @@ const SHED_LIMITS = {
    ever computed one for a depth the server did not know was on offer.
    Served with the limits, and the designer renders exactly these. */
 const PORCH_DEPTHS_FT = [4, 6, 8, 10];
+/* Shortest partial porch on offer, in feet. Served with the limits. */
+const PORCH_MIN_LEN_FT = 4;
 function validateShedConfig(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
   const lim = (k) => [SHED_LIMITS[k].min, SHED_LIMITS[k].max, SHED_LIMITS[k].def];
@@ -3374,6 +3376,11 @@ function validateShedConfig(raw) {
     ovh: clampNum(raw.ovh, 0, 24, 4),
     porchLoc: enumOr(raw.porchLoc, SHED_PORCHLOC, "none"),
     porchDepth: clampNum(raw.porchDepth, 0, 20, 0),
+    /* Partial porch: its length along the wall and its offset from the
+       wall's start corner, in feet. 0 = full length (every design saved
+       before this existed), so a missing field prices exactly as before. */
+    porchLen: clampNum(raw.porchLen, 0, 40, 0),
+    porchOff: clampNum(raw.porchOff, 0, 40, 0),
     porchTier: typeof raw.porchTier === "string" ? raw.porchTier.slice(0, 60) : "standard",
     /* Whitelisted, not passed through. A client-supplied deck id now moves
        money, so anything not in the rate table has to land on the free
@@ -3407,10 +3414,17 @@ function validateShedConfig(raw) {
 // whatever depth is currently selected (the two moments the porch page
 // actually shows a price for).
 function computeOptionPrices(cfg) {
-  const encEat = cfg.style === "gable" && cfg.porchLoc !== "none" && cfg.porchDepth > 0
+  const porchPartial = cfg.style === "gable" && porchIsPartialFor(cfg.porchLoc, cfg.porchDepth, cfg.porchLen, cfg.w, cfg.l);
+  const encEat = cfg.style === "gable" && cfg.porchLoc !== "none" && cfg.porchDepth > 0 && !porchPartial
     ? (cfg.porchLoc === "front" ? { w: 0, l: cfg.porchDepth } : { w: cfg.porchDepth, l: 0 })
     : { w: 0, l: 0 };
-  const encW = Math.max(6, cfg.w - encEat.w), encD = Math.max(6, cfg.l - encEat.l);
+  let encW = Math.max(6, cfg.w - encEat.w), encD = Math.max(6, cfg.l - encEat.l);
+  /* A partial porch is a notch, not a strip: the area-billed lines below read
+     encW * encD, so fold the notch into encD rather than teach each one. */
+  if (porchPartial) {
+    const notch = cfg.porchDepth * porchLenFtFor(cfg.porchLoc, cfg.porchDepth, cfg.porchLen, cfg.w, cfg.l);
+    encD = Math.max(0, (encW * encD - notch) / encW);
+  }
 
   const windows = Object.assign({}, SELL.windows);
 
@@ -3439,22 +3453,40 @@ function computeOptionPrices(cfg) {
   const curTier = cfg.porchTier || "standard";
   const maxPorchFront = Math.max(0, cfg.l - 6);
   const maxPorchSide = Math.max(0, cfg.w - 6);
+  /* Depth buttons price at THIS porch's length: the whole wall for a
+     full-length porch, porchLen for a partial one. */
+  const lenFor = (loc) => porchLenFtFor(loc, 1, cfg.porchLoc === loc ? cfg.porchLen : 0, cfg.w, cfg.l);
+  const partFor = (loc) => cfg.porchLoc === loc && porchPartial;
   const frontDepths = {};
   PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchFront).forEach((ft) => {
-    const line = porchLineFor("front", ft, curTier, cfg.w);
+    const line = porchLineFor("front", ft, curTier, lenFor("front"), partFor("front"));
     if (line) frontDepths[ft] = line.price;
   });
   const sideDepths = {};
   PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchSide).forEach((ft) => {
-    const line = porchLineFor("side", ft, "standard", cfg.l);
+    const line = porchLineFor("side", ft, "standard", lenFor("side"), partFor("side"));
     if (line) sideDepths[ft] = line.price;
   });
   const frontTiers = {};
   if (cfg.porchLoc === "front" && cfg.porchDepth > 0) {
     Object.keys(SELL.porchFrontSqft).forEach((tier) => {
-      const line = porchLineFor("front", cfg.porchDepth, tier, cfg.w);
+      const line = porchLineFor("front", cfg.porchDepth, tier, lenFor("front"), partFor("front"));
       if (line) frontTiers[tier] = line.price;
     });
+  }
+  /* Length buttons: every whole-foot length from PORCH_MIN_LEN_FT up to the
+     wall, priced at the CURRENT depth. The full-wall entry is keyed "full"
+     so the client never has to know which number means "the whole wall". */
+  const lengths = {};
+  if ((cfg.porchLoc === "front" || cfg.porchLoc === "side") && cfg.porchDepth > 0) {
+    const span = cfg.porchLoc === "front" ? cfg.w : cfg.l;
+    const tier = cfg.porchLoc === "front" ? curTier : "standard";
+    for (let n = PORCH_MIN_LEN_FT; n < span; n++) {
+      const line = porchLineFor(cfg.porchLoc, cfg.porchDepth, tier, n, true);
+      if (line) lengths[n] = line.price;
+    }
+    const full = porchLineFor(cfg.porchLoc, cfg.porchDepth, tier, span, false);
+    if (full) lengths.full = full.price;
   }
   /* Decking, priced for THIS porch. The designer's deck buttons used to carry
      no price because there was no charge to carry; the charge moved here off
@@ -3463,7 +3495,7 @@ function computeOptionPrices(cfg) {
      rather than having to know which ids are free. */
   const porchDeck = {};
   if (cfg.porchLoc === "front" || cfg.porchLoc === "side") {
-    const span = cfg.porchLoc === "side" ? cfg.l : cfg.w;
+    const span = porchLenFtFor(cfg.porchLoc, cfg.porchDepth, cfg.porchLen, cfg.w, cfg.l);
     Object.keys(SELL.porchDeckSqft).forEach((id) => {
       const line = porchDeckLineFor(cfg.porchLoc, cfg.porchDepth, id, span);
       porchDeck[id] = line ? line.price : 0;
@@ -3546,7 +3578,7 @@ function computeOptionPrices(cfg) {
     /* The sizes the client is allowed to build, and the porch depths it may
        offer. Served rather than duplicated in the designer — see SHED_LIMITS
        and PORCH_DEPTHS_FT. */
-    limits: Object.assign({ porchDepths: PORCH_DEPTHS_FT.slice() }, SHED_LIMITS),
+    limits: Object.assign({ porchDepths: PORCH_DEPTHS_FT.slice(), porchMinLen: PORCH_MIN_LEN_FT }, SHED_LIMITS),
     dormers: Object.assign({}, SELL.dormers),
     windows: windows,
     barLedge: barLedge,
@@ -3565,7 +3597,7 @@ function computeOptionPrices(cfg) {
     shelving: shelving,
     addons: addons,
     porch: { frontDepths: frontDepths, sideDepths: sideDepths, frontTiers: frontTiers,
-             deck: porchDeck }
+             deck: porchDeck, lengths: lengths }
   };
 }
 

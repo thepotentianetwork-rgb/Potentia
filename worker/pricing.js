@@ -102,6 +102,7 @@ export let COST = {
 let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     SIDING='vertical', W=8, L=12, H=8,
     PORCH_LOC='none', SIDE_PORCH=0, PORCH_TIER='standard', PORCH_DECK='pt',
+    PORCH_LEN=0, PORCH_OFF=0,
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
     LOFT='none', ELEC='none', INT_FINISH='none', FLOOR='none',
@@ -134,6 +135,8 @@ export function setConfig(cfg){
   if(cfg.porchDepth!=null) SIDE_PORCH=+cfg.porchDepth;
   if(cfg.porchTier!=null) PORCH_TIER=cfg.porchTier;
   if(cfg.porchDeck!=null) PORCH_DECK=cfg.porchDeck;
+  if(cfg.porchLen!=null) PORCH_LEN=+cfg.porchLen||0;
+  if(cfg.porchOff!=null) PORCH_OFF=+cfg.porchOff||0;
   if(cfg.dormerL!=null) DORMER_L=+cfg.dormerL;
   if(cfg.dormerR!=null) DORMER_R=+cfg.dormerR;
   if(cfg.foundation!=null) FOUNDATION=cfg.foundation;
@@ -157,6 +160,7 @@ export function resetConfig(){
   STYLE='gable'; PITCH=6; ROOFTYPE='shingle'; OVTYPE='gable'; OVH=4;
   SIDING='vertical'; W=8; L=12; H=8;
   PORCH_LOC='none'; SIDE_PORCH=0; PORCH_TIER='standard'; PORCH_DECK='pt';
+  PORCH_LEN=0; PORCH_OFF=0;
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
   LOFT='none'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
@@ -175,14 +179,43 @@ export function resetConfig(){
    style returns {w:0,l:0} and these are no-ops for it, matching the 3D
    code's own "nothing else in the file can tell the difference" note. */
 const MIN_ENCLOSED=6;
+/* PARTIAL PORCH (porchLen). 0, or anything at or past the wall it runs
+   along, is the full-length porch every saved design already has, so old
+   configs price exactly as before. A partial porch is a notch out of ONE
+   corner or the middle of the wall: the enclosure stays the full W x L
+   rectangle (the main roof spans it — option R1) and only porchLen x depth
+   comes out of the room. So porchEatFt (a whole strip off W or L) is for
+   the full-length porch only, and the enclosed AREA is what the
+   interior/flooring/pad lines read. Mirrors designer.html. */
+export function porchSpanFtFor(loc, w, l){ return (loc==='front') ? w : l; }
+export function porchLenFtFor(loc, depth, len, w, l){
+  var span = porchSpanFtFor(loc, w, l);
+  var n = +len || 0;
+  return (n>0 && n<span) ? n : span;
+}
+export function porchIsPartialFor(loc, depth, len, w, l){
+  if(loc!=='front' && loc!=='side') return false;
+  if(!(depth>0)) return false;
+  var n = +len || 0;
+  return n>0 && n<porchSpanFtFor(loc, w, l);
+}
+function porchOn(){ return STYLE==='gable' && PORCH_LOC!=='none' && SIDE_PORCH>0; }
+function porchPartial(){ return porchOn() && porchIsPartialFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L); }
 function porchEatFt(){
   if(STYLE!=='gable') return {w:0,l:0};
   if(PORCH_LOC==='none') return {w:0,l:0};
   if(!(SIDE_PORCH>0)) return {w:0,l:0};
+  if(porchPartial()) return {w:0,l:0};
   return (PORCH_LOC==='front') ? {w:0, l:SIDE_PORCH} : {w:SIDE_PORCH, l:0};
 }
 function encWft(){ return Math.max(MIN_ENCLOSED, W - porchEatFt().w); }
 function encLft(){ return Math.max(MIN_ENCLOSED, L - porchEatFt().l); }
+/* Enclosed floor area in sqft — the rectangle, less a partial porch's notch. */
+function enclosedSqft(){
+  var a = encWft()*encLft();
+  if(porchPartial()) a -= SIDE_PORCH * porchLenFtFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L);
+  return Math.max(0, a);
+}
 /* Also ported (was outside the pricing IIFE, alongside porchEatFt/encWft/
    encLft): the concrete pad is sized off the ENCLOSURE, not the full
    footprint — a porch sits on its own deck. computePricing's foundation
@@ -191,7 +224,7 @@ function encLft(){ return Math.max(MIN_ENCLOSED, L - porchEatFt().l); }
    this on the first port left broom-finish billing against the full W×L
    footprint instead of the shrunk enclosure — caught by
    pricing.regress.mjs, which is exactly the case it's there to catch. */
-function padSqft(){ return Math.round(encWft()*encLft()); }
+function padSqft(){ return Math.round(enclosedSqft()); }
 
 
 /* INTERIOR FINISH PRICE — the single implementation.
@@ -508,6 +541,17 @@ export let SELL = {
   },
   porchSideSqft: { "standard": 8.33 },
 
+  /* ── PARTIAL PORCH ADJUSTMENTS ── ⚠️ PLACEHOLDERS, NOT PRICES.
+     A partial porch (shorter than the wall) bills the same per-sqft rate as
+     a full one — porchFrontSqft/porchSideSqft x depth x LENGTH — until
+     Fernando sets real numbers. These two hooks are here so that can happen
+     as an override, without a code change:
+       flat — added to every partial porch (return walls, extra corner trim
+              and the header pocket do not shrink with the porch)
+       min  — the partial porch line never quotes below this
+     Both 0 = off, which is exactly the plain per-sqft price. */
+  porchPartial: { flat: 0, min: 0 },
+
   /* ── PORCH DECKING (upcharge, per sqft of porch) ──
      This is where the porch upgrade money lives now. It used to live in the
      porchFrontSqft finish tiers, which ran to $35/sqft and were invisible:
@@ -681,7 +725,11 @@ function sellBaseFor(W, D, sheet){
 /* Single rate path. shedSpan is the run the porch covers: the WIDTH for a
    front porch, the LENGTH for a side one, because the side porch roof is
    built as spLen = enclosure length + overhangs and runs the whole wall. */
-export function porchLineFor(loc, depth, tier, shedSpan){
+/* partial: true when shedSpan is a PARTIAL porch's own length rather than
+   the whole wall. It names the line "4' x 4' Side Porch" and applies the
+   SELL.porchPartial flat/min hooks (both 0 today, so the price is the same
+   per-sqft number a full porch of that area would get). */
+export function porchLineFor(loc, depth, tier, shedSpan, partial){
   if(loc!=='front' && loc!=='side') return null;
   if(!(depth>0)) return null;
   var tbl  = (loc==='side') ? SELL.porchSideSqft : SELL.porchFrontSqft;
@@ -691,7 +739,15 @@ export function porchLineFor(loc, depth, tier, shedSpan){
   var label= (loc==='side' ? "' Side Porch" : "' Front Porch")
            + (key==='standard' ? '' : ' \u2014 '+key)
            + ' ('+sqft+' sqft)';
-  return { price: rate ? Math.round(rate*sqft) : 0, name: depth+label, unpriced: !rate };
+  var price = rate ? Math.round(rate*sqft) : 0;
+  if(partial && rate){
+    var pp = SELL.porchPartial || {};
+    var flat = (typeof pp.flat==='number' && isFinite(pp.flat) && pp.flat>0) ? pp.flat : 0;
+    var min  = (typeof pp.min ==='number' && isFinite(pp.min)  && pp.min >0) ? pp.min  : 0;
+    price = Math.max(Math.round(price + flat), Math.round(min));
+  }
+  var name = partial ? (depth+"' \u00d7 "+(+shedSpan||0)+label) : (depth+label);
+  return { price: price, name: name, unpriced: !rate };
 }
 
 /* The porch's own square footage — the area both the porch line and the
@@ -1408,8 +1464,11 @@ export function computePricing(cfgIn, opts){
   var porchDeck = (typeof PORCH_DECK!=='undefined') ? PORCH_DECK : 'pt';
   var porchDeckSell = 0, porchDeckSellName = '';
   if(porchLoc!=='none' && porchDepth>0){
-    var _span = (porchLoc==='side'?Df:Wf);
-    var pl = porchLineFor(porchLoc, porchDepth, porchTier, _span);
+    /* A partial porch bills on its OWN length, not the wall's. */
+    var _partial = porchIsPartialFor(porchLoc, porchDepth, PORCH_LEN, Wf, Df);
+    var _span = _partial ? porchLenFtFor(porchLoc, porchDepth, PORCH_LEN, Wf, Df)
+                         : (porchLoc==='side'?Df:Wf);
+    var pl = porchLineFor(porchLoc, porchDepth, porchTier, _span, _partial);
     if(pl){
       porchSell += pl.price;
       porchSellName = pl.name;
@@ -1547,6 +1606,8 @@ export function computePricing(cfgIn, opts){
     var _eat = (typeof porchEatFt==='function') ? porchEatFt() : {w:0,l:0};
     var _encW = Wf - _eat.w, _encD = Df - _eat.l;
     var _floor = _encW * _encD;
+    // A partial porch takes a notch, not a strip: bill the real room area.
+    if(porchPartial()){ _floor = enclosedSqft(); _encW = _floor; _encD = 1; }
     intSell = interiorPrice(intId, _encW, _encD);
     intSellName = (intId==='drywall' ? 'Drywall & Mud' : 'Drywall, Mud & Paint')
                 + ' (' + _floor + ' sqft)';
@@ -1563,7 +1624,7 @@ export function computePricing(cfgIn, opts){
   var floorId = (typeof FLOOR!=='undefined') ? FLOOR : 'none';
   if(FLOORING.tiers[floorId] && floorId!=='none'){
     var _feat = (typeof porchEatFt==='function') ? porchEatFt() : {w:0,l:0};
-    var _fArea = (Wf - _feat.w) * (Df - _feat.l);
+    var _fArea = porchPartial() ? enclosedSqft() : (Wf - _feat.w) * (Df - _feat.l);
     floorSell = flooringPrice(floorId, _fArea);
     floorSellName = 'Flooring \u2014 ' + (FLOORING_NAMES[floorId]||floorId)
                   + ' (' + _fArea + ' sq ft)';
@@ -1854,7 +1915,7 @@ export function elecIncludesFor(sellName){
 }
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
-  'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
+  'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".

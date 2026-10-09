@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "7c96e6e";
-const WORKER_BUILT_AT = "2026-10-05T17:43:43.408Z";
+const WORKER_BUILD = "f1268ce-dirty";
+const WORKER_BUILT_AT = "2026-10-09T05:26:36.586Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -107,6 +107,7 @@ let COST = {
 let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     SIDING='vertical', W=8, L=12, H=8,
     PORCH_LOC='none', SIDE_PORCH=0, PORCH_TIER='standard', PORCH_DECK='pt',
+    PORCH_LEN=0, PORCH_OFF=0,
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
     LOFT='none', ELEC='none', INT_FINISH='none', FLOOR='none',
@@ -139,6 +140,8 @@ function setConfig(cfg){
   if(cfg.porchDepth!=null) SIDE_PORCH=+cfg.porchDepth;
   if(cfg.porchTier!=null) PORCH_TIER=cfg.porchTier;
   if(cfg.porchDeck!=null) PORCH_DECK=cfg.porchDeck;
+  if(cfg.porchLen!=null) PORCH_LEN=+cfg.porchLen||0;
+  if(cfg.porchOff!=null) PORCH_OFF=+cfg.porchOff||0;
   if(cfg.dormerL!=null) DORMER_L=+cfg.dormerL;
   if(cfg.dormerR!=null) DORMER_R=+cfg.dormerR;
   if(cfg.foundation!=null) FOUNDATION=cfg.foundation;
@@ -162,6 +165,7 @@ function resetConfig(){
   STYLE='gable'; PITCH=6; ROOFTYPE='shingle'; OVTYPE='gable'; OVH=4;
   SIDING='vertical'; W=8; L=12; H=8;
   PORCH_LOC='none'; SIDE_PORCH=0; PORCH_TIER='standard'; PORCH_DECK='pt';
+  PORCH_LEN=0; PORCH_OFF=0;
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
   LOFT='none'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
@@ -180,14 +184,43 @@ function resetConfig(){
    style returns {w:0,l:0} and these are no-ops for it, matching the 3D
    code's own "nothing else in the file can tell the difference" note. */
 const MIN_ENCLOSED=6;
+/* PARTIAL PORCH (porchLen). 0, or anything at or past the wall it runs
+   along, is the full-length porch every saved design already has, so old
+   configs price exactly as before. A partial porch is a notch out of ONE
+   corner or the middle of the wall: the enclosure stays the full W x L
+   rectangle (the main roof spans it — option R1) and only porchLen x depth
+   comes out of the room. So porchEatFt (a whole strip off W or L) is for
+   the full-length porch only, and the enclosed AREA is what the
+   interior/flooring/pad lines read. Mirrors designer.html. */
+function porchSpanFtFor(loc, w, l){ return (loc==='front') ? w : l; }
+function porchLenFtFor(loc, depth, len, w, l){
+  var span = porchSpanFtFor(loc, w, l);
+  var n = +len || 0;
+  return (n>0 && n<span) ? n : span;
+}
+function porchIsPartialFor(loc, depth, len, w, l){
+  if(loc!=='front' && loc!=='side') return false;
+  if(!(depth>0)) return false;
+  var n = +len || 0;
+  return n>0 && n<porchSpanFtFor(loc, w, l);
+}
+function porchOn(){ return STYLE==='gable' && PORCH_LOC!=='none' && SIDE_PORCH>0; }
+function porchPartial(){ return porchOn() && porchIsPartialFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L); }
 function porchEatFt(){
   if(STYLE!=='gable') return {w:0,l:0};
   if(PORCH_LOC==='none') return {w:0,l:0};
   if(!(SIDE_PORCH>0)) return {w:0,l:0};
+  if(porchPartial()) return {w:0,l:0};
   return (PORCH_LOC==='front') ? {w:0, l:SIDE_PORCH} : {w:SIDE_PORCH, l:0};
 }
 function encWft(){ return Math.max(MIN_ENCLOSED, W - porchEatFt().w); }
 function encLft(){ return Math.max(MIN_ENCLOSED, L - porchEatFt().l); }
+/* Enclosed floor area in sqft — the rectangle, less a partial porch's notch. */
+function enclosedSqft(){
+  var a = encWft()*encLft();
+  if(porchPartial()) a -= SIDE_PORCH * porchLenFtFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L);
+  return Math.max(0, a);
+}
 /* Also ported (was outside the pricing IIFE, alongside porchEatFt/encWft/
    encLft): the concrete pad is sized off the ENCLOSURE, not the full
    footprint — a porch sits on its own deck. computePricing's foundation
@@ -196,7 +229,7 @@ function encLft(){ return Math.max(MIN_ENCLOSED, L - porchEatFt().l); }
    this on the first port left broom-finish billing against the full W×L
    footprint instead of the shrunk enclosure — caught by
    pricing.regress.mjs, which is exactly the case it's there to catch. */
-function padSqft(){ return Math.round(encWft()*encLft()); }
+function padSqft(){ return Math.round(enclosedSqft()); }
 
 
 /* INTERIOR FINISH PRICE — the single implementation.
@@ -513,6 +546,17 @@ let SELL = {
   },
   porchSideSqft: { "standard": 8.33 },
 
+  /* ── PARTIAL PORCH ADJUSTMENTS ── ⚠️ PLACEHOLDERS, NOT PRICES.
+     A partial porch (shorter than the wall) bills the same per-sqft rate as
+     a full one — porchFrontSqft/porchSideSqft x depth x LENGTH — until
+     Fernando sets real numbers. These two hooks are here so that can happen
+     as an override, without a code change:
+       flat — added to every partial porch (return walls, extra corner trim
+              and the header pocket do not shrink with the porch)
+       min  — the partial porch line never quotes below this
+     Both 0 = off, which is exactly the plain per-sqft price. */
+  porchPartial: { flat: 0, min: 0 },
+
   /* ── PORCH DECKING (upcharge, per sqft of porch) ──
      This is where the porch upgrade money lives now. It used to live in the
      porchFrontSqft finish tiers, which ran to $35/sqft and were invisible:
@@ -651,7 +695,7 @@ let SELL = {
       hip     -> poolhouse       (Poolhouse)
    3 Peak / 4 Peak have sheets but no geometry in the designer yet.        */
 const SHEET_LABEL = {
-  "aframe":"A-Frame", "barn":"Barn", "leanto":"Single Slope", "poolhouse":"Poolhouse",
+  "aframe":"Gable / A-Frame", "barn":"Barn", "leanto":"Single Slope", "poolhouse":"Poolhouse",
   "3peak":"3 Peak", "4peak":"4 Peak"
 };
 function sellSheetKey(){
@@ -686,7 +730,11 @@ function sellBaseFor(W, D, sheet){
 /* Single rate path. shedSpan is the run the porch covers: the WIDTH for a
    front porch, the LENGTH for a side one, because the side porch roof is
    built as spLen = enclosure length + overhangs and runs the whole wall. */
-function porchLineFor(loc, depth, tier, shedSpan){
+/* partial: true when shedSpan is a PARTIAL porch's own length rather than
+   the whole wall. It names the line "4' x 4' Side Porch" and applies the
+   SELL.porchPartial flat/min hooks (both 0 today, so the price is the same
+   per-sqft number a full porch of that area would get). */
+function porchLineFor(loc, depth, tier, shedSpan, partial){
   if(loc!=='front' && loc!=='side') return null;
   if(!(depth>0)) return null;
   var tbl  = (loc==='side') ? SELL.porchSideSqft : SELL.porchFrontSqft;
@@ -696,7 +744,15 @@ function porchLineFor(loc, depth, tier, shedSpan){
   var label= (loc==='side' ? "' Side Porch" : "' Front Porch")
            + (key==='standard' ? '' : ' \u2014 '+key)
            + ' ('+sqft+' sqft)';
-  return { price: rate ? Math.round(rate*sqft) : 0, name: depth+label, unpriced: !rate };
+  var price = rate ? Math.round(rate*sqft) : 0;
+  if(partial && rate){
+    var pp = SELL.porchPartial || {};
+    var flat = (typeof pp.flat==='number' && isFinite(pp.flat) && pp.flat>0) ? pp.flat : 0;
+    var min  = (typeof pp.min ==='number' && isFinite(pp.min)  && pp.min >0) ? pp.min  : 0;
+    price = Math.max(Math.round(price + flat), Math.round(min));
+  }
+  var name = partial ? (depth+"' \u00d7 "+(+shedSpan||0)+label) : (depth+label);
+  return { price: price, name: name, unpriced: !rate };
 }
 
 /* The porch's own square footage — the area both the porch line and the
@@ -1413,8 +1469,11 @@ function computePricing(cfgIn, opts){
   var porchDeck = (typeof PORCH_DECK!=='undefined') ? PORCH_DECK : 'pt';
   var porchDeckSell = 0, porchDeckSellName = '';
   if(porchLoc!=='none' && porchDepth>0){
-    var _span = (porchLoc==='side'?Df:Wf);
-    var pl = porchLineFor(porchLoc, porchDepth, porchTier, _span);
+    /* A partial porch bills on its OWN length, not the wall's. */
+    var _partial = porchIsPartialFor(porchLoc, porchDepth, PORCH_LEN, Wf, Df);
+    var _span = _partial ? porchLenFtFor(porchLoc, porchDepth, PORCH_LEN, Wf, Df)
+                         : (porchLoc==='side'?Df:Wf);
+    var pl = porchLineFor(porchLoc, porchDepth, porchTier, _span, _partial);
     if(pl){
       porchSell += pl.price;
       porchSellName = pl.name;
@@ -1552,6 +1611,8 @@ function computePricing(cfgIn, opts){
     var _eat = (typeof porchEatFt==='function') ? porchEatFt() : {w:0,l:0};
     var _encW = Wf - _eat.w, _encD = Df - _eat.l;
     var _floor = _encW * _encD;
+    // A partial porch takes a notch, not a strip: bill the real room area.
+    if(porchPartial()){ _floor = enclosedSqft(); _encW = _floor; _encD = 1; }
     intSell = interiorPrice(intId, _encW, _encD);
     intSellName = (intId==='drywall' ? 'Drywall & Mud' : 'Drywall, Mud & Paint')
                 + ' (' + _floor + ' sqft)';
@@ -1568,7 +1629,7 @@ function computePricing(cfgIn, opts){
   var floorId = (typeof FLOOR!=='undefined') ? FLOOR : 'none';
   if(FLOORING.tiers[floorId] && floorId!=='none'){
     var _feat = (typeof porchEatFt==='function') ? porchEatFt() : {w:0,l:0};
-    var _fArea = (Wf - _feat.w) * (Df - _feat.l);
+    var _fArea = porchPartial() ? enclosedSqft() : (Wf - _feat.w) * (Df - _feat.l);
     floorSell = flooringPrice(floorId, _fArea);
     floorSellName = 'Flooring \u2014 ' + (FLOORING_NAMES[floorId]||floorId)
                   + ' (' + _fArea + ' sq ft)';
@@ -1859,7 +1920,7 @@ function elecIncludesFor(sellName){
 }
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
-  'porchFrontSqft','porchSideSqft','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
+  'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".
@@ -3338,11 +3399,12 @@ function safeParse(s) { try { return JSON.parse(s); } catch (e) { return null; }
 /* Utah sales tax — applied to the shed and to each separately-billed item
    (concrete, interior finishing) since each is invoiced as its own sale. */
 const TAX_RATE = 0.0725;
-/* ONE deposit, covering the whole job, collected before work begins. It is
-   worked out per item — 30% of each item's tax-included price, which is what
-   the quote itemises — but the items are billed together, not as each stage
-   starts. This comment and the quote both used to say the opposite, which was
-   a promise on every quote sent that the invoicing never kept. */
+/* 30% of each phase's tax-included price, collected before THAT phase begins;
+   the rest of the phase is due once it is complete (billed by phase from the
+   CRM — see buildPhaseInvoice in invoices.js). The quote's note says exactly
+   this, and invoices.test.mjs fails if the two drift apart again. The
+   whole-job deposit invoice still exists for a job someone wants billed in
+   one go. */
 const DEPOSIT_RATE = 0.30;
 
 /* What the base shed price covers, named under the Base Shed line. NAMES ONLY,
@@ -3356,6 +3418,16 @@ const BASE_SHED_INCLUDES = [
 ];
 
 const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
+
+/* WHAT A CUSTOMER CALLS THE STYLE. Gable and A-Frame are the same shed: the
+   designer stores it as "gable", the price sheet calls it "A-Frame", and
+   quotes saved before this carry "A-Frame" in their redline. Everything a
+   customer reads says "Gable / A-Frame", whichever of the three it was given.
+   Anything else passes through unchanged. */
+function shedStyleName(s) {
+  const v = String(s == null ? '' : s).trim();
+  return /^(gable|a-?frame)$/i.test(v) ? 'Gable / A-Frame' : v;
+}
 
 function num(n) { return Number(n) || 0; }
 
@@ -3477,6 +3549,9 @@ function quoteLines(redline, adjustments) {
      in first, then the shed, then interior finishing — each its own phase.
      Phase numbers are assigned from position after the rows are built, because
      removal is added at the FRONT when it applies. */
+  /* Each row carries its KIND (clearance / foundation / shed / interior) so two
+     builds billed together can match concrete with concrete and shed with shed
+     even when one has a site-clearance phase in front and its numbers shift. */
   const rows = [];
   function add(label, amt) {
     if (!label || !amt) return null;
@@ -3489,6 +3564,7 @@ function quoteLines(redline, adjustments) {
   if (removal.length) {
     const rTotal = removalTotal(redline) - compedIn(REMOVAL_NAMES);
     const rRow = add(removal.length > 1 ? 'Site Clearance' : removal[0].name, rTotal);
+    if (rRow) rRow.kind = 'clearance';
     if (rRow && removal.length > 1) {
       rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) }));
     }
@@ -3501,9 +3577,12 @@ function quoteLines(redline, adjustments) {
   if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
     foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
   }
-  add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
-  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + redline.baseSheetLabel + ')' : ''), shedTotal);
-  add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
+  const foundRow = add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
+  if (foundRow) foundRow.kind = 'foundation';
+  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + shedStyleName(redline.baseSheetLabel) + ')' : ''), shedTotal);
+  if (shedRow) shedRow.kind = 'shed';
+  const intRow = add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
+  if (intRow) intRow.kind = 'interior';
 
   /* Electrical and flooring are still billed and deposited as part of the Shed
      phase (their dollars stay inside shedTotal) — these just break them out so
@@ -3794,10 +3873,17 @@ function jobLines(bd, adjustments) {
   return lines;
 }
 
-function depositInvoice(bd, adjustments) {
+/* The deposit, less anything this job has already been paid.
+ *
+ * Money taken outside Stripe — a cashier's check, cash, a deposit collected on
+ * Invoice2go before Stripe — is still money the customer has handed over. A
+ * deposit invoice that ignored it asked them for the full 30% a second time.
+ * So the same credits the balance invoice shows appear here too, one line per
+ * payment, and the figure asked for is what is still owed of the deposit. */
+function depositInvoice(bd, adjustments, payments) {
   const lines = jobLines(bd, adjustments);
-  const totalCents = toCents(bd.depositTotal);
-  const deferred = toCents(bd.total) - totalCents;
+  const depositCents = toCents(bd.depositTotal);
+  const deferred = toCents(bd.total) - depositCents;
   if (deferred > 0) {
     lines.push({
       label: 'Less balance due on completion — ' + pct(1 - depositRateOf(bd)) + '% of each phase',
@@ -3805,7 +3891,61 @@ function depositInvoice(bd, adjustments) {
       residue: true
     });
   }
+  creditLines(payments).forEach((l) => lines.push(l));
+  const totalCents = depositCents - paidCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
+}
+
+/* One credit line per payment received, exactly as the money arrived. Fixed:
+   reconcile() never nudges a payment by a penny. */
+function creditLines(payments) {
+  const out = [];
+  (payments || []).forEach((p) => {
+    const c = toCents(p.amount);
+    if (!c) return;
+    const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
+    const how = p.method ? ' by ' + methodLabel(p.method) : '';
+    out.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c), fixed: true });
+  });
+  return out;
+}
+
+/* Payments are stored in DOLLARS (REAL) — manual ones as typed, Stripe ones as
+   amount_paid / 100. Every sum is done in integer cents so that 0.1 + 0.2 never
+   leaves a balance of $0.00000000004 that refuses to read as "paid". */
+function paidCentsOf(payments) {
+  return (payments || []).reduce((t, p) => t + Math.abs(toCents(p.amount)), 0);
+}
+
+const METHOD_LABELS = { cash: 'cash', check: 'check', cashiers_check: "cashier's check",
+  venmo: 'Venmo', zelle: 'Zelle', invoice2go: 'Invoice2go', card: 'card', stripe: 'Stripe', other: 'other' };
+function methodLabel(m) { return METHOD_LABELS[m] || m; }
+
+/* WHERE A JOB STANDS: total, what has come in, what is left.
+ *
+ * The one figure the CRM puts beside the Stripe button, so it has to be the
+ * same arithmetic the invoice uses — it is built from the same quoteLines()
+ * breakdown and the same applied payments, in cents.
+ *
+ *   balanceCents   — never below zero. Overpayment is reported separately
+ *                    rather than shown as a negative "balance due".
+ *   depositDueCents — the 30% deposit less everything paid so far, never below
+ *                    zero. A check that covered the deposit makes this 0.
+ */
+function balanceSummary(breakdown, payments) {
+  const jobTotalCents = toCents(breakdown && breakdown.total);
+  const depositTotalCents = toCents(breakdown && breakdown.depositTotal);
+  const paidCents = paidCentsOf(payments);
+  const owed = jobTotalCents - paidCents;
+  return {
+    jobTotalCents,
+    depositTotalCents,
+    paidCents,
+    balanceCents: Math.max(0, owed),
+    overpaidCents: Math.max(0, -owed),
+    depositDueCents: Math.max(0, depositTotalCents - paidCents),
+    paidInFull: jobTotalCents > 0 && owed <= 0
+  };
 }
 
 /* The balance: the whole job, less what has already been paid.
@@ -3821,18 +3961,10 @@ function depositInvoice(bd, adjustments) {
  * of buried in a subtraction. */
 function balanceInvoice(bd, adjustments, payments) {
   const lines = jobLines(bd, adjustments);
-
-  (payments || []).forEach((p) => {
-    const c = toCents(p.amount);
-    if (!c) return;
-    const when = p.paid_at ? ' ' + String(p.paid_at).slice(0, 10) : '';
-    const how = p.method ? ' by ' + p.method : '';
-    lines.push({ label: 'Payment received' + how + when, amountCents: -Math.abs(c), fixed: true });
-  });
+  creditLines(payments).forEach((l) => lines.push(l));
 
   const jobCents = toCents(bd.total);
-  const paidCents = (payments || []).reduce((t, p) => t + Math.abs(toCents(p.amount)), 0);
-  const totalCents = jobCents - paidCents;
+  const totalCents = jobCents - paidCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
 
@@ -3945,13 +4077,14 @@ function buildMemo(bd, opts = {}) {
    block is the reason this is not just a discount line: "Shutters — Included"
    is something you gave them, where "Discount -$60" reads as the price having
    been soft in the first place. */
-function buildFooter(bd, comped, kind) {
+function buildFooter(bd, comped, kind, opts = {}) {
   const parts = [];
   const names = Object.keys(comped || {});
   if (names.length) parts.push('Included at no charge: ' + names.join(', ') + '.');
   if (bd.savings > 0.005) parts.push('You save ' + usd(bd.savings) + ' on this build.');
   parts.push(kind === 'deposit'
-    ? 'This invoice collects the deposit. The balance is invoiced on completion.'
+    ? 'This invoice collects the deposit' + (opts.credited ? ', less payments already received (credited above)' : '') +
+      '. The balance is invoiced on completion.'
     : 'This invoice settles the balance. Payments already received are credited above.');
   parts.push('All amounts include Utah sales tax.');
   return clip(parts.join(' '), LIMITS.footer);
@@ -4009,24 +4142,518 @@ function buildInvoice(breakdown, kind, payments, opts = {}) {
   const paid = payments || [];
   const adjustments = opts.adjustments || [];
   const out = kind === 'deposit'
-    ? depositInvoice(breakdown, adjustments)
+    ? depositInvoice(breakdown, adjustments, paid)
     : balanceInvoice(breakdown, adjustments, paid);
 
   if (out.totalCents <= 0) {
-    throw new Error(kind === 'balance'
-      ? 'nothing left to invoice — payments already cover this job'
-      : 'the deposit for this job works out to nothing');
+    const e = new Error(kind === 'balance'
+      ? 'Paid in full — payments already cover this job, so there is nothing to bill'
+      : (paid.length
+        ? 'The deposit is already covered by payments received — bill the balance instead'
+        : 'the deposit for this job works out to nothing'));
+    e.code = kind === 'balance' ? 'paid_in_full' : (paid.length ? 'deposit_covered' : 'nothing_to_bill');
+    throw e;
   }
   return {
     kind,
     lines: out.lines.map((l) => ({ ...l, label: clip(l.label, LIMITS.label) })),
     totalCents: out.totalCents,
     jobTotalCents: toCents(breakdown.total),
-    paidCents: paid.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    paidCents: paidCentsOf(paid),
     memo: buildMemo(breakdown, opts),
-    footer: buildFooter(breakdown, opts.comped, kind),
+    footer: buildFooter(breakdown, opts.comped, kind, { credited: paid.length > 0 }),
     customFields: buildCustomFields(breakdown, kind, opts)
   };
+}
+
+/* ---------------------------------------------------------------------------
+ * BILLING BY PHASE.
+ *
+ * The quote already splits every job into phases (quoteLines rows: Phase 1 —
+ * Concrete Pad, Phase 2 — Shed, Phase 3 — Interior, with site clearance first
+ * when there is any) and prints a 30% deposit per phase. Billing by phase uses
+ * exactly those figures — nothing here invents a percentage:
+ *
+ *   each phase = its 30% DEPOSIT (collected before the phase starts)
+ *              + its REMAINDER   (the other 70%, due once the phase is done)
+ *
+ * and the schedule is: Phase 1 deposit; then Phase 2 deposit + what is left of
+ * Phase 1; then Phase 3 deposit + what is left of Phase 2; then what is left of
+ * the last phase on completion. The CRM suggests that and lets a person tick
+ * any other combination.
+ * ------------------------------------------------------------------------- */
+
+const PHASE_PARTS = ['deposit', 'remainder'];
+
+/* "Phase 2 — Shed (A-Frame)" -> "Shed (A-Frame)". */
+function phaseName(row) {
+  return String(row.label || '').replace(/^Phase\s+\d+\s+—\s+/, '');
+}
+
+/* Every phase in integer cents. Deposit and remainder are reconciled so the
+   phases add up to the job total to the penny; any rounding cent lands on the
+   LAST phase's remainder, the final amount billed. */
+function phaseParts(bd) {
+  if (!bd || !Array.isArray(bd.rows)) return [];
+  const out = bd.rows.map((r, i) => {
+    const totalCents = toCents(r.total);
+    const depositCents = toCents(r.deposit);
+    return { phase: r.phase || i + 1, kind: r.kind || null, name: phaseName(r), totalCents, depositCents,
+             remainderCents: totalCents - depositCents };
+  });
+  const drift = toCents(bd.total) - out.reduce((t, p) => t + p.totalCents, 0);
+  if (drift && out.length) {
+    const last = out[out.length - 1];
+    last.totalCents += drift; last.remainderCents += drift;
+  }
+  return out;
+}
+
+/* What a payment says it was for. Stored as JSON in payments.phase_alloc:
+     {"phase": 2}                                        typed by a person
+     {"parts": [{"phase":1,"part":"remainder","cents":225225}, ...]}
+                                                         written when a phase
+                                                         invoice is paid
+   Anything else (including null — every payment before this existed) is
+   untagged. */
+function parseAlloc(v) {
+  if (!v) return null;
+  let o = v;
+  if (typeof v === 'string') { try { o = JSON.parse(v); } catch (e) { return null; } }
+  if (!o || typeof o !== 'object') return null;
+  if (Array.isArray(o.parts)) {
+    const parts = o.parts.filter((p) => p && Number(p.phase) > 0 && PHASE_PARTS.includes(p.part))
+      .map((p) => ({ phase: Number(p.phase), part: p.part, cents: Math.max(0, Math.round(Number(p.cents) || 0)) }));
+    return parts.length ? { parts } : null;
+  }
+  if (Number(o.phase) > 0) return { phase: Number(o.phase) };
+  return null;
+}
+
+/* WHICH PART OF WHICH PHASE EACH PAYMENT PAID.
+ *
+ *  1. Payments from a phase invoice go to the parts that invoice billed.
+ *  2. Payments a person tagged with a phase go to that phase: deposit first,
+ *     then its remainder.
+ *  3. Everything else — untagged payments and anything left over from 1 or 2 —
+ *     fills DEPOSITS first, in phase order, then remainders in phase order.
+ *     That is what an untagged payment has always meant here: before phases,
+ *     "the deposit" was all the phase deposits together, so a paid old-style
+ *     deposit invoice lands on exactly the deposits it covered.
+ *
+ * Nothing is ever allocated past what a part costs; money beyond the whole job
+ * is reported as overpaid, never as a negative balance. */
+function allocatePhases(phases, payments) {
+  const key = (ph, part) => ph + ':' + part;
+  const cost = {}, paid = {};
+  phases.forEach((p) => {
+    cost[key(p.phase, 'deposit')] = p.depositCents;
+    cost[key(p.phase, 'remainder')] = p.remainderCents;
+    paid[key(p.phase, 'deposit')] = 0;
+    paid[key(p.phase, 'remainder')] = 0;
+  });
+  const room = (k) => (cost[k] == null ? 0 : Math.max(0, cost[k] - paid[k]));
+  const byPayment = (payments || []).map((p) => ({ payment: p, parts: [] }));
+  function put(entry, phase, part, cents) {
+    const k = key(phase, part);
+    const take = Math.min(cents, room(k));
+    if (take <= 0) return cents;
+    paid[k] += take;
+    const same = entry.parts.find((x) => x.phase === phase && x.part === part);
+    if (same) same.cents += take; else entry.parts.push({ phase, part, cents: take });
+    return cents - take;
+  }
+  const leftover = byPayment.map((e) => Math.abs(toCents(e.payment.amount)));
+
+  byPayment.forEach((e, i) => {                              // 1. from a phase invoice
+    const a = parseAlloc(e.payment.phase_alloc);
+    if (!a || !a.parts) return;
+    a.parts.forEach((x) => {
+      const want = Math.min(x.cents, leftover[i]);
+      leftover[i] -= want - put(e, x.phase, x.part, want);
+    });
+  });
+  byPayment.forEach((e, i) => {                              // 2. tagged by a person
+    const a = parseAlloc(e.payment.phase_alloc);
+    if (!a || !a.phase) return;
+    leftover[i] = put(e, a.phase, 'deposit', leftover[i]);
+    leftover[i] = put(e, a.phase, 'remainder', leftover[i]);
+  });
+  const order = phases.map((p) => [p.phase, 'deposit']).concat(phases.map((p) => [p.phase, 'remainder']));
+  byPayment.forEach((e, i) => {                              // 3. everything else
+    order.forEach(([ph, part]) => { if (leftover[i] > 0) leftover[i] = put(e, ph, part, leftover[i]); });
+  });
+  return { paid, byPayment, overpaidCents: leftover.reduce((t, c) => t + c, 0) };
+}
+
+/* Where each phase stands, and what the CRM should suggest billing next.
+ * openParts: parts already on a sent, unpaid phase invoice — not suggested
+ * again, so a second invoice cannot ask for the same money. */
+function phaseStatus(bd, payments, openParts) {
+  const phases = phaseParts(bd);
+  const { paid, byPayment, overpaidCents } = allocatePhases(phases, payments);
+  const open = {};
+  (openParts || []).forEach((o) => { open[o.phase + ':' + o.part] = o.invoice_id || true; });
+  const rows = phases.map((p) => {
+    const part = (name, cents) => {
+      const k = p.phase + ':' + name;
+      return { amountCents: cents, paidCents: paid[k] || 0,
+               remainingCents: Math.max(0, cents - (paid[k] || 0)), openInvoice: open[k] || null };
+    };
+    return { phase: p.phase, kind: p.kind, name: p.name, totalCents: p.totalCents,
+             deposit: part('deposit', p.depositCents), remainder: part('remainder', p.remainderCents) };
+  });
+
+  /* The suggestion: the first phase whose deposit is still owed, plus every
+     earlier phase's unpaid remainder (those phases have started, so the work
+     is done or under way). If every deposit is in, the earliest unpaid
+     remainder — on the last phase that is the bill on completion. */
+  const free = (x) => x.remainingCents > 0 && !x.openInvoice;
+  const suggested = [];
+  const next = rows.find((r) => free(r.deposit));
+  if (next) {
+    suggested.push({ phase: next.phase, part: 'deposit' });
+    /* Only phases whose deposit is in — a phase that never started has no
+       "rest" to collect yet. */
+    rows.filter((r) => r.phase < next.phase && free(r.remainder) && r.deposit.remainingCents === 0)
+      .forEach((r) => suggested.push({ phase: r.phase, part: 'remainder' }));
+  } else {
+    const rem = rows.find((r) => free(r.remainder));
+    if (rem) suggested.push({ phase: rem.phase, part: 'remainder' });
+  }
+  return { phases: rows, byPayment, overpaidCents, suggested };
+}
+
+const SHORT_DATE = (v) => {
+  const d = new Date(v);
+  if (isNaN(d.getTime())) return '';
+  return (d.getUTCMonth() + 1) + '/' + d.getUTCDate() + '/' + d.getUTCFullYear();
+};
+const METHOD_TITLE = { cash: 'Cash', check: 'Check', cashiers_check: "Cashier's check", venmo: 'Venmo',
+  zelle: 'Zelle', invoice2go: 'Invoice2go', card: 'Card', stripe: 'Stripe', other: 'Other' };
+
+/* ---------------------------------------------------------------------------
+ * BILLING SEVERAL BUILDS TOGETHER.
+ *
+ * A customer buying two sheds gets one invoice per step, not two. Phases are
+ * matched by KIND (quoteLines tags each row clearance / foundation / shed /
+ * interior), not by number: one build may have a site-clearance phase in front
+ * and its numbers shifted by one. The combined phases are numbered in build
+ * order over the kinds any of the builds has; a build without a kind (no
+ * interior, say) is simply absent from that phase.
+ *
+ * Nothing is pooled underneath. Each build keeps its own phases, payments and
+ * allocation, so per-build balances stay exact; the combined view is only a
+ * grouping of them, and a combined invoice records which build and part every
+ * cent covers.
+ * ------------------------------------------------------------------------- */
+const PHASE_KIND_ORDER = ['clearance', 'foundation', 'shed', 'interior'];
+const KIND_PLURAL = { clearance: 'Site Clearance', foundation: 'Concrete Pads', shed: 'Sheds', interior: 'Interiors' };
+
+/* "Shed (Gable / A-Frame)" -> "Shed": with several builds on one invoice the
+   build is named on the line, so the style in brackets is just noise. */
+function bareName(name) { return String(name || '').replace(/\s*\([^)]*\)/g, '').trim(); }
+
+/* builds: [{ sub, name, bd, payments, openParts }] (name: "10x20 Gable / A-Frame").
+   Returns the groups (combined phases), each with one item per build that has
+   that kind of phase, and what to bill next. */
+function togetherStatus(builds) {
+  const per = (builds || []).map((b) => ({ b, st: phaseStatus(b.bd, b.payments, b.openParts) }));
+  const single = per.length === 1;
+  const keyOf = (p) => p.kind || ('row' + p.phase);
+  const keys = [];
+  per.forEach(({ st }) => st.phases.forEach((p) => { if (keys.indexOf(keyOf(p)) === -1) keys.push(keyOf(p)); }));
+  const rank = (k) => { const i = PHASE_KIND_ORDER.indexOf(k); return i > -1 ? i : 100 + keys.indexOf(k); };
+  if (!single) keys.sort((a, b) => rank(a) - rank(b));
+
+  const groups = keys.map((k, gi) => {
+    const items = [];
+    per.forEach(({ b, st }) => {
+      const p = st.phases.find((x) => keyOf(x) === k);
+      if (p) items.push({ sub: b.sub, build: b.name || null, phase: p.phase, kind: p.kind, name: p.name,
+                          totalCents: p.totalCents, deposit: p.deposit, remainder: p.remainder });
+    });
+    /* One build: its own numbers, exactly as its quote prints them. */
+    const num = single ? items[0].phase : gi + 1;
+    const names = items.map((i) => bareName(i.name));
+    const same = names.every((n) => n === names[0]);
+    const name = single ? items[0].name
+      : items.length === 1 ? bareName(items[0].name)
+      : same && KIND_PLURAL[items[0].kind] ? KIND_PLURAL[items[0].kind]
+      : same ? names[0] : (KIND_PLURAL[items[0].kind] || names.join(' / '));
+    return { phase: num, kind: items[0].kind, name, items };
+  });
+
+  /* Next bill: the first combined phase with a deposit still owed on ANY build
+     (only those builds), plus the rest of every earlier phase whose deposits
+     are all in. Once every deposit is in, the earliest rest still owed. Parts
+     already on a sent invoice are never suggested again. */
+  const free = (x) => x.remainingCents > 0 && !x.openInvoice;
+  const suggested = [];
+  const next = groups.find((g) => g.items.some((i) => free(i.deposit)));
+  if (next) {
+    suggested.push({ phase: next.phase, part: 'deposit' });
+    groups.filter((g) => g.phase < next.phase && g.items.some((i) => free(i.remainder)) &&
+                         g.items.every((i) => i.deposit.remainingCents === 0))
+      .forEach((g) => suggested.push({ phase: g.phase, part: 'remainder' }));
+  } else {
+    const rem = groups.find((g) => g.items.some((i) => free(i.remainder)));
+    if (rem) suggested.push({ phase: rem.phase, part: 'remainder' });
+  }
+  return {
+    groups, suggested,
+    byBuild: per.map(({ b, st }) => ({ sub: b.sub, name: b.name || null, byPayment: st.byPayment,
+                                       overpaidCents: st.overpaidCents, phases: st.phases })),
+  };
+}
+
+/* Which builds/parts a ticked selection actually bills. selected: [{phase,
+   part, sub?}] — phase is the COMBINED number; sub narrows it to one build.
+   Parts already paid or already on a sent invoice are skipped when another
+   build in the same phase still owes; when nothing in it is billable, say why. */
+function resolveSelection(ts, selected) {
+  const want = [];
+  (selected || []).forEach((s) => {
+    if (!s || !PHASE_PARTS.includes(s.part)) return;
+    const g = ts.groups.find((x) => x.phase === Number(s.phase));
+    if (!g) throw Object.assign(new Error('there is no phase ' + s.phase + ' to bill'), { code: 'bad_phase' });
+    const sub = s.sub != null && s.sub !== '' ? Number(s.sub) : null;
+    want.push({ g, part: s.part, sub });
+  });
+  if (!want.length) throw Object.assign(new Error('pick at least one phase to bill'), { code: 'nothing_selected' });
+
+  const picks = [];                          // { g, item, part }
+  const seen = {};
+  want.forEach(({ g, part, sub }) => {
+    const items = g.items.filter((i) => sub == null || Number(i.sub) === sub);
+    if (!items.length) throw Object.assign(new Error('that build has no phase ' + g.phase), { code: 'bad_phase' });
+    const billable = items.filter((i) => i[part].remainingCents > 0 && !i[part].openInvoice);
+    /* Both halves of a phase ticked and one is already paid: bill the other. */
+    const sibling = want.some((w) => w.g === g && w.part !== part &&
+      g.items.some((i) => (w.sub == null || Number(i.sub) === w.sub) && i[w.part].remainingCents > 0 && !i[w.part].openInvoice));
+    if (!billable.length && sibling) return;
+    if (!billable.length) {
+      const what = 'Phase ' + g.phase + ' ' + (part === 'deposit' ? 'deposit' : 'remainder');
+      if (items.some((i) => i[part].openInvoice)) {
+        throw Object.assign(new Error(what + ' is already on a sent invoice — void it first'), { code: 'already_billed' });
+      }
+      throw Object.assign(new Error(what + ' is already paid'), { code: 'already_paid' });
+    }
+    billable.forEach((item) => {
+      const k = item.sub + ':' + item.phase + ':' + part;
+      if (seen[k]) return;
+      seen[k] = 1;
+      picks.push({ g, item, part });
+    });
+  });
+  return picks;
+}
+
+/* ONE STRIPE INVOICE FOR THE PARTS SOMEONE TICKED — one build or several.
+ *
+ * Written for the customer, who has to understand it without a call. Every
+ * line is what is LEFT to pay on that part, with anything already paid toward
+ * it taken off inside the number, not shown as a separate minus line:
+ *
+ *   Phase 2: Shed (Gable / A-Frame) deposit (30%)                 $5,511.90
+ *   Remainder of Phase 1: Concrete Pad (4" slab), due after
+ *     completion                                                  $2,252.25
+ *
+ * and the memo says what was applied ("Your $965.25 deposit (Invoice2go,
+ * 9/1/2026) has been applied."). Several builds: one line per build per part,
+ * the build named at the end ("Phase 2: Shed deposit (30%) — 10x20 Gable /
+ * A-Frame"), so each number can be found on that build's own quote.
+ *
+ * Every payment on a build folds into one of its parts (allocatePhases never
+ * books past a part's cost), so no separate credit line is needed; money that
+ * cannot fold (not assigned to a build, or more than a build costs) is not
+ * credited here and the CRM warns about it instead.
+ *
+ * All amounts are tax-inclusive, exactly as the quote's per-phase figures are;
+ * Stripe must not add tax (same rule as the deposit/balance invoices).
+ *
+ * `covers` says which build and part each billed cent pays for — stored with
+ * the invoice so that when Stripe says it is paid, each build gets a payment
+ * booked against exactly those parts and nothing is billed twice. */
+function buildTogetherInvoice(builds, selected, opts = {}) {
+  if (!builds || !builds.length || builds.some((b) => !b.bd || !Array.isArray(b.bd.rows) || !b.bd.rows.length)) {
+    throw new Error('this submission has no priced phases to invoice');
+  }
+  const ts = togetherStatus(builds);
+  const many = builds.length > 1;
+  const picks = resolveSelection(ts, selected);
+
+  /* Deposits first — the phase about to start — then the rest of the phases
+     already under way. Within that, phase order, then build order. */
+  const both = {};
+  picks.forEach((p) => { both[p.item.sub + ':' + p.item.phase] = (both[p.item.sub + ':' + p.item.phase] || 0) + 1; });
+  const isBoth = (p) => both[p.item.sub + ':' + p.item.phase] === 2;
+  const order = (p) => (p.part === 'deposit' && !isBoth(p) ? 0 : 1) * 1000 + p.g.phase;
+  const sorted = picks.slice().sort((a, b) => order(a) - order(b) ||
+    builds.findIndex((x) => x.sub === a.item.sub) - builds.findIndex((x) => x.sub === b.item.sub));
+
+  const lines = [], covers = [];
+  const done = {};
+  sorted.forEach((p) => {
+    const it = p.item;
+    const k = it.sub + ':' + it.phase;
+    const tag = many && it.build ? ' — ' + it.build : '';
+    const nm = many ? bareName(it.name) : it.name;
+    const head = 'Phase ' + p.g.phase + ': ' + nm;
+    const less = (paidC) => (paidC > 0 ? ', less ' + usd(fromCents(paidC)) + ' already paid' : '');
+    const cover = (part, cents) => covers.push(Object.assign(it.sub != null ? { sub: it.sub } : {},
+                                                 { phase: it.phase, part, cents }));
+    if (isBoth(p)) {
+      if (done[k]) return;
+      done[k] = 1;
+      const cents = it.deposit.remainingCents + it.remainder.remainingCents;
+      lines.push({ label: head + ', full amount (deposit + remainder)' + tag +
+                   less(it.deposit.paidCents + it.remainder.paidCents), amountCents: cents });
+      cover('deposit', it.deposit.remainingCents);
+      cover('remainder', it.remainder.remainingCents);
+      return;
+    }
+    if (p.part === 'deposit') {
+      lines.push({ label: head + ' deposit (30%)' + tag + less(it.deposit.paidCents), amountCents: it.deposit.remainingCents });
+      cover('deposit', it.deposit.remainingCents);
+      return;
+    }
+    /* The rest of a phase whose deposit is in reads simply as what is left.
+       If the deposit is still owed and not on this bill, say this is the 70%. */
+    const seventy = it.deposit.remainingCents > 0 ? ' — 70% of the phase' : '';
+    lines.push({ label: 'Remainder of ' + head + ', due after completion' + seventy + tag + less(it.remainder.paidCents),
+                 amountCents: it.remainder.remainingCents });
+    cover('remainder', it.remainder.remainingCents);
+  });
+  /* A part on its own line twice would bill it twice; covers say it once. */
+  const coverCents = covers.filter((c) => c.cents > 0);
+
+  const totalCents = coverCents.reduce((t, c) => t + c.cents, 0);
+  const sum = lines.reduce((t, l) => t + l.amountCents, 0);
+  if (sum !== totalCents) throw new Error('phase invoice lines (' + sum + ') do not add up to ' + totalCents);
+  if (totalCents <= 0) throw Object.assign(new Error('nothing left to bill on those phases'), { code: 'already_paid' });
+
+  const what = describeTogether(ts, sorted, many);
+  const allPayments = builds.reduce((a, b) => a.concat(b.payments || []), []);
+  const jobTotalCents = builds.reduce((t, b) => t + toCents(b.bd.total), 0);
+  const subs = builds.map((b) => b.sub).filter((x) => x != null);
+  return {
+    kind: 'phase',
+    lines: lines.map((l) => ({ ...l, label: clip(l.label, LIMITS.label) })),
+    totalCents,
+    jobTotalCents,
+    paidCents: allPayments.reduce((t, p) => t + Math.abs(toCents(p.amount)), 0),
+    covers: coverCents,
+    builds: many ? subs : undefined,
+    description: what,
+    memo: togetherMemo(ts, sorted, what, builds, opts),
+    footer: clip('All amounts include Utah sales tax (7.25%). Payments already received have been applied.' +
+      (opts.comped && Object.keys(opts.comped).length ? ' Included at no charge: ' + Object.keys(opts.comped).join(', ') + '.' : ''),
+      LIMITS.footer),
+    customFields: [
+      [many ? 'Orders' : 'Order', many ? subs.map((x) => '#' + x).join(' + ') : (opts.submissionId ? '#' + opts.submissionId : null)],
+      [many ? 'Builds' : 'Build', many ? builds.map((b) => b.summary || b.name).filter(Boolean).join(' + ') : (opts.summary || null)],
+      ['This invoice', what],
+      [many ? 'Total, all builds' : 'Job total', usd(fromCents(jobTotalCents))]
+    ].filter(([, v]) => v).map(([name, value]) => ({ name: clip(name, LIMITS.fieldName), value: clip(value, LIMITS.fieldValue) }))
+  };
+}
+
+/* One build — the original entry point, unchanged in what it accepts. */
+function buildPhaseInvoice(bd, payments, selected, opts = {}) {
+  if (!bd || !Array.isArray(bd.rows) || !bd.rows.length) throw new Error('this submission has no priced phases to invoice');
+  return buildTogetherInvoice([{ sub: opts.submissionId != null ? opts.submissionId : undefined, bd, payments,
+                                 openParts: opts.openParts, summary: opts.summary }], selected, opts);
+}
+
+/* The size alone ("10x20") — enough to tell two sheds apart in a sentence. */
+function shortBuild(name) {
+  const m = /^\s*(\d+(?:\.\d+)?x\d+(?:\.\d+)?)/i.exec(String(name || ''));
+  return m ? m[1] : String(name || '');
+}
+
+/* "Phase 2 deposit + rest of Phase 1"; with several builds, a part billed for
+   only some of them names which ("Phase 1 deposit (8x16)"). */
+function describeTogether(ts, picks, many) {
+  const bits = [];
+  const did = {};
+  const label = (g, kind, items) => {
+    const all = items.length === g.items.length;
+    return kind + (many && !all ? ' (' + items.map((i) => shortBuild(i.build)).join(', ') + ')' : '');
+  };
+  const byGP = (gp, part) => picks.filter((p) => p.g.phase === gp && p.part === part).map((p) => p.item);
+  const groupsIn = (part) => ts.groups.filter((g) => picks.some((p) => p.g === g && p.part === part));
+  groupsIn('deposit').forEach((g) => {
+    const d = byGP(g.phase, 'deposit'), r = byGP(g.phase, 'remainder');
+    const whole = d.filter((i) => r.indexOf(i) > -1);
+    if (whole.length) { bits.push(label(g, 'all of Phase ' + g.phase, whole)); did[g.phase] = whole; }
+    const depOnly = d.filter((i) => whole.indexOf(i) === -1);
+    if (depOnly.length) bits.push(label(g, 'Phase ' + g.phase + ' deposit' + (many && depOnly.length > 1 ? 's' : ''), depOnly));
+  });
+  groupsIn('remainder').forEach((g) => {
+    const r = byGP(g.phase, 'remainder').filter((i) => (did[g.phase] || []).indexOf(i) === -1);
+    if (r.length) bits.push(label(g, 'rest of Phase ' + g.phase, r));
+  });
+  return bits.join(' + ');
+}
+
+/* "Your $965.25 deposit (Invoice2go, 9/1/2026) has been applied." — the
+   payments that went toward the phases on this bill, so a customer sees why
+   a remainder is what it is without a minus line to reconcile. */
+function appliedSentence(ts, picks, many) {
+  const onBill = {};
+  picks.forEach((p) => { onBill[p.item.sub + ':' + p.item.phase] = 1; });
+  const hits = [];
+  ts.byBuild.forEach((b) => {
+    b.byPayment.forEach((e) => {
+      const parts = e.parts.filter((x) => onBill[b.sub + ':' + x.phase]);
+      if (!parts.length) return;
+      const p = e.payment;
+      const cents = Math.abs(toCents(p.amount));
+      const how = [METHOD_TITLE[p.method] || p.method, SHORT_DATE(p.paid_at)].filter(Boolean).join(', ');
+      const what = parts.every((x) => x.part === 'deposit') ? 'deposit' : 'payment';
+      hits.push({ cents, how, what, build: many ? shortBuild(b.name) : '' });
+    });
+  });
+  if (!hits.length) return '';
+  if (hits.length <= 2) {
+    return hits.map((h) => 'Your ' + usd(fromCents(h.cents)) + ' ' + h.what + (h.how ? ' (' + h.how + ')' : '') +
+      (h.build ? ' on the ' + h.build : '') + ' has been applied.').join(' ');
+  }
+  return 'Your ' + hits.length + ' earlier payments (' + usd(fromCents(hits.reduce((t, h) => t + h.cents, 0))) +
+    ') have been applied.';
+}
+
+/* The plain-words explanation, on every phase invoice. Under Stripe's 500:
+   pieces are dropped, least useful first, until it fits. */
+function togetherMemo(ts, picks, what, builds, opts) {
+  const many = builds.length > 1;
+  const head = many
+    ? 'Orders ' + builds.map((b) => b.sub != null ? '#' + b.sub : null).filter(Boolean).join(' + ')
+    : [opts.summary, opts.submissionId ? 'Order #' + opts.submissionId : null].filter(Boolean).join(' \u00b7 ');
+  const list = () => ts.groups.map((g) => {
+    const nm = bareName(g.name);
+    const only = many && g.items.length < builds.length ? ' (' + g.items.map((i) => shortBuild(i.build)).join(', ') + ' only)' : '';
+    return 'Phase ' + g.phase + ': ' + nm + only;
+  }).join(', ');
+  const intro = many
+    ? 'How payment works: your ' + (builds.length === 2 ? 'two sheds' : builds.length + ' sheds') + ' (' +
+      builds.map((b) => shortBuild(b.name)).filter(Boolean).join(' and ') + ') are billed together, in phases: ' + list() + '. '
+    : 'How payment works: your build is done in phases (' + list() + '). ';
+  const rule = 'Before each phase starts we collect a 30% deposit on that phase. ' +
+    'The rest of a phase is due once that phase is complete, and is added to the next invoice.';
+  const applied = appliedSentence(ts, picks, many);
+  const tail = what ? 'This invoice: ' + what + '.' : '';
+  const tries = [
+    [head, intro + rule + (applied ? ' ' + applied : ''), tail],
+    [intro + rule + (applied ? ' ' + applied : ''), tail],
+    [intro + rule, applied, tail].filter(Boolean),
+  ];
+  for (const t of tries) {
+    const text = t.filter(Boolean).join('\n\n');
+    if (text.length <= LIMITS.memo) return text;
+  }
+  return clip([intro + rule, tail].join('\n\n'), LIMITS.memo);
 }
 
 // ---- end inlined invoices.js ----
@@ -4115,7 +4742,7 @@ const STRIPE_PAYMENT_METHODS = ['us_bank_account', 'card'];
 
 /* Days until due, per kind. A deposit gates the build starting, so it is due
    when it arrives; the balance is billed against work already done. */
-const DAYS_UNTIL_DUE = { deposit: 0, balance: 7 };
+const DAYS_UNTIL_DUE = { deposit: 0, balance: 7, phase: 0 };
 
 /* Create a customer, or reuse one we already recorded.
    Stripe will happily create a second customer with the same email, which is
@@ -4857,16 +5484,48 @@ function specFoundationLine(c) {
   return "Foundation: " + base + (fin ? " (" + fin + ")" : "");
 }
 
+/* Partial porch: where along its wall it sits, as the crew standing outside
+   that wall would say it. pos runs from the wall's start corner (front: the
+   left end; right side: the BACK end, which is on your right as you face it),
+   so the side wall reads the other way round. */
+function specPorchWhere(c, span, len) {
+  const off = Math.max(0, Math.min(span - len, Number(c.porchOff) || 0));
+  const fromLeft = sv(c.porchLoc) === "side" ? span - len - off : off;
+  const fromRight = span - len - fromLeft;
+  if (fromLeft < 0.5) return "left end";
+  if (fromRight < 0.5) return "right end";
+  if (Math.abs(fromLeft - fromRight) < 0.5) return "centered";
+  return fromLeft + "ft from the left end";
+}
 function specPorchLine(c) {
   const loc = sv(c.porchLoc);
   if (!loc || loc === "none") return "";
   const bits = [specCap(loc)];
-  if (c.porchDepth) bits.push(c.porchDepth + "ft deep");
+  const depth = Number(c.porchDepth) || 0;
+  const span = loc === "front" ? Number(c.w) || 0 : Number(c.l) || 0;
+  const len = Number(c.porchLen) || 0;
+  if (depth && len > 0 && len < span) {
+    bits.push(depth + "ft deep × " + len + "ft long");
+    bits.push(specPorchWhere(c, span, len));
+  } else if (depth) bits.push(depth + "ft deep");
   const deck = SPEC_DECK[sv(c.porchDeck)];
   if (deck) bits.push(deck);
   const tier = sv(c.porchTier);
   if (tier && tier !== "standard") bits.push(tier);
   return "Porch: " + bits.join(" · ");
+}
+
+function specEnclosedLine(c) {
+  const loc = sv(c.porchLoc), depth = Number(c.porchDepth) || 0;
+  const w = Number(c.w) || 0, l = Number(c.l) || 0;
+  if (!w || !l || (loc !== "front" && loc !== "side") || !(depth > 0)) return "";
+  if (c.style && sv(c.style) !== "gable") return "";
+  const span = loc === "front" ? w : l;
+  const len = (Number(c.porchLen) > 0 && Number(c.porchLen) < span) ? Number(c.porchLen) : span;
+  const porch = depth * len;
+  const room = w * l - porch;
+  const shape = len < span ? "" : (loc === "front" ? " (" + w + "x" + (l - depth) + ")" : " (" + (w - depth) + "x" + l + ")");
+  return "Enclosed: " + room + " sq ft" + shape + " · Porch: " + depth + "x" + len + " ft (" + porch + " sq ft)";
 }
 
 /* Interior, floor and electrical on one line — they are three short answers
@@ -4899,6 +5558,9 @@ function buildSpecLines(config) {
   const out = [];
 
   const s = specShell(c); if (s) out.push(s);
+  /* With a porch, the footprint is not the room: say both, because the crew
+     frames the room and the customer bought the footprint. */
+  const enc = specEnclosedLine(c); if (enc) out.push(enc);
   /* sidingDisplayName already ends in "Siding" — "Siding: Board & Batten
      Siding" is the kind of thing that reads fine in code and looks careless on
      a page someone else is working from. */
@@ -6059,6 +6721,71 @@ async function ensurePaymentsTable(env) {
 }
 
 // Lazily creates the installs table on first use — same reasoning as
+/* PHASE TRACKING NEEDS ONE COLUMN: payments.phase_alloc (JSON).
+ *
+ * Added by worker/migrations/0001_payment_phases.sql, run BY HAND after a D1
+ * backup — deliberately not ALTERed in at runtime like the older columns, so
+ * the schema change is a step someone takes on purpose. Until it is run,
+ * everything still works: payments read as untagged (they fill phase deposits
+ * first), and only TAGGING a payment with a phase is refused. */
+async function hasPhaseAlloc(env) {
+  const have = await env.DB.prepare("PRAGMA table_info(payments)").all();
+  return (have.results || []).some((r) => r.name === "phase_alloc");
+}
+async function payCols(env) {
+  return (await hasPhaseAlloc(env)) ? "phase_alloc" : "NULL AS phase_alloc";
+}
+/* The parts a sent, unpaid phase invoice is collecting — so they are not
+   offered, or billed, a second time while it is out. */
+/* A combined invoice (several builds on one bill) is stored against its first
+   build, and each of its covers names the build it is for — so every phase
+   invoice of the customer is read, and a cover counts for the build it names. */
+function openPhaseParts(invRows, submissionId) {
+  const out = [];
+  (invRows || []).forEach((i) => {
+    if (i.kind !== "phase") return;
+    if (["paid", "void", "draft_failed", "uncollectible"].includes(i.status)) return;
+    coversOf(i.lines).forEach((c) => {
+      if (coverSub(c, i) !== Number(submissionId)) return;
+      out.push({ phase: c.phase, part: c.part, invoice_id: i.id });
+    });
+  });
+  return out;
+}
+function coverSub(c, inv) {
+  return Number(c && c.sub != null ? c.sub : inv.submission_id);
+}
+/* Every build a phase invoice bills (one, or several when combined). */
+function invoiceSubs(inv) {
+  const subs = [Number(inv.submission_id)];
+  if (inv.kind === "phase") coversOf(inv.lines).forEach((c) => {
+    const n = coverSub(c, inv);
+    if (subs.indexOf(n) === -1) subs.push(n);
+  });
+  return subs;
+}
+/* "10x20 Gable / A-Frame" — how a build is named on a combined invoice. */
+function buildName(config) {
+  if (!config) return "";
+  return [config.w && config.l ? config.w + "x" + config.l : null,
+          config.style ? shedStyleName(config.style) : null].filter(Boolean).join(" ");
+}
+/* covers ride on the FIRST stored line of a phase invoice (lines is JSON). */
+function coversOf(lines) {
+  let arr = lines;
+  if (typeof lines === "string") { try { arr = JSON.parse(lines); } catch (e) { arr = []; } }
+  const holder = (Array.isArray(arr) ? arr : []).find((l) => l && Array.isArray(l.covers));
+  return holder ? holder.covers : [];
+}
+/* {phase: n} from a request body, or null to clear. undefined = not given. */
+function phaseTagFrom(body) {
+  if (body.phase === undefined) return undefined;
+  if (body.phase === null || body.phase === "") return null;
+  const n = Number(body.phase);
+  if (!Number.isInteger(n) || n < 1 || n > 20) return "bad";
+  return JSON.stringify({ phase: n });
+}
+
 // ensurePaymentsTable: avoids a manual D1 migration for a table that didn't
 // exist when the DB was first set up.
 // One row per install EVENT, not per order — a submission can have both a
@@ -6133,7 +6860,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensurePaymentsTable(env);
   const { results: payments } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -6338,7 +7065,7 @@ function configSummary(config) {
   if (!config) return "";
   const parts = [];
   if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
-  if (config.style) parts.push(config.style);
+  if (config.style) parts.push(shedStyleName(config.style));
   if (config.siding) parts.push(config.siding);
   return parts.join(" \u00b7 ");
 }
@@ -6619,7 +7346,7 @@ async function handleSchedule(request, env, origin) {
 /* Everything an invoice needs, gathered and priced, without sending anything.
    Shared by the preview and the send so the figures a person approves are the
    figures that go out — computing them twice would let the two drift. */
-async function invoiceContext(env, submissionId, kind) {
+async function invoiceContext(env, submissionId, kind, parts, together) {
   await ensurePaymentsTable(env);
   await ensureInvoicesTable(env);
 
@@ -6639,9 +7366,59 @@ async function invoiceContext(env, submissionId, kind) {
   if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
 
   const { results: payRows } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
   ).bind(sub.customer_id).all();
   const split = splitPayments(payRows || [], sub.id);
+
+  if (kind === "phase") {
+    /* Every invoice of this customer, not just this build's: a combined bill
+       is stored against its first build but covers parts of the others. */
+    const { results: invRows } = await env.DB.prepare(
+      "SELECT id, submission_id, kind, status, lines FROM invoices WHERE customer_id = ?"
+    ).bind(sub.customer_id).all();
+    const others = (together || []).map(Number).filter((n) => n && n !== Number(sub.id));
+    const builds = [{ sub: sub.id, details, bd: breakdown, adjustments: adjustmentsOf(sub), payments: split.applied }];
+    for (const id of others) {
+      if (builds.some((b) => Number(b.sub) === id)) continue;
+      const o = await env.DB.prepare(
+        "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+      ).bind(id).first();
+      if (!o) throw Object.assign(new Error("no such order #" + id), { status: 404 });
+      if (Number(o.customer_id) !== Number(sub.customer_id)) {
+        throw Object.assign(new Error("order #" + id + " belongs to a different customer"), { status: 400, code: "other_customer" });
+      }
+      let d = {};
+      try { d = JSON.parse(o.details) || {}; } catch (e) {}
+      const obd = quoteLines(d.redline, adjustmentsOf(o));
+      if (!obd) throw Object.assign(new Error("order #" + id + " has no priced build to invoice"), { status: 400 });
+      builds.push({ sub: o.id, details: d, bd: obd, adjustments: adjustmentsOf(o),
+                    payments: splitPayments(payRows || [], o.id).applied });
+    }
+    let invoice;
+    try {
+      if (builds.length === 1) {
+        invoice = buildPhaseInvoice(breakdown, split.applied, parts, {
+          openParts: openPhaseParts(invRows, sub.id),
+          comped: compedMap(details.redline, builds[0].adjustments),
+          summary: configSummary(details.config),
+          submissionId: sub.id
+        });
+      } else {
+        const comped = {};
+        builds.forEach((b) => Object.assign(comped, compedMap(b.details.redline, b.adjustments)));
+        invoice = buildTogetherInvoice(builds.map((b) => ({
+          sub: b.sub, bd: b.bd, payments: b.payments,
+          name: buildName(b.details.config) || "Order #" + b.sub,
+          summary: buildName(b.details.config) || null,
+          openParts: openPhaseParts(invRows, b.sub)
+        })), parts, { comped });
+      }
+    } catch (e) {
+      throw Object.assign(e, { status: e.status || (e.code === "already_billed" ? 409 : 400) });
+    }
+    return { sub, customer, breakdown, split, invoice, builds: builds.map((b) => b.sub),
+             payRows: payRows || [] };
+  }
 
   /* Everything the quote page puts around the numbers, handed to the invoice
      so the customer reads one document, not two that have to be compared:
@@ -6692,7 +7469,7 @@ async function handleStripeWebhook(request, env, origin) {
   await ensurePaymentsTable(env);
 
   const row = await env.DB.prepare(
-    "SELECT id, customer_id, submission_id, kind, status, amount FROM invoices WHERE stripe_invoice_id = ?"
+    "SELECT id, customer_id, submission_id, kind, status, amount, lines FROM invoices WHERE stripe_invoice_id = ?"
   ).bind(inv.id).first();
   /* An invoice raised somewhere other than here — the Stripe dashboard, say.
      Acknowledged rather than errored: it is a real event, just not ours. */
@@ -6723,14 +7500,50 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   const amount = Number.isFinite(cents) && cents > 0 ? cents / 100 : Number(row.amount);
   const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-  ).bind(row.customer_id, amount, "stripe",
-         row.kind === "deposit" ? "Deposit paid on Stripe" : "Balance paid on Stripe",
-         now, now, row.submission_id).run();
-
-  await env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?")
-    .bind(now, row.id).run();
+  /* A phase invoice says which parts it collected; the payment is booked
+     against exactly those, in order, up to what actually cleared. A combined
+     invoice (several builds) becomes one payment PER BUILD, so each build's
+     balance stays its own; anything beyond what the covers ask for stays on
+     the first build, where it shows up as overpaid rather than vanishing. */
+  const note = row.kind === "deposit" ? "Deposit paid on Stripe"
+    : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe";
+  const withAlloc = row.kind === "phase" && (await hasPhaseAlloc(env));
+  const shares = [];                        // { sub, cents, parts }
+  if (row.kind === "phase") {
+    let left = toCents(amount);
+    coversOf(row.lines).forEach((c) => {
+      const take = Math.min(left, Math.max(0, Math.round(Number(c.cents) || 0)));
+      if (take <= 0) return;
+      const sub = coverSub(c, row);
+      let sh = shares.find((x) => x.sub === sub);
+      if (!sh) { sh = { sub, cents: 0, parts: [] }; shares.push(sh); }
+      sh.cents += take;
+      sh.parts.push({ phase: Number(c.phase), part: c.part, cents: take });
+      left -= take;
+    });
+    if (left > 0) {
+      if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: 0, parts: [] });
+      shares[0].cents += left;
+    }
+  }
+  if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: toCents(amount), parts: [] });
+  const many = shares.length > 1;
+  const stmts = shares.map((sh) => {
+    const amt = fromCents(sh.cents);
+    const n = many ? note + " (combined invoice, " + shares.map((x) => "#" + x.sub).join(" + ") + ")" : note;
+    if (withAlloc && sh.parts.length) {
+      return env.DB.prepare(
+        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub, JSON.stringify({ parts: sh.parts }));
+    }
+    return env.DB.prepare(
+      "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+    ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub);
+  });
+  /* All the payments and the status flip land together or not at all, so a
+     retry after a failure cannot book a build twice. */
+  stmts.push(env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
+  await env.DB.batch(stmts);
 
   return { already: false, amount };
 }
@@ -6815,12 +7628,22 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const submissionId = Number(body.submission_id);
   const kind = String(body.kind || "").toLowerCase();
   if (!submissionId) return json({ error: "submission_id required" }, 400, origin);
+  /* kind "phase": parts = [{phase, part: "deposit"|"remainder"}] — the boxes
+     ticked on the customer page. */
+  const parts = kind === "phase" ? (Array.isArray(body.parts) ? body.parts.slice(0, 40) : []) : null;
+  /* builds: [7, 38] — bill several of this customer's builds together, one
+     invoice per step. The first is submission_id; the rest ride along. */
+  const together = kind === "phase" && Array.isArray(body.builds)
+    ? body.builds.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 6) : null;
 
   let ctx;
   try {
-    ctx = await invoiceContext(env, submissionId, kind);
+    ctx = await invoiceContext(env, submissionId, kind, parts, together);
   } catch (e) {
-    return json({ error: e.message }, e.status || 400, origin);
+    /* code tells the page WHY there is nothing to bill — "paid_in_full" and
+       "deposit_covered" are not failures, and the CRM says so instead of
+       showing them as an error. */
+    return json({ error: e.message, code: e.code || null }, e.status || 400, origin);
   }
   const { sub, customer, split, invoice } = ctx;
 
@@ -6845,9 +7668,15 @@ async function handleCreateInvoice(request, env, origin, actor) {
      has not cleared and the balance is early. Warned about rather than
      blocked: there are real reasons to have both out, and guessing wrong here
      silently changes what a customer is charged. */
-  const { results: outstanding } = await env.DB.prepare(
-    "SELECT id, kind, amount, hosted_url FROM invoices WHERE submission_id = ? AND kind != ? AND status NOT IN ('paid','void','draft_failed')"
-  ).bind(sub.id, kind).all();
+  /* For a phase invoice every other open invoice counts, phase ones included:
+     the parts they cover are already refused above, but the old-style deposit
+     and balance invoices do not say which phases they cover. */
+  const billedSubs = ctx.builds || [sub.id];
+  const { results: openRows } = await env.DB.prepare(
+    "SELECT id, submission_id, kind, amount, hosted_url, lines FROM invoices WHERE customer_id = ? AND status NOT IN ('paid','void','draft_failed','uncollectible')"
+  ).bind(customer.id).all();
+  const outstanding = (openRows || []).filter((o) =>
+    (o.kind !== kind || kind === "phase") && invoiceSubs(o).some((n) => billedSubs.indexOf(n) > -1));
   (outstanding || []).forEach((o) => {
     const combined = Number(o.amount || 0) + fromCents(invoice.totalCents);
     warnings.push({
@@ -6865,9 +7694,21 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const shape = {
     kind, submission_id: sub.id, customer_id: customer.id,
     lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+    /* Phase invoices: which parts this collects, and the short name of it. */
+    covers: invoice.covers || null,
+    description: invoice.description || null,
+    builds: billedSubs.length > 1 ? billedSubs : null,
     amount: fromCents(invoice.totalCents),
     job_total: fromCents(invoice.jobTotalCents),
     already_paid: fromCents(invoice.paidCents),
+    /* The payments that were credited, so the preview can list them and a
+       wrongly-attributed one is visible before anything is sent. */
+    payments: (billedSubs.length > 1
+      ? (ctx.payRows || []).filter((p) => billedSubs.indexOf(Number(p.submission_id)) > -1)
+      : split.applied).map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
+                                     method: p.method, paid_at: p.paid_at, note: p.note || null,
+                                     submission_id: p.submission_id })),
+    balance_due: fromCents(Math.max(0, invoice.jobTotalCents - invoice.paidCents)),
     /* Returned on the preview too, so what the CRM shows before sending is
        the whole document and not just its numbers. */
     memo: invoice.memo,
@@ -6880,7 +7721,9 @@ async function handleCreateInvoice(request, env, origin, actor) {
   /* One live invoice of a kind per shed. Voiding is how you replace one, and
      requiring that makes "I pressed it twice last week" impossible to do by
      accident — Stripe's idempotency only covers a 24 hour window. */
-  const existing = await env.DB.prepare(
+  /* Phase invoices are many per shed by design; double-billing a part is
+     refused by part instead (openPhaseParts, in invoiceContext). */
+  const existing = kind === "phase" ? null : await env.DB.prepare(
     "SELECT id, status, hosted_url FROM invoices WHERE submission_id = ? AND kind = ? AND status NOT IN ('void','draft_failed')"
   ).bind(sub.id, kind).first();
   if (existing && !body.replace_voided) {
@@ -6905,6 +7748,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
     memo: invoice.memo,
     footer: invoice.footer,
     fields: invoice.customFields,
+    covers: invoice.covers || null,
   });
 
   let stripeCustomerId = customer.stripe_customer_id || null;
@@ -6925,11 +7769,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
       /* The memo is the build itemised the way the quote itemises it. Falls
          back to the old one-liner only if a submission has nothing to list. */
       description: invoice.memo ||
-        `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+        `${kind === "deposit" ? "Deposit" : kind === "phase" ? "Phase payment" : "Balance"} — shed order #${sub.id}`,
       footer: invoice.footer,
       customFields: invoice.customFields,
       idempotencyKey,
-      metadata: { submission_id: String(sub.id), customer_id: String(customer.id), kind },
+      metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
+                              billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
     });
   } catch (e) {
     return json({ error: e.message || "Stripe would not accept this invoice" }, 502, origin);
@@ -6942,12 +7787,20 @@ async function handleCreateInvoice(request, env, origin, actor) {
        amount, status, lines, created_at, created_by, sent_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
-         JSON.stringify(shape.lines), now, (actor && actor.name) || null, sentTo).run();
+         JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
                 sent_to: sentTo,
                 ...shape }, 200, origin);
+}
+
+/* The stored copy of the lines. A phase invoice carries what it collects on
+   the first line, so recordInvoicePaid can book the payment against exactly
+   those parts. No new column needed. */
+function storedLines(lines, covers, about) {
+  if (!covers || !covers.length || !lines.length) return lines;
+  return lines.map((l, i) => (i === 0 ? { ...l, covers, ...(about ? { about } : {}) } : l));
 }
 
 async function handleListInvoices(request, env, origin, customerId) {
@@ -7000,14 +7853,25 @@ async function handleVoidInvoice(request, env, origin, id) {
 // A single collection is sometimes split across two methods (e.g. part cash,
 // part Venmo) — the UI handles that by just logging two separate entries
 // rather than needing a special multi-method row.
-const PAYMENT_METHODS = ["cash", "check", "venmo", "zelle", "invoice2go", "card", "other"];
+const PAYMENT_METHODS = ["cash", "check", "cashiers_check", "venmo", "zelle", "invoice2go", "card", "other"];
+
+/* Dollars in, dollars stored — but always a whole number of cents. A typed
+   "1250.005" would otherwise sit in the table as a value no invoice can credit
+   exactly, and the balance would never quite reach zero. */
+function paymentAmount(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const cents = toCents(n);
+  return cents > 0 ? fromCents(cents) : null;
+}
+
 async function handleAddPayment(request, env, origin, customerId) {
   const body = await request.json().catch(() => ({}));
-  const amount = Number(body.amount);
+  const amount = paymentAmount(body.amount);
   const method = String(body.method || "").toLowerCase().trim();
   const note = String(body.note || "").slice(0, 500);
   const paidAt = body.paid_at ? String(body.paid_at).slice(0, 40) : new Date().toISOString();
-  if (!Number.isFinite(amount) || amount <= 0) return json({ error: "valid amount required" }, 400, origin);
+  if (amount == null) return json({ error: "valid amount required" }, 400, origin);
   if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
 
   await ensurePaymentsTable(env);
@@ -7027,12 +7891,21 @@ async function handleAddPayment(request, env, origin, customerId) {
     if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
   }
 
+  const tag = phaseTagFrom(body);
+  if (tag === "bad") return json({ error: "bad phase" }, 400, origin);
+  if (tag && !submissionId) return json({ error: "pick the build before the phase" }, 400, origin);
+  if (tag && !(await hasPhaseAlloc(env))) {
+    return json({ error: "phase tracking is not switched on yet (D1 migration 0001_payment_phases.sql)", code: "needs_migration" }, 409, origin);
+  }
+
   const now = new Date().toISOString();
-  const res = await env.DB.prepare(
-    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-  )
-    .bind(customerId, amount, method, note || null, paidAt, now, submissionId)
-    .run();
+  const res = tag
+    ? await env.DB.prepare(
+        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId, tag).run()
+    : await env.DB.prepare(
+        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId).run();
   return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
 }
 
@@ -7061,6 +7934,187 @@ async function handleSetPaymentSubmission(request, env, origin, paymentId) {
   await env.DB.prepare("UPDATE payments SET submission_id = ? WHERE id = ?")
     .bind(submissionId, paymentId).run();
   return json({ ok: true, id: paymentId, submission_id: submissionId }, 200, origin);
+}
+
+/* POST /admin/payments/:id — correct a payment someone typed in.
+ *
+ * Amount, method, date, note and build can all be fixed. Payments recorded
+ * FROM Stripe are refused on amount and method: they mirror money Stripe moved,
+ * and the invoice row they belong to is already marked paid, so editing the
+ * copy here would leave the two disagreeing with no way to notice. A Stripe
+ * mistake is a refund, done in Stripe. Its note and build can still be fixed.
+ *
+ * Nothing stores a running balance, so there is nothing else to update: every
+ * balance and every invoice is worked out from the payments table on demand. */
+async function handleUpdatePayment(request, env, origin, paymentId) {
+  const body = await request.json().catch(() => ({}));
+  await ensurePaymentsTable(env);
+  const pay = await env.DB.prepare("SELECT * FROM payments WHERE id = ?").bind(paymentId).first();
+  if (!pay) return json({ error: "no such payment" }, 404, origin);
+
+  const sets = [], args = [];
+  if (body.amount !== undefined || body.method !== undefined) {
+    if (pay.method === "stripe") {
+      return json({ error: "this payment came from Stripe — refund or adjust it in Stripe, not here" }, 409, origin);
+    }
+  }
+  if (body.amount !== undefined) {
+    const amount = paymentAmount(body.amount);
+    if (amount == null) return json({ error: "valid amount required" }, 400, origin);
+    sets.push("amount = ?"); args.push(amount);
+  }
+  if (body.method !== undefined) {
+    const method = String(body.method || "").toLowerCase().trim();
+    if (!PAYMENT_METHODS.includes(method)) return json({ error: "valid method required" }, 400, origin);
+    sets.push("method = ?"); args.push(method);
+  }
+  if (body.paid_at !== undefined) {
+    const paidAt = String(body.paid_at || "").slice(0, 40);
+    if (!paidAt || isNaN(new Date(paidAt).getTime())) return json({ error: "valid paid_at required" }, 400, origin);
+    sets.push("paid_at = ?"); args.push(paidAt);
+  }
+  if (body.note !== undefined) {
+    sets.push("note = ?"); args.push(String(body.note || "").slice(0, 500) || null);
+  }
+  if (body.submission_id !== undefined) {
+    let submissionId = null;
+    if (body.submission_id !== null && body.submission_id !== "") {
+      submissionId = Number(body.submission_id);
+      if (!Number.isFinite(submissionId)) return json({ error: "bad submission_id" }, 400, origin);
+      const owns = await env.DB.prepare(
+        "SELECT id FROM submissions WHERE id = ? AND customer_id = ?"
+      ).bind(submissionId, pay.customer_id).first();
+      if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
+    }
+    sets.push("submission_id = ?"); args.push(submissionId);
+  }
+  /* Which phase it paid for. Stripe rows can be re-tagged too: an old-style
+     deposit invoice knew nothing about phases. */
+  const tag = phaseTagFrom(body);
+  if (tag === "bad") return json({ error: "bad phase" }, 400, origin);
+  if (tag !== undefined) {
+    if (!(await hasPhaseAlloc(env))) {
+      return json({ error: "phase tracking is not switched on yet (D1 migration 0001_payment_phases.sql)", code: "needs_migration" }, 409, origin);
+    }
+    const willHaveBuild = body.submission_id !== undefined ? (body.submission_id !== null && body.submission_id !== "") : pay.submission_id != null;
+    if (tag && !willHaveBuild) return json({ error: "pick the build before the phase" }, 400, origin);
+    sets.push("phase_alloc = ?"); args.push(tag);
+  }
+  if (!sets.length) return json({ error: "nothing to change" }, 400, origin);
+
+  await env.DB.prepare("UPDATE payments SET " + sets.join(", ") + " WHERE id = ?")
+    .bind(...args, paymentId).run();
+  const row = await env.DB.prepare(
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE id = ?"
+  ).bind(paymentId).first();
+  return json({ ok: true, payment: row }, 200, origin);
+}
+
+/* GET /admin/customers/:id/balances — where every billable build stands.
+ *
+ * Total (tax included, from the same quoteLines() the quote and the invoice
+ * use), the payments credited to it, and what is left. This is the figure the
+ * CRM prints on the Stripe button, so it is computed here, once, by the same
+ * code that builds the invoice — the page never does its own arithmetic.
+ *
+ * Read-only. Works out everything from the payments table on every call, so
+ * adding, editing, reassigning or deleting a payment changes it immediately. */
+async function handleCustomerBalances(request, env, origin, customerId) {
+  await ensurePaymentsTable(env);
+  await ensureInvoicesTable(env);
+  const { results: subs } = await env.DB.prepare(
+    "SELECT id, status, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE customer_id = ?"
+  ).bind(customerId).all();
+  const { results: payRows } = await env.DB.prepare(
+    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+  ).bind(customerId).all();
+  const { results: invRows } = await env.DB.prepare(
+    "SELECT id, submission_id, kind, amount, status, hosted_url, lines FROM invoices WHERE customer_id = ? AND status NOT IN ('void','draft_failed')"
+  ).bind(customerId).all();
+  const phaseTracking = await hasPhaseAlloc(env);
+
+  const money = (c) => fromCents(c);
+  const builds = [];
+  const built = [];
+  (subs || []).forEach((sub) => {
+    let details = {};
+    try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+    let bd = null;
+    try { bd = quoteLines(details.redline, adjustmentsOf(sub)); } catch (e) { bd = null; }
+    if (!bd || !bd.rows || !bd.rows.length) return;          // consult / unpriced: nothing to bill
+    const split = splitPayments(payRows || [], sub.id);
+    const sum = balanceSummary(bd, split.applied);
+    const open = (invRows || []).filter((i) => invoiceSubs(i).indexOf(Number(sub.id)) > -1 && i.status !== "paid");
+    const ps = phaseStatus(bd, split.applied, openPhaseParts(invRows, sub.id));
+    const cents = (x) => ({ amount: money(x.amountCents), paid: money(x.paidCents),
+                            remaining: money(x.remainingCents), open_invoice: x.openInvoice });
+    built.push({ sub: sub.id, bd, payments: split.applied, name: buildName(details.config) || "Order #" + sub.id,
+                 openParts: openPhaseParts(invRows, sub.id) });
+    builds.push({
+      submission_id: sub.id,
+      status: sub.status,
+      /* "10x20 Gable / A-Frame" — how it is named when billed with another. */
+      name: buildName(details.config) || null,
+      job_total: money(sum.jobTotalCents),
+      deposit_total: money(sum.depositTotalCents),
+      paid: money(sum.paidCents),
+      balance_due: money(sum.balanceCents),
+      deposit_due: money(sum.depositDueCents),
+      overpaid: money(sum.overpaidCents),
+      paid_in_full: sum.paidInFull,
+      payments: split.applied.map((p) => {
+        const a = parseAlloc(p.phase_alloc);
+        const used = (ps.byPayment.find((e) => e.payment === p) || { parts: [] }).parts;
+        return { id: p.id, amount: money(toCents(p.amount)), method: p.method, paid_at: p.paid_at, note: p.note || null,
+                 phase: a && a.phase ? a.phase : null,
+                 /* Where the money actually landed, tagged or not. */
+                 applied_to: used.map((u) => ({ phase: u.phase, part: u.part, amount: money(u.cents) })) };
+      }),
+      /* Per phase: the 30% deposit and the rest, each with what is paid and
+         what is left, and the parts the CRM suggests billing next. */
+      phases: ps.phases.map((p) => ({ phase: p.phase, kind: p.kind, name: p.name, total: money(p.totalCents),
+                                      deposit: cents(p.deposit), remainder: cents(p.remainder) })),
+      suggested: ps.suggested,
+      /* Sent on Stripe and not paid yet. Not subtracted — it is not money in
+         hand — but shown, because a check marked while a Stripe invoice for
+         the same thing is still open is how a customer pays twice. */
+      open_invoices: open.map((i) => ({ id: i.id, kind: i.kind, amount: Number(i.amount || 0),
+                                        status: i.status, hosted_url: i.hosted_url || null,
+                                        builds: invoiceSubs(i).length > 1 ? invoiceSubs(i) : null })),
+    });
+  });
+  const unassigned = splitPayments(payRows || [], -1).unassigned;
+
+  /* ?together=7,38 — those builds billed as one: matching phases side by side
+     (concrete with concrete, shed with shed), each build's own amounts under
+     them, and what to bill next across all of them. */
+  let together = null;
+  const want = (new URL(request.url).searchParams.get("together") || "")
+    .split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const chosen = want.map((n) => built.find((b) => Number(b.sub) === n)).filter(Boolean);
+  if (chosen.length > 1) {
+    const ts = togetherStatus(chosen);
+    const cents = (x) => ({ amount: money(x.amountCents), paid: money(x.paidCents),
+                            remaining: money(x.remainingCents), open_invoice: x.openInvoice });
+    together = {
+      builds: chosen.map((b) => ({ submission_id: b.sub, name: b.name })),
+      phases: ts.groups.map((g) => ({
+        phase: g.phase, kind: g.kind, name: g.name,
+        items: g.items.map((i) => ({ submission_id: i.sub, build: i.build, phase: i.phase, name: i.name,
+                                     total: money(i.totalCents), deposit: cents(i.deposit), remainder: cents(i.remainder) }))
+      })),
+      suggested: ts.suggested,
+    };
+  }
+  return json({
+    builds,
+    together,
+    phase_tracking: phaseTracking,
+    unassigned: {
+      count: unassigned.length,
+      total: money(unassigned.reduce((t, p) => t + toCents(p.amount), 0)),
+    },
+  }, 200, origin);
 }
 
 async function handleDeletePayment(request, env, origin, id) {
@@ -8422,6 +9476,8 @@ const SHED_LIMITS = {
    ever computed one for a depth the server did not know was on offer.
    Served with the limits, and the designer renders exactly these. */
 const PORCH_DEPTHS_FT = [4, 6, 8, 10];
+/* Shortest partial porch on offer, in feet. Served with the limits. */
+const PORCH_MIN_LEN_FT = 4;
 function validateShedConfig(raw) {
   raw = raw && typeof raw === "object" ? raw : {};
   const lim = (k) => [SHED_LIMITS[k].min, SHED_LIMITS[k].max, SHED_LIMITS[k].def];
@@ -8437,6 +9493,11 @@ function validateShedConfig(raw) {
     ovh: clampNum(raw.ovh, 0, 24, 4),
     porchLoc: enumOr(raw.porchLoc, SHED_PORCHLOC, "none"),
     porchDepth: clampNum(raw.porchDepth, 0, 20, 0),
+    /* Partial porch: its length along the wall and its offset from the
+       wall's start corner, in feet. 0 = full length (every design saved
+       before this existed), so a missing field prices exactly as before. */
+    porchLen: clampNum(raw.porchLen, 0, 40, 0),
+    porchOff: clampNum(raw.porchOff, 0, 40, 0),
     porchTier: typeof raw.porchTier === "string" ? raw.porchTier.slice(0, 60) : "standard",
     /* Whitelisted, not passed through. A client-supplied deck id now moves
        money, so anything not in the rate table has to land on the free
@@ -8470,10 +9531,17 @@ function validateShedConfig(raw) {
 // whatever depth is currently selected (the two moments the porch page
 // actually shows a price for).
 function computeOptionPrices(cfg) {
-  const encEat = cfg.style === "gable" && cfg.porchLoc !== "none" && cfg.porchDepth > 0
+  const porchPartial = cfg.style === "gable" && porchIsPartialFor(cfg.porchLoc, cfg.porchDepth, cfg.porchLen, cfg.w, cfg.l);
+  const encEat = cfg.style === "gable" && cfg.porchLoc !== "none" && cfg.porchDepth > 0 && !porchPartial
     ? (cfg.porchLoc === "front" ? { w: 0, l: cfg.porchDepth } : { w: cfg.porchDepth, l: 0 })
     : { w: 0, l: 0 };
-  const encW = Math.max(6, cfg.w - encEat.w), encD = Math.max(6, cfg.l - encEat.l);
+  let encW = Math.max(6, cfg.w - encEat.w), encD = Math.max(6, cfg.l - encEat.l);
+  /* A partial porch is a notch, not a strip: the area-billed lines below read
+     encW * encD, so fold the notch into encD rather than teach each one. */
+  if (porchPartial) {
+    const notch = cfg.porchDepth * porchLenFtFor(cfg.porchLoc, cfg.porchDepth, cfg.porchLen, cfg.w, cfg.l);
+    encD = Math.max(0, (encW * encD - notch) / encW);
+  }
 
   const windows = Object.assign({}, SELL.windows);
 
@@ -8502,22 +9570,40 @@ function computeOptionPrices(cfg) {
   const curTier = cfg.porchTier || "standard";
   const maxPorchFront = Math.max(0, cfg.l - 6);
   const maxPorchSide = Math.max(0, cfg.w - 6);
+  /* Depth buttons price at THIS porch's length: the whole wall for a
+     full-length porch, porchLen for a partial one. */
+  const lenFor = (loc) => porchLenFtFor(loc, 1, cfg.porchLoc === loc ? cfg.porchLen : 0, cfg.w, cfg.l);
+  const partFor = (loc) => cfg.porchLoc === loc && porchPartial;
   const frontDepths = {};
   PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchFront).forEach((ft) => {
-    const line = porchLineFor("front", ft, curTier, cfg.w);
+    const line = porchLineFor("front", ft, curTier, lenFor("front"), partFor("front"));
     if (line) frontDepths[ft] = line.price;
   });
   const sideDepths = {};
   PORCH_DEPTHS_FT.filter((ft) => ft <= maxPorchSide).forEach((ft) => {
-    const line = porchLineFor("side", ft, "standard", cfg.l);
+    const line = porchLineFor("side", ft, "standard", lenFor("side"), partFor("side"));
     if (line) sideDepths[ft] = line.price;
   });
   const frontTiers = {};
   if (cfg.porchLoc === "front" && cfg.porchDepth > 0) {
     Object.keys(SELL.porchFrontSqft).forEach((tier) => {
-      const line = porchLineFor("front", cfg.porchDepth, tier, cfg.w);
+      const line = porchLineFor("front", cfg.porchDepth, tier, lenFor("front"), partFor("front"));
       if (line) frontTiers[tier] = line.price;
     });
+  }
+  /* Length buttons: every whole-foot length from PORCH_MIN_LEN_FT up to the
+     wall, priced at the CURRENT depth. The full-wall entry is keyed "full"
+     so the client never has to know which number means "the whole wall". */
+  const lengths = {};
+  if ((cfg.porchLoc === "front" || cfg.porchLoc === "side") && cfg.porchDepth > 0) {
+    const span = cfg.porchLoc === "front" ? cfg.w : cfg.l;
+    const tier = cfg.porchLoc === "front" ? curTier : "standard";
+    for (let n = PORCH_MIN_LEN_FT; n < span; n++) {
+      const line = porchLineFor(cfg.porchLoc, cfg.porchDepth, tier, n, true);
+      if (line) lengths[n] = line.price;
+    }
+    const full = porchLineFor(cfg.porchLoc, cfg.porchDepth, tier, span, false);
+    if (full) lengths.full = full.price;
   }
   /* Decking, priced for THIS porch. The designer's deck buttons used to carry
      no price because there was no charge to carry; the charge moved here off
@@ -8526,7 +9612,7 @@ function computeOptionPrices(cfg) {
      rather than having to know which ids are free. */
   const porchDeck = {};
   if (cfg.porchLoc === "front" || cfg.porchLoc === "side") {
-    const span = cfg.porchLoc === "side" ? cfg.l : cfg.w;
+    const span = porchLenFtFor(cfg.porchLoc, cfg.porchDepth, cfg.porchLen, cfg.w, cfg.l);
     Object.keys(SELL.porchDeckSqft).forEach((id) => {
       const line = porchDeckLineFor(cfg.porchLoc, cfg.porchDepth, id, span);
       porchDeck[id] = line ? line.price : 0;
@@ -8609,7 +9695,7 @@ function computeOptionPrices(cfg) {
     /* The sizes the client is allowed to build, and the porch depths it may
        offer. Served rather than duplicated in the designer — see SHED_LIMITS
        and PORCH_DEPTHS_FT. */
-    limits: Object.assign({ porchDepths: PORCH_DEPTHS_FT.slice() }, SHED_LIMITS),
+    limits: Object.assign({ porchDepths: PORCH_DEPTHS_FT.slice(), porchMinLen: PORCH_MIN_LEN_FT }, SHED_LIMITS),
     dormers: Object.assign({}, SELL.dormers),
     windows: windows,
     barLedge: barLedge,
@@ -8628,7 +9714,7 @@ function computeOptionPrices(cfg) {
     shelving: shelving,
     addons: addons,
     porch: { frontDepths: frontDepths, sideDepths: sideDepths, frontTiers: frontTiers,
-             deck: porchDeck }
+             deck: porchDeck, lengths: lengths }
   };
 }
 
@@ -10379,6 +11465,20 @@ export default {
         const id = Number(path.slice("/admin/customers/".length, -"/payments".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleAddPayment(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/balances") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const cid = Number(path.split("/")[3]);
+        if (!cid) return json({ error: "bad customer id" }, 400, origin);
+        return await handleCustomerBalances(request, env, origin, cid);
+      }
+      /* Exactly /admin/payments/<id> — the /submission route above is matched
+         first, and anything else under this prefix falls through. */
+      if (/^\/admin\/payments\/\d+$/.test(path) && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const pid = Number(path.slice("/admin/payments/".length));
+        if (!pid) return json({ error: "Invalid id" }, 400, origin);
+        return await handleUpdatePayment(request, env, origin, pid);
       }
       if (path.startsWith("/admin/payments/") && request.method === "DELETE") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

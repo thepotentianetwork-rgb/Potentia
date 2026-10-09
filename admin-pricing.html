@@ -250,6 +250,7 @@ var SELL_DEFAULTS = {
     "Posts & Beam, Finished Ceiling": 28, "Posts, Beams & Composite Floor": 35
   },
   porchSideSqft: { "standard": 8.33 },
+  porchPartial: { flat: 0, min: 0 },
   porchDeckSqft: { "none": 0, "pt": 0, "composite": 8.50 },
   foundation: { pad: 3000, blocks: 0, existing: 0 },
   foundationFinish: { plain: 0, coated: 300 },
@@ -329,6 +330,14 @@ var TIER_GROUPS = [
       { key: 'break1', label: 'Break 1', unit: 'sq ft' },
       { key: 'break2', label: 'Break 2', unit: 'sq ft' },
       { key: 'maxSqft', label: 'Not offered past', unit: 'sq ft' }
+    ]
+  },
+  {
+    key: 'porchPartial', label: 'Partial Porch — Add-on and Minimum',
+    note: 'Applies only to a porch SHORTER than its wall (e.g. a 4\u2019 \u00d7 4\u2019 side porch). It is priced at the Front/Side porch rate above \u00d7 depth \u00d7 its own length, then this flat amount is added and the result is raised to the minimum. 0 = off for both, which is the shipped setting: no partial-porch numbers have been set yet. Full-length porches are not affected.',
+    fields: [
+      { key: 'flat', label: 'Added to every partial porch', unit: '$', prefix: true },
+      { key: 'min', label: 'Minimum partial porch price', unit: '$', prefix: true }
     ]
   },
   {
