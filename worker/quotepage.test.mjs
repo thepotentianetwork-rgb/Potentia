@@ -485,9 +485,11 @@ test('the before figure is struck through only when the price came down', () => 
   const downHtml = down.page.priceBox(down.bd, down.bd.total);
   assert.match(downHtml, /price-was is-saving/, 'a discount strikes the old higher price');
 
+  /* Nando, 9 Oct 2026: "If I edit line pricing and up the price, don't show
+     the original price just change it." */
   const up = withAdjust(NO_PROMO(), [{ kind: 'amount', value: 500 }]);
   const upHtml = up.page.priceBox(up.bd, up.bd.total);
-  assert.match(upHtml, /Before adjustment/, 'a rise still shows what it was');
+  assert.ok(!/Before|Adjust|price-was/i.test(upHtml), 'a rise shows only the new total');
   assert.ok(!/is-saving/.test(upHtml), 'but does not strike the cheaper figure through');
   assert.ok(!/You save/.test(upHtml));
   assert.ok(!/price-box-deal/.test(upHtml));

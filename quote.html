@@ -375,17 +375,19 @@ function taxBreakdown(redline) {
    staff discount — the box reads "Before discounts" (regular prices plus
    anything added, tax included) and "You save" the Discounts total with its
    tax, so before - save = Total Due. A quote whose only change is a price
-   rise still shows "Before adjustment" with no saving. The cash, check & bank
-   transfer discount is not counted here; it has its own box below. */
+   rise shows just the Total Due: no "Before adjustment", no old figure
+   (Nando, 9 Oct 2026: "If I edit line pricing and up the price, don't show
+   the original price just change it"). The cash, check & bank transfer
+   discount is not counted here; it has its own box below. */
 function priceBox(bd, totalDue) {
   var hasDisc = !!(bd && bd.discounts && bd.discounts.length);
-  var hasAdjust = hasDisc || !!(bd && bd.adjust);
+  var hasAdjust = hasDisc;
   var saved = (bd && bd.savings > 0.005) ? bd.savings : 0;
   return '<div class="doc-section">'
     + '<div class="price-box' + (saved ? ' price-box-deal' : '') + '">'
     +   '<div class="price-side">'
-    +     '<span class="price-label">Total Due' + (hasDisc ? ' After Discounts' : hasAdjust ? ' After Adjustment' : '') + ' (Tax Included)</span>'
-    +     (hasAdjust ? '<span class="price-was' + (saved ? ' is-saving' : '') + '">' + (hasDisc ? 'Before discounts ' : 'Before adjustment ')
+    +     '<span class="price-label">Total Due' + (hasDisc ? ' After Discounts' : '') + ' (Tax Included)</span>'
+    +     (hasAdjust ? '<span class="price-was' + (saved ? ' is-saving' : '') + '">' + 'Before discounts '
             + money2(bd.totalBefore) + '</span>' : '')
     +   '</div>'
     +   '<div class="price-side price-side-right">'
@@ -440,20 +442,17 @@ function buildBreakdown(bd) {
   var rowsHtml = bd.rows.map(function (r) {
     var html = '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
       + '<span class="br-amt">' + money2(reg(r)) + '</span></div>';
-    /* A line staff re-priced for this job (site seen): the old figure, and
-       the reason they gave, so the change is not a silent new number. A
-       re-price is the job's price, not a discount, so it stays here. */
-    if (r.override) {
-      html += '<div class="br-row br-promo"><span class="br-label">&nbsp;&nbsp;Price set for this job'
-        + (r.override.note ? ' \u2014 ' + esc(r.override.note) : '') + '</span>'
-        + '<span class="br-amt"><span class="br-was">' + money2(r.override.was) + '</span></span></div>';
-    }
+    /* A line staff re-priced (Nando, 9 Oct 2026: "If I edit line pricing and
+       up the price, don't show the original price just change it. Only when
+       I lower it should it explain why."): raised, the row is simply at the
+       new price; lowered, the row is at its old price and the cut is a line
+       in the Discounts section with the staff's reason. Nothing here. */
     // Sub-lines (e.g. Electrical inside the Shed phase) are shown indented,
     // already-included-in-the-row-above dollars — not their own deposit
     // phase, just a customer-facing breakout of what's in that total.
     /* Nando, 9 Oct 2026: concrete and sprinkler relocation "may vary
        depending on conditions of the site". Said once, under the phase. */
-    if (r.estimate && !r.override) {
+    if (r.estimate) {
       html += '<div class="br-row br-inc br-est">Estimate. Final price may vary based on site conditions.</div>';
     }
     (r.regularSubLines || r.subLines || []).forEach(function (s) {
@@ -479,14 +478,17 @@ function buildBreakdown(bd) {
   var discounts = bd.discounts || [];
   var charges = bd.charges || [];
   var regularSub = bd.regularSubtotal != null ? bd.regularSubtotal : bd.subtotal;
-  rowsHtml += '<div class="br-row br-sum"><span class="br-label">Subtotal' + (discounts.length ? ' at regular prices' : '') + ' (before tax)</span><span class="br-amt">' + money2(regularSub) + '</span></div>';
-  /* Anything that ADDS (custom work, a percentage up) is a charge, not a
-     discount: its own line, ahead of the discounts. Not hardcoded
-     "Discount": a figure that goes up must not read as one. */
+  /* Something priced in by staff with a note saying what it is (custom
+     glass, removing an old shed) is an item they are buying: a line like any
+     other, above the subtotal. A plain price rise is not a line at all; it is
+     already in the phase prices (quoteLines folds it), so the quote never
+     says "adjusted" or shows what a price was before it went up. */
   charges.forEach(function (c) {
     rowsHtml += '<div class="br-row br-charge"><span class="br-label">' + esc(c.label) + '</span>'
-      + '<span class="br-amt">+' + money2(c.amt) + '</span></div>';
+      + '<span class="br-amt">' + money2(c.amt) + '</span></div>';
+    regularSub += c.amt;
   });
+  rowsHtml += '<div class="br-row br-sum"><span class="br-label">Subtotal' + (discounts.length ? ' at regular prices' : '') + ' (before tax)</span><span class="br-amt">' + money2(regularSub) + '</span></div>';
   if (discounts.length) {
     rowsHtml += '<div class="br-row br-dischead"><span class="br-label">Discounts</span><span class="br-amt"></span></div>';
     discounts.forEach(function (d) {
@@ -494,8 +496,8 @@ function buildBreakdown(bd) {
         + '<span class="br-amt">' + money2s(d.amt) + '</span></div>';
     });
   }
-  if (discounts.length || charges.length) {
-    rowsHtml += '<div class="br-row br-sum"><span class="br-label">' + (discounts.length ? 'Subtotal after discounts' : 'Adjusted Subtotal') + ' (before tax)</span>'
+  if (discounts.length) {
+    rowsHtml += '<div class="br-row br-sum"><span class="br-label">Subtotal after discounts (before tax)</span>'
       + '<span class="br-amt">' + money2(bd.adjustedSubtotal) + '</span></div>';
   }
   rowsHtml += '<div class="br-row br-tax"><span class="br-label">Sales Tax (' + PCT_LABEL(TAX_RATE) + '%)</span><span class="br-amt">' + money2(bd.tax) + '</span></div>';

@@ -4320,7 +4320,9 @@ async function handleTrack(request, env, origin, token) {
        things both called a phase is the sort of thing a customer reads twice
        and then rings about. The number is dropped; the grouping stays. */
     label: String(r.label || "").replace(/^Phase \d+ \u2014 /, ""),
-    amount: Number(r.amt) || 0,
+    /* With any plain price rise already in it (quoteLines foldAmt), as the
+       quote shows it: a rise is never a line of its own (Nando, 9 Oct 2026). */
+    amount: (Number(r.amt) || 0) + (Number(r.foldAmt) || 0),
     lines: (r.subLines || []).map(line)
   })) : [];
 
@@ -4345,6 +4347,9 @@ async function handleTrack(request, env, origin, token) {
     /* A percentage is a share of the pre-adjustment subtotal, which is the
        figure quoteLines applies it to. */
     const amt = a.kind === "percent" ? preAdjust * (v / 100) : v;
+    /* Added with no note saying what it buys: a plain price rise, already in
+       the phase amounts above (Nando, 9 Oct 2026). */
+    if (amt > 0 && !String(a.note || "").trim()) return;
     if (amt > 0) {
       customLines.push({
         /* The note is the only record of WHAT the money was for. With none
