@@ -1,4 +1,9 @@
-/* CREDIT CARD SURCHARGE ON STRIPE BILLS (Nando, 9 Oct 2026).
+/* CREDIT CARD SURCHARGE ON STRIPE BILLS (Nando, 9 Oct 2026) — RETIRED.
+ *
+ * Stripe-hosted invoices cannot surcharge, so the switch is pinned off in
+ * pricing.js (CARD_FEE_AVAILABLE) and the cash discount replaced it
+ * (cashdiscount.test.mjs). The library pieces stay and are still checked here;
+ * the worker tests now prove that no saved setting can put a fee on a bill.
  *
  * Real worker, SQLite standing in for D1, Stripe stubbed — no key, no network,
  * no real invoice. Covers: the math, bank vs card bills, what Stripe is sent,
@@ -83,13 +88,12 @@ test('3% of the amount billed, rounded to the cent; never more than 3%', () => {
   assert.equal(cardFeeLabel(0.03), 'Credit card surcharge (3%) \u2014 not applied to bank transfer (ACH), check or cashier\u2019s check');
 });
 
-test('settings: off by default, capped at 3, junk is off', () => {
+test('settings: retired — off whatever the saved config says', () => {
   resetConfig();
   assert.deepEqual(cardFeeSettings(), { enabled: false, percent: 3, rate: 0 });
-  SELL.cardFee = { enabled: 1, percent: 2.5 }; assert.equal(cardFeeSettings().rate, 0.025);
+  SELL.cardFee = { enabled: 1, percent: 2.5 }; assert.equal(cardFeeSettings().enabled, false); assert.equal(cardFeeSettings().rate, 0);
   SELL.cardFee = { enabled: 1, percent: 9 };   assert.equal(cardFeeSettings().percent, 3);
   SELL.cardFee = { enabled: 'yes', percent: 3 }; assert.equal(cardFeeSettings().enabled, false);
-  SELL.cardFee = { enabled: 1, percent: 0 };   assert.equal(cardFeeSettings().enabled, false);
   resetConfig();
 });
 
@@ -121,133 +125,24 @@ test('payment methods: both when off; one or the other when on', () => {
 });
 
 /* ── through the worker ───────────────────────────────────────────────── */
-test('surcharge OFF: preview and Stripe exactly as before', async () => {
-  const { env } = setup({ enabled: 0, percent: 3 });
-  const t = await token(env); const s = stubStripe();
+test('a saved "enabled: 1" surcharge never reaches a bill, a payment or the quote', async () => {
+  const { env, db } = setup(ON);
+  const t = await token(env); const s = stubStripe(() => ({ ok: true, status: 200,
+    json: async () => ({ id: 'in_1', status: 'paid', amount_paid: Math.round(BD.depositTotal * 100) }) }));
   try {
     const p = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true, pay_by: 'card' }, t);
-    assert.equal(p.data.card_fee, null); assert.equal(p.data.fee, 0); assert.equal(p.data.pay_by, null);
+    assert.equal(p.data.card_fee, null); assert.equal(p.data.pay_by, null);
     assert.equal(p.data.amount, Math.round(BD.depositTotal * 100) / 100);
+    assert.deepEqual(p.data.payment_methods, STRIPE_PAYMENT_METHODS);
+    assert.ok(!p.data.lines.some((l) => /surcharge/i.test(l.label)));
     const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', pay_by: 'card' }, t);
     assert.equal(r.status, 200);
     const inv = s.calls.find((c) => c.path === '/v1/invoices');
     assert.equal(inv.params['payment_settings[payment_method_types][0]'], 'us_bank_account');
     assert.equal(inv.params['payment_settings[payment_method_types][1]'], 'card');
-    assert.ok(!s.calls.some((c) => /surcharge/.test(c.params.description || '')));
+    assert.ok(!s.calls.some((c) => /surcharge/i.test(JSON.stringify(c.params))));
+    assert.equal(db.prepare('SELECT fee_cents FROM invoices').get().fee_cents, 0);
+    const q = await api(env, 'GET', '/admin/submissions/7', null, t);
+    assert.equal(q.data.submission.card_fee_percent, 0);
   } finally { s.restore(); }
-});
-
-test('surcharge ON: preview offers both bills; the default is bank with no fee', async () => {
-  const { env } = setup(ON);
-  const t = await token(env); const s = stubStripe();
-  try {
-    const p = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true }, t);
-    assert.equal(s.calls.length, 0, 'preview never calls Stripe');
-    assert.equal(p.data.pay_by, 'bank'); assert.equal(p.data.fee, 0);
-    assert.deepEqual(p.data.payment_methods, ['us_bank_account']);
-    const base = p.data.card_fee.amount_without_fee;
-    assert.equal(p.data.amount, base);
-    assert.equal(p.data.card_fee.fee, Math.round(base * 3) / 100);
-    assert.equal(p.data.card_fee.amount_with_fee, Math.round((base + p.data.card_fee.fee) * 100) / 100);
-    assert.ok(p.data.card_fee.lines_with_fee.at(-1).fee);
-    assert.match(p.data.footer, /bank transfer \(ACH\) with no fee/);
-  } finally { s.restore(); }
-});
-
-test('surcharge ON, card bill: card only, fee line sent to Stripe, fee stored', async () => {
-  const { env, db } = setup(ON);
-  const t = await token(env); const s = stubStripe();
-  try {
-    const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', pay_by: 'card' }, t);
-    assert.equal(r.status, 200, JSON.stringify(r.data));
-    const inv = s.calls.find((c) => c.path === '/v1/invoices');
-    assert.equal(inv.params['payment_settings[payment_method_types][0]'], 'card');
-    assert.equal(inv.params['payment_settings[payment_method_types][1]'], undefined);
-    assert.equal(inv.params['automatic_tax[enabled]'], 'false', 'no Stripe tax on top');
-    const items = s.calls.filter((c) => c.path === '/v1/invoiceitems');
-    const feeItem = items.at(-1);
-    assert.match(feeItem.params.description, /^Credit card surcharge \(3%\)/);
-    const sum = items.reduce((t2, c) => t2 + Number(c.params.amount), 0);
-    const row = db.prepare('SELECT amount, fee_cents FROM invoices').get();
-    assert.equal(sum, Math.round(row.amount * 100), 'Stripe items add up to what we stored');
-    assert.equal(Number(feeItem.params.amount), row.fee_cents);
-    assert.equal(row.fee_cents, Math.round(BD.depositTotal * 100 * 0.03));
-  } finally { s.restore(); }
-});
-
-test('card bill paid: the build is credited the pre-fee amount; the fee is kept apart', async () => {
-  const { env, db } = setup(ON);
-  const t = await token(env); let s = stubStripe();
-  let total;
-  try {
-    const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', pay_by: 'card' }, t);
-    total = Math.round(r.data.amount * 100);
-  } finally { s.restore(); }
-  s = stubStripe(() => ({ ok: true, status: 200, json: async () => ({ id: 'in_1', status: 'paid', amount_paid: total, hosted_invoice_url: 'x' }) }));
-  try {
-    const row = db.prepare('SELECT id, fee_cents FROM invoices').get();
-    const sync = await api(env, 'POST', '/admin/invoices/' + row.id + '/sync', {}, t);
-    assert.equal(sync.data.status, 'paid', JSON.stringify(sync.data));
-    const pays = db.prepare('SELECT amount, method, note FROM payments').all();
-    assert.equal(pays.length, 1);
-    assert.equal(Math.round(pays[0].amount * 100), total - row.fee_cents, 'only the deposit itself is credited');
-    assert.equal(Math.round(pays[0].amount * 100), Math.round(BD.depositTotal * 100));
-    assert.match(pays[0].note, /card surcharge, kept separately/);
-    assert.equal(db.prepare('SELECT fee_paid_cents FROM invoices').get().fee_paid_cents, row.fee_cents);
-    /* Balance math: the deposit is covered exactly — not over by the fee. */
-    const bal = balanceSummary(BD, pays);
-    assert.equal(bal.depositDueCents, 0);
-    assert.equal(bal.balanceCents, Math.round(BD.total * 100) - Math.round(BD.depositTotal * 100));
-    assert.equal(bal.overpaidCents, 0);
-    /* And a second check changes nothing (idempotent). */
-    const again = await api(env, 'POST', '/admin/invoices/' + row.id + '/sync', {}, t);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM payments').get().n, 1, JSON.stringify(again.data));
-  } finally { s.restore(); }
-});
-
-test('bank bill paid with the surcharge on: credited in full, no fee', async () => {
-  const { env, db } = setup(ON);
-  const t = await token(env); let s = stubStripe();
-  let total;
-  try {
-    const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
-    total = Math.round(r.data.amount * 100);
-  } finally { s.restore(); }
-  s = stubStripe(() => ({ ok: true, status: 200, json: async () => ({ id: 'in_1', status: 'paid', amount_paid: total, hosted_invoice_url: 'x' }) }));
-  try {
-    const row = db.prepare('SELECT id, fee_cents FROM invoices').get();
-    assert.equal(row.fee_cents, 0);
-    await api(env, 'POST', '/admin/invoices/' + row.id + '/sync', {}, t);
-    const p = db.prepare('SELECT amount, note FROM payments').get();
-    assert.equal(Math.round(p.amount * 100), total);
-    assert.doesNotMatch(p.note, /surcharge/);
-  } finally { s.restore(); }
-});
-
-test('phase bill by card: the parts are booked pre-fee, so phase status is not overpaid', async () => {
-  const { env, db } = setup(ON);
-  const t = await token(env); let s = stubStripe();
-  let r;
-  try {
-    r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'phase', parts: [{ phase: 1, part: 'deposit' }], pay_by: 'card' }, t);
-    assert.equal(r.status, 200, JSON.stringify(r.data));
-  } finally { s.restore(); }
-  const total = Math.round(r.data.amount * 100);
-  s = stubStripe(() => ({ ok: true, status: 200, json: async () => ({ id: 'in_1', status: 'paid', amount_paid: total, hosted_invoice_url: 'x' }) }));
-  try {
-    const row = db.prepare('SELECT id, fee_cents FROM invoices').get();
-    await api(env, 'POST', '/admin/invoices/' + row.id + '/sync', {}, t);
-    const p = db.prepare('SELECT amount FROM payments').get();
-    assert.equal(Math.round(p.amount * 100), total - row.fee_cents);
-    assert.equal(Math.round(p.amount * 100), Math.round(BD.rows[0].deposit * 100));
-  } finally { s.restore(); }
-});
-
-test('the quote endpoint carries the disclosure rate only while the surcharge is on', async () => {
-  for (const [fee, want] of [[ON, 3], [{ enabled: 0, percent: 3 }, 0]]) {
-    const { env } = setup(fee);
-    const t = await token(env);
-    const r = await api(env, 'GET', '/admin/submissions/7', null, t);
-    assert.equal(r.data.submission.card_fee_percent, want);
-  }
 });

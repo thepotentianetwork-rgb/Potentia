@@ -59,6 +59,9 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .price-was.is-saving{text-decoration:line-through}
 .price-save{font-family:'DM Mono',monospace;font-size:13px;letter-spacing:0.08em;color:var(--sp-green);font-weight:400;text-transform:uppercase}
 .price-box-deal{border-color:var(--sp-green);background:rgba(61,220,151,0.06)}
+.price-cash{margin-top:10px;border-color:var(--sp-green);background:rgba(61,220,151,0.06)}
+.br-cashdisc{color:var(--sp-green)}
+.price-cashline{display:block;font-size:13px;color:var(--sp-green);margin-top:4px}
 
 .br-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--dim);font-size:15px}
 .br-row:last-child{border-bottom:none}
@@ -377,7 +380,27 @@ function priceBox(bd, totalDue) {
     +     (saved ? '<span class="price-save">You save ' + money2(saved) + '</span>' : '')
     +   '</div>'
     + '</div>'
+    + cashPriceBox(bd)
     + '</div>';
+}
+
+/* Quoted at regular (card) prices: what paying any other way comes to, and the
+   plain statement of why (Nando, 9 Oct 2026). Nothing at all on a quote priced
+   before the discount existed. */
+function cashPriceBox(bd) {
+  var cd = bd && bd.cashDiscount;
+  if (!cd) return '';
+  return '<div class="price-box price-cash">'
+    +   '<div class="price-side">'
+    +     '<span class="price-label">Pay by cash, check, cashier\u2019s check or bank transfer (ACH)</span>'
+    +     '<span class="price-cashline">' + esc(CASH_DISCOUNT_LABEL) + ' (' + esc(cd.percentLabel) + '%) \u2212' + money2(cd.amount) + '</span>'
+    +   '</div>'
+    +   '<div class="price-side price-side-right">'
+    +     '<span class="price-value">' + money2(cd.cashTotal) + '</span>'
+    +     '<span class="price-save">You save ' + money2(cd.amount) + '</span>'
+    +   '</div>'
+    + '</div>'
+    + '<div class="br-note br-cashdisc">' + esc(cashDiscountDisclosure(cd.uplift, cd.amount)) + '</div>';
 }
 
 /* The credit card surcharge on Stripe bills, from Admin Pricing (0 = off).
@@ -447,6 +470,9 @@ function buildBreakdown(bd) {
       rowsHtml += '<div class="br-row' + (pAmt < 0 ? ' br-save' : '') + '"><span class="br-label">' + esc(pLabel) + '</span>'
         + '<span class="br-amt">' + (pAmt < 0 ? '\u2212' : '+') + money2(Math.abs(pAmt)) + '</span></div>';
     } else if (a.kind === 'amount' && isFinite(v)) {
+      /* At regular prices a typed amount reads at the same scale as the rest
+         (quoteLines bd.priceScale; 1 on every older quote). */
+      v = v * (Number(bd.priceScale) || 1);
       var aLabel = a.note || (v < 0 ? 'Discount' : 'Adjustment');
       rowsHtml += '<div class="br-row' + (v < 0 ? ' br-save' : '') + '"><span class="br-label">' + esc(aLabel) + '</span>'
         + '<span class="br-amt">' + (v < 0 ? '\u2212' : '+') + money2(Math.abs(v)) + '</span></div>';
@@ -483,6 +509,7 @@ function buildBreakdown(bd) {
     + '<div class="doc-section"><div class="doc-label">Deposits Due</div>' + depositRowsHtml
     +   '<div class="br-note">A 30% deposit (tax included) is collected before each phase begins, and the rest of each phase is due once it\u2019s complete.</div>'
     +   cardFeeNote()
+    +   (bd.cashDiscount ? '<div class="br-note br-cashdisc">Deposits are shown at our regular prices. Paid by cash, check, cashier\u2019s check or bank transfer (ACH), each is ' + esc(bd.cashDiscount.percentLabel) + '% less \u2014 ' + money2(bd.cashDiscount.cashDepositTotal) + ' in all.</div>' : '')
     + '</div>';
 }
 

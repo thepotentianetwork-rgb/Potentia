@@ -226,6 +226,9 @@ select:focus{border-color:var(--sp-blue)}
 .inv-payopt{display:block;font-size:13px;margin:3px 0;cursor:pointer}
 .inv-pline.inv-fee{color:#f0b44c}
 .inv-feetag{font-size:11px;color:#f0b44c;margin:0 6px}
+.inv-disctag{font-size:11px;color:#6fcf97;margin:0 6px}
+.bal-disc span{color:#6fcf97}
+.inv-pline.inv-disc span{color:#6fcf97}
 .inv-preview{margin:4px 0 10px;padding:12px 14px;border:1px solid rgba(43,181,232,0.45);background:rgba(43,181,232,0.06);border-radius:8px}
 .inv-pline{display:flex;justify-content:space-between;gap:14px;font-size:13px;color:var(--fg);margin-bottom:4px}
 .inv-ptotal{display:flex;justify-content:space-between;gap:14px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(43,181,232,0.35);font-size:15px;color:var(--bright)}
@@ -427,6 +430,9 @@ select:focus{border-color:var(--sp-blue)}
       <select id="pay-phase" title="Which phase this paid for" style="display:none"></select>
       <input id="pay-date" type="date">
       <input id="pay-note" type="text" placeholder="Note (optional) — e.g. Phase 1 deposit">
+      <label id="pay-cashdisc-wrap" style="display:none;font-size:12px;color:var(--silver);align-items:center;gap:6px" title="Builds quoted at regular (card) prices: a cash, check or cashier's check payment takes the discount off the job too">
+        <input id="pay-cashdisc" type="checkbox" checked> Apply cash discount <span id="pay-cashdisc-hint"></span>
+      </label>
       <button type="submit" class="btn">Add Payment</button>
     </form>
     <div id="payments-list"><p class="empty">Loading…</p></div>
@@ -1475,14 +1481,15 @@ function invStatePill(status) {
 
 /* Preview panel. Returns the element; the caller decides where it goes and
    when it comes away. */
-/* How the customer will pay this Stripe bill, when the card surcharge is on.
-   'bank' = bank transfer (ACH) only, no fee; 'card' = card only, surcharge
-   line added. Read by every send below; reset for each new preview. */
+/* How the customer will pay this Stripe bill — asked only for a build quoted
+   at regular (card) prices, i.e. with the cash, check & bank transfer discount.
+   'bank' = bank transfer (ACH) only, discount line added; 'card' = card only,
+   regular price. Read by every send below; reset for each new preview. */
 var INV_PAY_BY = 'bank';
 function invPreviewPanel(kind, data, onSend, onCancel) {
   var box = document.createElement('div');
   box.className = 'inv-preview';
-  var cf = data.card_fee || null;
+  var cf = data.cash_discount || null;
   INV_PAY_BY = 'bank';
 
   /* The choice comes first: it decides what the lines below say. */
@@ -1490,8 +1497,8 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
     var choice = document.createElement('div');
     choice.className = 'inv-paychoice';
     choice.innerHTML = '<div class="inv-paylabel">How will they pay on Stripe?</div>';
-    [['bank', 'Bank transfer (ACH) \u2014 no fee', money(cf.amount_without_fee)],
-     ['card', 'Credit card \u2014 +' + cf.percent + '% surcharge (' + money(cf.fee) + ')', money(cf.amount_with_fee)]].forEach(function (o) {
+    [['bank', 'Bank transfer (ACH) \u2014 ' + cf.percent_label + '% cash discount (\u2212' + money(cf.discount) + ')', money(cf.amount_bank)],
+     ['card', 'Credit card \u2014 regular price', money(cf.amount_card)]].forEach(function (o) {
       var lab = document.createElement('label');
       lab.className = 'inv-payopt';
       var r = document.createElement('input');
@@ -1506,7 +1513,7 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
     });
     var hintPay = document.createElement('div');
     hintPay.className = 'inv-note';
-    hintPay.textContent = 'One bill, one way to pay. Card bills take credit cards only (debit and prepaid cannot be surcharged). Checks and cashier\u2019s checks are marked by hand and never get the fee.';
+    hintPay.textContent = 'One bill, one way to pay: the bank-transfer bill takes ACH only, the card bill takes cards only. Checks, cash and cashier\u2019s checks are marked by hand below and get the discount automatically.';
     choice.appendChild(hintPay);
     box.appendChild(choice);
     choice.querySelectorAll('input').forEach(function (r) { r.name = 'paypick-' + kind; });
@@ -1517,7 +1524,7 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
     linesHost.innerHTML = '';
     (lines || []).forEach(function (l) {
       var row = document.createElement('div');
-      row.className = 'inv-pline' + (l.fee ? ' inv-fee' : '');
+      row.className = 'inv-pline' + (l.discount ? ' inv-disc' : '');
       var name = document.createElement('span');
       name.textContent = l.label;
       var amt = document.createElement('span');
@@ -1527,7 +1534,7 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
       linesHost.appendChild(row);
     });
   }
-  drawLines(cf ? cf.lines_without_fee : data.lines);
+  drawLines(cf ? cf.lines_bank : data.lines);
 
   var total = document.createElement('div');
   total.className = 'inv-ptotal';
@@ -1543,11 +1550,12 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
      $11,315 shed looks like an error rather than the deposit already paid. */
   var note = document.createElement('div');
   note.className = 'inv-note';
-  note.textContent = 'Job total ' + money(data.job_total) + ' · already paid ' + money(data.already_paid) +
+  note.textContent = 'Job total ' + money(data.job_total) + (cf ? ' (regular price)' : '') + ' · already paid ' + money(data.already_paid) +
     (data.payments && data.payments.length
       ? ' (' + data.payments.map(function (p) { return PAY_LABEL(p.method) + ' ' + money(p.amount); }).join(', ') + ')'
       : '') +
-    '. Sent from Stripe by email, payable by ' + (cf ? 'bank transfer (ACH) only, no fee.' : 'bank transfer or card.');
+    (Number(data.discounts_earned) > 0 ? ' · cash discounts already earned ' + money(data.discounts_earned) : '') +
+    '. Sent from Stripe by email, payable by ' + (cf ? 'bank transfer (ACH) only, with the cash discount.' : 'bank transfer or card.');
   box.appendChild(note);
   var footEl = null;
 
@@ -1622,13 +1630,13 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
   function setPay(p) {
     INV_PAY_BY = p;
     var card = p === 'card';
-    drawLines(card ? cf.lines_with_fee : cf.lines_without_fee);
-    var amt = card ? cf.amount_with_fee : cf.amount_without_fee;
+    drawLines(card ? cf.lines_card : cf.lines_bank);
+    var amt = card ? cf.amount_card : cf.amount_bank;
     tv.textContent = money(amt);
     note.textContent = note.textContent.replace(/payable by .*$/, 'payable by ' + (card
-      ? 'credit card only, with the ' + cf.percent + '% surcharge. The surcharge does not count toward the job.'
-      : 'bank transfer (ACH) only, no fee.'));
-    if (footEl) footEl.textContent = card ? cf.footer_card : (cf.footer_bank || data.footer);
+      ? 'credit card only, at the regular price.'
+      : 'bank transfer (ACH) only, with the cash discount. The discount is booked beside the payment, not as money.'));
+    if (footEl) footEl.textContent = card ? cf.footer_card : cf.footer_bank;
     send.textContent = 'Send ' + money(amt) + ' ' + INV_KIND_LABELS[kind].toLowerCase() + (card ? ' card' : ' bank-transfer') + ' bill with Stripe';
   }
   if (cf) setPay('bank');
@@ -1683,7 +1691,8 @@ function renderBalanceBox(bal) {
     var y = document.createElement(cls === 'bal-due' ? 'strong' : 'span'); y.textContent = b;
     r.appendChild(x); r.appendChild(y); return r;
   }
-  box.appendChild(line('bal-line', 'Total (incl. tax)', money(bal.job_total)));
+  var cd = bal.cash_discount || null;
+  box.appendChild(line('bal-line', 'Total (incl. tax)' + (cd ? ', regular price' : ''), money(bal.job_total)));
   var sub = document.createElement('div'); sub.className = 'bal-sub';
   sub.textContent = 'Payments received';
   box.appendChild(sub);
@@ -1696,12 +1705,19 @@ function renderBalanceBox(bal) {
     var bits = [PAY_LABEL(p.method), shortDate(p.paid_at)];
     if (p.note) bits.push(p.note);
     box.appendChild(line('bal-pay', bits.filter(Boolean).join(' \u00b7 '), '\u2212' + money(p.amount)));
+    /* Not money: what paying by check / cash / ACH took off the job. */
+    if (Number(p.discount) > 0) box.appendChild(line('bal-pay bal-disc', '\u00a0\u00a0Cash, check & bank transfer discount on that payment', '\u2212' + money(p.discount)));
   });
   if (bal.payments.length > 1) box.appendChild(line('bal-line', 'Total received', money(bal.paid)));
   var due = line('bal-due', bal.paid_in_full ? 'Paid in full' : 'Balance due',
                  bal.paid_in_full ? money(0) : money(bal.balance_due));
   if (bal.paid_in_full) due.classList.add('bal-full');
   box.appendChild(due);
+  /* A regular-price build: the figure to ask for if they pay the rest by
+     cash, check, cashier's check or bank transfer. */
+  if (cd && !bal.paid_in_full) {
+    box.appendChild(line('bal-line bal-disc', 'If paid by cash, check or ACH (' + cd.percent_label + '% off)', money(cd.balance_due_cash)));
+  }
   if (bal.overpaid > 0) {
     var over = document.createElement('div'); over.className = 'inv-warn';
     over.textContent = 'Payments are ' + money(bal.overpaid) + ' more than the job total. Check for a duplicate entry.';
@@ -2204,6 +2220,15 @@ function fillExistingRow(row, existing, kind) {
       (existing.status === 'paid' && Number(existing.fee_paid_cents) >= 0 && existing.fee_paid_cents != null
         ? ' (fee collected ' + money(Number(existing.fee_paid_cents) / 100) + ', not credited to the build)' : '');
     row.appendChild(fee);
+  }
+  /* A regular-price build: which bill this was. A bank-transfer bill names
+     the cash discount it carried. */
+  if (existing.pay_by === 'card' || existing.pay_by === 'bank') {
+    var dt = document.createElement('span');
+    dt.className = 'inv-disctag';
+    dt.textContent = existing.pay_by === 'card' ? 'card bill \u00b7 regular price'
+      : 'bank transfer \u00b7 incl. \u2212' + money(Number(existing.discount_cents || 0) / 100) + ' cash discount';
+    row.appendChild(dt);
   }
   row.appendChild(invStatePill(existing.status));
 
@@ -2764,6 +2789,12 @@ function renderPayments(payments) {
     var amt = document.createElement('div');
     amt.className = 'payment-amt';
     amt.textContent = '$' + Number(p.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (Number(p.discount_amount) > 0) {
+      var dtag = document.createElement('span');
+      dtag.className = 'inv-disctag';
+      dtag.textContent = '+ ' + money(Number(p.discount_amount)) + ' cash discount';
+      amt.appendChild(dtag);
+    }
     var meta = document.createElement('div');
     meta.className = 'payment-meta';
     meta.textContent = (PAYMENT_METHOD_LABELS[p.method] || p.method) + ' · ' + shortDate(p.paid_at);
@@ -3235,6 +3266,8 @@ document.getElementById('payment-form').addEventListener('submit', function (e) 
       method: method,
       submission_id: (document.getElementById('pay-submission') || {}).value || undefined,
       phase: (document.getElementById('pay-phase') || {}).value ? Number(document.getElementById('pay-phase').value) : undefined,
+      cash_discount: (function () { var w = document.getElementById('pay-cashdisc-wrap'), c = document.getElementById('pay-cashdisc');
+        return w && w.style.display !== 'none' && c && !c.checked ? false : undefined; })(),
       note: noteInput.value.trim(),
       paid_at: dateInput.value ? new Date(dateInput.value).toISOString() : undefined
     })
@@ -3248,6 +3281,27 @@ document.getElementById('payment-form').addEventListener('submit', function (e) 
       loadCustomer();
     }
   });
+});
+
+/* The discount box shows only when the build picked was quoted at regular
+   (card) prices and the method is one that earns it, with the figure to
+   collect for what is left. The worker works the discount out itself. */
+var CASH_DISC_METHODS = ['cash', 'check', 'cashiers_check', 'invoice2go', 'zelle', 'other'];
+function syncCashDiscBox() {
+  var w = document.getElementById('pay-cashdisc-wrap');
+  if (!w) return;
+  var sid = (document.getElementById('pay-submission') || {}).value;
+  var m = (document.getElementById('pay-method') || {}).value;
+  var bal = sid ? balanceFor(sid) : null;
+  var cd = bal && bal.cash_discount;
+  var show = !!(cd && CASH_DISC_METHODS.indexOf(m) > -1);
+  w.style.display = show ? 'inline-flex' : 'none';
+  var hint = document.getElementById('pay-cashdisc-hint');
+  if (hint) hint.textContent = show && !bal.paid_in_full ? '(' + cd.percent_label + '% \u00b7 balance by cash/check ' + money(cd.balance_due_cash) + ')' : '';
+}
+['pay-submission', 'pay-method'].forEach(function (id) {
+  var el = document.getElementById(id);
+  if (el) el.addEventListener('change', syncCashDiscBox);
 });
 
 if (token && customerId) loadCustomer();

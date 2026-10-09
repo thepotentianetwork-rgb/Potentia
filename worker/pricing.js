@@ -488,6 +488,16 @@ export let SELL = {
      When on, a Stripe bill is EITHER bank transfer (ACH) with no fee, OR card
      with this surcharge on its own line; never both on one bill. */
   cardFee: { enabled: 0, percent: 3 },
+  /* CASH, CHECK & BANK TRANSFER DISCOUNT (Nando, 9 Oct 2026: "build the cash or
+     check or ACH discount. If credit card charge a 3% fee"). Replaces the card
+     surcharge above, which Stripe-hosted invoices cannot carry.
+     The posted price becomes the CARD price: a quote priced while this is on is
+     stamped (redline.cardUplift = percent/100) and every figure on it reads at
+     today's price x (1 + percent/100). Paying by anything but a card takes it
+     back off — the discount is percent/(100+percent) of the regular price, so a
+     non-card payer pays exactly today's price. OFF until Nando switches it on;
+     a quote priced while it is off is never stamped and never changes. */
+  cashDiscount: { enabled: 0, percent: 3 },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
   // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
@@ -2002,7 +2012,7 @@ export function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel','cardFee'];
+  'concretePromo','sprinkler','travel','cardFee','cashDiscount'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".
@@ -2069,9 +2079,26 @@ export function mergedPricingConfig(saved){
    Stripe's standard 2.9% + 30c a 3% fee on the pre-fee amount is 2.91% of the
    charge, so the setting must come down if the Stripe rate ever does. */
 export const CARD_FEE_MAX_PERCENT = 3;
+/* RETIRED 9 Oct 2026, kept in code: Stripe support confirmed hosted Invoices
+   cannot surcharge (that needs Checkout / Payment Links / PaymentIntents plus a
+   provider app). CARD_FEE_AVAILABLE pins it off whatever a saved config says,
+   so a stale "enabled: 1" can never put a surcharge on a bill. The cash
+   discount below is what replaced it. */
+export const CARD_FEE_AVAILABLE = false;
 export function cardFeeSettings() {
   const c = (SELL && SELL.cardFee) || {};
   const pct = Math.min(CARD_FEE_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
-  const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
+  const on = CARD_FEE_AVAILABLE && (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
   return { enabled: on, percent: pct, rate: on ? pct / 100 : 0 };
+}
+
+/* The cash discount switch as the quote code wants it. percent is the CARD
+   PRICE UPLIFT (3 = card price is today's price x 1.03); held to 0..10.
+   uplift is what gets stamped on a new quote's redline. */
+export const CASH_DISCOUNT_MAX_PERCENT = 10;
+export function cashDiscountSettings() {
+  const c = (SELL && SELL.cashDiscount) || {};
+  const pct = Math.min(CASH_DISCOUNT_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
+  const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
+  return { enabled: on, percent: pct, uplift: on ? pct / 100 : 0 };
 }

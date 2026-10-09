@@ -165,7 +165,7 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
         <span class="count-tag partial">Paste from another source</span>
       </summary>
       <div style="padding:0 20px 20px">
-        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>porchDeckSqft</code>, <code>foundation</code>, <code>concretePromo</code>, <code>sprinkler</code>, <code>travel</code>, <code>cardFee</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>gravelTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
+        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>porchDeckSqft</code>, <code>foundation</code>, <code>concretePromo</code>, <code>sprinkler</code>, <code>travel</code>, <code>cashDiscount</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>gravelTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
         <textarea id="comp-import-text" class="add-form input" style="width:100%;min-height:120px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:10px 12px;outline:none" placeholder='{"doors":{"5\' Double":0,"5\' Double Craftsman":50}}'></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <button class="save-btn" id="comp-import-btn" type="button">Import Into Components</button>
@@ -257,6 +257,7 @@ var SELL_DEFAULTS = {
   sprinkler: { base: 300, includedFt: 5, stepFt: 2, stepAmt: 100 },
   travel: { perDay: 0 },
   cardFee: { enabled: 0, percent: 3 },
+  cashDiscount: { enabled: 0, percent: 3 },
   foundationFinish: { plain: 0, coated: 300 },
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
   gravelTiers: { tier1: 750, tier2: 1100, tier3: 1500, break1: 75, break2: 150, maxSqft: 200 },
@@ -361,11 +362,13 @@ var TIER_GROUPS = [
     ]
   },
   {
-    key: 'cardFee', label: 'Credit Card Surcharge — Stripe Bills',
-    note: 'When ON, every Stripe bill is sent one of two ways: bank transfer (ACH) with no fee, or credit card with this surcharge as its own line ("Credit card surcharge (3%)"). Checks, cash, cashier\u2019s checks and Invoice2go payments marked by hand never get it, and the surcharge never counts toward paying off a build. Capped at 3% (the Visa limit) and must not be more than what card payments actually cost us. BEFORE turning on: give Stripe/the card networks 30 days\u2019 notice and block debit and prepaid cards in Stripe Radar (they cannot be surcharged). OFF = Stripe bills offer bank transfer and card with no fee, as before.',
+    /* The card surcharge group that sat here is retired (Stripe-hosted
+       invoices cannot surcharge); its saved value is kept and ignored. */
+    key: 'cashDiscount', label: 'Cash, Check & Bank Transfer Discount',
+    note: 'When ON, every NEW quote is priced at our regular price \u2014 today\u2019s price plus this percent \u2014 and that is the price card payers pay. Paying by cash, check, cashier\u2019s check, Invoice2go/other or Stripe bank transfer (ACH) takes it back off, so those customers pay exactly what they pay today (3%: a $10,000 job is $10,300 by card, $10,000 by check or ACH; the discount is 2.9% of the regular price and is advertised as that). The quote, the designer and every Stripe bill say so. Quotes made while this is OFF never change, even after it is turned on \u2014 re-quote a job to move it to the new prices. Turning it OFF again stops stamping new quotes; quotes already stamped keep their regular prices and discount.',
     fields: [
-      { key: 'enabled', label: 'Charge the surcharge on card bills', toggle: true },
-      { key: 'percent', label: 'Surcharge on credit card bills (max 3)', unit: '%' }
+      { key: 'enabled', label: 'Price new quotes at the regular (card) price', toggle: true },
+      { key: 'percent', label: 'Card price above today\u2019s price (max 10)', unit: '%' }
     ]
   },
   {
@@ -811,7 +814,7 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
   }
   var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical',
     'porchFrontSqft', 'porchSideSqft', 'porchDeckSqft', 'foundation', 'foundationFinish', 'broomTiers', 'gravelTiers', 'interior',
-    'concretePromo', 'sprinkler', 'travel', 'cardFee'];
+    'concretePromo', 'sprinkler', 'travel', 'cardFee', 'cashDiscount'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {

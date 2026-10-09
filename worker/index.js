@@ -18,9 +18,9 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
-import { quoteLines, compedMap, shedStyleName, travelAmount } from "./quotelines.js";
+import { quoteLines, compedMap, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
@@ -31,7 +31,9 @@ import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
          stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
 import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, balanceSummary,
          buildPhaseInvoice, buildTogetherInvoice, togetherStatus, phaseStatus, parseAlloc,
-         addCardFee, splitFee, bankFooterNote, LIMITS } from "./invoices.js";
+         addCardFee, splitFee, bankFooterNote, LIMITS,
+         addCashDiscount, paidDiscountCents, manualDiscountCents, creditCentsOf, discountCentsOf,
+         DISCOUNT_METHODS, cardBillFooterNote, bankBillFooterNote } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
@@ -602,6 +604,13 @@ async function ensurePaymentsTable(env) {
   if (names.indexOf("submission_id") === -1) {
     await env.DB.prepare("ALTER TABLE payments ADD COLUMN submission_id INTEGER").run();
   }
+  /* The cash, check & bank transfer discount a payment earned on a
+     regular-price (card price) job, in dollars. Not money received: it is
+     what that payment took off the job beyond its own amount. Null/0 on every
+     payment before the discount existed, which is exactly right for them. */
+  if (names.indexOf("discount_amount") === -1) {
+    await env.DB.prepare("ALTER TABLE payments ADD COLUMN discount_amount REAL").run();
+  }
 }
 
 // Lazily creates the installs table on first use — same reasoning as
@@ -752,7 +761,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensurePaymentsTable(env);
   const { results: payments } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+    "SELECT id, amount, discount_amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -955,6 +964,14 @@ async function ensureInvoicesTable(env) {
   }
   if (invNames.length && invNames.indexOf("fee_paid_cents") === -1) {
     await env.DB.prepare("ALTER TABLE invoices ADD COLUMN fee_paid_cents INTEGER").run();
+  }
+  /* Cash discount on a bank-transfer (ACH) bill: what the bill took off
+     (discount_cents) and how it was paid for (pay_by: 'card' | 'bank'). */
+  if (invNames.length && invNames.indexOf("discount_cents") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN discount_cents INTEGER").run();
+  }
+  if (invNames.length && invNames.indexOf("pay_by") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN pay_by TEXT").run();
   }
 }
 
@@ -1265,9 +1282,10 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
   const breakdown = quoteLines(details.redline, adjustmentsOf(sub));
   if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
+  const uplift = cardUpliftOf(details.redline);
 
   const { results: payRows } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+    "SELECT id, amount, discount_amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
   ).bind(sub.customer_id).all();
   const split = splitPayments(payRows || [], sub.id);
 
@@ -1318,7 +1336,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
       throw Object.assign(e, { status: e.status || (e.code === "already_billed" ? 409 : 400) });
     }
     return { sub, customer, breakdown, split, invoice, builds: builds.map((b) => b.sub),
-             payRows: payRows || [] };
+             payRows: payRows || [], uplift };
   }
 
   /* Everything the quote page puts around the numbers, handed to the invoice
@@ -1332,7 +1350,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     summary: configSummary(details.config),
     submissionId: sub.id
   });
-  return { sub, customer, breakdown, split, invoice };
+  return { sub, customer, breakdown, split, invoice, uplift };
 }
 
 /* POST /stripe/webhook — public, and the only thing standing between it and a
@@ -1404,6 +1422,11 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
      build; the fee is recorded on the invoice row (fee_paid_cents). */
   const fee = splitFee(toCents(cleared), toCents(row.amount), Number(row.fee_cents) || 0);
   const amount = fromCents(fee.creditCents);
+  /* A bank-transfer (ACH) bill on a regular-price job carried the cash
+     discount as a line. Paying it takes that discount off the job too — in
+     full, or in proportion to a part payment — and it is booked BESIDE the
+     money (payments.discount_amount), never as money. */
+  const discCents = paidDiscountCents(fee.creditCents, toCents(row.amount), Number(row.discount_cents) || 0);
 
   /* A phase invoice says which parts it collected; the payment is booked
      against exactly those, in order, up to what actually cleared. A combined
@@ -1412,11 +1435,16 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
      the first build, where it shows up as overpaid rather than vanishing. */
   const note = (row.kind === "deposit" ? "Deposit paid on Stripe"
     : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe") +
-    (fee.feeCents ? " by card (+" + usd(fromCents(fee.feeCents)) + " card surcharge, kept separately)" : "");
+    (fee.feeCents ? " by card (+" + usd(fromCents(fee.feeCents)) + " card surcharge, kept separately)" : "") +
+    (discCents ? " by bank transfer (ACH), with " + usd(fromCents(discCents)) + " cash, check & bank transfer discount" : "");
   const withAlloc = row.kind === "phase" && (await hasPhaseAlloc(env));
   const shares = [];                        // { sub, cents, parts }
+  /* What the payment covers: money plus the discount it earned. Shared over
+     the bill's covers in those terms, then each build's share is split back
+     into money and discount in proportion. */
+  const creditTotal = toCents(amount) + discCents;
   if (row.kind === "phase") {
-    let left = toCents(amount);
+    let left = creditTotal;
     coversOf(row.lines).forEach((c) => {
       const take = Math.min(left, Math.max(0, Math.round(Number(c.cents) || 0)));
       if (take <= 0) return;
@@ -1432,19 +1460,45 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
       shares[0].cents += left;
     }
   }
-  if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: toCents(amount), parts: [] });
+  if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: creditTotal, parts: [] });
+  /* Discount per build: by the covers it was worked out on when the bill was
+     made (each carries disc), scaled to what was paid; the money is the rest.
+     A bill without covers (deposit / balance) has one build. */
+  let discLeft = discCents;
+  if (discCents) {
+    const byCover = {};
+    let coverDisc = 0;
+    coversOf(row.lines).forEach((c) => {
+      const d = Math.max(0, Math.round(Number(c.disc) || 0));
+      if (!d) return;
+      const sub = coverSub(c, row);
+      byCover[sub] = (byCover[sub] || 0) + d;
+      coverDisc += d;
+    });
+    shares.forEach((sh, i) => {
+      let d;
+      if (i === shares.length - 1) d = discLeft;
+      else if (coverDisc) d = Math.round(discCents * (byCover[sh.sub] || 0) / coverDisc);
+      else d = Math.round(discCents * sh.cents / Math.max(1, creditTotal));
+      d = Math.max(0, Math.min(d, discLeft, sh.cents));
+      sh.disc = d;
+      discLeft -= d;
+    });
+  }
   const many = shares.length > 1;
   const stmts = shares.map((sh) => {
-    const amt = fromCents(sh.cents);
+    const disc = sh.disc || 0;
+    const amt = fromCents(sh.cents - disc);
+    const dAmt = disc ? fromCents(disc) : null;
     const n = many ? note + " (combined invoice, " + shares.map((x) => "#" + x.sub).join(" + ") + ")" : note;
     if (withAlloc && sh.parts.length) {
       return env.DB.prepare(
-        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
-      ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub, JSON.stringify({ parts: sh.parts }));
+        "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?,?)"
+      ).bind(row.customer_id, amt, dAmt, "stripe", n, now, now, sh.sub, JSON.stringify({ parts: sh.parts }));
     }
     return env.DB.prepare(
-      "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-    ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub);
+      "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?,?)"
+    ).bind(row.customer_id, amt, dAmt, "stripe", n, now, now, sh.sub);
   });
   /* All the payments and the status flip land together or not at all, so a
      retry after a failure cannot book a build twice. */
@@ -1453,7 +1507,7 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
     : env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
   await env.DB.batch(stmts);
 
-  return { already: false, amount, fee: fromCents(fee.feeCents) };
+  return { already: false, amount, fee: fromCents(fee.feeCents), discount: fromCents(discCents) };
 }
 
 /* POST /admin/invoices/:id/sync — ask Stripe what it thinks and believe it.
@@ -1556,19 +1610,35 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const { sub, customer, split } = ctx;
   const baseInvoice = ctx.invoice;
 
-  /* CREDIT CARD SURCHARGE. Off: nothing changes. On: the bill is bank-only
-     with no fee (the default), or — pay_by "card" — card-only with the
-     surcharge as its own line. Both versions go back on the preview so the
-     CRM can show the choice; the one chosen is what gets sent. */
-  let feeCfg = { enabled: false, rate: 0, percent: 0 };
-  try { await applySavedPricing(env); feeCfg = cardFeeSettings(); } catch (e) {}
-  const payBy = feeCfg.enabled && String(body.pay_by || "").toLowerCase() === "card" ? "card" : "bank";
-  const withFee = feeCfg.enabled ? addCardFee(baseInvoice, feeCfg.rate) : null;
-  const invoice = payBy === "card" ? withFee
-    : (feeCfg.enabled ? Object.assign({}, baseInvoice, {
-        footer: String((bankFooterNote(feeCfg.rate) + (baseInvoice.footer ? " " + baseInvoice.footer : ""))).slice(0, LIMITS.footer) })
-      : baseInvoice);
-  const methods = invoiceMethods(feeCfg.enabled, payBy);
+  /* CASH, CHECK & BANK TRANSFER DISCOUNT. Decided by the BUILD, not by the
+     switch: only a quote priced while the discount was on is at regular (card)
+     prices (redline.cardUplift), so only it earns a discount. For such a bill
+     the CRM picks how it will be paid —
+       card: the regular price, card only;
+       bank: the regular price less the discount line, bank transfer only —
+     and both versions go back on the preview so the picker can switch without
+     asking again. Every other bill is exactly what it always was: one bill,
+     card or bank, same amount. (The retired card surcharge is pinned off in
+     pricing.js and no longer reaches a bill.) */
+  const upliftBySub = {};
+  const builtSubs = ctx.builds || [sub.id];
+  for (const sid of builtSubs) {
+    if (Number(sid) === Number(sub.id)) { upliftBySub[sid] = ctx.uplift || 0; continue; }
+    const o = await env.DB.prepare("SELECT details FROM submissions WHERE id = ?").bind(sid).first();
+    let d = {};
+    try { d = JSON.parse((o && o.details) || "{}") || {}; } catch (e) {}
+    upliftBySub[sid] = cardUpliftOf(d.redline);
+  }
+  const upliftFor = (sid) => upliftBySub[Number(sid)] || upliftBySub[String(sid)] || 0;
+  const withDiscount = addCashDiscount(baseInvoice, upliftFor, sub.id);
+  const discountOn = !!withDiscount;
+  const payBy = discountOn ? (String(body.pay_by || "").toLowerCase() === "card" ? "card" : "bank") : null;
+  const pctLabel = discountOn ? withDiscount.discountPct || cashDiscountPctLabel(upliftFor(sub.id)) : null;
+  const clipFooter = (note, f) => String(note + (f ? " " + f : "")).slice(0, LIMITS.footer);
+  const cardInvoice = discountOn ? Object.assign({}, baseInvoice, { footer: clipFooter(cardBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
+  const bankInvoice = discountOn ? Object.assign({}, withDiscount, { footer: clipFooter(bankBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
+  const invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
+  const methods = invoiceMethods(discountOn, payBy);
 
   /* Payments nobody attributed to a job. Not applied and not ignored — both
      are wrong in a way that costs a customer money — so they ride along on
@@ -1631,26 +1701,30 @@ async function handleCreateInvoice(request, env, origin, actor) {
       : split.applied).map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
                                      method: p.method, paid_at: p.paid_at, note: p.note || null,
                                      submission_id: p.submission_id })),
-    balance_due: fromCents(Math.max(0, invoice.jobTotalCents - invoice.paidCents)),
+    /* Discounts already earned by earlier cash / check / ACH payments take the
+       job down too; they are not "paid", so they are listed separately. */
+    discounts_earned: fromCents(baseInvoice.earnedDiscountCents || 0),
+    balance_due: fromCents(Math.max(0, baseInvoice.jobTotalCents - baseInvoice.paidCents - (baseInvoice.earnedDiscountCents || 0))),
     /* Returned on the preview too, so what the CRM shows before sending is
        the whole document and not just its numbers. */
     memo: invoice.memo,
     footer: invoice.footer,
     custom_fields: invoice.customFields,
-    pay_by: feeCfg.enabled ? payBy : null,
+    pay_by: payBy,
     payment_methods: methods,
-    fee: fromCents(invoice.feeCents || 0),
+    discount: fromCents(invoice.discountCents || 0),
     /* Both versions, so the preview can switch without asking again. */
-    card_fee: feeCfg.enabled ? {
-      percent: feeCfg.percent,
-      fee: fromCents(withFee.feeCents),
-      amount_with_fee: fromCents(withFee.totalCents),
-      amount_without_fee: fromCents(baseInvoice.totalCents),
-      lines_with_fee: withFee.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), fee: !!l.fee })),
-      lines_without_fee: baseInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
-      footer_card: withFee.footer,
-      footer_bank: payBy === "card" ? null : invoice.footer
+    cash_discount: discountOn ? {
+      percent_label: pctLabel,
+      discount: fromCents(withDiscount.discountCents),
+      amount_card: fromCents(cardInvoice.totalCents),
+      amount_bank: fromCents(bankInvoice.totalCents),
+      lines_card: cardInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+      lines_bank: bankInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), discount: !!l.discount })),
+      footer_card: cardInvoice.footer,
+      footer_bank: bankInvoice.footer
     } : null,
+    card_fee: null,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -1722,11 +1796,11 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const sentTo = sent.customerEmail || customer.email || null;
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
-       amount, status, lines, created_at, created_by, sent_to, fee_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+       amount, status, lines, created_at, created_by, sent_to, fee_cents, discount_cents, pay_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
          JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo,
-         invoice.feeCents || 0).run();
+         invoice.feeCents || 0, invoice.discountCents || 0, payBy).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
@@ -1746,7 +1820,7 @@ async function handleListInvoices(request, env, origin, customerId) {
   await ensureInvoicesTable(env);
   const { results } = await env.DB.prepare(
     `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
-            lines, created_at, created_by, paid_at, sent_to, fee_cents, fee_paid_cents
+            lines, created_at, created_by, paid_at, sent_to, fee_cents, fee_paid_cents, discount_cents, pay_by
      FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
   ).bind(customerId).all();
   const invoices = (results || []).map((r) => {
@@ -1804,6 +1878,34 @@ function paymentAmount(v) {
   return cents > 0 ? fromCents(cents) : null;
 }
 
+/* THE DISCOUNT A CHECK / CASH / CASHIER'S CHECK PAYMENT EARNS.
+ *
+ * Only on a build quoted at regular (card) prices (redline.cardUplift), only
+ * for a method in DISCOUNT_METHODS, and only when the payment is placed on a
+ * build — without one there is no price to discount. payment x uplift, capped
+ * by what is left of that build beyond the payment (manualDiscountCents).
+ * want === false is staff unticking it for this one payment. Returns dollars
+ * or null. */
+async function manualDiscountFor(env, submissionId, method, amount, excludeId, want) {
+  if (want === false || !submissionId || DISCOUNT_METHODS.indexOf(method) === -1) return null;
+  const sub = await env.DB.prepare(
+    "SELECT id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+  ).bind(submissionId).first();
+  if (!sub) return null;
+  let details = {};
+  try { details = JSON.parse(sub.details) || {}; } catch (e) {}
+  const uplift = cardUpliftOf(details.redline);
+  if (!uplift) return null;
+  const bd = quoteLines(details.redline, adjustmentsOf(sub));
+  if (!bd) return null;
+  const { results } = await env.DB.prepare(
+    "SELECT id, amount, discount_amount FROM payments WHERE submission_id = ? AND id != ?"
+  ).bind(submissionId, excludeId || 0).all();
+  const credited = (results || []).reduce((t, p) => t + creditCentsOf(p), 0);
+  const d = manualDiscountCents(toCents(amount), uplift, toCents(bd.total) - credited);
+  return d ? fromCents(d) : null;
+}
+
 async function handleAddPayment(request, env, origin, customerId) {
   const body = await request.json().catch(() => ({}));
   const amount = paymentAmount(body.amount);
@@ -1838,14 +1940,15 @@ async function handleAddPayment(request, env, origin, customerId) {
   }
 
   const now = new Date().toISOString();
+  const discount = await manualDiscountFor(env, submissionId, method, amount, 0, body.cash_discount === false ? false : true);
   const res = tag
     ? await env.DB.prepare(
-        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
-      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId, tag).run()
+        "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, discount, method, note || null, paidAt, now, submissionId, tag).run()
     : await env.DB.prepare(
-        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId).run();
-  return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
+        "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, discount, method, note || null, paidAt, now, submissionId).run();
+  return json({ ok: true, id: res.meta.last_row_id, discount_amount: discount }, 200, origin);
 }
 
 /* PUT the shed onto a payment that has none — or move one that went on the
@@ -1870,9 +1973,16 @@ async function handleSetPaymentSubmission(request, env, origin, paymentId) {
     if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
   }
 
-  await env.DB.prepare("UPDATE payments SET submission_id = ? WHERE id = ?")
-    .bind(submissionId, paymentId).run();
-  return json({ ok: true, id: paymentId, submission_id: submissionId }, 200, origin);
+  /* Moving a typed payment onto (or off) a regular-price build changes the
+     discount it earns. A Stripe payment keeps whatever its bill gave it. */
+  const full = await env.DB.prepare("SELECT * FROM payments WHERE id = ?").bind(paymentId).first();
+  let discount = full ? full.discount_amount : null;
+  if (full && full.method !== "stripe") {
+    discount = await manualDiscountFor(env, submissionId, full.method, full.amount, paymentId, true);
+  }
+  await env.DB.prepare("UPDATE payments SET submission_id = ?, discount_amount = ? WHERE id = ?")
+    .bind(submissionId, discount == null ? null : discount, paymentId).run();
+  return json({ ok: true, id: paymentId, submission_id: submissionId, discount_amount: discount == null ? null : discount }, 200, origin);
 }
 
 /* POST /admin/payments/:id — correct a payment someone typed in.
@@ -1939,12 +2049,25 @@ async function handleUpdatePayment(request, env, origin, paymentId) {
     if (tag && !willHaveBuild) return json({ error: "pick the build before the phase" }, 400, origin);
     sets.push("phase_alloc = ?"); args.push(tag);
   }
+  /* Amount, method or build changed (or the discount box was ticked or
+     unticked): the discount is worked out again for the payment as it now
+     stands. Stripe payments keep the discount their bill gave them. */
+  if (pay.method !== "stripe" && (body.amount !== undefined || body.method !== undefined ||
+      body.submission_id !== undefined || body.cash_discount !== undefined)) {
+    const nAmount = body.amount !== undefined ? paymentAmount(body.amount) : pay.amount;
+    const nMethod = body.method !== undefined ? String(body.method || "").toLowerCase().trim() : pay.method;
+    const nSub = body.submission_id !== undefined
+      ? (body.submission_id === null || body.submission_id === "" ? null : Number(body.submission_id))
+      : pay.submission_id;
+    const d = await manualDiscountFor(env, nSub, nMethod, nAmount, paymentId, body.cash_discount === false ? false : true);
+    sets.push("discount_amount = ?"); args.push(d);
+  }
   if (!sets.length) return json({ error: "nothing to change" }, 400, origin);
 
   await env.DB.prepare("UPDATE payments SET " + sets.join(", ") + " WHERE id = ?")
     .bind(...args, paymentId).run();
   const row = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE id = ?"
+    "SELECT id, amount, discount_amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE id = ?"
   ).bind(paymentId).first();
   return json({ ok: true, payment: row }, 200, origin);
 }
@@ -1958,6 +2081,10 @@ async function handleUpdatePayment(request, env, origin, paymentId) {
  *
  * Read-only. Works out everything from the payments table on every call, so
  * adding, editing, reassigning or deleting a payment changes it immediately. */
+function cashDiscountCentsFor(cents, uplift) {
+  return uplift > 0 ? Math.round(Math.max(0, cents) * uplift / (1 + uplift)) : 0;
+}
+
 async function handleCustomerBalances(request, env, origin, customerId) {
   await ensurePaymentsTable(env);
   await ensureInvoicesTable(env);
@@ -1965,7 +2092,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     "SELECT id, status, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE customer_id = ?"
   ).bind(customerId).all();
   const { results: payRows } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+    "SELECT id, amount, discount_amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
   ).bind(customerId).all();
   const { results: invRows } = await env.DB.prepare(
     "SELECT id, submission_id, kind, amount, status, hosted_url, lines FROM invoices WHERE customer_id = ? AND status NOT IN ('void','draft_failed')"
@@ -1989,9 +2116,18 @@ async function handleCustomerBalances(request, env, origin, customerId) {
                             remaining: money(x.remainingCents), open_invoice: x.openInvoice });
     built.push({ sub: sub.id, bd, payments: split.applied, name: buildName(details.config) || "Order #" + sub.id,
                  openParts: openPhaseParts(invRows, sub.id) });
+    /* Quoted at regular (card) prices? Then what is left reads two ways: by
+       card as it stands, and by cash / check / bank transfer less the discount
+       — the figure to ask for when someone says they'll bring a check. */
+    const uplift = cardUpliftOf(details.redline);
+    const cashOf = (c) => c - cashDiscountCentsFor(c, uplift);
     builds.push({
       submission_id: sub.id,
       status: sub.status,
+      cash_discount: uplift ? { percent_label: cashDiscountPctLabel(uplift), uplift,
+                                balance_due_cash: money(cashOf(sum.balanceCents)),
+                                deposit_due_cash: money(cashOf(sum.depositDueCents)),
+                                discounts_earned: money(sum.discountCents) } : null,
       /* "10x20 Gable / A-Frame" — how it is named when billed with another. */
       name: buildName(details.config) || null,
       job_total: money(sum.jobTotalCents),
@@ -2004,7 +2140,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
       payments: split.applied.map((p) => {
         const a = parseAlloc(p.phase_alloc);
         const used = (ps.byPayment.find((e) => e.payment === p) || { parts: [] }).parts;
-        return { id: p.id, amount: money(toCents(p.amount)), method: p.method, paid_at: p.paid_at, note: p.note || null,
+        return { id: p.id, amount: money(toCents(p.amount)), discount: money(discountCentsOf(p)), method: p.method, paid_at: p.paid_at, note: p.note || null,
                  phase: a && a.phase ? a.phase : null,
                  /* Where the money actually landed, tagged or not. */
                  applied_to: used.map((u) => ({ phase: u.phase, part: u.part, amount: money(u.cents) })) };
@@ -2255,7 +2391,7 @@ async function handleBackfillQuoteRedline(request, env, origin) {
     }
     let result;
     try {
-      ({ result } = await computeQuoteResult(d.config, undefined, env));
+      ({ result } = await computeQuoteResult(d.config, undefined, env, true));
     } catch (e) {
       failed++;
       continue;
@@ -3748,14 +3884,42 @@ async function applySavedPricing(env) {
   if (saved) applyPricingOverrides(saved);
 }
 
-async function computeQuoteResult(rawConfig, overrides, env) {
+async function computeQuoteResult(rawConfig, overrides, env, keepToday) {
   const cfg = validateShedConfig(rawConfig);
 
   await applySavedPricing(env);
 
   const opts = overrides && typeof overrides === "object" ? overrides : undefined;
   const result = computePricing(cfg, opts);
+  /* CASH DISCOUNT ON: this quote is priced at REGULAR (card) prices. The
+     redline is stamped with the uplift (quoteLines scales every figure by it)
+     and the total moves with it, so the designer, the stored quotedPrice and
+     the quote document all read the same regular price. keepToday is for the
+     one caller comparing against a price quoted before (the redline backfill). */
+  const cd = keepToday ? { enabled: false } : cashDiscountSettings();
+  if (cd.enabled && result && result.redline) {
+    result.redline.cardUplift = cd.uplift;
+    result.customer = result.customer * (1 + cd.uplift);
+    result.cashDiscount = cd;
+  }
   return { cfg, result };
+}
+
+/* Every money figure the designer's tiles show, at the regular (card) price
+   when the cash discount is on, so a tile reading +$500 moves a regular-price
+   total by $500 and not $485.44. Sizes, feet and the sprinkler rule's steps are
+   not money and are left alone. */
+const OPTION_PRICE_NOT_MONEY = { limits: 1, areaSqft: 1, includedFt: 1, stepFt: 1 };
+function scaleOptionPrices(v, k, key) {
+  if (key && OPTION_PRICE_NOT_MONEY[key]) return v;
+  if (typeof v === "number") return Math.round(v * k * 100) / 100;
+  if (Array.isArray(v)) return v.map((x) => scaleOptionPrices(x, k));
+  if (v && typeof v === "object") {
+    const out = {};
+    Object.keys(v).forEach((kk) => { out[kk] = scaleOptionPrices(v[kk], k, kk); });
+    return out;
+  }
+  return v;
 }
 
 async function handleShedQuote(request, env, origin) {
@@ -3780,11 +3944,26 @@ async function handleShedQuote(request, env, origin) {
     return json({ error: "Could not price this build" }, 400, origin);
   }
 
+  /* The designer shows regular prices and says so, with what paying any
+     other way saves on THIS build (pre-tax, like the total it sits under).
+     Staff (redline) see the same line the customer does. */
+  const cd = result.cashDiscount;
+  const cashDiscount = cd && cd.enabled ? (() => {
+    const cashTotal = result.customer / (1 + cd.uplift);
+    return { percentLabel: cashDiscountPctLabel(cd.uplift), cashTotal,
+             saving: result.customer - cashTotal, disclosure: cashDiscountDisclosure(cd.uplift) };
+  })() : null;
+
   if (wantsRedline) {
     if (!staff) return json({ error: "Unauthorized" }, 401, origin);
-    return json({ total: result.customer, redline: result.redline }, 200, origin);
+    return json(cashDiscount ? { total: result.customer, redline: result.redline, cashDiscount }
+                             : { total: result.customer, redline: result.redline }, 200, origin);
   }
 
+  if (cashDiscount) {
+    return json({ total: result.customer, optionPrices: scaleOptionPrices(computeOptionPrices(cfg), 1 + cd.uplift),
+                  cashDiscount }, 200, origin);
+  }
   return json({ total: result.customer, optionPrices: computeOptionPrices(cfg) }, 200, origin);
 }
 
