@@ -973,3 +973,56 @@ function togetherMemo(ts, picks, what, builds, opts) {
   }
   return clip([intro + rule, tail].join('\n\n'), LIMITS.memo);
 }
+
+/* ---------------------------------------------------------------------------
+ * CREDIT CARD SURCHARGE.
+ *
+ * A Stripe invoice's amount is fixed when it is created; Stripe cannot add a
+ * fee later for one payment method and not another. So when the surcharge is
+ * on, the CRM sends one of two bills, never a mix:
+ *
+ *   bank — bank transfer (ACH) only, NO fee. Same lines as always.
+ *   card — card only, with the surcharge as its own last line.
+ *
+ * The surcharge is worked out on the amount being billed — tax included,
+ * since that is what the customer pays and what the card is charged for — and
+ * it is not itself taxed or counted towards the job: recordInvoicePaid books
+ * only the pre-fee part against the build and keeps the fee separately.
+ * ------------------------------------------------------------------------- */
+export function cardFeeLabel(rate) {
+  return 'Credit card surcharge (' + pct(rate) + '%) \u2014 not applied to bank transfer (ACH), check or cashier\u2019s check';
+}
+export function cardFeeCents(baseCents, rate) {
+  const r = Math.max(0, Math.min(0.03, Number(rate) || 0));
+  return Math.round(Math.max(0, Number(baseCents) || 0) * r);
+}
+/* A new invoice object with the surcharge added. The original is not touched:
+   the preview returns both, and the person sending picks. */
+export function addCardFee(invoice, rate) {
+  const fee = cardFeeCents(invoice.totalCents, rate);
+  if (!fee) return Object.assign({}, invoice, { feeCents: 0, baseCents: invoice.totalCents });
+  return Object.assign({}, invoice, {
+    lines: invoice.lines.concat([{ label: cardFeeLabel(rate), amountCents: fee, fixed: true, fee: true }]),
+    totalCents: invoice.totalCents + fee,
+    baseCents: invoice.totalCents,
+    feeCents: fee,
+    footer: clip(cardFeeFooter(rate) + (invoice.footer ? ' ' + invoice.footer : ''), LIMITS.footer)
+  });
+}
+export function cardFeeFooter(rate) {
+  return 'This bill is for payment by credit card and includes a ' + pct(rate) + '% surcharge, which is not more than our cost of card acceptance. Debit and prepaid cards cannot be used. To pay with no fee, ask us for a bank-transfer (ACH) bill, or pay by check or cashier\u2019s check.';
+}
+export function bankFooterNote(rate) {
+  return 'Pay by bank transfer (ACH) with no fee. Paying by credit card adds a ' + pct(rate) + '% surcharge; ask us for a card bill if you prefer.';
+}
+/* What part of a Stripe payment belongs to the job, and what is the fee.
+   A partial payment splits in proportion, so a half-paid card bill credits
+   half the base and half the fee. */
+export function splitFee(paidCents, totalCents, feeCents) {
+  const paid = Math.max(0, Math.round(Number(paidCents) || 0));
+  const fee = Math.max(0, Math.round(Number(feeCents) || 0));
+  const tot = Math.max(0, Math.round(Number(totalCents) || 0));
+  if (!fee || !tot) return { creditCents: paid, feeCents: 0 };
+  const feePart = paid >= tot ? fee : Math.round(paid * fee / tot);
+  return { creditCents: paid - feePart, feeCents: feePart };
+}

@@ -221,6 +221,11 @@ select:focus{border-color:var(--sp-blue)}
 .inv-btn.quiet{border-color:var(--dim);color:var(--dim)}
 .inv-btn.quiet:hover{border-color:#e0684f;color:#e0684f;background:none}
 .inv-link{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border-bottom:1px solid rgba(43,181,232,0.4)}
+.inv-paychoice{margin:0 0 10px;padding:8px 10px;border:1px dashed rgba(43,181,232,0.45);border-radius:6px}
+.inv-paylabel{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--silver,#9aa);margin-bottom:6px}
+.inv-payopt{display:block;font-size:13px;margin:3px 0;cursor:pointer}
+.inv-pline.inv-fee{color:#f0b44c}
+.inv-feetag{font-size:11px;color:#f0b44c;margin:0 6px}
 .inv-preview{margin:4px 0 10px;padding:12px 14px;border:1px solid rgba(43,181,232,0.45);background:rgba(43,181,232,0.06);border-radius:8px}
 .inv-pline{display:flex;justify-content:space-between;gap:14px;font-size:13px;color:var(--fg);margin-bottom:4px}
 .inv-ptotal{display:flex;justify-content:space-between;gap:14px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(43,181,232,0.35);font-size:15px;color:var(--bright)}
@@ -1470,21 +1475,59 @@ function invStatePill(status) {
 
 /* Preview panel. Returns the element; the caller decides where it goes and
    when it comes away. */
+/* How the customer will pay this Stripe bill, when the card surcharge is on.
+   'bank' = bank transfer (ACH) only, no fee; 'card' = card only, surcharge
+   line added. Read by every send below; reset for each new preview. */
+var INV_PAY_BY = 'bank';
 function invPreviewPanel(kind, data, onSend, onCancel) {
   var box = document.createElement('div');
   box.className = 'inv-preview';
+  var cf = data.card_fee || null;
+  INV_PAY_BY = 'bank';
 
-  (data.lines || []).forEach(function (l) {
-    var row = document.createElement('div');
-    row.className = 'inv-pline';
-    var name = document.createElement('span');
-    name.textContent = l.label;
-    var amt = document.createElement('span');
-    amt.textContent = money(l.amount);
-    row.appendChild(name);
-    row.appendChild(amt);
-    box.appendChild(row);
-  });
+  /* The choice comes first: it decides what the lines below say. */
+  if (cf) {
+    var choice = document.createElement('div');
+    choice.className = 'inv-paychoice';
+    choice.innerHTML = '<div class="inv-paylabel">How will they pay on Stripe?</div>';
+    [['bank', 'Bank transfer (ACH) \u2014 no fee', money(cf.amount_without_fee)],
+     ['card', 'Credit card \u2014 +' + cf.percent + '% surcharge (' + money(cf.fee) + ')', money(cf.amount_with_fee)]].forEach(function (o) {
+      var lab = document.createElement('label');
+      lab.className = 'inv-payopt';
+      var r = document.createElement('input');
+      r.type = 'radio'; r.name = 'paypick-' + Math.random().toString(36).slice(2); r.value = o[0];
+      r.checked = o[0] === 'bank';
+      r.addEventListener('change', function () { if (r.checked) setPay(o[0]); });
+      lab.appendChild(r);
+      var t = document.createElement('span'); t.textContent = ' ' + o[1] + ' \u00b7 ' + o[2];
+      lab.appendChild(t);
+      choice.appendChild(lab);
+      r.dataset.pay = o[0];
+    });
+    var hintPay = document.createElement('div');
+    hintPay.className = 'inv-note';
+    hintPay.textContent = 'One bill, one way to pay. Card bills take credit cards only (debit and prepaid cannot be surcharged). Checks and cashier\u2019s checks are marked by hand and never get the fee.';
+    choice.appendChild(hintPay);
+    box.appendChild(choice);
+    choice.querySelectorAll('input').forEach(function (r) { r.name = 'paypick-' + kind; });
+  }
+  var linesHost = document.createElement('div');
+  box.appendChild(linesHost);
+  function drawLines(lines) {
+    linesHost.innerHTML = '';
+    (lines || []).forEach(function (l) {
+      var row = document.createElement('div');
+      row.className = 'inv-pline' + (l.fee ? ' inv-fee' : '');
+      var name = document.createElement('span');
+      name.textContent = l.label;
+      var amt = document.createElement('span');
+      amt.textContent = money(l.amount);
+      row.appendChild(name);
+      row.appendChild(amt);
+      linesHost.appendChild(row);
+    });
+  }
+  drawLines(cf ? cf.lines_without_fee : data.lines);
 
   var total = document.createElement('div');
   total.className = 'inv-ptotal';
@@ -1504,8 +1547,9 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
     (data.payments && data.payments.length
       ? ' (' + data.payments.map(function (p) { return PAY_LABEL(p.method) + ' ' + money(p.amount); }).join(', ') + ')'
       : '') +
-    '. Sent from Stripe by email, payable by bank transfer or card.';
+    '. Sent from Stripe by email, payable by ' + (cf ? 'bank transfer (ACH) only, no fee.' : 'bank transfer or card.');
   box.appendChild(note);
+  var footEl = null;
 
   /* What the customer will actually read, not just what they will be charged.
      Shown collapsed: on a normal send you want the total and the lines, and
@@ -1536,6 +1580,7 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
       foot.className = 'inv-note';
       foot.textContent = data.footer;
       more.appendChild(foot);
+      footEl = foot;
     }
     box.appendChild(more);
   }
@@ -1571,6 +1616,22 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
      than costing us a redo, so it gets a second press. Everything else the
      preview says is information; this is a stop. */
   var doubleBill = (data.warnings || []).filter(function (w) { return w.code === 'unpaid_invoice'; })[0];
+
+  /* Switch the whole preview between the two bills. Both versions came back
+     from the worker, so the figures here are the worker's, not worked out. */
+  function setPay(p) {
+    INV_PAY_BY = p;
+    var card = p === 'card';
+    drawLines(card ? cf.lines_with_fee : cf.lines_without_fee);
+    var amt = card ? cf.amount_with_fee : cf.amount_without_fee;
+    tv.textContent = money(amt);
+    note.textContent = note.textContent.replace(/payable by .*$/, 'payable by ' + (card
+      ? 'credit card only, with the ' + cf.percent + '% surcharge. The surcharge does not count toward the job.'
+      : 'bank transfer (ACH) only, no fee.'));
+    if (footEl) footEl.textContent = card ? cf.footer_card : (cf.footer_bank || data.footer);
+    send.textContent = 'Send ' + money(amt) + ' ' + INV_KIND_LABELS[kind].toLowerCase() + (card ? ' card' : ' bank-transfer') + ' bill with Stripe';
+  }
+  if (cf) setPay('bank');
 
   send.addEventListener('click', function () {
     if (doubleBill && !confirm(doubleBill.message + '\n\nSend it anyway?')) return;
@@ -1812,7 +1873,7 @@ function renderPhasePanel(block, s, bal) {
       var prev = invPreviewPanel('phase', r.data, function (fail) {
         authFetch('/admin/invoices', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ submission_id: s.id, kind: 'phase', parts: parts })
+          body: JSON.stringify({ submission_id: s.id, kind: 'phase', parts: parts, pay_by: INV_PAY_BY })
         }).then(function (sent) {
           if (sent.ok) { loadCustomer(); return; }
           fail((sent.data && sent.data.error) || 'Stripe would not take it.');
@@ -2107,7 +2168,7 @@ function drawTogether(body, tg) {
       var prev = invPreviewPanel('phase', r.data, function (fail) {
         authFetch('/admin/invoices', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(req)
+          body: JSON.stringify(Object.assign({ pay_by: INV_PAY_BY }, req))
         }).then(function (sent) {
           if (sent.ok) { loadCustomer(); return; }
           fail((sent.data && sent.data.error) || 'Stripe would not take it.');
@@ -2134,6 +2195,16 @@ function fillExistingRow(row, existing, kind) {
   amt.className = 'inv-amt';
   amt.textContent = money(existing.amount);
   row.appendChild(amt);
+  /* A card bill: say how much of it is the surcharge, which never counts
+     toward the build. Once paid, what was actually collected as fee. */
+  if (Number(existing.fee_cents) > 0) {
+    var fee = document.createElement('span');
+    fee.className = 'inv-feetag';
+    fee.textContent = 'card \u00b7 incl. ' + money(Number(existing.fee_cents) / 100) + ' surcharge' +
+      (existing.status === 'paid' && Number(existing.fee_paid_cents) >= 0 && existing.fee_paid_cents != null
+        ? ' (fee collected ' + money(Number(existing.fee_paid_cents) / 100) + ', not credited to the build)' : '');
+    row.appendChild(fee);
+  }
   row.appendChild(invStatePill(existing.status));
 
   /* Where it actually went, straight from Stripe. "I sent it" and "it
@@ -2336,7 +2407,7 @@ function renderInvoiceBlock(card, s, details) {
           authFetch('/admin/invoices', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ submission_id: s.id, kind: kind })
+            body: JSON.stringify({ submission_id: s.id, kind: kind, pay_by: INV_PAY_BY })
           }).then(function (sent) {
             if (sent.ok) { loadCustomer(); return; }
             fail((sent.data && sent.data.error) || 'Stripe would not take it.');

@@ -47,9 +47,12 @@ const DEPOSIT_RATE = 0.30;
 const BASE_SHED_INCLUDES = [
   'Materials & lumber',
   'Shop labor',
-  'Build labor & assembly',
-  'Fuel & delivery'
+  'Build labor & assembly'
 ];
+/* 'Fuel & delivery' was the fourth heading until 9 Oct 2026. Taken out on
+   Nando's word ("we will charge more if needed"): the base price must not
+   read as covering travel, which is billed as its own Travel & fuel line when
+   a job needs it. The quote carries a neutral note instead. */
 
 const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 

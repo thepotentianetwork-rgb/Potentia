@@ -380,6 +380,14 @@ function priceBox(bd, totalDue) {
     + '</div>';
 }
 
+/* The credit card surcharge on Stripe bills, from Admin Pricing (0 = off).
+   Utah's consumer-protection guidance wants a fee disclosed BEFORE the
+   customer pays, so the quote says it whenever it is switched on. */
+var CARD_FEE_PCT = 0;
+function cardFeeNote() {
+  if (!(CARD_FEE_PCT > 0)) return '';
+  return '<div class="br-note br-cardfee">A ' + CARD_FEE_PCT + '% surcharge applies to credit card payments through Stripe (debit and prepaid cards are not accepted for card bills). Bank transfer (ACH), checks and cashier\u2019s checks have no fee.</div>';
+}
 function buildBreakdown(bd) {
   if (!bd) return '';
   var rowsHtml = bd.rows.map(function (r) {
@@ -474,6 +482,7 @@ function buildBreakdown(bd) {
     + compHtml
     + '<div class="doc-section"><div class="doc-label">Deposits Due</div>' + depositRowsHtml
     +   '<div class="br-note">A 30% deposit (tax included) is collected before each phase begins, and the rest of each phase is due once it\u2019s complete.</div>'
+    +   cardFeeNote()
     + '</div>';
 }
 
@@ -654,7 +663,7 @@ function render(submission, customer) {
     + (details.notes ? '<div class="doc-section"><div class="doc-label">Customer Notes</div><div class="fv" style="font-size:15px">' + esc(details.notes) + '</div></div>' : '')
 
     + '<div class="doc-footer">'
-    +   'Pricing is reviewed and confirmed by a ShedPro representative before order. Current promotions will be included in your final quote.<br>'
+    +   'Pricing is reviewed and confirmed by a ShedPro representative before order. Current promotions will be included in your final quote. Travel or fuel charges may apply for locations outside our standard service area.<br>'
     +   'Questions? Call or text ' + SHEDPRO_PHONE + ', or email ' + SHEDPRO_EMAIL + '.'
     + '</div>';
 
@@ -1386,6 +1395,7 @@ if (token && submissionId) {
         'The server found the record but returned nothing to build a quote from.');
       return;
     }
+    CARD_FEE_PCT = Number(r.data.submission.card_fee_percent) || 0;
     /* Drawing is caught separately from fetching. A fault in the code that
        builds the document is not a network problem, and reporting it as one
        sent a real bug (a ReferenceError thrown while totalling the removal
