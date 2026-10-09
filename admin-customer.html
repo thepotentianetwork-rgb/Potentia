@@ -1158,11 +1158,15 @@ function travelText(a) {
   var d = Number(a.days) || 0;
   return 'Travel & fuel surcharge \u2014 ' + fmtN(d) + ' day' + (d === 1 ? '' : 's') + ' \u00d7 $' + fmtN(a.rate);
 }
-function adjLabelFor(a, compPrices) {
+function adjLabelFor(a, compPrices, compPromos) {
   if (a.kind === 'travel') return travelText(a) + ' = +$' + fmtN(travelAmt(a));
   if (a.kind === 'override') {
     var was = compPrices[a.item];
-    return a.item + ' \u2014 ' + (was != null ? '$' + fmtN(was) + ' \u2192 ' : '') + '$' + fmtN(a.amount);
+    /* The pad promo still comes off a typed pad price (Nando, 9 Oct 2026), so
+       "was" is the pad's regular price and the label says the promo stays. */
+    var promo = (compPromos && compPromos[a.item]) || 0;
+    return a.item + ' \u2014 ' + (was != null ? '$' + fmtN(was + promo) + ' \u2192 ' : '') + '$' + fmtN(a.amount)
+      + (promo ? ', promo \u2212$' + fmtN(Math.min(promo, Number(a.amount) || 0)) + ' still applies' : '');
   }
   if (a.kind === 'comp') {
     var p = compPrices[a.item];
@@ -1176,7 +1180,8 @@ function renderAdjustBlock(card, s, details) {
   var quoted = details.quotedPrice != null ? Number(details.quotedPrice) : null;
   var list = Array.isArray(s.adjustment_list) ? s.adjustment_list.slice() : [];
   var compPrices = {};
-  (s.comp_items || []).forEach(function (i) { compPrices[i.name] = i.amt; });
+  var compPromos = {};
+  (s.comp_items || []).forEach(function (i) { compPrices[i.name] = i.amt; if (i.promo > 0) compPromos[i.name] = i.promo; });
 
   var block = document.createElement('div');
   block.className = 'adj-block';
@@ -1203,7 +1208,7 @@ function renderAdjustBlock(card, s, details) {
         : (up ? '+' : '\u2212') + (a.kind === 'percent' ? '%' : '$');
       var text = document.createElement('span');
       text.className = 'adj-text';
-      text.textContent = adjLabelFor(a, compPrices);
+      text.textContent = adjLabelFor(a, compPrices, compPromos);
       var note = document.createElement('span');
       note.className = 'adj-note-shown';
       if (a.note && a.kind !== 'comp') note.textContent = a.note;
@@ -1334,13 +1339,17 @@ function renderAdjustBlock(card, s, details) {
       : 'Reason shown on the quote';
     if (isOvr) {
       /* Re-price one line for this job — the concrete pad or the sprinkler
-         relocation after a site visit, say. The new figure replaces the line's
-         price in its own phase; the quote shows the old one struck through. */
+         relocation after a site visit, say. Raised, the quote shows just the
+         new price; lowered, the cut is a discount with the reason. On the pad
+         the promo still comes off the price typed (Nando, 9 Oct 2026). */
       valIn.placeholder = 'New price';
-      noteIn.placeholder = 'Reason shown on the quote (e.g. site conditions)';
+      noteIn.placeholder = 'Reason (shown on the quote only if you lower it)';
       var cur = compPrices[itemSel.value];
+      var pr = compPromos[itemSel.value] || 0;
       hint.textContent = 'Sets this line to a new price for this quote only' +
-        (cur != null ? ' (now $' + fmtN(cur) + ')' : '') + '. It stays in its own phase; deposits follow.';
+        (cur != null ? ' (now $' + fmtN(cur + pr) + (pr ? ' before the $' + fmtN(pr) + ' promo' : '') + ')' : '') +
+        (pr ? '. Type the regular price: the $' + fmtN(pr) + ' promo still comes off it' : '') +
+        '. It stays in its own phase; deposits follow.';
       return;
     }
     if (isTravel) {

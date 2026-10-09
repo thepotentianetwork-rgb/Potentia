@@ -20,7 +20,7 @@
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
-import { quoteLines, compedMap, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
+import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
@@ -2593,6 +2593,10 @@ function compItemsFromRedline(redline) {
   push(redline.intSellName, redline.intSell);
   push(redline.floorSellName, redline.floorSell);
   push(redline.foundName, redline.foundSell);
+  /* The pad carries its promo, so the CRM can say the promo still comes off
+     a price typed for it, and the stored price takes it off (Nando, 9 Oct). */
+  const padPromo = padPromoOf(redline, redline.foundName);
+  if (padPromo && seen[String(redline.foundName)] != null) out[seen[String(redline.foundName)]].promo = padPromo;
   // paintSell is deliberately absent. The quote document never sums it as its
   // own line, so comping it would take money off a total that never contained
   // it — the customer's bill would drop by an amount nothing on the page
@@ -2604,8 +2608,8 @@ function compItemsFromRedline(redline) {
 // tested against the same cases so they cannot drift apart quietly.
 function applyAdjustments(subtotal, adjustments, compItems) {
   const list = Array.isArray(adjustments) ? adjustments : [];
-  const priceOf = {};
-  (compItems || []).forEach((i) => { priceOf[i.name] = i.amt; });
+  const priceOf = {}, promoOf = {};
+  (compItems || []).forEach((i) => { priceOf[i.name] = i.amt; if (i.promo > 0) promoOf[i.name] = i.promo; });
 
   const comped = [];
   let compTotal = 0;
@@ -2626,7 +2630,9 @@ function applyAdjustments(subtotal, adjustments, compItems) {
     const was = priceOf[a.item];
     const amt = Number(a.amount);
     if (was == null || compedNames[a.item] || !Number.isFinite(amt)) return;
-    overrideDelta += was - Math.max(0, amt);
+    /* On a pad with the promo the typed figure is its regular price and the
+       promo still comes off it (quotelines overridePays). */
+    overrideDelta += was - overridePays(amt, promoOf[a.item] || 0);
   });
 
   let running = subtotal - compTotal - overrideDelta;

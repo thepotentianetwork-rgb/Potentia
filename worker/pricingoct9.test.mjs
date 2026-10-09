@@ -325,21 +325,23 @@ test('CRM: a travel adjustment is stored, validated and priced into the effectiv
 });
 
 /* ── staff re-pricing a line (site conditions) ─────────────────────── */
-test('override: the pad re-priced for this job moves only the concrete phase', () => {
+test('override: the pad re-priced for this job moves only the concrete phase, and the promo still comes off', () => {
   const { redline } = computePricing(PAD);
   const bd0 = quoteLines(redline, []);
   const adj = [{ kind: 'override', item: redline.foundName, amount: 3600, note: 'Sloped lot, extra forms' }];
   const bd = quoteLines(redline, adj);
   const pad = bd.rows.find((r) => r.kind === 'foundation');
-  assert.equal(pad.amt, 3600);
-  /* Raised: just the new price, no trace of the old one (Nando, 9 Oct 2026). */
+  /* Nando, 9 Oct 2026: "Make the promo come off whatever pad price I type."
+     $3,600 typed = the pad's regular price; the $500 promo comes off it. */
+  assert.equal(pad.amt, 3100);
+  /* Raised: just the new price, no trace of the old one. */
   assert.equal(pad.override, undefined);
   assert.equal(pad.regularAmt, 3600);
-  assert.ok(!bd.discounts.length, 'a raise is not a discount');
+  assert.deepEqual(bd.discounts.map((d) => [d.label, d.amt]), [['Concrete pad promo', 500]], 'a raise is not a discount; the promo is');
   assert.ok(!pad.estimate, 'a price set after seeing the site is not an estimate');
-  assert.equal(pad.promo, undefined, 'the staff price replaces the promo arithmetic');
-  near(pad.deposit, 3600 * (1 + TAX_RATE) * 0.3);
-  near(bd.subtotal - bd0.subtotal, 600);
+  assert.deepEqual(pad.promo, { label: 'Concrete pad promo', amt: 500 });
+  near(pad.deposit, 3100 * (1 + TAX_RATE) * 0.3);
+  near(bd.subtotal - bd0.subtotal, 100);
   near(bd.rows.find((r) => r.kind === 'shed').amt, bd0.rows.find((r) => r.kind === 'shed').amt);
   assert.equal(bd.adjust, 0);
 });
@@ -375,9 +377,12 @@ test('CRM: overrides are stored, checked, and priced into the effective price', 
   const { redline, customer } = computePricing(PAD);
   let r = await set([{ kind: 'override', item: redline.foundName, amount: 3400, note: 'Site visit' }]);
   assert.equal(r.status, 200, JSON.stringify(r.data));
-  near(r.data.effective_price, customer + 400);
+  /* $3,400 typed is the pad's regular price; the $500 promo still comes off,
+     so the pad is $2,900 against the $3,000 it was. */
+  near(r.data.effective_price, customer - 100);
+  near(quoteLines(redline, r.data.adjustments).adjustedSubtotal, r.data.effective_price, 'quote and stored price agree');
   r = await set([{ kind: 'override', item: redline.foundName, amount: 2800 }, { kind: 'percent', value: -10 }]);
-  near(r.data.effective_price, (customer - 200) * 0.9);
+  near(r.data.effective_price, (customer - 700) * 0.9);
   near(quoteLines(redline, r.data.adjustments).adjustedSubtotal, r.data.effective_price, 'quote and stored price agree');
   for (const bad of [[{ kind: 'override', item: 'Gold Taps', amount: 5 }],
                      [{ kind: 'override', item: redline.foundName, amount: -1 }],
