@@ -75,6 +75,11 @@ select:focus{border-color:var(--sp-blue)}
 .adj-form input{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 9px;outline:none}
 .adj-form input:focus{border-color:var(--sp-blue)}
 .adj-form input.adj-amt{width:110px}
+.adj-form input.adj-days{width:80px}
+.adj-form input.adj-rate{width:110px}
+.adj-kind.adj-override{color:var(--sp-blue);border:1px solid rgba(44,192,253,0.45);background:rgba(44,192,253,0.1)}
+.adj-kind.adj-travel{color:#f6941f;border:1px solid rgba(246,148,31,0.55);background:rgba(246,148,31,0.16)}
+.adj-travel-calc{font-family:'DM Mono',monospace;font-size:12px;color:var(--bright)}
 .adj-form input.adj-note{flex:1;min-width:150px;font-family:'Cormorant Garamond',serif;font-size:15px}
 .adj-form select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:7px 9px;outline:none}
 .adj-form select:focus{border-color:var(--sp-blue)}
@@ -1131,7 +1136,23 @@ function renderInstallBlock(card, s, details, installs) {
 // Order of application is decided in the worker (comps, then percent, then
 // amounts). This page only collects them and shows the result the worker
 // calculated, so the two can't disagree about the price.
+/* Mirrors travelLabel/travelAmount in worker/quotelines.js (the quote's own
+   wording), so the CRM line reads exactly as the customer's quote does. */
+function travelAmt(a) {
+  var d = Number(a.days), r = Number(a.rate);
+  return (d > 0 && r > 0) ? Math.round(d * r * 100) / 100 : 0;
+}
+function fmtN(n) { return (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }); }
+function travelText(a) {
+  var d = Number(a.days) || 0;
+  return 'Travel & fuel surcharge \u2014 ' + fmtN(d) + ' day' + (d === 1 ? '' : 's') + ' \u00d7 $' + fmtN(a.rate);
+}
 function adjLabelFor(a, compPrices) {
+  if (a.kind === 'travel') return travelText(a) + ' = +$' + fmtN(travelAmt(a));
+  if (a.kind === 'override') {
+    var was = compPrices[a.item];
+    return a.item + ' \u2014 ' + (was != null ? '$' + fmtN(was) + ' \u2192 ' : '') + '$' + fmtN(a.amount);
+  }
   if (a.kind === 'comp') {
     var p = compPrices[a.item];
     return a.item + (p != null ? ' — was $' + Math.round(p).toLocaleString() : '');
@@ -1163,9 +1184,11 @@ function renderAdjustBlock(card, s, details) {
       row.className = 'adj-item';
       var up = a.kind !== 'comp' && Number(a.value) > 0;
       var kind = document.createElement('span');
-      kind.className = 'adj-kind adj-' + a.kind + (a.kind === 'comp' ? '' : (up ? ' adj-up' : ' adj-down'));
+      kind.className = 'adj-kind adj-' + a.kind + (a.kind === 'comp' || a.kind === 'travel' || a.kind === 'override' ? '' : (up ? ' adj-up' : ' adj-down'));
       kind.textContent = a.kind === 'comp'
         ? 'Free'
+        : a.kind === 'travel' ? 'Travel'
+        : a.kind === 'override' ? 'Price'
         : (up ? '+' : '\u2212') + (a.kind === 'percent' ? '%' : '$');
       var text = document.createElement('span');
       text.className = 'adj-text';
@@ -1173,6 +1196,7 @@ function renderAdjustBlock(card, s, details) {
       var note = document.createElement('span');
       note.className = 'adj-note-shown';
       if (a.note && a.kind !== 'comp') note.textContent = a.note;
+      if (a.kind === 'travel') note.textContent = (a.note ? a.note + ' \u00b7 ' : '') + 'in the Shed phase, taxed with it';
       var del = document.createElement('button');
       del.type = 'button';
       del.className = 'adj-clear';
@@ -1205,7 +1229,7 @@ function renderAdjustBlock(card, s, details) {
   form.className = 'adj-form';
 
   var kindSel = document.createElement('select');
-  [['comp', 'Include free'], ['percent', 'Percent'], ['amount', 'Amount']].forEach(function (k) {
+  [['comp', 'Include free'], ['override', 'Change a line\u2019s price'], ['percent', 'Percent'], ['amount', 'Amount'], ['travel', 'Travel & fuel']].forEach(function (k) {
     var o = document.createElement('option');
     o.value = k[0];
     o.textContent = k[1];
@@ -1247,6 +1271,33 @@ function renderAdjustBlock(card, s, details) {
   valIn.step = '0.01';
   valIn.placeholder = '10';
 
+  /* Travel & fuel: estimated days x an amount per day. The amount starts at
+     the default set in Admin Pricing (Travel & Fuel Surcharge) and can be
+     changed for this quote; with no default set it starts empty. */
+  var daysIn = document.createElement('input');
+  daysIn.className = 'adj-days';
+  daysIn.type = 'number';
+  daysIn.step = '0.5';
+  daysIn.min = '0.5';
+  daysIn.placeholder = 'Days';
+  daysIn.setAttribute('aria-label', 'Estimated days');
+  var rateIn = document.createElement('input');
+  rateIn.className = 'adj-rate';
+  rateIn.type = 'number';
+  rateIn.step = '0.01';
+  rateIn.min = '0';
+  rateIn.placeholder = '$ per day';
+  rateIn.setAttribute('aria-label', 'Amount per day');
+  if (Number(s.travel_per_day) > 0) rateIn.value = String(s.travel_per_day);
+  var travelCalc = document.createElement('span');
+  travelCalc.className = 'adj-travel-calc';
+  function syncTravelCalc() {
+    var t = { days: daysIn.value, rate: rateIn.value };
+    travelCalc.textContent = travelAmt(t) ? '= +$' + fmtN(travelAmt(t)) : '';
+  }
+  daysIn.addEventListener('input', syncTravelCalc);
+  rateIn.addEventListener('input', syncTravelCalc);
+
   var noteIn = document.createElement('input');
   noteIn.className = 'adj-note';
   noteIn.type = 'text';
@@ -1256,10 +1307,13 @@ function renderAdjustBlock(card, s, details) {
   hint.className = 'adj-dir-hint';
 
   function syncKind() {
-    var k = kindSel.value, isComp = (k === 'comp');
-    itemSel.style.display = isComp ? '' : 'none';
-    dirSel.style.display = isComp ? 'none' : '';
-    valIn.style.display = isComp ? 'none' : '';
+    var k = kindSel.value, isComp = (k === 'comp'), isTravel = (k === 'travel'), isOvr = (k === 'override');
+    itemSel.style.display = (isComp || isOvr) ? '' : 'none';
+    dirSel.style.display = (isComp || isTravel || isOvr) ? 'none' : '';
+    valIn.style.display = (isComp || isTravel) ? 'none' : '';
+    daysIn.style.display = isTravel ? '' : 'none';
+    rateIn.style.display = isTravel ? '' : 'none';
+    travelCalc.style.display = isTravel ? '' : 'none';
     noteIn.style.display = isComp ? 'none' : '';
     valIn.placeholder = (k === 'percent') ? '10' : '500';
     /* A price going UP reaches the customer as a line on their quote. Saying
@@ -1267,12 +1321,31 @@ function renderAdjustBlock(card, s, details) {
     noteIn.placeholder = dirSel.value === 'up'
       ? 'Reason shown on the quote (required)'
       : 'Reason shown on the quote';
+    if (isOvr) {
+      /* Re-price one line for this job — the concrete pad or the sprinkler
+         relocation after a site visit, say. The new figure replaces the line's
+         price in its own phase; the quote shows the old one struck through. */
+      valIn.placeholder = 'New price';
+      noteIn.placeholder = 'Reason shown on the quote (e.g. site conditions)';
+      var cur = compPrices[itemSel.value];
+      hint.textContent = 'Sets this line to a new price for this quote only' +
+        (cur != null ? ' (now $' + fmtN(cur) + ')' : '') + '. It stays in its own phase; deposits follow.';
+      return;
+    }
+    if (isTravel) {
+      noteIn.placeholder = 'Note (optional)';
+      hint.textContent = 'Adds a line to the Shed phase: "Travel & fuel surcharge \u2014 3 days \u00d7 $X". Taxed with the phase; a percentage discount is not taken off it.' +
+        (Number(s.travel_per_day) > 0 ? '' : ' No default per-day amount is set in Admin Pricing yet.');
+      syncTravelCalc();
+      return;
+    }
     hint.textContent = isComp ? ''
       : (dirSel.value === 'up'
           ? 'Raises the price. The customer sees this line and your reason for it.'
           : 'Lowers the price.');
   }
   kindSel.addEventListener('change', syncKind);
+  itemSel.addEventListener('change', syncKind);
   dirSel.addEventListener('change', syncKind);
 
   var btn = document.createElement('button');
@@ -1290,6 +1363,24 @@ function renderAdjustBlock(card, s, details) {
         return;
       }
       entry = { kind: 'comp', item: itemSel.value };
+    } else if (k === 'override') {
+      if (!itemSel.value) { alert('This quote has no lines to re-price.'); return; }
+      var na = Number(valIn.value);
+      if (valIn.value === '' || !isFinite(na) || na < 0) { alert('Enter the new price for that line.'); valIn.focus(); return; }
+      if (list.some(function (a) { return a.kind === 'comp' && a.item === itemSel.value; })) {
+        alert('That line is included free. Remove that first to re-price it.'); return;
+      }
+      entry = { kind: 'override', item: itemSel.value, amount: na, note: noteIn.value };
+      list = list.filter(function (a) { return !(a.kind === 'override' && a.item === itemSel.value); });
+    } else if (k === 'travel') {
+      var days = Number(daysIn.value), rate = Number(rateIn.value);
+      if (!(days > 0)) { alert('Enter the estimated number of days.'); daysIn.focus(); return; }
+      if (!(rate > 0)) { alert('Enter the amount per day.'); rateIn.focus(); return; }
+      if (list.some(function (a) { return a.kind === 'travel'; })) {
+        alert('This quote already has a travel surcharge. Remove it first to change it.');
+        return;
+      }
+      entry = { kind: 'travel', days: days, rate: rate, note: noteIn.value };
     } else {
       var v = Number(valIn.value);
       if (!valIn.value || !isFinite(v) || v === 0) { alert('Enter an amount.'); return; }
@@ -1311,6 +1402,9 @@ function renderAdjustBlock(card, s, details) {
   form.appendChild(itemSel);
   form.appendChild(dirSel);
   form.appendChild(valIn);
+  form.appendChild(daysIn);
+  form.appendChild(rateIn);
+  form.appendChild(travelCalc);
   form.appendChild(noteIn);
   form.appendChild(btn);
   form.appendChild(hint);

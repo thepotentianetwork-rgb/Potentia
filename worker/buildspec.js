@@ -122,6 +122,16 @@ function specInsideLine(c) {
   return bits.length ? specCap(bits.join(" · ")) : "";
 }
 
+/* Sprinkler relocation: how many heads and how far each moves — the crew
+   moves them before the pad is formed, so the distances belong on the sheet. */
+export function specSprinklerLine(c) {
+  const list = Array.isArray(c && c.sprinklers) ? c.sprinklers : [];
+  if (!list.length) return "";
+  const ft = list.map((v) => { const n = Number(v && typeof v === "object" ? v.ft : v); return n > 0 ? n : 0; });
+  return "Sprinkler relocation: " + ft.length + " head" + (ft.length === 1 ? "" : "s") + " (" +
+    ft.map((n) => (!n || n <= 5) ? "up to 5 ft" : n + " ft").join(", ") + ") · estimate, confirm on site";
+}
+
 function specAddonLine(c) {
   const a = c.addons;
   if (!a || typeof a !== "object") return "";
@@ -180,6 +190,7 @@ export function buildSpecLines(config) {
 
   const inside = specInsideLine(c); if (inside) out.push(inside);
   const ad = specAddonLine(c); if (ad) out.push(ad);
+  const spr = specSprinklerLine(c); if (spr) out.push(spr);
 
   return out;
 }

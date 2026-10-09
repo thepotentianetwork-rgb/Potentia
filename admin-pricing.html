@@ -165,7 +165,7 @@ table.price-grid td.rowhead{color:var(--silver);text-align:right;padding-right:1
         <span class="count-tag partial">Paste from another source</span>
       </summary>
       <div style="padding:0 20px 20px">
-        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>porchDeckSqft</code>, <code>foundation</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>gravelTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
+        <p class="note" style="margin-bottom:10px">Paste a block like <code>{"doors":{"5' Double":0,"5' Double Craftsman":50},"windows":{...}}</code> — group names are <code>doors</code>, <code>windows</code>, <code>siding</code>, <code>electrical</code>, <code>porchFrontSqft</code>, <code>porchSideSqft</code>, <code>porchDeckSqft</code>, <code>foundation</code>, <code>concretePromo</code>, <code>sprinkler</code>, <code>travel</code>, <code>foundationFinish</code>, <code>broomTiers</code>, <code>gravelTiers</code>, <code>interior</code>, <code>options.flat</code>, <code>options.perLinFt</code>. Existing items are updated by name; new names are added. Nothing is saved until you click Save Pricing.</p>
         <textarea id="comp-import-text" class="add-form input" style="width:100%;min-height:120px;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:12px;padding:10px 12px;outline:none" placeholder='{"doors":{"5\' Double":0,"5\' Double Craftsman":50}}'></textarea>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
           <button class="save-btn" id="comp-import-btn" type="button">Import Into Components</button>
@@ -252,7 +252,10 @@ var SELL_DEFAULTS = {
   porchSideSqft: { "standard": 8.33 },
   porchPartial: { flat: 0, min: 0 },
   porchDeckSqft: { "none": 0, "pt": 0, "composite": 8.50 },
-  foundation: { pad: 3000, blocks: 0, existing: 0 },
+  foundation: { pad: 3500, blocks: 0, existing: 0 },
+  concretePromo: { amount: 500 },
+  sprinkler: { base: 300, includedFt: 5, stepFt: 2, stepAmt: 100 },
+  travel: { perDay: 0 },
   foundationFinish: { plain: 0, coated: 300 },
   broomTiers: { under: 500, mid: 750, over: 1000, breakLo: 125, breakHi: 175 },
   gravelTiers: { tier1: 750, tier2: 1100, tier3: 1500, break1: 75, break2: 150, maxSqft: 200 },
@@ -286,7 +289,7 @@ var FLAT_GROUPS = [
   { key: 'porchFrontSqft', label: 'Porch — Front (item name = "standard" for the base finish, or a tier name like "Composite Awning")', unit: '/ sq ft (depth × shed width)' },
   { key: 'porchSideSqft', label: 'Porch — Side (item name = "standard"; only that one tier is offered)', unit: '/ sq ft (depth × shed length)' },
   { key: 'porchDeckSqft', label: 'Porch Decking (item names: "none", "pt", "composite" — the front-finish tiers are retired, this is where a porch upgrade is charged now)', unit: '/ sq ft of porch' },
-  { key: 'foundation', label: 'Foundation (item names: "pad", "blocks", "existing")', unit: 'flat' },
+  { key: 'foundation', label: 'Foundation (item names: "pad", "blocks", "existing") — "pad" is the LIST price; the Concrete Pad Promo below comes off it', unit: 'flat' },
   { key: 'foundationFinish', label: 'Foundation Floor Finish — Plain & Coated (item names: "plain", "coated"; Broom is tiered, edited below)', unit: 'flat' }
 ];
 
@@ -330,6 +333,30 @@ var TIER_GROUPS = [
       { key: 'break1', label: 'Break 1', unit: 'sq ft' },
       { key: 'break2', label: 'Break 2', unit: 'sq ft' },
       { key: 'maxSqft', label: 'Not offered past', unit: 'sq ft' }
+    ]
+  },
+  {
+    key: 'concretePromo', label: 'Concrete Pad Promo — Taken Off the Pad Price',
+    note: 'Comes off the concrete pad\u2019s list price ("pad" above), never off the floor finish. The designer and the quote show the list price struck through, the promo as its own line, and what the customer pays. Example: pad $3,500 with a $500 promo = $3,000 to pay. Set to 0 to end the promo (customers then pay the full list price).',
+    fields: [
+      { key: 'amount', label: 'Promo amount off each pad', unit: '$', prefix: true }
+    ]
+  },
+  {
+    key: 'sprinkler', label: 'Sprinkler Relocation — Per Sprinkler Head',
+    note: 'Each head pays the base price to move it up to the included distance. Past that, every further step of feet (or part of one) adds the step amount. With $300 / 5 ft / 2 ft / $100: up to 5 ft $300, 6\u20137 ft $400, 8\u20139 ft $500, 10\u201311 ft $600. Billed in the Site Prep phase, before the pad.',
+    fields: [
+      { key: 'base', label: 'Per head, up to the included distance', unit: '$', prefix: true },
+      { key: 'includedFt', label: 'Included distance', unit: 'ft' },
+      { key: 'stepFt', label: 'Then every', unit: 'ft (part counts as whole)' },
+      { key: 'stepAmt', label: 'Adds', unit: '$', prefix: true }
+    ]
+  },
+  {
+    key: 'travel', label: 'Travel & Fuel Surcharge — Default Per Day',
+    note: 'Pre-fills the per-day amount when staff add a travel & fuel surcharge to a quote in the CRM (Adjustments \u2192 Travel & fuel). Staff enter the days and can change the amount on each quote. 0 = no default: the CRM asks for the amount each time. Nothing is charged unless staff add it to a quote.',
+    fields: [
+      { key: 'perDay', label: 'Default amount per day', unit: '$', prefix: true }
     ]
   },
   {
@@ -762,7 +789,8 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
     return;
   }
   var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical',
-    'porchFrontSqft', 'porchSideSqft', 'porchDeckSqft', 'foundation', 'foundationFinish', 'broomTiers', 'gravelTiers', 'interior'];
+    'porchFrontSqft', 'porchSideSqft', 'porchDeckSqft', 'foundation', 'foundationFinish', 'broomTiers', 'gravelTiers', 'interior',
+    'concretePromo', 'sprinkler', 'travel'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {

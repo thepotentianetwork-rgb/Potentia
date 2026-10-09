@@ -79,6 +79,10 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 .br-row.br-tax .br-label{color:var(--chrome)}
 /* A discount is the one line on this page the customer should catch first. */
 .br-row.br-save .br-label,.br-row.br-save .br-amt{color:var(--sp-green);font-weight:600}
+/* A promo on a phase (the concrete pad): list price struck through beside
+   what is actually charged, and the promo on its own line underneath. */
+.br-was{text-decoration:line-through;color:var(--silver);font-weight:400;margin-right:8px;font-size:13px}
+.br-row.br-promo{padding-left:20px;font-size:13px;border-bottom-style:dashed}
 .br-row.br-save .br-amt{font-size:18px}
 .br-row.br-save{background:rgba(61,220,151,0.07);margin:0 -12px;padding-left:12px;padding-right:12px}
 .br-sub-note{font-size:11px;color:var(--chrome);opacity:.8;padding:0 0 8px;line-height:1.5}
@@ -379,11 +383,31 @@ function priceBox(bd, totalDue) {
 function buildBreakdown(bd) {
   if (!bd) return '';
   var rowsHtml = bd.rows.map(function (r) {
+    var hasPromo = r.promo && Number(r.promo.amt) > 0 && Number(r.listAmt) > 0;
     var html = '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
-      + '<span class="br-amt">' + money2(r.amt) + '</span></div>';
+      + '<span class="br-amt">' + (hasPromo ? '<span class="br-was">' + money2(r.listAmt) + '</span>' : '')
+      + money2(r.amt) + '</span></div>';
+    /* Already inside the phase figure above — shown so the customer sees the
+       promo as a line, not just a lower number. */
+    /* A line staff re-priced for this job (site seen): the old figure, and
+       the reason they gave, so the change is not a silent new number. */
+    if (r.override) {
+      html += '<div class="br-row br-promo"><span class="br-label">&nbsp;&nbsp;Price set for this job'
+        + (r.override.note ? ' \u2014 ' + esc(r.override.note) : '') + '</span>'
+        + '<span class="br-amt"><span class="br-was">' + money2(r.override.was) + '</span></span></div>';
+    }
+    if (hasPromo) {
+      html += '<div class="br-row br-promo br-save"><span class="br-label">&nbsp;&nbsp;\u2212 ' + esc(r.promo.label) + '</span>'
+        + '<span class="br-amt">\u2212' + money2(r.promo.amt) + '</span></div>';
+    }
     // Sub-lines (e.g. Electrical inside the Shed phase) are shown indented,
     // already-included-in-the-row-above dollars — not their own deposit
     // phase, just a customer-facing breakout of what's in that total.
+    /* Nando, 9 Oct 2026: concrete and sprinkler relocation "may vary
+       depending on conditions of the site". Said once, under the phase. */
+    if (r.estimate && !r.override) {
+      html += '<div class="br-row br-inc br-est">Estimate. Final price may vary based on site conditions.</div>';
+    }
     (r.subLines || []).forEach(function (s) {
       html += '<div class="br-row" style="padding-left:20px;font-size:13px;color:var(--silver)">'
         + '<span class="br-label">&nbsp;&nbsp;+ ' + esc(s.label) + '</span>'
@@ -406,7 +430,8 @@ function buildBreakdown(bd) {
     if (!a) return;
     var v = Number(a.value);
     if (a.kind === 'percent' && isFinite(v)) {
-      var pAmt = bd.subtotal * (v / 100);
+      /* Of the subtotal less any travel surcharge, as quoteLines works it. */
+      var pAmt = (bd.percentBase != null ? bd.percentBase : bd.subtotal) * (v / 100);
       /* Not hardcoded "Discount": a percentage can go up as well as down, and
          "Discount (10%)" beside a +$500 figure is the kind of contradiction a
          customer reads as a mistake on the whole quote. */
@@ -475,6 +500,14 @@ function doorLabel(dd) {
   var wl = (w <= 38) ? "3'" : (w <= 46) ? '3\'6"' : (w <= 64) ? "5'" : (w <= 78) ? "6'" : "7'";
   var kind = (w <= 46) ? 'Single' : 'Double';
   return wl + ' ' + kind + ' — ' + (DOOR_STYLE_NAMES[st] || st);
+}
+/* "Relocate 3 heads (up to 5 ft, up to 5 ft, 8 ft)" — the crew needs the
+   distances, the customer needs to see what they were priced on. */
+function sprinklerSpec(list) {
+  if (!Array.isArray(list) || !list.length) return '';
+  var ft = list.map(function (v) { var n = Number(v && typeof v === 'object' ? v.ft : v); return n > 0 ? n : 0; });
+  return 'Relocate ' + ft.length + ' head' + (ft.length === 1 ? '' : 's') + ' (' +
+    ft.map(function (n) { return (!n || n <= 5) ? 'up to 5 ft' : n + ' ft'; }).join(', ') + ') \u00b7 estimate, confirmed on site';
 }
 function wallLabel(w) { return w ? w.charAt(0).toUpperCase() + w.slice(1) : '—'; }
 
@@ -562,6 +595,8 @@ function render(submission, customer) {
   if (Array.isArray(config.windows)) fields += field('Windows', config.windows.length);
   if (config.foundation) fields += field('Foundation', config.foundation === 'pad' ? '4" Poured Concrete Pad' : config.foundation === 'blocks' ? 'Leveled on Cinder Blocks' : config.foundation);
   if (config.loft) fields += field('Loft', config.loft);
+  var _spr = sprinklerSpec(config.sprinklers);
+  if (_spr) fields += field('Sprinklers', _spr);
   if (config.elec) fields += field('Electrical', config.elec);
   if (!fields) fields = '<p class="empty">No design details captured for this order.</p>';
 

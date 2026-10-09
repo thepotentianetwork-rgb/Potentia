@@ -18,9 +18,9 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
-import { quoteLines, compedMap, shedStyleName } from "./quotelines.js";
+import { quoteLines, compedMap, shedStyleName, travelAmount } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
@@ -723,7 +723,15 @@ async function handleGetCustomer(request, env, origin, id) {
   // redline, plus its adjustments normalised into one shape. Done here so the
   // CRM never has to parse a redline or know about the older single-adjustment
   // column.
+  /* The travel surcharge's default per-day amount (Admin Pricing), so the
+     CRM's adjustment form can pre-fill it. 0 = none set, staff type it. */
+  let travelPerDay = 0;
+  try {
+    await applySavedPricing(env);
+    travelPerDay = Number((SELL.travel || {}).perDay) || 0;
+  } catch (e) {}   // a default that will not load must not stop the customer loading
   submissions.forEach((sub) => {
+    sub.travel_per_day = travelPerDay;
     sub.adjustment_list = adjustmentsOf(sub);
     let redline = null, parsed = null;
     try {
@@ -2319,7 +2327,7 @@ function trackUrlFor(env, token) {
 //
 // Several percentages add rather than compound: 10% and 5% is 15% off, not
 // 14.5%. Compounding is not what anyone means when they say it out loud.
-const ADJUSTMENT_KINDS = ["comp", "percent", "amount"];
+const ADJUSTMENT_KINDS = ["comp", "percent", "amount", "travel", "override"];
 
 // Every individually-priced, customer-visible line on a quote, by the name it
 // appears under — which is exactly the set that can be given away. Read from
@@ -2420,7 +2428,22 @@ function applyAdjustments(subtotal, adjustments, compItems) {
     if (amt != null) { compTotal += amt; comped.push({ name: a.item, amt: amt }); }
   });
 
-  let running = subtotal - compTotal;
+  /* Overrides: one line set to a different price for this quote (a concrete
+     pad or sprinkler job priced after seeing the site). Applied with the
+     comps — they change what the line costs, not the total after it — so a
+     percentage then lands on the corrected figure, as quoteLines does. A
+     comp on the same line wins. */
+  let overrideDelta = 0;
+  const compedNames = {};
+  comped.forEach((c) => { compedNames[c.name] = true; });
+  list.filter((a) => a && a.kind === "override").forEach((a) => {
+    const was = priceOf[a.item];
+    const amt = Number(a.amount);
+    if (was == null || compedNames[a.item] || !Number.isFinite(amt)) return;
+    overrideDelta += was - Math.max(0, amt);
+  });
+
+  let running = subtotal - compTotal - overrideDelta;
   if (running < 0) running = 0;
   const afterComps = running;
 
@@ -2430,6 +2453,13 @@ function applyAdjustments(subtotal, adjustments, compItems) {
     if (Number.isFinite(v)) percentTotal += afterComps * (v / 100);
   });
   running += percentTotal;
+
+  /* Travel & fuel: days x per-day, added after the percentage (a percentage
+     is never taken off the surcharge) and before flat amounts. quoteLines
+     puts the same figure inside the Shed phase. */
+  let travelTotal = 0;
+  list.forEach((a) => { travelTotal += travelAmount(a); });
+  running += travelTotal;
 
   let amountTotal = 0;
   list.filter((a) => a && a.kind === "amount").forEach((a) => {
@@ -2442,7 +2472,9 @@ function applyAdjustments(subtotal, adjustments, compItems) {
   return {
     comped: comped,
     compTotal: Math.round(compTotal * 100) / 100,
+    overrideDelta: Math.round(overrideDelta * 100) / 100,
     percentTotal: Math.round(percentTotal * 100) / 100,
+    travelTotal: Math.round(travelTotal * 100) / 100,
     amountTotal: Math.round(amountTotal * 100) / 100,
     adjusted: Math.round(running * 100) / 100
   };
@@ -2461,6 +2493,24 @@ function validateAdjustments(raw) {
       const item = String(a.item || "").trim().slice(0, 200);
       if (!item) return { error: "comp needs an item" };
       out.push({ kind: kind, item: item, note: note });
+    } else if (kind === "override") {
+      /* A new price for one line. Zero is allowed (though "Include free" says
+         it better); negative is not. One per line. */
+      const item = String(a.item || "").trim().slice(0, 200);
+      const amount = Number(a.amount);
+      if (!item) return { error: "a price change needs an item" };
+      if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) return { error: "a price change needs a new amount of $0 or more" };
+      if (out.some((x) => x.kind === "override" && x.item === item)) return { error: "that line already has a price change" };
+      out.push({ kind: kind, item: item, amount: Math.round(amount * 100) / 100, note: note });
+    } else if (kind === "travel") {
+      /* Days can be a half day; the amount is per day, in dollars. Both have
+         to be real, positive numbers — a surcharge of $0 is not a line. One
+         per quote: two would be the same trips billed twice. */
+      const days = Number(a.days), rate = Number(a.rate);
+      if (!Number.isFinite(days) || days <= 0 || days > 60) return { error: "travel needs a number of days between 0 and 60" };
+      if (!Number.isFinite(rate) || rate <= 0 || rate > 10000) return { error: "travel needs a per-day amount" };
+      if (out.some((x) => x.kind === "travel")) return { error: "only one travel surcharge per quote" };
+      out.push({ kind: kind, days: Math.round(days * 2) / 2, rate: Math.round(rate * 100) / 100, note: note });
     } else {
       const v = Number(a.value);
       if (!Number.isFinite(v) || v === 0) return { error: kind + " needs a non-zero value" };
@@ -2552,8 +2602,11 @@ async function handleSetAdjustments(request, env, origin, id) {
   const names = {};
   compItems.forEach((i) => { names[i.name] = true; });
   for (const a of v.list) {
-    if (a.kind === "comp" && !names[a.item]) {
+    if ((a.kind === "comp" || a.kind === "override") && !names[a.item]) {
       return json({ error: "This quote has no line called \"" + a.item + "\"" }, 400, origin);
+    }
+    if (a.kind === "override" && v.list.some((x) => x.kind === "comp" && x.item === a.item)) {
+      return json({ error: "\"" + a.item + "\" is already included free" }, 400, origin);
     }
   }
 
@@ -3401,7 +3454,10 @@ function validateShedConfig(raw) {
     doors: capArray(raw.doors, 30),
     windows: capArray(raw.windows, 30),
     vents: capArray(raw.vents, 30),
-    shelves: capArray(raw.shelves, 30)
+    shelves: capArray(raw.shelves, 30),
+    /* Sprinkler relocation: feet each head moves, one entry per head (20
+       max). Absent on every design saved before this, which is no heads. */
+    sprinklers: sprinklerFeet(raw.sprinklers)
   };
 }
 
@@ -3589,7 +3645,25 @@ function computeOptionPrices(cfg) {
     // shed's own footprint (gravelTiers), same as foundationFinish.broom
     // below is tiered by pad sqft. Computed fresh here so the tile always
     // shows what this exact build would actually be charged.
-    foundation: Object.assign({}, SELL.foundation, { gravel: gravelFoundationPrice(padSqft) }),
+    /* pad is what the customer PAYS (list less the concrete promo), so a
+       designer that knows nothing of the promo still shows the right figure;
+       padList/padPromo let a newer one strike the list price through. */
+    foundation: Object.assign({}, SELL.foundation, {
+      gravel: gravelFoundationPrice(padSqft),
+      pad: (Number(SELL.foundation.pad) || 0) - concretePromoAmount(SELL.foundation.pad),
+      padList: Number(SELL.foundation.pad) || 0,
+      padPromo: concretePromoAmount(SELL.foundation.pad)
+    }),
+    /* Sprinkler relocation: the price of one head at each distance the
+       designer offers (key = the most feet that price covers), plus the
+       rule, for the line that says how it is worked out. */
+    sprinkler: (function () {
+      const sp = SELL.sprinkler || {};
+      const byFt = {};
+      for (let ft = Number(sp.includedFt) || 5; ft <= 25; ft += Number(sp.stepFt) || 2) byFt[ft] = sprinklerHeadPrice(ft);
+      return { base: Number(sp.base) || 0, includedFt: Number(sp.includedFt) || 0,
+               stepFt: Number(sp.stepFt) || 0, stepAmt: Number(sp.stepAmt) || 0, byFt: byFt };
+    })(),
     foundationFinish: foundationFinish,
     wallHeight: wallHeight,
     siding: siding,
@@ -4030,11 +4104,13 @@ async function handleTrack(request, env, origin, token) {
      Anything that adds is something they are buying, so it gets a line.
      Anything that takes money off is a discount, and shows as one below. */
   const adjList = breakdown ? adjustmentsOf(sub) : [];
-  const preAdjust = breakdown ? Number(breakdown.subtotal) || 0 : 0;
+  /* percentBase: the subtotal less any travel surcharge (already a line in
+     the Shed phase above), which is what a percentage is worked out on. */
+  const preAdjust = breakdown ? Number(breakdown.percentBase != null ? breakdown.percentBase : breakdown.subtotal) || 0 : 0;
   const customLines = [];
   let discount = 0;
   adjList.forEach((a) => {
-    if (!a || a.kind === "comp") return;      // comps already left their own phase row
+    if (!a || a.kind === "comp" || a.kind === "override" || a.kind === "travel") return;      // already inside their own phase rows
     const v = Number(a.value);
     if (!isFinite(v) || !v) return;
     /* A percentage is a share of the pre-adjustment subtotal, which is the
