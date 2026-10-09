@@ -40,7 +40,7 @@
       return who + ' paid ' + money(e.amount) + how;
     }
     if (e.kind === 'invoice_sent') {
-      var which = e.invoice_kind === 'deposit' ? 'Deposit' : 'Balance';
+      var which = e.invoice_kind === 'deposit' ? 'Deposit' : e.invoice_kind === 'phase' ? 'Phase' : 'Balance';
       return which + ' invoice sent to ' + who + ' — ' + money(e.amount);
     }
     if (e.kind === 'consult') return who + ' asked for a call back';

@@ -646,7 +646,7 @@ export let SELL = {
       hip     -> poolhouse       (Poolhouse)
    3 Peak / 4 Peak have sheets but no geometry in the designer yet.        */
 export const SHEET_LABEL = {
-  "aframe":"A-Frame", "barn":"Barn", "leanto":"Single Slope", "poolhouse":"Poolhouse",
+  "aframe":"Gable / A-Frame", "barn":"Barn", "leanto":"Single Slope", "poolhouse":"Poolhouse",
   "3peak":"3 Peak", "4peak":"4 Peak"
 };
 function sellSheetKey(){

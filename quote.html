@@ -257,7 +257,7 @@ function firstName(full) {
 function buildPhrase(config) {
   var c = config || {};
   var size = (c.w && c.l) ? (c.w + 'x' + c.l + ' ft') : '';
-  var style = String(c.style || '').trim();
+  var style = shedStyleName(c.style);
   return [size, style].filter(Boolean).join(' ');
 }
 
@@ -448,7 +448,7 @@ function buildBreakdown(bd) {
   return '<div class="doc-section"><div class="doc-label">Price Breakdown</div>' + rowsHtml + '</div>'
     + compHtml
     + '<div class="doc-section"><div class="doc-label">Deposits Due</div>' + depositRowsHtml
-    +   '<div class="br-note">One 30% deposit (tax included) is collected before work begins, covering every item above. The balance is due on completion.</div>'
+    +   '<div class="br-note">A 30% deposit (tax included) is collected before each phase begins, and the rest of each phase is due once it\u2019s complete.</div>'
     + '</div>';
 }
 
@@ -547,7 +547,7 @@ function render(submission, customer) {
   // the designer's own enclosure()/wallFrame(), which build the room at
   // W/L minus the porch depth and hang the porch off the freed-up strip).
   if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
-  if (config.style) fields += field('Style', config.style);
+  if (config.style) fields += field('Style', shedStyleName(config.style));
   if (config.siding) fields += field('Siding', config.siding);
   if (config.roofType) fields += field('Roof', config.roofType);
   if (Array.isArray(config.doors)) fields += field('Doors', config.doors.length);

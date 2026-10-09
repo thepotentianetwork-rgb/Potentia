@@ -41,6 +41,9 @@ function page() {
   ctx.window = ctx;
   ctx.print = () => { ctx.__printed += 1; seq.push('print'); };
   vm.createContext(ctx);
+  /* The real page loads the shared quote math first (quotelines.browser.js —
+     shedStyleName and friends), so this does too. */
+  vm.runInContext(fs.readFileSync(path.join(path.dirname(PAGE), 'quotelines.browser.js'), 'utf8'), ctx);
   try { vm.runInContext(src, ctx); } catch (e) { /* the page's own boot work needs a DOM */ }
   return ctx;
 }

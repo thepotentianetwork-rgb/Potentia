@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { computePricing } from './pricing.js';
 import { quoteLines } from './quotelines.js';
 import { buildInvoice, splitPayments, toCents, buildMemo, buildFooter,
-         buildCustomFields, LIMITS, fingerprint } from './invoices.js';
+         buildCustomFields, LIMITS, fingerprint, buildPhaseInvoice } from './invoices.js';
 
 const BUILDS = {
   'plain 10x16': { style: 'gable', w: 10, l: 16, h: 9 },
@@ -436,20 +436,21 @@ test('the quote describes the deposit the code actually sends', () => {
   const note = (/<div class="br-note">([^<]*)<\/div>/.exec(quote) || [])[1] || '';
   assert.ok(note, 'the deposit note has gone missing from the quote');
 
-  assert.doesNotMatch(note, /invoiced separately|per item|as its stage/i,
-    'the quote promises per-stage billing that buildInvoice does not do: "' + note + '"');
-  assert.match(note, /before work begins/i,
-    'the quote should say when the deposit is collected: "' + note + '"');
+  /* Billing is by phase now (approved wording): a 30% deposit before each
+     phase, the rest of each phase once it is done. */
+  assert.match(note, /30% deposit \(tax included\) is collected before each phase begins/i,
+    'the quote should say a deposit is collected before EACH phase: "' + note + '"');
+  assert.match(note, /rest of each phase is due once it/i,
+    'the quote should say when the rest of a phase is due: "' + note + '"');
+  assert.doesNotMatch(note, /covering every item|One 30% deposit/i,
+    'the old one-deposit wording is back: "' + note + '"');
 
-  /* And the behaviour it now describes: one invoice, covering every phase. */
+  /* And the behaviour it describes: a phase invoice for Phase 1 asks for
+     exactly that phase's printed 30% deposit, nothing more. */
   const bd = quoteLines(RICH, []);
   assert.ok(bd.rows.length > 1, 'fixture needs several phases to be worth checking');
-  const inv = buildInvoice(bd, 'deposit', []);
-  assert.equal(inv.totalCents, toCents(bd.depositTotal));
-  const everyPhase = bd.rows.reduce((t, r) => t + toCents(r.deposit), 0);
-  assert.ok(Math.abs(inv.totalCents - everyPhase) <= 2,
-    'the deposit invoice must cover EVERY phase, not just the first: ' +
-    inv.totalCents + ' vs ' + everyPhase);
+  const inv = buildPhaseInvoice(bd, [], [{ phase: 1, part: 'deposit' }]);
+  assert.equal(inv.totalCents, toCents(bd.rows[0].deposit));
 });
 
 /* A gravel pad is its own phase, and the question that prompted all this was

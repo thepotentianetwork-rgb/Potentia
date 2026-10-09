@@ -20,7 +20,7 @@
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
-import { quoteLines, compedMap } from "./quotelines.js";
+import { quoteLines, compedMap, shedStyleName } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
@@ -29,7 +29,8 @@ import { trackPhases, trackComplete, trackChangeWindow } from "./tracker.js";
 import { scheduleMessage } from "./schedulemsg.js";
 import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
          stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
-import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, balanceSummary } from "./invoices.js";
+import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, balanceSummary,
+         buildPhaseInvoice, buildTogetherInvoice, togetherStatus, phaseStatus, parseAlloc } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
@@ -603,6 +604,71 @@ async function ensurePaymentsTable(env) {
 }
 
 // Lazily creates the installs table on first use — same reasoning as
+/* PHASE TRACKING NEEDS ONE COLUMN: payments.phase_alloc (JSON).
+ *
+ * Added by worker/migrations/0001_payment_phases.sql, run BY HAND after a D1
+ * backup — deliberately not ALTERed in at runtime like the older columns, so
+ * the schema change is a step someone takes on purpose. Until it is run,
+ * everything still works: payments read as untagged (they fill phase deposits
+ * first), and only TAGGING a payment with a phase is refused. */
+async function hasPhaseAlloc(env) {
+  const have = await env.DB.prepare("PRAGMA table_info(payments)").all();
+  return (have.results || []).some((r) => r.name === "phase_alloc");
+}
+async function payCols(env) {
+  return (await hasPhaseAlloc(env)) ? "phase_alloc" : "NULL AS phase_alloc";
+}
+/* The parts a sent, unpaid phase invoice is collecting — so they are not
+   offered, or billed, a second time while it is out. */
+/* A combined invoice (several builds on one bill) is stored against its first
+   build, and each of its covers names the build it is for — so every phase
+   invoice of the customer is read, and a cover counts for the build it names. */
+function openPhaseParts(invRows, submissionId) {
+  const out = [];
+  (invRows || []).forEach((i) => {
+    if (i.kind !== "phase") return;
+    if (["paid", "void", "draft_failed", "uncollectible"].includes(i.status)) return;
+    coversOf(i.lines).forEach((c) => {
+      if (coverSub(c, i) !== Number(submissionId)) return;
+      out.push({ phase: c.phase, part: c.part, invoice_id: i.id });
+    });
+  });
+  return out;
+}
+function coverSub(c, inv) {
+  return Number(c && c.sub != null ? c.sub : inv.submission_id);
+}
+/* Every build a phase invoice bills (one, or several when combined). */
+function invoiceSubs(inv) {
+  const subs = [Number(inv.submission_id)];
+  if (inv.kind === "phase") coversOf(inv.lines).forEach((c) => {
+    const n = coverSub(c, inv);
+    if (subs.indexOf(n) === -1) subs.push(n);
+  });
+  return subs;
+}
+/* "10x20 Gable / A-Frame" — how a build is named on a combined invoice. */
+function buildName(config) {
+  if (!config) return "";
+  return [config.w && config.l ? config.w + "x" + config.l : null,
+          config.style ? shedStyleName(config.style) : null].filter(Boolean).join(" ");
+}
+/* covers ride on the FIRST stored line of a phase invoice (lines is JSON). */
+function coversOf(lines) {
+  let arr = lines;
+  if (typeof lines === "string") { try { arr = JSON.parse(lines); } catch (e) { arr = []; } }
+  const holder = (Array.isArray(arr) ? arr : []).find((l) => l && Array.isArray(l.covers));
+  return holder ? holder.covers : [];
+}
+/* {phase: n} from a request body, or null to clear. undefined = not given. */
+function phaseTagFrom(body) {
+  if (body.phase === undefined) return undefined;
+  if (body.phase === null || body.phase === "") return null;
+  const n = Number(body.phase);
+  if (!Number.isInteger(n) || n < 1 || n > 20) return "bad";
+  return JSON.stringify({ phase: n });
+}
+
 // ensurePaymentsTable: avoids a manual D1 migration for a table that didn't
 // exist when the DB was first set up.
 // One row per install EVENT, not per order — a submission can have both a
@@ -677,7 +743,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensurePaymentsTable(env);
   const { results: payments } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at DESC, id DESC"
   )
     .bind(id)
     .all();
@@ -882,7 +948,7 @@ function configSummary(config) {
   if (!config) return "";
   const parts = [];
   if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
-  if (config.style) parts.push(config.style);
+  if (config.style) parts.push(shedStyleName(config.style));
   if (config.siding) parts.push(config.siding);
   return parts.join(" \u00b7 ");
 }
@@ -1163,7 +1229,7 @@ async function handleSchedule(request, env, origin) {
 /* Everything an invoice needs, gathered and priced, without sending anything.
    Shared by the preview and the send so the figures a person approves are the
    figures that go out — computing them twice would let the two drift. */
-async function invoiceContext(env, submissionId, kind) {
+async function invoiceContext(env, submissionId, kind, parts, together) {
   await ensurePaymentsTable(env);
   await ensureInvoicesTable(env);
 
@@ -1183,9 +1249,59 @@ async function invoiceContext(env, submissionId, kind) {
   if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
 
   const { results: payRows } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
   ).bind(sub.customer_id).all();
   const split = splitPayments(payRows || [], sub.id);
+
+  if (kind === "phase") {
+    /* Every invoice of this customer, not just this build's: a combined bill
+       is stored against its first build but covers parts of the others. */
+    const { results: invRows } = await env.DB.prepare(
+      "SELECT id, submission_id, kind, status, lines FROM invoices WHERE customer_id = ?"
+    ).bind(sub.customer_id).all();
+    const others = (together || []).map(Number).filter((n) => n && n !== Number(sub.id));
+    const builds = [{ sub: sub.id, details, bd: breakdown, adjustments: adjustmentsOf(sub), payments: split.applied }];
+    for (const id of others) {
+      if (builds.some((b) => Number(b.sub) === id)) continue;
+      const o = await env.DB.prepare(
+        "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+      ).bind(id).first();
+      if (!o) throw Object.assign(new Error("no such order #" + id), { status: 404 });
+      if (Number(o.customer_id) !== Number(sub.customer_id)) {
+        throw Object.assign(new Error("order #" + id + " belongs to a different customer"), { status: 400, code: "other_customer" });
+      }
+      let d = {};
+      try { d = JSON.parse(o.details) || {}; } catch (e) {}
+      const obd = quoteLines(d.redline, adjustmentsOf(o));
+      if (!obd) throw Object.assign(new Error("order #" + id + " has no priced build to invoice"), { status: 400 });
+      builds.push({ sub: o.id, details: d, bd: obd, adjustments: adjustmentsOf(o),
+                    payments: splitPayments(payRows || [], o.id).applied });
+    }
+    let invoice;
+    try {
+      if (builds.length === 1) {
+        invoice = buildPhaseInvoice(breakdown, split.applied, parts, {
+          openParts: openPhaseParts(invRows, sub.id),
+          comped: compedMap(details.redline, builds[0].adjustments),
+          summary: configSummary(details.config),
+          submissionId: sub.id
+        });
+      } else {
+        const comped = {};
+        builds.forEach((b) => Object.assign(comped, compedMap(b.details.redline, b.adjustments)));
+        invoice = buildTogetherInvoice(builds.map((b) => ({
+          sub: b.sub, bd: b.bd, payments: b.payments,
+          name: buildName(b.details.config) || "Order #" + b.sub,
+          summary: buildName(b.details.config) || null,
+          openParts: openPhaseParts(invRows, b.sub)
+        })), parts, { comped });
+      }
+    } catch (e) {
+      throw Object.assign(e, { status: e.status || (e.code === "already_billed" ? 409 : 400) });
+    }
+    return { sub, customer, breakdown, split, invoice, builds: builds.map((b) => b.sub),
+             payRows: payRows || [] };
+  }
 
   /* Everything the quote page puts around the numbers, handed to the invoice
      so the customer reads one document, not two that have to be compared:
@@ -1236,7 +1352,7 @@ async function handleStripeWebhook(request, env, origin) {
   await ensurePaymentsTable(env);
 
   const row = await env.DB.prepare(
-    "SELECT id, customer_id, submission_id, kind, status, amount FROM invoices WHERE stripe_invoice_id = ?"
+    "SELECT id, customer_id, submission_id, kind, status, amount, lines FROM invoices WHERE stripe_invoice_id = ?"
   ).bind(inv.id).first();
   /* An invoice raised somewhere other than here — the Stripe dashboard, say.
      Acknowledged rather than errored: it is a real event, just not ours. */
@@ -1267,14 +1383,50 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   const amount = Number.isFinite(cents) && cents > 0 ? cents / 100 : Number(row.amount);
   const now = new Date().toISOString();
 
-  await env.DB.prepare(
-    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-  ).bind(row.customer_id, amount, "stripe",
-         row.kind === "deposit" ? "Deposit paid on Stripe" : "Balance paid on Stripe",
-         now, now, row.submission_id).run();
-
-  await env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?")
-    .bind(now, row.id).run();
+  /* A phase invoice says which parts it collected; the payment is booked
+     against exactly those, in order, up to what actually cleared. A combined
+     invoice (several builds) becomes one payment PER BUILD, so each build's
+     balance stays its own; anything beyond what the covers ask for stays on
+     the first build, where it shows up as overpaid rather than vanishing. */
+  const note = row.kind === "deposit" ? "Deposit paid on Stripe"
+    : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe";
+  const withAlloc = row.kind === "phase" && (await hasPhaseAlloc(env));
+  const shares = [];                        // { sub, cents, parts }
+  if (row.kind === "phase") {
+    let left = toCents(amount);
+    coversOf(row.lines).forEach((c) => {
+      const take = Math.min(left, Math.max(0, Math.round(Number(c.cents) || 0)));
+      if (take <= 0) return;
+      const sub = coverSub(c, row);
+      let sh = shares.find((x) => x.sub === sub);
+      if (!sh) { sh = { sub, cents: 0, parts: [] }; shares.push(sh); }
+      sh.cents += take;
+      sh.parts.push({ phase: Number(c.phase), part: c.part, cents: take });
+      left -= take;
+    });
+    if (left > 0) {
+      if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: 0, parts: [] });
+      shares[0].cents += left;
+    }
+  }
+  if (!shares.length) shares.push({ sub: Number(row.submission_id), cents: toCents(amount), parts: [] });
+  const many = shares.length > 1;
+  const stmts = shares.map((sh) => {
+    const amt = fromCents(sh.cents);
+    const n = many ? note + " (combined invoice, " + shares.map((x) => "#" + x.sub).join(" + ") + ")" : note;
+    if (withAlloc && sh.parts.length) {
+      return env.DB.prepare(
+        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub, JSON.stringify({ parts: sh.parts }));
+    }
+    return env.DB.prepare(
+      "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+    ).bind(row.customer_id, amt, "stripe", n, now, now, sh.sub);
+  });
+  /* All the payments and the status flip land together or not at all, so a
+     retry after a failure cannot book a build twice. */
+  stmts.push(env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
+  await env.DB.batch(stmts);
 
   return { already: false, amount };
 }
@@ -1359,10 +1511,17 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const submissionId = Number(body.submission_id);
   const kind = String(body.kind || "").toLowerCase();
   if (!submissionId) return json({ error: "submission_id required" }, 400, origin);
+  /* kind "phase": parts = [{phase, part: "deposit"|"remainder"}] — the boxes
+     ticked on the customer page. */
+  const parts = kind === "phase" ? (Array.isArray(body.parts) ? body.parts.slice(0, 40) : []) : null;
+  /* builds: [7, 38] — bill several of this customer's builds together, one
+     invoice per step. The first is submission_id; the rest ride along. */
+  const together = kind === "phase" && Array.isArray(body.builds)
+    ? body.builds.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 6) : null;
 
   let ctx;
   try {
-    ctx = await invoiceContext(env, submissionId, kind);
+    ctx = await invoiceContext(env, submissionId, kind, parts, together);
   } catch (e) {
     /* code tells the page WHY there is nothing to bill — "paid_in_full" and
        "deposit_covered" are not failures, and the CRM says so instead of
@@ -1392,9 +1551,15 @@ async function handleCreateInvoice(request, env, origin, actor) {
      has not cleared and the balance is early. Warned about rather than
      blocked: there are real reasons to have both out, and guessing wrong here
      silently changes what a customer is charged. */
-  const { results: outstanding } = await env.DB.prepare(
-    "SELECT id, kind, amount, hosted_url FROM invoices WHERE submission_id = ? AND kind != ? AND status NOT IN ('paid','void','draft_failed')"
-  ).bind(sub.id, kind).all();
+  /* For a phase invoice every other open invoice counts, phase ones included:
+     the parts they cover are already refused above, but the old-style deposit
+     and balance invoices do not say which phases they cover. */
+  const billedSubs = ctx.builds || [sub.id];
+  const { results: openRows } = await env.DB.prepare(
+    "SELECT id, submission_id, kind, amount, hosted_url, lines FROM invoices WHERE customer_id = ? AND status NOT IN ('paid','void','draft_failed','uncollectible')"
+  ).bind(customer.id).all();
+  const outstanding = (openRows || []).filter((o) =>
+    (o.kind !== kind || kind === "phase") && invoiceSubs(o).some((n) => billedSubs.indexOf(n) > -1));
   (outstanding || []).forEach((o) => {
     const combined = Number(o.amount || 0) + fromCents(invoice.totalCents);
     warnings.push({
@@ -1412,13 +1577,20 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const shape = {
     kind, submission_id: sub.id, customer_id: customer.id,
     lines: invoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+    /* Phase invoices: which parts this collects, and the short name of it. */
+    covers: invoice.covers || null,
+    description: invoice.description || null,
+    builds: billedSubs.length > 1 ? billedSubs : null,
     amount: fromCents(invoice.totalCents),
     job_total: fromCents(invoice.jobTotalCents),
     already_paid: fromCents(invoice.paidCents),
     /* The payments that were credited, so the preview can list them and a
        wrongly-attributed one is visible before anything is sent. */
-    payments: split.applied.map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
-                                          method: p.method, paid_at: p.paid_at, note: p.note || null })),
+    payments: (billedSubs.length > 1
+      ? (ctx.payRows || []).filter((p) => billedSubs.indexOf(Number(p.submission_id)) > -1)
+      : split.applied).map((p) => ({ id: p.id, amount: fromCents(toCents(p.amount)),
+                                     method: p.method, paid_at: p.paid_at, note: p.note || null,
+                                     submission_id: p.submission_id })),
     balance_due: fromCents(Math.max(0, invoice.jobTotalCents - invoice.paidCents)),
     /* Returned on the preview too, so what the CRM shows before sending is
        the whole document and not just its numbers. */
@@ -1432,7 +1604,9 @@ async function handleCreateInvoice(request, env, origin, actor) {
   /* One live invoice of a kind per shed. Voiding is how you replace one, and
      requiring that makes "I pressed it twice last week" impossible to do by
      accident — Stripe's idempotency only covers a 24 hour window. */
-  const existing = await env.DB.prepare(
+  /* Phase invoices are many per shed by design; double-billing a part is
+     refused by part instead (openPhaseParts, in invoiceContext). */
+  const existing = kind === "phase" ? null : await env.DB.prepare(
     "SELECT id, status, hosted_url FROM invoices WHERE submission_id = ? AND kind = ? AND status NOT IN ('void','draft_failed')"
   ).bind(sub.id, kind).first();
   if (existing && !body.replace_voided) {
@@ -1457,6 +1631,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
     memo: invoice.memo,
     footer: invoice.footer,
     fields: invoice.customFields,
+    covers: invoice.covers || null,
   });
 
   let stripeCustomerId = customer.stripe_customer_id || null;
@@ -1477,11 +1652,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
       /* The memo is the build itemised the way the quote itemises it. Falls
          back to the old one-liner only if a submission has nothing to list. */
       description: invoice.memo ||
-        `${kind === "deposit" ? "Deposit" : "Balance"} — shed order #${sub.id}`,
+        `${kind === "deposit" ? "Deposit" : kind === "phase" ? "Phase payment" : "Balance"} — shed order #${sub.id}`,
       footer: invoice.footer,
       customFields: invoice.customFields,
       idempotencyKey,
-      metadata: { submission_id: String(sub.id), customer_id: String(customer.id), kind },
+      metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
+                              billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
     });
   } catch (e) {
     return json({ error: e.message || "Stripe would not accept this invoice" }, 502, origin);
@@ -1494,12 +1670,20 @@ async function handleCreateInvoice(request, env, origin, actor) {
        amount, status, lines, created_at, created_by, sent_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
-         JSON.stringify(shape.lines), now, (actor && actor.name) || null, sentTo).run();
+         JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
                 sent_to: sentTo,
                 ...shape }, 200, origin);
+}
+
+/* The stored copy of the lines. A phase invoice carries what it collects on
+   the first line, so recordInvoicePaid can book the payment against exactly
+   those parts. No new column needed. */
+function storedLines(lines, covers, about) {
+  if (!covers || !covers.length || !lines.length) return lines;
+  return lines.map((l, i) => (i === 0 ? { ...l, covers, ...(about ? { about } : {}) } : l));
 }
 
 async function handleListInvoices(request, env, origin, customerId) {
@@ -1590,12 +1774,21 @@ async function handleAddPayment(request, env, origin, customerId) {
     if (!owns) return json({ error: "that build does not belong to this customer" }, 400, origin);
   }
 
+  const tag = phaseTagFrom(body);
+  if (tag === "bad") return json({ error: "bad phase" }, 400, origin);
+  if (tag && !submissionId) return json({ error: "pick the build before the phase" }, 400, origin);
+  if (tag && !(await hasPhaseAlloc(env))) {
+    return json({ error: "phase tracking is not switched on yet (D1 migration 0001_payment_phases.sql)", code: "needs_migration" }, 409, origin);
+  }
+
   const now = new Date().toISOString();
-  const res = await env.DB.prepare(
-    "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
-  )
-    .bind(customerId, amount, method, note || null, paidAt, now, submissionId)
-    .run();
+  const res = tag
+    ? await env.DB.prepare(
+        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id, phase_alloc) VALUES (?,?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId, tag).run()
+    : await env.DB.prepare(
+        "INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?)"
+      ).bind(customerId, amount, method, note || null, paidAt, now, submissionId).run();
   return json({ ok: true, id: res.meta.last_row_id }, 200, origin);
 }
 
@@ -1678,12 +1871,24 @@ async function handleUpdatePayment(request, env, origin, paymentId) {
     }
     sets.push("submission_id = ?"); args.push(submissionId);
   }
+  /* Which phase it paid for. Stripe rows can be re-tagged too: an old-style
+     deposit invoice knew nothing about phases. */
+  const tag = phaseTagFrom(body);
+  if (tag === "bad") return json({ error: "bad phase" }, 400, origin);
+  if (tag !== undefined) {
+    if (!(await hasPhaseAlloc(env))) {
+      return json({ error: "phase tracking is not switched on yet (D1 migration 0001_payment_phases.sql)", code: "needs_migration" }, 409, origin);
+    }
+    const willHaveBuild = body.submission_id !== undefined ? (body.submission_id !== null && body.submission_id !== "") : pay.submission_id != null;
+    if (tag && !willHaveBuild) return json({ error: "pick the build before the phase" }, 400, origin);
+    sets.push("phase_alloc = ?"); args.push(tag);
+  }
   if (!sets.length) return json({ error: "nothing to change" }, 400, origin);
 
   await env.DB.prepare("UPDATE payments SET " + sets.join(", ") + " WHERE id = ?")
     .bind(...args, paymentId).run();
   const row = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, created_at, submission_id FROM payments WHERE id = ?"
+    "SELECT id, amount, method, note, paid_at, created_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE id = ?"
   ).bind(paymentId).first();
   return json({ ok: true, payment: row }, 200, origin);
 }
@@ -1704,14 +1909,16 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     "SELECT id, status, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE customer_id = ?"
   ).bind(customerId).all();
   const { results: payRows } = await env.DB.prepare(
-    "SELECT id, amount, method, note, paid_at, submission_id FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
+    "SELECT id, amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
   ).bind(customerId).all();
   const { results: invRows } = await env.DB.prepare(
-    "SELECT id, submission_id, kind, amount, status, hosted_url FROM invoices WHERE customer_id = ? AND status NOT IN ('void','draft_failed')"
+    "SELECT id, submission_id, kind, amount, status, hosted_url, lines FROM invoices WHERE customer_id = ? AND status NOT IN ('void','draft_failed')"
   ).bind(customerId).all();
+  const phaseTracking = await hasPhaseAlloc(env);
 
   const money = (c) => fromCents(c);
   const builds = [];
+  const built = [];
   (subs || []).forEach((sub) => {
     let details = {};
     try { details = JSON.parse(sub.details) || {}; } catch (e) {}
@@ -1720,10 +1927,17 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     if (!bd || !bd.rows || !bd.rows.length) return;          // consult / unpriced: nothing to bill
     const split = splitPayments(payRows || [], sub.id);
     const sum = balanceSummary(bd, split.applied);
-    const open = (invRows || []).filter((i) => Number(i.submission_id) === Number(sub.id) && i.status !== "paid");
+    const open = (invRows || []).filter((i) => invoiceSubs(i).indexOf(Number(sub.id)) > -1 && i.status !== "paid");
+    const ps = phaseStatus(bd, split.applied, openPhaseParts(invRows, sub.id));
+    const cents = (x) => ({ amount: money(x.amountCents), paid: money(x.paidCents),
+                            remaining: money(x.remainingCents), open_invoice: x.openInvoice });
+    built.push({ sub: sub.id, bd, payments: split.applied, name: buildName(details.config) || "Order #" + sub.id,
+                 openParts: openPhaseParts(invRows, sub.id) });
     builds.push({
       submission_id: sub.id,
       status: sub.status,
+      /* "10x20 Gable / A-Frame" — how it is named when billed with another. */
+      name: buildName(details.config) || null,
       job_total: money(sum.jobTotalCents),
       deposit_total: money(sum.depositTotalCents),
       paid: money(sum.paidCents),
@@ -1731,18 +1945,54 @@ async function handleCustomerBalances(request, env, origin, customerId) {
       deposit_due: money(sum.depositDueCents),
       overpaid: money(sum.overpaidCents),
       paid_in_full: sum.paidInFull,
-      payments: split.applied.map((p) => ({ id: p.id, amount: money(toCents(p.amount)), method: p.method,
-                                            paid_at: p.paid_at, note: p.note || null })),
+      payments: split.applied.map((p) => {
+        const a = parseAlloc(p.phase_alloc);
+        const used = (ps.byPayment.find((e) => e.payment === p) || { parts: [] }).parts;
+        return { id: p.id, amount: money(toCents(p.amount)), method: p.method, paid_at: p.paid_at, note: p.note || null,
+                 phase: a && a.phase ? a.phase : null,
+                 /* Where the money actually landed, tagged or not. */
+                 applied_to: used.map((u) => ({ phase: u.phase, part: u.part, amount: money(u.cents) })) };
+      }),
+      /* Per phase: the 30% deposit and the rest, each with what is paid and
+         what is left, and the parts the CRM suggests billing next. */
+      phases: ps.phases.map((p) => ({ phase: p.phase, kind: p.kind, name: p.name, total: money(p.totalCents),
+                                      deposit: cents(p.deposit), remainder: cents(p.remainder) })),
+      suggested: ps.suggested,
       /* Sent on Stripe and not paid yet. Not subtracted — it is not money in
          hand — but shown, because a check marked while a Stripe invoice for
          the same thing is still open is how a customer pays twice. */
       open_invoices: open.map((i) => ({ id: i.id, kind: i.kind, amount: Number(i.amount || 0),
-                                        status: i.status, hosted_url: i.hosted_url || null })),
+                                        status: i.status, hosted_url: i.hosted_url || null,
+                                        builds: invoiceSubs(i).length > 1 ? invoiceSubs(i) : null })),
     });
   });
   const unassigned = splitPayments(payRows || [], -1).unassigned;
+
+  /* ?together=7,38 — those builds billed as one: matching phases side by side
+     (concrete with concrete, shed with shed), each build's own amounts under
+     them, and what to bill next across all of them. */
+  let together = null;
+  const want = (new URL(request.url).searchParams.get("together") || "")
+    .split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const chosen = want.map((n) => built.find((b) => Number(b.sub) === n)).filter(Boolean);
+  if (chosen.length > 1) {
+    const ts = togetherStatus(chosen);
+    const cents = (x) => ({ amount: money(x.amountCents), paid: money(x.paidCents),
+                            remaining: money(x.remainingCents), open_invoice: x.openInvoice });
+    together = {
+      builds: chosen.map((b) => ({ submission_id: b.sub, name: b.name })),
+      phases: ts.groups.map((g) => ({
+        phase: g.phase, kind: g.kind, name: g.name,
+        items: g.items.map((i) => ({ submission_id: i.sub, build: i.build, phase: i.phase, name: i.name,
+                                     total: money(i.totalCents), deposit: cents(i.deposit), remainder: cents(i.remainder) }))
+      })),
+      suggested: ts.suggested,
+    };
+  }
   return json({
     builds,
+    together,
+    phase_tracking: phaseTracking,
     unassigned: {
       count: unassigned.length,
       total: money(unassigned.reduce((t, p) => t + toCents(p.amount), 0)),

@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 import worker from '../worker/index.js';
 import { computePricing } from '../worker/pricing.js';
 import { quoteLines } from '../worker/quotelines.js';
-import { buildInvoice, fromCents } from '../worker/invoices.js';
+import { buildInvoice, fromCents, phaseParts } from '../worker/invoices.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 /* CHROME_BIN overrides, for a box where Chrome lives elsewhere. */
@@ -253,8 +253,32 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
     R.kinds = [].slice.call(quoted.querySelectorAll('.inv-kind')).map(txt);
 
     var btns = [].slice.call(quoted.querySelectorAll('.inv-btn'));
-    R.buttonLabels = btns.map(txt);
+    /* The whole-job deposit / balance buttons, under "Other ways to bill". */
+    R.buttonLabels = btns.filter(function (b) { return !b.classList.contains('ph-bill'); }).map(txt);
+    R.otherOpenBefore = !!(quoted.querySelector('.inv-other') && quoted.querySelector('.inv-other').open);
+    /* The bill-by-phase panel: what is ticked, and the button. */
+    R.phaseBill = txt(quoted.querySelector('.ph-bill'));
+    R.phaseTicked = [].slice.call(quoted.querySelectorAll('.ph-part input')).filter(function (b) { return b.checked; })
+      .map(function (b) { return b.dataset.phase + b.dataset.part; });
     R.balBoxBefore = txt(quoted.querySelector('.bal-box'));
+
+    /* Two won builds (#7 and #11): "Bill builds together" sits above the cards,
+       both ticked, matching phases side by side, next bill ticked. */
+    var tg = await until(function () { var p = document.querySelector('.tg-panel'); return p && p.querySelector('.tg-bill') && p; });
+    R.tgBuilds = tg ? [].slice.call(tg.querySelectorAll('.tg-build input')).map(function (b) { return b.value + (b.checked ? '+' : '-'); }) : null;
+    R.tgPhases = tg ? [].slice.call(tg.querySelectorAll('.ph-title span:first-child')).map(txt) : null;
+    R.tgTicked = tg ? [].slice.call(tg.querySelectorAll('.ph-part input')).filter(function (b) { return b.checked; })
+      .map(function (b) { return b.dataset.phase + b.dataset.part; }) : null;
+    R.tgBill = tg ? txt(tg.querySelector('.tg-bill')) : null;
+    R.tgPer = tg ? [].slice.call(tg.querySelector('.tg-per').children).map(txt) : null;
+    R.tgAboveCards = !!(tg && tg.nextElementSibling && tg.nextElementSibling.classList.contains('order-card'));
+    if (tg) {
+      tg.querySelector('.tg-bill').click();
+      var tgPrev = await until(function () { return tg.querySelector('.inv-preview'); });
+      R.tgPreviewLines = tgPrev ? [].slice.call(tgPrev.querySelectorAll(':scope > .inv-pline span:first-child')).map(txt) : null;
+      var cancelTg = tgPrev && [].slice.call(tgPrev.querySelectorAll('.inv-btn')).filter(function (b) { return txt(b) === 'Cancel'; })[0];
+      if (cancelTg) cancelTg.click();
+    }
 
     // ---- planning a build from one date --------------------------------
     var won = cards().filter(function (c) { return c.querySelector('.plan-wrap'); })[0];
@@ -509,6 +533,9 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
       R.balanceAfterPaidWarnings = bp2 ? [].slice.call(bp2.querySelectorAll('.inv-warn')).map(txt) : [];
     }
     R.balBoxAfterPaid = txt(paidCard.querySelector('.bal-box'));
+    R.otherOpenAfter = !!(paidCard.querySelector('.inv-other') && paidCard.querySelector('.inv-other').open);
+    R.phaseTickedAfterPaid = [].slice.call(paidCard.querySelectorAll('.ph-part input')).filter(function (b) { return b.checked; })
+      .map(function (b) { return b.dataset.phase + b.dataset.part; });
     R.balBtnAfterPaid = balAfter ? txt(balAfter) : null;
 
     /* ---- the rest paid by cashier's check, marked by hand ------------- */
@@ -786,6 +813,32 @@ check('the balance box lists the Stripe deposit as received',
   R.balBoxAfterPaid);
 check('and the balance button names the rest',
   R.balBtnAfterPaid === 'Bill balance ' + money(balanceUncredited - depositDue) + ' with Stripe', R.balBtnAfterPaid);
+
+console.log('\n-- bill by phase --');
+const PH = phaseParts(BREAKDOWN);
+console.log('\n-- bill builds together --');
+check('two won builds: "Bill builds together" sits above the order cards', R.tgAboveCards === true, R.tgBuilds);
+check('both builds ticked by default', JSON.stringify(R.tgBuilds) === '["7+","11+"]', R.tgBuilds);
+check('phases matched across builds', Array.isArray(R.tgPhases) && /^Phase 1 · Concrete Pad/.test(R.tgPhases[0]) &&
+  R.tgPhases.some((t) => /^Phase 2 · Sheds$/.test(t)), R.tgPhases);
+check('next combined bill ticked: Phase 1 deposit', JSON.stringify(R.tgTicked) === '["1deposit"]', R.tgTicked);
+{
+  const P11 = phaseParts(BREAKDOWN);
+  check('the button names both builds and the sum of both deposits',
+    R.tgBill === 'Bill ' + money(2 * P11[0].depositCents / 100) + ' for #7 + #11 with Stripe', R.tgBill);
+}
+check('each build is listed under the part', Array.isArray(R.tgPer) && R.tgPer.length === 2 &&
+  /^10x16: \$[\d,.]+$/.test(R.tgPer[0]) && /^10x14: \$[\d,.]+$/.test(R.tgPer[1]), R.tgPer);
+check('preview: one line per build, named', Array.isArray(R.tgPreviewLines) && R.tgPreviewLines.length === 2 &&
+  R.tgPreviewLines.every((l) => /^Phase 1: Concrete Pad[^(]* deposit \(30%\) — 10x1[46] Gable \/ A-Frame$/.test(l)), R.tgPreviewLines);
+check('the combined preview went to the worker with both builds',
+  invoicePosts.some((b) => b.preview && JSON.stringify(b.builds) === '[7,11]'), invoicePosts.length);
+check('the phase panel ticks Phase 1 deposit first', JSON.stringify(R.phaseTicked) === '["1deposit"]', R.phaseTicked);
+check('and its button names that amount', R.phaseBill === 'Bill ' + money(PH[0].depositCents / 100) + ' with Stripe', R.phaseBill);
+check('whole-job buttons are tucked away until one is used', R.otherOpenBefore === false && R.otherOpenAfter === true,
+  [R.otherOpenBefore, R.otherOpenAfter]);
+check('after the whole-job deposit is paid, the next phase bill is the rest of Phase 1',
+  JSON.stringify(R.phaseTickedAfterPaid) === '["1remainder"]', R.phaseTickedAfterPaid);
 
 console.log('\n-- a cashier\'s check marked by hand covers the rest --');
 check('the box says Paid in full and lists the check',

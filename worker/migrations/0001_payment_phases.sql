@@ -1,0 +1,17 @@
+-- Payment phases: which phase (and which part of it) each payment paid for.
+--
+-- NOT applied automatically. Back up D1 (potentia-shed) first, then run once:
+--   D1 console for potentia-shed, or
+--   POST /accounts/<acct>/d1/database/<potentia-shed id>/query  {"sql": "<this file>"}
+--
+-- Nullable, no default: every existing payment stays untagged, which the
+-- worker reads as "fill the phase deposits first, then the remainders" — the
+-- same thing those payments meant before phases existed.
+--
+-- Values (JSON text):
+--   {"phase": 2}                                               tagged by hand in the CRM
+--   {"parts":[{"phase":1,"part":"remainder","cents":225225}]}  written when a phase invoice is paid
+--
+-- Rollback: the column is ignored by older worker builds; to drop it,
+--   ALTER TABLE payments DROP COLUMN phase_alloc;
+ALTER TABLE payments ADD COLUMN phase_alloc TEXT;

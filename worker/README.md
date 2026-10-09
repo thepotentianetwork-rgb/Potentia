@@ -1215,3 +1215,47 @@ Endpoints (admin auth):
 No D1 migration: the payments/invoices tables and columns already exist.
 Deploy the worker before the page: `admin-customer.html` falls back to the
 old buttons if `/balances` is missing, but the Edit button needs the new route.
+
+---
+
+## Billing by phase
+
+The quote already splits each job into phases (quoteLines rows: site
+clearance if any, Concrete Pad, Shed, Interior) and prints a 30% deposit per
+phase. Phase billing uses those figures: each phase = its 30% deposit
+(collected before it starts) + the remaining 70% (due once it is done, added
+to the next phase's bill). The CRM ticks the next bill for you (next unpaid
+deposit + the rest of earlier started phases) and you can change it.
+
+- `POST /admin/invoices {submission_id, kind:"phase", parts:[{phase, part:"deposit"|"remainder"}], preview?}`
+  — one Stripe invoice, a line per phase part, credits per payment, a memo
+  explaining how phased payment works. Due on receipt. A part already on a
+  sent, unpaid phase invoice is refused (409).
+- `GET /admin/customers/:id/balances` now also returns `phases`, `suggested`,
+  per-payment `applied_to`, and `phase_tracking`.
+- `POST /admin/payments/:id {phase: n|null}` and `POST .../payments {phase}` tag
+  a payment to a phase.
+
+Which phase a payment covers lives in `payments.phase_alloc` (JSON), added by
+**`worker/migrations/0001_payment_phases.sql` — run by hand after a D1 backup**.
+Until it runs, everything works except tagging (409 `needs_migration`); untagged
+payments fill phase deposits first, then remainders, in phase order. A paid
+phase invoice books its payment against the parts it billed (stored on the
+invoice's `lines` JSON as `covers`).
+
+### Several builds billed together
+
+`POST /admin/invoices {submission_id, builds:[7,38], kind:"phase", parts:[{phase, part, sub?}]}`
+bills a customer's builds as one job: one Stripe invoice per step. Phases are
+matched by kind (quoteLines tags rows clearance / foundation / shed / interior),
+numbered over the kinds any of the builds has; `phase` in `parts` is that
+combined number, and `sub` narrows a part to one build. Lines are one per build
+per part ("Phase 2: Shed deposit (30%) — 10x20 Gable / A-Frame"). Every cover
+carries its `sub`; the invoice row is stored against the first build.
+Paid -> one payment per build (each with its own `phase_alloc`), written in one
+batch with the status flip. Parts on any open phase invoice — combined or not —
+are refused from every side. `GET /admin/customers/:id/balances?together=7,38`
+returns the combined view and suggestion. Builds must belong to one customer.
+
+Every line is what is LEFT on that part, payments folded in; the memo says what
+was applied. Payments not assigned to a build are never credited (warning).
