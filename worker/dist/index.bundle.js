@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "408a86a";
-const WORKER_BUILT_AT = "2026-10-09T16:34:38.452Z";
+const WORKER_BUILD = "d4f14d7";
+const WORKER_BUILT_AT = "2026-10-09T17:55:03.823Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -486,6 +486,13 @@ let SELL = {
      per quote; nothing is charged unless they add one. Starts at 0 because no
      rate has been set yet — the CRM then asks for the amount every time. */
   travel: { perDay: 0 },
+  /* Credit card surcharge on Stripe invoices (Nando, 9 Oct 2026: "a 3% fee for
+     anyone paying electronically via Stripe"). OFF until switched on in Admin
+     Pricing — Visa and Mastercard need 30 days' notice before a merchant starts
+     surcharging. percent is capped at 3 (Visa's US ceiling) by cardFeeSettings.
+     When on, a Stripe bill is EITHER bank transfer (ACH) with no fee, OR card
+     with this surcharge on its own line; never both on one bill. */
+  cardFee: { enabled: 0, percent: 3 },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
   // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
@@ -2000,7 +2007,7 @@ function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel'];
+  'concretePromo','sprinkler','travel','cardFee'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".
@@ -2059,6 +2066,19 @@ function mergedPricingConfig(saved){
     }
   }
   return out;
+}
+
+/* The card surcharge as the invoice code wants it: on/off and a RATE (0.03).
+   Anything unreadable is off; anything over 3% is held at 3%, the Visa US cap.
+   Mastercard caps it at the merchant's own cost of acceptance instead; on
+   Stripe's standard 2.9% + 30c a 3% fee on the pre-fee amount is 2.91% of the
+   charge, so the setting must come down if the Stripe rate ever does. */
+const CARD_FEE_MAX_PERCENT = 3;
+function cardFeeSettings() {
+  const c = (SELL && SELL.cardFee) || {};
+  const pct = Math.min(CARD_FEE_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
+  const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
+  return { enabled: on, percent: pct, rate: on ? pct / 100 : 0 };
 }
 
 // ---- end inlined pricing.js ----
@@ -3493,9 +3513,12 @@ const DEPOSIT_RATE = 0.30;
 const BASE_SHED_INCLUDES = [
   'Materials & lumber',
   'Shop labor',
-  'Build labor & assembly',
-  'Fuel & delivery'
+  'Build labor & assembly'
 ];
+/* 'Fuel & delivery' was the fourth heading until 9 Oct 2026. Taken out on
+   Nando's word ("we will charge more if needed"): the base price must not
+   read as covering travel, which is billed as its own Travel & fuel line when
+   a job needs it. The quote carries a neutral note instead. */
 
 const REMOVAL_NAMES = ['Shed Removal', 'Concrete Removal'];
 
@@ -4838,6 +4861,59 @@ function togetherMemo(ts, picks, what, builds, opts) {
   return clip([intro + rule, tail].join('\n\n'), LIMITS.memo);
 }
 
+/* ---------------------------------------------------------------------------
+ * CREDIT CARD SURCHARGE.
+ *
+ * A Stripe invoice's amount is fixed when it is created; Stripe cannot add a
+ * fee later for one payment method and not another. So when the surcharge is
+ * on, the CRM sends one of two bills, never a mix:
+ *
+ *   bank — bank transfer (ACH) only, NO fee. Same lines as always.
+ *   card — card only, with the surcharge as its own last line.
+ *
+ * The surcharge is worked out on the amount being billed — tax included,
+ * since that is what the customer pays and what the card is charged for — and
+ * it is not itself taxed or counted towards the job: recordInvoicePaid books
+ * only the pre-fee part against the build and keeps the fee separately.
+ * ------------------------------------------------------------------------- */
+function cardFeeLabel(rate) {
+  return 'Credit card surcharge (' + pct(rate) + '%) \u2014 not applied to bank transfer (ACH), check or cashier\u2019s check';
+}
+function cardFeeCents(baseCents, rate) {
+  const r = Math.max(0, Math.min(0.03, Number(rate) || 0));
+  return Math.round(Math.max(0, Number(baseCents) || 0) * r);
+}
+/* A new invoice object with the surcharge added. The original is not touched:
+   the preview returns both, and the person sending picks. */
+function addCardFee(invoice, rate) {
+  const fee = cardFeeCents(invoice.totalCents, rate);
+  if (!fee) return Object.assign({}, invoice, { feeCents: 0, baseCents: invoice.totalCents });
+  return Object.assign({}, invoice, {
+    lines: invoice.lines.concat([{ label: cardFeeLabel(rate), amountCents: fee, fixed: true, fee: true }]),
+    totalCents: invoice.totalCents + fee,
+    baseCents: invoice.totalCents,
+    feeCents: fee,
+    footer: clip(cardFeeFooter(rate) + (invoice.footer ? ' ' + invoice.footer : ''), LIMITS.footer)
+  });
+}
+function cardFeeFooter(rate) {
+  return 'This bill is for payment by credit card and includes a ' + pct(rate) + '% surcharge, which is not more than our cost of card acceptance. Debit and prepaid cards cannot be used. To pay with no fee, ask us for a bank-transfer (ACH) bill, or pay by check or cashier\u2019s check.';
+}
+function bankFooterNote(rate) {
+  return 'Pay by bank transfer (ACH) with no fee. Paying by credit card adds a ' + pct(rate) + '% surcharge; ask us for a card bill if you prefer.';
+}
+/* What part of a Stripe payment belongs to the job, and what is the fee.
+   A partial payment splits in proportion, so a half-paid card bill credits
+   half the base and half the fee. */
+function splitFee(paidCents, totalCents, feeCents) {
+  const paid = Math.max(0, Math.round(Number(paidCents) || 0));
+  const fee = Math.max(0, Math.round(Number(feeCents) || 0));
+  const tot = Math.max(0, Math.round(Number(totalCents) || 0));
+  if (!fee || !tot) return { creditCents: paid, feeCents: 0 };
+  const feePart = paid >= tot ? fee : Math.round(paid * fee / tot);
+  return { creditCents: paid - feePart, feeCents: feePart };
+}
+
 // ---- end inlined invoices.js ----
 
 // ---- inlined from worker/stripe.js by build-bundle.mjs — do not edit below by hand ----
@@ -4924,6 +5000,14 @@ const STRIPE_PAYMENT_METHODS = ['us_bank_account', 'card'];
 
 /* Days until due, per kind. A deposit gates the build starting, so it is due
    when it arrives; the balance is billed against work already done. */
+/* Which payment methods a bill offers. Surcharge off: both, as before.
+   Surcharge on: a card bill takes cards only and a bank bill ACH only, so the
+   fee is never charged to a bank payment and never missing from a card one. */
+function invoiceMethods(feeOn, payBy) {
+  if (!feeOn) return STRIPE_PAYMENT_METHODS.slice();
+  return payBy === 'card' ? ['card'] : ['us_bank_account'];
+}
+
 const DAYS_UNTIL_DUE = { deposit: 0, balance: 7, phase: 0 };
 
 /* Create a customer, or reuse one we already recorded.
@@ -4978,7 +5062,7 @@ async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
  * overcharge by 7.25% and nothing in this code would notice.
  */
 async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -4994,7 +5078,9 @@ async function createAndSendInvoice(env, {
        belongs under payment_settings. (payment_method_types IS top level on
        PaymentIntents and Checkout Sessions, which is where the wrong shape
        came from.) */
-    payment_settings: { payment_method_types: STRIPE_PAYMENT_METHODS },
+    /* With the card surcharge on, a bill is bank-only (no fee) or card-only
+       (fee line on it) — paymentMethods says which; see invoiceMethods(). */
+    payment_settings: { payment_method_types: paymentMethods && paymentMethods.length ? paymentMethods : STRIPE_PAYMENT_METHODS },
     auto_advance: false,
     automatic_tax: { enabled: false },
     currency: 'usd',
@@ -7256,6 +7342,15 @@ async function ensureInvoicesTable(env) {
   if (invNames.length && invNames.indexOf("sent_to") === -1) {
     await env.DB.prepare("ALTER TABLE invoices ADD COLUMN sent_to TEXT").run();
   }
+  /* Credit card surcharge: what the bill added (fee_cents) and, once paid,
+     how much of the payment was fee (fee_paid_cents). The fee is kept here
+     and NOT in payments, so it can never count as paying down a build. */
+  if (invNames.length && invNames.indexOf("fee_cents") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN fee_cents INTEGER").run();
+  }
+  if (invNames.length && invNames.indexOf("fee_paid_cents") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN fee_paid_cents INTEGER").run();
+  }
 }
 
 /* The one-line description of the build, in the same words and the same order
@@ -7670,7 +7765,7 @@ async function handleStripeWebhook(request, env, origin) {
   await ensurePaymentsTable(env);
 
   const row = await env.DB.prepare(
-    "SELECT id, customer_id, submission_id, kind, status, amount, lines FROM invoices WHERE stripe_invoice_id = ?"
+    "SELECT * FROM invoices WHERE stripe_invoice_id = ?"
   ).bind(inv.id).first();
   /* An invoice raised somewhere other than here — the Stripe dashboard, say.
      Acknowledged rather than errored: it is a real event, just not ours. */
@@ -7698,16 +7793,21 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   /* What actually cleared, which is not always what was billed — a partial
      payment or a credit note changes it. Record what arrived. */
   const cents = Number(amountPaidCents);
-  const amount = Number.isFinite(cents) && cents > 0 ? cents / 100 : Number(row.amount);
+  const cleared = Number.isFinite(cents) && cents > 0 ? cents / 100 : Number(row.amount);
   const now = new Date().toISOString();
+  /* A card bill carries the surcharge. Only the pre-fee part pays down the
+     build; the fee is recorded on the invoice row (fee_paid_cents). */
+  const fee = splitFee(toCents(cleared), toCents(row.amount), Number(row.fee_cents) || 0);
+  const amount = fromCents(fee.creditCents);
 
   /* A phase invoice says which parts it collected; the payment is booked
      against exactly those, in order, up to what actually cleared. A combined
      invoice (several builds) becomes one payment PER BUILD, so each build's
      balance stays its own; anything beyond what the covers ask for stays on
      the first build, where it shows up as overpaid rather than vanishing. */
-  const note = row.kind === "deposit" ? "Deposit paid on Stripe"
-    : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe";
+  const note = (row.kind === "deposit" ? "Deposit paid on Stripe"
+    : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe") +
+    (fee.feeCents ? " by card (+" + usd(fromCents(fee.feeCents)) + " card surcharge, kept separately)" : "");
   const withAlloc = row.kind === "phase" && (await hasPhaseAlloc(env));
   const shares = [];                        // { sub, cents, parts }
   if (row.kind === "phase") {
@@ -7743,10 +7843,12 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   });
   /* All the payments and the status flip land together or not at all, so a
      retry after a failure cannot book a build twice. */
-  stmts.push(env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
+  stmts.push(fee.feeCents
+    ? env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ?, fee_paid_cents = ? WHERE id = ?").bind(now, fee.feeCents, row.id)
+    : env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
   await env.DB.batch(stmts);
 
-  return { already: false, amount };
+  return { already: false, amount, fee: fromCents(fee.feeCents) };
 }
 
 /* POST /admin/invoices/:id/sync — ask Stripe what it thinks and believe it.
@@ -7846,7 +7948,22 @@ async function handleCreateInvoice(request, env, origin, actor) {
        showing them as an error. */
     return json({ error: e.message, code: e.code || null }, e.status || 400, origin);
   }
-  const { sub, customer, split, invoice } = ctx;
+  const { sub, customer, split } = ctx;
+  const baseInvoice = ctx.invoice;
+
+  /* CREDIT CARD SURCHARGE. Off: nothing changes. On: the bill is bank-only
+     with no fee (the default), or — pay_by "card" — card-only with the
+     surcharge as its own line. Both versions go back on the preview so the
+     CRM can show the choice; the one chosen is what gets sent. */
+  let feeCfg = { enabled: false, rate: 0, percent: 0 };
+  try { await applySavedPricing(env); feeCfg = cardFeeSettings(); } catch (e) {}
+  const payBy = feeCfg.enabled && String(body.pay_by || "").toLowerCase() === "card" ? "card" : "bank";
+  const withFee = feeCfg.enabled ? addCardFee(baseInvoice, feeCfg.rate) : null;
+  const invoice = payBy === "card" ? withFee
+    : (feeCfg.enabled ? Object.assign({}, baseInvoice, {
+        footer: String((bankFooterNote(feeCfg.rate) + (baseInvoice.footer ? " " + baseInvoice.footer : ""))).slice(0, LIMITS.footer) })
+      : baseInvoice);
+  const methods = invoiceMethods(feeCfg.enabled, payBy);
 
   /* Payments nobody attributed to a job. Not applied and not ignored — both
      are wrong in a way that costs a customer money — so they ride along on
@@ -7915,6 +8032,20 @@ async function handleCreateInvoice(request, env, origin, actor) {
     memo: invoice.memo,
     footer: invoice.footer,
     custom_fields: invoice.customFields,
+    pay_by: feeCfg.enabled ? payBy : null,
+    payment_methods: methods,
+    fee: fromCents(invoice.feeCents || 0),
+    /* Both versions, so the preview can switch without asking again. */
+    card_fee: feeCfg.enabled ? {
+      percent: feeCfg.percent,
+      fee: fromCents(withFee.feeCents),
+      amount_with_fee: fromCents(withFee.totalCents),
+      amount_without_fee: fromCents(baseInvoice.totalCents),
+      lines_with_fee: withFee.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), fee: !!l.fee })),
+      lines_without_fee: baseInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+      footer_card: withFee.footer,
+      footer_bank: payBy === "card" ? null : invoice.footer
+    } : null,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -7973,6 +8104,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
         `${kind === "deposit" ? "Deposit" : kind === "phase" ? "Phase payment" : "Balance"} — shed order #${sub.id}`,
       footer: invoice.footer,
       customFields: invoice.customFields,
+      paymentMethods: methods,
       idempotencyKey,
       metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
                               billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
@@ -7985,10 +8117,11 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const sentTo = sent.customerEmail || customer.email || null;
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
-       amount, status, lines, created_at, created_by, sent_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+       amount, status, lines, created_at, created_by, sent_to, fee_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
-         JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo).run();
+         JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo,
+         invoice.feeCents || 0).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
@@ -8008,7 +8141,7 @@ async function handleListInvoices(request, env, origin, customerId) {
   await ensureInvoicesTable(env);
   const { results } = await env.DB.prepare(
     `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
-            lines, created_at, created_by, paid_at, sent_to
+            lines, created_at, created_by, paid_at, sent_to, fee_cents, fee_paid_cents
      FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
   ).bind(customerId).all();
   const invoices = (results || []).map((r) => {
@@ -8401,6 +8534,8 @@ async function handleGetSubmission(request, env, origin, id) {
       submission.details = JSON.stringify(parsed);
     }
   } catch (e) {}
+  /* The quote prints the card-surcharge disclosure only while it is on. */
+  try { submission.card_fee_percent = cardFeeSettings().enabled ? cardFeeSettings().percent : 0; } catch (e) { submission.card_fee_percent = 0; }
   return json({ submission, customer: customer || null }, 200, origin);
 }
 

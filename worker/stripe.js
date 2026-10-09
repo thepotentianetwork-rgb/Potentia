@@ -81,6 +81,14 @@ export const STRIPE_PAYMENT_METHODS = ['us_bank_account', 'card'];
 
 /* Days until due, per kind. A deposit gates the build starting, so it is due
    when it arrives; the balance is billed against work already done. */
+/* Which payment methods a bill offers. Surcharge off: both, as before.
+   Surcharge on: a card bill takes cards only and a bank bill ACH only, so the
+   fee is never charged to a bank payment and never missing from a card one. */
+export function invoiceMethods(feeOn, payBy) {
+  if (!feeOn) return STRIPE_PAYMENT_METHODS.slice();
+  return payBy === 'card' ? ['card'] : ['us_bank_account'];
+}
+
 export const DAYS_UNTIL_DUE = { deposit: 0, balance: 7, phase: 0 };
 
 /* Create a customer, or reuse one we already recorded.
@@ -135,7 +143,7 @@ export async function ensureCustomer(env, { stripeCustomerId, name, email, phone
  * overcharge by 7.25% and nothing in this code would notice.
  */
 export async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -151,7 +159,9 @@ export async function createAndSendInvoice(env, {
        belongs under payment_settings. (payment_method_types IS top level on
        PaymentIntents and Checkout Sessions, which is where the wrong shape
        came from.) */
-    payment_settings: { payment_method_types: STRIPE_PAYMENT_METHODS },
+    /* With the card surcharge on, a bill is bank-only (no fee) or card-only
+       (fee line on it) — paymentMethods says which; see invoiceMethods(). */
+    payment_settings: { payment_method_types: paymentMethods && paymentMethods.length ? paymentMethods : STRIPE_PAYMENT_METHODS },
     auto_advance: false,
     automatic_tax: { enabled: false },
     currency: 'usd',

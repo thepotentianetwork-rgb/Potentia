@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap, shedStyleName, travelAmount } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
@@ -30,8 +30,9 @@ import { scheduleMessage } from "./schedulemsg.js";
 import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
          stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
 import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, balanceSummary,
-         buildPhaseInvoice, buildTogetherInvoice, togetherStatus, phaseStatus, parseAlloc } from "./invoices.js";
-import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice } from "./stripe.js";
+         buildPhaseInvoice, buildTogetherInvoice, togetherStatus, phaseStatus, parseAlloc,
+         addCardFee, splitFee, bankFooterNote, LIMITS } from "./invoices.js";
+import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
@@ -946,6 +947,15 @@ async function ensureInvoicesTable(env) {
   if (invNames.length && invNames.indexOf("sent_to") === -1) {
     await env.DB.prepare("ALTER TABLE invoices ADD COLUMN sent_to TEXT").run();
   }
+  /* Credit card surcharge: what the bill added (fee_cents) and, once paid,
+     how much of the payment was fee (fee_paid_cents). The fee is kept here
+     and NOT in payments, so it can never count as paying down a build. */
+  if (invNames.length && invNames.indexOf("fee_cents") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN fee_cents INTEGER").run();
+  }
+  if (invNames.length && invNames.indexOf("fee_paid_cents") === -1) {
+    await env.DB.prepare("ALTER TABLE invoices ADD COLUMN fee_paid_cents INTEGER").run();
+  }
 }
 
 /* The one-line description of the build, in the same words and the same order
@@ -1360,7 +1370,7 @@ async function handleStripeWebhook(request, env, origin) {
   await ensurePaymentsTable(env);
 
   const row = await env.DB.prepare(
-    "SELECT id, customer_id, submission_id, kind, status, amount, lines FROM invoices WHERE stripe_invoice_id = ?"
+    "SELECT * FROM invoices WHERE stripe_invoice_id = ?"
   ).bind(inv.id).first();
   /* An invoice raised somewhere other than here — the Stripe dashboard, say.
      Acknowledged rather than errored: it is a real event, just not ours. */
@@ -1388,16 +1398,21 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   /* What actually cleared, which is not always what was billed — a partial
      payment or a credit note changes it. Record what arrived. */
   const cents = Number(amountPaidCents);
-  const amount = Number.isFinite(cents) && cents > 0 ? cents / 100 : Number(row.amount);
+  const cleared = Number.isFinite(cents) && cents > 0 ? cents / 100 : Number(row.amount);
   const now = new Date().toISOString();
+  /* A card bill carries the surcharge. Only the pre-fee part pays down the
+     build; the fee is recorded on the invoice row (fee_paid_cents). */
+  const fee = splitFee(toCents(cleared), toCents(row.amount), Number(row.fee_cents) || 0);
+  const amount = fromCents(fee.creditCents);
 
   /* A phase invoice says which parts it collected; the payment is booked
      against exactly those, in order, up to what actually cleared. A combined
      invoice (several builds) becomes one payment PER BUILD, so each build's
      balance stays its own; anything beyond what the covers ask for stays on
      the first build, where it shows up as overpaid rather than vanishing. */
-  const note = row.kind === "deposit" ? "Deposit paid on Stripe"
-    : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe";
+  const note = (row.kind === "deposit" ? "Deposit paid on Stripe"
+    : row.kind === "phase" ? "Phase payment paid on Stripe" : "Balance paid on Stripe") +
+    (fee.feeCents ? " by card (+" + usd(fromCents(fee.feeCents)) + " card surcharge, kept separately)" : "");
   const withAlloc = row.kind === "phase" && (await hasPhaseAlloc(env));
   const shares = [];                        // { sub, cents, parts }
   if (row.kind === "phase") {
@@ -1433,10 +1448,12 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   });
   /* All the payments and the status flip land together or not at all, so a
      retry after a failure cannot book a build twice. */
-  stmts.push(env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
+  stmts.push(fee.feeCents
+    ? env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ?, fee_paid_cents = ? WHERE id = ?").bind(now, fee.feeCents, row.id)
+    : env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
   await env.DB.batch(stmts);
 
-  return { already: false, amount };
+  return { already: false, amount, fee: fromCents(fee.feeCents) };
 }
 
 /* POST /admin/invoices/:id/sync — ask Stripe what it thinks and believe it.
@@ -1536,7 +1553,22 @@ async function handleCreateInvoice(request, env, origin, actor) {
        showing them as an error. */
     return json({ error: e.message, code: e.code || null }, e.status || 400, origin);
   }
-  const { sub, customer, split, invoice } = ctx;
+  const { sub, customer, split } = ctx;
+  const baseInvoice = ctx.invoice;
+
+  /* CREDIT CARD SURCHARGE. Off: nothing changes. On: the bill is bank-only
+     with no fee (the default), or — pay_by "card" — card-only with the
+     surcharge as its own line. Both versions go back on the preview so the
+     CRM can show the choice; the one chosen is what gets sent. */
+  let feeCfg = { enabled: false, rate: 0, percent: 0 };
+  try { await applySavedPricing(env); feeCfg = cardFeeSettings(); } catch (e) {}
+  const payBy = feeCfg.enabled && String(body.pay_by || "").toLowerCase() === "card" ? "card" : "bank";
+  const withFee = feeCfg.enabled ? addCardFee(baseInvoice, feeCfg.rate) : null;
+  const invoice = payBy === "card" ? withFee
+    : (feeCfg.enabled ? Object.assign({}, baseInvoice, {
+        footer: String((bankFooterNote(feeCfg.rate) + (baseInvoice.footer ? " " + baseInvoice.footer : ""))).slice(0, LIMITS.footer) })
+      : baseInvoice);
+  const methods = invoiceMethods(feeCfg.enabled, payBy);
 
   /* Payments nobody attributed to a job. Not applied and not ignored — both
      are wrong in a way that costs a customer money — so they ride along on
@@ -1605,6 +1637,20 @@ async function handleCreateInvoice(request, env, origin, actor) {
     memo: invoice.memo,
     footer: invoice.footer,
     custom_fields: invoice.customFields,
+    pay_by: feeCfg.enabled ? payBy : null,
+    payment_methods: methods,
+    fee: fromCents(invoice.feeCents || 0),
+    /* Both versions, so the preview can switch without asking again. */
+    card_fee: feeCfg.enabled ? {
+      percent: feeCfg.percent,
+      fee: fromCents(withFee.feeCents),
+      amount_with_fee: fromCents(withFee.totalCents),
+      amount_without_fee: fromCents(baseInvoice.totalCents),
+      lines_with_fee: withFee.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents), fee: !!l.fee })),
+      lines_without_fee: baseInvoice.lines.map((l) => ({ label: l.label, amount: fromCents(l.amountCents) })),
+      footer_card: withFee.footer,
+      footer_bank: payBy === "card" ? null : invoice.footer
+    } : null,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -1663,6 +1709,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
         `${kind === "deposit" ? "Deposit" : kind === "phase" ? "Phase payment" : "Balance"} — shed order #${sub.id}`,
       footer: invoice.footer,
       customFields: invoice.customFields,
+      paymentMethods: methods,
       idempotencyKey,
       metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
                               billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
@@ -1675,10 +1722,11 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const sentTo = sent.customerEmail || customer.email || null;
   const row = await env.DB.prepare(
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
-       amount, status, lines, created_at, created_by, sent_to) VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+       amount, status, lines, created_at, created_by, sent_to, fee_cents) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
          fromCents(invoice.totalCents), sent.status || "open",
-         JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo).run();
+         JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo,
+         invoice.feeCents || 0).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
                 hosted_url: sent.hostedUrl, status: sent.status || "open",
@@ -1698,7 +1746,7 @@ async function handleListInvoices(request, env, origin, customerId) {
   await ensureInvoicesTable(env);
   const { results } = await env.DB.prepare(
     `SELECT id, submission_id, kind, stripe_invoice_id, hosted_url, amount, status,
-            lines, created_at, created_by, paid_at, sent_to
+            lines, created_at, created_by, paid_at, sent_to, fee_cents, fee_paid_cents
      FROM invoices WHERE customer_id = ? ORDER BY created_at DESC, id DESC`
   ).bind(customerId).all();
   const invoices = (results || []).map((r) => {
@@ -2091,6 +2139,8 @@ async function handleGetSubmission(request, env, origin, id) {
       submission.details = JSON.stringify(parsed);
     }
   } catch (e) {}
+  /* The quote prints the card-surcharge disclosure only while it is on. */
+  try { submission.card_fee_percent = cardFeeSettings().enabled ? cardFeeSettings().percent : 0; } catch (e) { submission.card_fee_percent = 0; }
   return json({ submission, customer: customer || null }, 200, origin);
 }
 

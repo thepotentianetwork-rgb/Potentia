@@ -481,6 +481,13 @@ export let SELL = {
      per quote; nothing is charged unless they add one. Starts at 0 because no
      rate has been set yet — the CRM then asks for the amount every time. */
   travel: { perDay: 0 },
+  /* Credit card surcharge on Stripe invoices (Nando, 9 Oct 2026: "a 3% fee for
+     anyone paying electronically via Stripe"). OFF until switched on in Admin
+     Pricing — Visa and Mastercard need 30 days' notice before a merchant starts
+     surcharging. percent is capped at 3 (Visa's US ceiling) by cardFeeSettings.
+     When on, a Stripe bill is EITHER bank transfer (ACH) with no fee, OR card
+     with this surcharge on its own line; never both on one bill. */
+  cardFee: { enabled: 0, percent: 3 },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
   // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
@@ -1995,7 +2002,7 @@ export function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel'];
+  'concretePromo','sprinkler','travel','cardFee'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".
@@ -2054,4 +2061,17 @@ export function mergedPricingConfig(saved){
     }
   }
   return out;
+}
+
+/* The card surcharge as the invoice code wants it: on/off and a RATE (0.03).
+   Anything unreadable is off; anything over 3% is held at 3%, the Visa US cap.
+   Mastercard caps it at the merchant's own cost of acceptance instead; on
+   Stripe's standard 2.9% + 30c a 3% fee on the pre-fee amount is 2.91% of the
+   charge, so the setting must come down if the Stripe rate ever does. */
+export const CARD_FEE_MAX_PERCENT = 3;
+export function cardFeeSettings() {
+  const c = (SELL && SELL.cardFee) || {};
+  const pct = Math.min(CARD_FEE_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
+  const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
+  return { enabled: on, percent: pct, rate: on ? pct / 100 : 0 };
 }
