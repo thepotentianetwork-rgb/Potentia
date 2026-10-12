@@ -2850,6 +2850,42 @@ function staleAdjustments(list, compItems) {
   return (list || []).filter((a) => (a.kind === "comp" || a.kind === "override") && !names[a.item]);
 }
 
+/* An order with money against it is not re-priced from the designer
+   (Nando, 12 Oct 2026): a deposit was taken on a price, and changing the
+   design under it would leave the deposit, the invoices and the quote out
+   of step. Counted as money: a CRM payment on this order, a payment on the
+   customer not tied to any order (it cannot be ruled out as this one's), or a
+   paid invoice for this order. Tables that do not exist yet mean no money. */
+const DEPOSIT_LOCK_MSG = "This order has a deposit, so it can't be updated from the designer. Save as new quote instead.";
+async function orderHasDeposit(env, sub) {
+  try {
+    const p = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM payments WHERE amount > 0 AND (submission_id = ? OR (customer_id = ? AND submission_id IS NULL))"
+    ).bind(sub.id, sub.customer_id).first();
+    if (p && Number(p.n) > 0) return true;
+  } catch (e) {
+    try {
+      const p2 = await env.DB.prepare("SELECT COUNT(*) AS n FROM payments WHERE amount > 0 AND customer_id = ?").bind(sub.customer_id).first();
+      if (p2 && Number(p2.n) > 0) return true;
+    } catch (e2) {}
+  }
+  try {
+    const i = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM invoices WHERE submission_id = ? AND (status = 'paid' OR paid_at IS NOT NULL)"
+    ).bind(sub.id).first();
+    if (i && Number(i.n) > 0) return true;
+  } catch (e) {}
+  return false;
+}
+/* GET /admin/submissions/:id/design-status — staff only. Lets the designer
+   disable "Update this quote" before anyone presses it. */
+async function handleDesignStatus(request, env, origin, id) {
+  const row = await env.DB.prepare("SELECT id, customer_id FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  const locked = await orderHasDeposit(env, row);
+  return json({ id: id, locked: locked, reason: locked ? DEPOSIT_LOCK_MSG : null }, 200, origin);
+}
+
 /* POST /admin/submissions/:id/design — staff only.
    "Update this quote" from the designer: the revised design is saved back
    onto the SAME order instead of arriving as a new lead. Re-priced here from
@@ -2864,6 +2900,7 @@ async function handleUpdateDesign(request, env, origin, id) {
     "SELECT id, customer_id, details, status, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
   ).bind(id).first();
   if (!row) return json({ error: "Not found" }, 404, origin);
+  if (await orderHasDeposit(env, row)) return json({ error: DEPOSIT_LOCK_MSG, locked: true }, 409, origin);
   const body = await request.json().catch(() => ({}));
   if (!body.config || typeof body.config !== "object") return json({ error: "config required" }, 400, origin);
   let details = {};
@@ -5880,6 +5917,12 @@ export default {
       if (path === "/admin/adjustments/last" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleLastAdjustments(request, env, origin, url);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/design-status") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/design-status".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleDesignStatus(request, env, origin, id);
       }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/design") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

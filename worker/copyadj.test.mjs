@@ -76,4 +76,26 @@ check("still one row per order (no new lead)", db.prepare("SELECT COUNT(*) n FRO
 const note = db.prepare("SELECT text FROM notes ORDER BY id DESC").get();
 check("CRM note written", /Design updated/.test(note.text) && note.text.includes(pad), note);
 check("effective = new price - 100 (stale override ignored)", Math.abs(r.data.effective_price - (r.data.quotedPrice - 100)) < 0.01, r.data);
+console.log("\n-- deposit lock --");
+db.exec("CREATE TABLE IF NOT EXISTS invoices (id INTEGER PRIMARY KEY, customer_id INTEGER, submission_id INTEGER, kind TEXT, amount REAL, status TEXT, created_at TEXT, paid_at TEXT)");
+try { db.exec("ALTER TABLE payments ADD COLUMN submission_id INTEGER"); } catch(e) {}
+db.prepare("INSERT INTO customers (name,created_at,updated_at) VALUES ('B',?,?)").run(now,now);
+db.prepare("INSERT INTO customers (name,created_at,updated_at) VALUES ('C',?,?)").run(now,now);
+const insC = (cid) => Number(db.prepare("INSERT INTO submissions (customer_id,name,email,details,status,created_at) VALUES (?,'B','b@x',?,'won',?)").run(cid, JSON.stringify({quotedPrice:1,config:cfg}), now).lastInsertRowid);
+const pA = insC(2), pB = insC(3), pC = insC(3);
+check("status unlocked before money", (await call("GET",`/admin/submissions/${pA}/design-status`,null,tok)).data.locked===false);
+check("design-status needs staff", (await call("GET",`/admin/submissions/${pA}/design-status`)).status===401);
+db.prepare("INSERT INTO payments (customer_id,amount,method,paid_at,created_at,submission_id) VALUES (2,500,'cash',?,?,?)").run(now,now,pA);
+r = await call("POST",`/admin/submissions/${pA}/design`,{config:cfg},tok);
+check("CRM payment blocks update (409)", r.status===409 && r.data.locked && /has a deposit/.test(r.data.error), r);
+check("status reports lock + message", (await call("GET",`/admin/submissions/${pA}/design-status`,null,tok)).data.reason.includes("Save as new quote"));
+db.prepare("INSERT INTO invoices (customer_id,submission_id,kind,amount,status,created_at,paid_at) VALUES (3,?,'deposit',900,'paid',?,?)").run(pB,now,now);
+check("paid Stripe invoice blocks update", (await call("POST",`/admin/submissions/${pB}/design`,{config:cfg},tok)).status===409);
+check("sibling order of same customer not blocked by that invoice", (await call("POST",`/admin/submissions/${pC}/design`,{config:cfg},tok)).status===200);
+db.prepare("INSERT INTO invoices (customer_id,submission_id,kind,amount,status,created_at) VALUES (3,?,'deposit',900,'open',?)").run(pC,now);
+check("open (unpaid) invoice does not block", (await call("POST",`/admin/submissions/${pC}/design`,{config:cfg},tok)).status===200);
+db.prepare("INSERT INTO payments (customer_id,amount,method,paid_at,created_at) VALUES (3,200,'venmo',?,?)").run(now,now);
+check("unattributed customer payment blocks (can't rule it out)", (await call("POST",`/admin/submissions/${pC}/design`,{config:cfg},tok)).status===409);
+const before409 = db.prepare("SELECT details FROM submissions WHERE id=?").get(pA).details;
+check("blocked order untouched", db.prepare("SELECT details FROM submissions WHERE id=?").get(pA).details===before409);
 console.log(fails? `\n${fails} FAILED` : "\nall passed"); process.exit(fails?1:0);
