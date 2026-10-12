@@ -701,6 +701,104 @@ function withCardPrice(redline, bd) {
   return bd;
 }
 
+/* THE ROOF, SPELLED OUT (Nando, 12 Oct 2026: "include more details on the
+ * roof. Roof pitch, shingle and color, overhang. Also ... a roof ridge vent").
+ *
+ * Read straight off the design config the Shed-Pro designer saves, mapped to
+ * the words its own Roof step shows. Display only: nothing here touches a
+ * price. A field the design never saved gives no row, so an older quote shows
+ * only what is actually known.
+ *
+ *   pitch     gable / 3-peak / 4-peak: config.pitch is the N of N/12 (the
+ *             designer's 6/12 · 8/12 · 10/12 · 12/12 buttons).
+ *             Barn: a fixed gambrel profile in the designer (~61deg lower,
+ *             ~23deg upper slopes); its pitch value is ignored by the build.
+ *             Lean-to: no pitch; the back wall drops leantoDrop ft (1 or 2)
+ *             below the front, over the shed's l (front-to-back) depth.
+ *   colour    config.roofColor is the swatch hex, looked up in the palette for
+ *             config.roofType. colorNames.roof is NOT trusted: the designer
+ *             keeps the last name picked, so a design switched from shingle to
+ *             metal can carry "Black Asphalt" on a black metal roof (#68).
+ *   overhang  ovType 'gable' = flush, ovh" fascia board; 'all4' = ovh"
+ *             overhang all 4 sides. Barn is always flush eaves with a 4" rake.
+ *             Lean-to front (tall side) overhang: leantoFrontOvh, 'match' =
+ *             same as the rest.
+ *   ridge     the "Roof Ridge Vent" add-on (addons.ridgeVent, priced on its
+ *             own line: $15/ft of ridge from 12 Oct 2026, a flat $263 before).
+ *             Offered on gable / 3-peak / 4-peak / barn, the same gate pricing
+ *             uses; a lean-to has no ridge. */
+const ROOF_PALETTES = {
+  shingle: { 0x28282A: 'Black Asphalt', 0x44413C: 'Gray Asphalt', 0x453A2F: 'Brown Asphalt',
+             // earlier designer swatches for the same three shingles
+             0x2A2A2A: 'Black Asphalt', 0x5A5A5A: 'Gray Asphalt', 0x6B4423: 'Brown Asphalt' },
+  metal:   { 0xEDEDE8: 'White', 0x8A8D8F: 'Gray', 0x1A1A1A: 'Black', 0x5A4636: 'Brown', 0x6E2B2B: 'Barn Red',
+             // retired metal swatches (named in the designer's palette notes)
+             0x4A3B32: 'Burnished Slate', 0x3A3C3E: 'Charcoal' },
+};
+const RIDGE_STYLES = ['gable', '3peak', '4peak', 'barn'];  // barn added 12 Oct 2026
+function roofSpec(config, redline) {
+  const c = (config && typeof config === 'object') ? config : {};
+  const st = String(c.style || '').toLowerCase();
+  const rows = [];
+  if (!st && !c.roofType) return rows;
+  const inch = (n) => n + '\u2033';
+  const styleName = { gable: 'Gable (A-frame), two slopes', '3peak': '3-Peak: gable with a cross gable',
+    '4peak': '4-Peak: gable with two cross gables', barn: 'Gambrel (barn)', leanto: 'Lean-to, single slope' }[st];
+  if (styleName) rows.push({ label: 'Roof style', value: styleName });
+  const p = Number(c.pitch);
+  if (RIDGE_STYLES.includes(st) && st !== 'barn' && p > 0) rows.push({ label: 'Pitch', value: p + '/12' });
+  else if (st === 'barn') rows.push({ label: 'Pitch', value: 'Gambrel profile: steep lower slopes (about 61\u00b0), shallow upper (about 23\u00b0)' });
+  else if (st === 'leanto') {
+    const d = Number(c.leantoDrop) || null;
+    if (d) {
+      const depth = Number(c.l) - ((c.porchLoc === 'front' && Number(c.porchDepth) > 0) ? Number(c.porchDepth) : 0);
+      const per = depth > 0 ? Math.round(d * 12 / depth * 10) / 10 : null;
+      rows.push({ label: 'Pitch', value: d + ' ft drop, front to back' + (per ? ' (about ' + per + '/12)' : '') });
+    }
+  }
+  const type = String(c.roofType || '').toLowerCase();
+  const pal = ROOF_PALETTES[type];
+  const col = (pal && c.roofColor != null) ? pal[Number(c.roofColor)] : null;
+  const typeName = type === 'shingle' ? 'Asphalt shingle' : type === 'metal' ? 'Metal' : null;
+  if (typeName) rows.push({ label: type === 'metal' ? 'Roofing & color' : 'Shingles & color', value: typeName + (col ? ', ' + col : '') });
+  let ovh = null;
+  if (st === 'barn') ovh = 'Flush eaves, 4\u2033 gable rake';
+  else if (Number(c.ovh) > 0 && (c.ovType === 'gable' || c.ovType === 'all4')) {
+    ovh = c.ovType === 'gable' ? 'Flush, ' + inch(c.ovh) + ' fascia board' : inch(c.ovh) + ' overhang, all 4 sides';
+    if (st === 'leanto' && Number(c.leantoFrontOvh) > 0) ovh += '; front (tall side) ' + (Number(c.leantoFrontOvh) % 12 ? inch(c.leantoFrontOvh) : (c.leantoFrontOvh / 12) + ' ft');
+  }
+  if (ovh) rows.push({ label: 'Overhang', value: ovh });
+  const sof = { match: 'Matches the walls', white: 'White', black: 'Black', cedar: 'Cedar' }[c.soffit];
+  if (sof && st !== 'barn') rows.push({ label: 'Soffit', value: sof });
+  const lines = (redline && Array.isArray(redline.addonLines)) ? redline.addonLines : [];
+  const vent = lines.some((l) => /^Roof Ridge Vent/i.test(String(l && l.name || '')));
+  if (vent) rows.push({ label: 'Ridge vent', value: 'Included (priced on its own line below)' });
+  else if (RIDGE_STYLES.includes(st)) rows.push({ label: 'Ridge vent', value: 'Not included' });
+  return rows;
+}
+
+/* The loft, in words: "4' back gable loft · front & back walls, 12' (short
+ * side)". config.loft is "<depthFt>-<front|back|dual>"; config.loftSide is
+ * 'ends' (front/back walls; also every design saved before the option) or
+ * 'sides' (left/right walls, where front=left and back=right). */
+function loftSpec(config) {
+  const c = (config && typeof config === 'object') ? config : {};
+  const v = String(c.loft || '');
+  if (!v || v === 'none') return null;
+  const [d, k = 'front'] = v.split('-');
+  const sides = c.loftSide === 'sides';
+  const kind = sides ? { front: 'left side', back: 'right side', dual: 'dual (both sides)' }[k]
+                     : { front: 'front gable', back: 'back gable', dual: 'dual (front + back)' }[k];
+  let out = d + '\u2032 ' + (kind || k) + ' loft';
+  const W = Number(c.w), L = Number(c.l);
+  if (W > 0 && L > 0) {
+    const along = sides ? L : W, other = sides ? W : L;
+    out += ' \u00b7 ' + (sides ? 'side walls' : 'front & back walls') + ', ' + along + '\u2032' +
+      (along === other ? '' : along < other ? ' (short side)' : ' (long side)');
+  }
+  return out;
+}
+
   root.TAX_RATE = TAX_RATE;
   root.DEPOSIT_RATE = DEPOSIT_RATE;
   root.BASE_SHED_INCLUDES = BASE_SHED_INCLUDES;
@@ -722,4 +820,8 @@ function withCardPrice(redline, bd) {
   root.CARD_UPLIFT_MAX = CARD_UPLIFT_MAX;
   root.cardUpliftOf = cardUpliftOf;
   root.cashDiscountFraction = cashDiscountFraction;
+  root.ROOF_PALETTES = ROOF_PALETTES;
+  root.RIDGE_STYLES = RIDGE_STYLES;
+  root.roofSpec = roofSpec;
+  root.loftSpec = loftSpec;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "7bbeb86";
-const WORKER_BUILT_AT = "2026-10-09T21:54:20.369Z";
+const WORKER_BUILD = "96a22b5";
+const WORKER_BUILT_AT = "2026-10-12T16:40:24.344Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -25,6 +25,8 @@ const WORKER_BUILT_AT = "2026-10-09T21:54:20.369Z";
    to exact. Prices below are HD baseline (national shelf, Jul 2026) — treat
    as placeholders until replaced with your real Logan/Pro numbers.
    ═══════════════════════════════════════════════════════════════════════ */
+const CONCRETE_SCOPE_DEFAULT = "Site preparation (included): we grub, level and grade the area where the pad will be placed.\nAdditional work: clearing of excessive vegetation, or any work outside this scope, is billed separately.\nBase: 3/4\" compacted gravel beneath the concrete.\nConcrete: 4,000 PSI mix.\nDrainage: the pad is poured slightly raised above the surrounding ground so runoff does not flow straight toward the shed.";
+
 let COST = {
   // Metal roofing — CONFIRMED: Metal Mart $1.00 / sq ft (replaces shingles+felt)
   metalRoofPerSqft: 1.00,
@@ -110,7 +112,7 @@ let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     PORCH_LEN=0, PORCH_OFF=0,
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
-    LOFT='none', ELEC='none', INT_FINISH='none', FLOOR='none',
+    LOFT='none', LOFT_SIDE='ends', ELEC='none', INT_FINISH='none', FLOOR='none',
     ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
       skylight:false, stairs:false, statLadder:false, atticLadder:false,
       weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
@@ -148,6 +150,8 @@ function setConfig(cfg){
   if(cfg.foundation!=null) FOUNDATION=cfg.foundation;
   if(cfg.foundationFinish!=null) FOUNDATION_FINISH=cfg.foundationFinish;
   if(cfg.loft!=null) LOFT=cfg.loft;
+  // Absent = front/back walls, where every loft before the option was built.
+  LOFT_SIDE=(cfg.loftSide==='sides')?'sides':'ends';
   if(cfg.elec!=null) ELEC=cfg.elec;
   if(cfg.intFinish!=null) INT_FINISH=cfg.intFinish;
   if(cfg.floor!=null) FLOOR=cfg.floor;
@@ -170,7 +174,7 @@ function resetConfig(){
   PORCH_LEN=0; PORCH_OFF=0;
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
-  LOFT='none'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
+  LOFT='none'; LOFT_SIDE='ends'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
   ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
     skylight:false, stairs:false, statLadder:false, atticLadder:false,
     weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
@@ -503,6 +507,10 @@ let SELL = {
      non-card payer pays exactly today's price. OFF until Nando switches it on;
      a quote priced while it is off is never stamped and never changes. */
   cashDiscount: { enabled: 0, percent: 3 },
+  /* The standard concrete Scope of Work (Nando, 12 Oct 2026), shown on every
+     quote with concrete unless staff wrote one for that order. Admin →
+     Pricing edits it like any other group. Words only: priced nowhere. */
+  concreteScope: { text: CONCRETE_SCOPE_DEFAULT },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
   // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
@@ -753,7 +761,10 @@ let SELL = {
       "Exterior Bar Ledge": 695
     },
     perLinFt: { // × linear feet the customer specifies
-      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17
+      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17,
+      // Nando, 12 Oct 2026: $15 per linear foot of ridge, replacing the flat
+      // $263 ("Roof Ridge Vent" in flat stays for anything that reads it).
+      "Roof Ridge Vent": 15
     },
     perSqft: {  // × area — see basis for each
       "Loft":               {rate:3.00,  basis:"loft"},   // customer-specified loft size
@@ -1753,14 +1764,21 @@ function computePricing(cfgIn, opts){
   if(loftId && loftId!=='none'){
     var parts = String(loftId).split('-');
     var depthFt = parseFloat(parts[0])||0;
-    // Can't build (or charge for) a loft deeper than the shed itself.
-    if(depthFt > Df) depthFt = Df;
     var kind = parts[1]||'front';
     var lofts = (kind==='dual')?2:1;
-    var sqft = depthFt * Wf * lofts;
+    /* Placement (12 Oct 2026). 'ends' is unchanged: depth x shed WIDTH,
+       capped at the shed's depth. 'sides' runs along the side walls, so the
+       same $3/sqft is depth x shed LENGTH, capped at the width (half each
+       for a dual, which meets in the middle). */
+    var sides = (LOFT_SIDE==='sides');
+    if(sides){ var capW = (lofts===2) ? Wf/2 : Wf; if(depthFt > capW) depthFt = capW; }
+    // Can't build (or charge for) a loft deeper than the shed itself.
+    else if(depthFt > Df) depthFt = Df;
+    var sqft = depthFt * (sides ? Df : Wf) * lofts;
     var rate = SELL.options.perSqft['Loft'].rate;   // $3/sqft
     loftSell = sqft * rate;
-    var kindLabel = (kind==='dual')?'Dual':(kind==='back')?'Back Gable':'Front Gable';
+    var kindLabel = sides ? ((kind==='dual')?'Dual Side':(kind==='back')?'Right Side':'Left Side')
+                          : ((kind==='dual')?'Dual':(kind==='back')?'Back Gable':'Front Gable');
     loftSellName = depthFt+"' "+kindLabel+' Loft ('+sqft+' sqft)';
   }
   customerPrice += loftSell;
@@ -1801,8 +1819,18 @@ function computePricing(cfgIn, opts){
        since ridge vent is normally sold by the linear foot. */
     // Same gate as the UI — a stale toggle from a previous style must not
     // keep billing after the customer switches to a Lean-To.
-    var _hasRidge=(STYLE==='gable'||STYLE==='3peak'||STYLE==='4peak');
-    _flat(ADDONS.ridgeVent && _hasRidge,'Roof Ridge Vent');
+    /* Now per linear foot of ridge (Nando, 12 Oct 2026), and offered on the
+       barn too. The ridge billed is the MAIN ridge, which runs the shed's
+       full length L: that is the run the designer draws the vent on (the
+       cross-gable ridges on a 3/4-peak die into the main roof and carry
+       none). Whole feet, so a 16ft shed is "16 ft x $15". */
+    var _hasRidge=(STYLE==='gable'||STYLE==='3peak'||STYLE==='4peak'||STYLE==='barn');
+    if(ADDONS.ridgeVent && _hasRidge){
+      var _rvFt=Math.ceil(Number(L)||0), _rvRate=(SELL.options.perLinFt||{})['Roof Ridge Vent'];
+      if(_rvRate==null) _rvRate=15;
+      var _rvAmt=_rvFt*_rvRate; addonSell+=_rvAmt;
+      addonLines.push({name:'Roof Ridge Vent '+_rvFt+' ft \u00d7 $'+_rvRate, amt:_rvAmt});
+    }
     _flat(ADDONS.skylight,'Skylight');
     _flat(ADDONS.stairs,'Stairs');
     _flat(ADDONS.ramp,'Ramp');
@@ -2017,7 +2045,7 @@ function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel','cardFee','cashDiscount'];
+  'concretePromo','sprinkler','travel','cardFee','cashDiscount','concreteScope'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".
@@ -2106,6 +2134,14 @@ function cashDiscountSettings() {
   const pct = Math.min(CASH_DISCOUNT_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
   const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
   return { enabled: on, percent: pct, uplift: on ? pct / 100 : 0 };
+}
+
+/* The order's scope of work: its own text when staff saved one (even an empty
+   one, which means "show none"), else the standard text. */
+function concreteScopeFor(own) {
+  if (own != null) return String(own);
+  const t = SELL && SELL.concreteScope && SELL.concreteScope.text;
+  return typeof t === 'string' ? t : CONCRETE_SCOPE_DEFAULT;
 }
 
 // ---- end inlined pricing.js ----
@@ -4194,6 +4230,104 @@ function withCardPrice(redline, bd) {
   return bd;
 }
 
+/* THE ROOF, SPELLED OUT (Nando, 12 Oct 2026: "include more details on the
+ * roof. Roof pitch, shingle and color, overhang. Also ... a roof ridge vent").
+ *
+ * Read straight off the design config the Shed-Pro designer saves, mapped to
+ * the words its own Roof step shows. Display only: nothing here touches a
+ * price. A field the design never saved gives no row, so an older quote shows
+ * only what is actually known.
+ *
+ *   pitch     gable / 3-peak / 4-peak: config.pitch is the N of N/12 (the
+ *             designer's 6/12 · 8/12 · 10/12 · 12/12 buttons).
+ *             Barn: a fixed gambrel profile in the designer (~61deg lower,
+ *             ~23deg upper slopes); its pitch value is ignored by the build.
+ *             Lean-to: no pitch; the back wall drops leantoDrop ft (1 or 2)
+ *             below the front, over the shed's l (front-to-back) depth.
+ *   colour    config.roofColor is the swatch hex, looked up in the palette for
+ *             config.roofType. colorNames.roof is NOT trusted: the designer
+ *             keeps the last name picked, so a design switched from shingle to
+ *             metal can carry "Black Asphalt" on a black metal roof (#68).
+ *   overhang  ovType 'gable' = flush, ovh" fascia board; 'all4' = ovh"
+ *             overhang all 4 sides. Barn is always flush eaves with a 4" rake.
+ *             Lean-to front (tall side) overhang: leantoFrontOvh, 'match' =
+ *             same as the rest.
+ *   ridge     the "Roof Ridge Vent" add-on (addons.ridgeVent, priced on its
+ *             own line: $15/ft of ridge from 12 Oct 2026, a flat $263 before).
+ *             Offered on gable / 3-peak / 4-peak / barn, the same gate pricing
+ *             uses; a lean-to has no ridge. */
+const ROOF_PALETTES = {
+  shingle: { 0x28282A: 'Black Asphalt', 0x44413C: 'Gray Asphalt', 0x453A2F: 'Brown Asphalt',
+             // earlier designer swatches for the same three shingles
+             0x2A2A2A: 'Black Asphalt', 0x5A5A5A: 'Gray Asphalt', 0x6B4423: 'Brown Asphalt' },
+  metal:   { 0xEDEDE8: 'White', 0x8A8D8F: 'Gray', 0x1A1A1A: 'Black', 0x5A4636: 'Brown', 0x6E2B2B: 'Barn Red',
+             // retired metal swatches (named in the designer's palette notes)
+             0x4A3B32: 'Burnished Slate', 0x3A3C3E: 'Charcoal' },
+};
+const RIDGE_STYLES = ['gable', '3peak', '4peak', 'barn'];  // barn added 12 Oct 2026
+function roofSpec(config, redline) {
+  const c = (config && typeof config === 'object') ? config : {};
+  const st = String(c.style || '').toLowerCase();
+  const rows = [];
+  if (!st && !c.roofType) return rows;
+  const inch = (n) => n + '\u2033';
+  const styleName = { gable: 'Gable (A-frame), two slopes', '3peak': '3-Peak: gable with a cross gable',
+    '4peak': '4-Peak: gable with two cross gables', barn: 'Gambrel (barn)', leanto: 'Lean-to, single slope' }[st];
+  if (styleName) rows.push({ label: 'Roof style', value: styleName });
+  const p = Number(c.pitch);
+  if (RIDGE_STYLES.includes(st) && st !== 'barn' && p > 0) rows.push({ label: 'Pitch', value: p + '/12' });
+  else if (st === 'barn') rows.push({ label: 'Pitch', value: 'Gambrel profile: steep lower slopes (about 61\u00b0), shallow upper (about 23\u00b0)' });
+  else if (st === 'leanto') {
+    const d = Number(c.leantoDrop) || null;
+    if (d) {
+      const depth = Number(c.l) - ((c.porchLoc === 'front' && Number(c.porchDepth) > 0) ? Number(c.porchDepth) : 0);
+      const per = depth > 0 ? Math.round(d * 12 / depth * 10) / 10 : null;
+      rows.push({ label: 'Pitch', value: d + ' ft drop, front to back' + (per ? ' (about ' + per + '/12)' : '') });
+    }
+  }
+  const type = String(c.roofType || '').toLowerCase();
+  const pal = ROOF_PALETTES[type];
+  const col = (pal && c.roofColor != null) ? pal[Number(c.roofColor)] : null;
+  const typeName = type === 'shingle' ? 'Asphalt shingle' : type === 'metal' ? 'Metal' : null;
+  if (typeName) rows.push({ label: type === 'metal' ? 'Roofing & color' : 'Shingles & color', value: typeName + (col ? ', ' + col : '') });
+  let ovh = null;
+  if (st === 'barn') ovh = 'Flush eaves, 4\u2033 gable rake';
+  else if (Number(c.ovh) > 0 && (c.ovType === 'gable' || c.ovType === 'all4')) {
+    ovh = c.ovType === 'gable' ? 'Flush, ' + inch(c.ovh) + ' fascia board' : inch(c.ovh) + ' overhang, all 4 sides';
+    if (st === 'leanto' && Number(c.leantoFrontOvh) > 0) ovh += '; front (tall side) ' + (Number(c.leantoFrontOvh) % 12 ? inch(c.leantoFrontOvh) : (c.leantoFrontOvh / 12) + ' ft');
+  }
+  if (ovh) rows.push({ label: 'Overhang', value: ovh });
+  const sof = { match: 'Matches the walls', white: 'White', black: 'Black', cedar: 'Cedar' }[c.soffit];
+  if (sof && st !== 'barn') rows.push({ label: 'Soffit', value: sof });
+  const lines = (redline && Array.isArray(redline.addonLines)) ? redline.addonLines : [];
+  const vent = lines.some((l) => /^Roof Ridge Vent/i.test(String(l && l.name || '')));
+  if (vent) rows.push({ label: 'Ridge vent', value: 'Included (priced on its own line below)' });
+  else if (RIDGE_STYLES.includes(st)) rows.push({ label: 'Ridge vent', value: 'Not included' });
+  return rows;
+}
+
+/* The loft, in words: "4' back gable loft · front & back walls, 12' (short
+ * side)". config.loft is "<depthFt>-<front|back|dual>"; config.loftSide is
+ * 'ends' (front/back walls; also every design saved before the option) or
+ * 'sides' (left/right walls, where front=left and back=right). */
+function loftSpec(config) {
+  const c = (config && typeof config === 'object') ? config : {};
+  const v = String(c.loft || '');
+  if (!v || v === 'none') return null;
+  const [d, k = 'front'] = v.split('-');
+  const sides = c.loftSide === 'sides';
+  const kind = sides ? { front: 'left side', back: 'right side', dual: 'dual (both sides)' }[k]
+                     : { front: 'front gable', back: 'back gable', dual: 'dual (front + back)' }[k];
+  let out = d + '\u2032 ' + (kind || k) + ' loft';
+  const W = Number(c.w), L = Number(c.l);
+  if (W > 0 && L > 0) {
+    const along = sides ? L : W, other = sides ? W : L;
+    out += ' \u00b7 ' + (sides ? 'side walls' : 'front & back walls') + ', ' + along + '\u2032' +
+      (along === other ? '' : along < other ? ' (short side)' : ' (long side)');
+  }
+  return out;
+}
+
 // ---- end inlined quotelines.js ----
 
 // ---- inlined from worker/invoices.js by build-bundle.mjs — do not edit below by hand ----
@@ -5429,6 +5563,29 @@ function bankBillFooterNote(pctLabel) {
     '% cash, check & bank transfer discount. Card payments are billed at our regular price.';
 }
 
+/* CONCRETE SCOPE OF WORK (Nando, 12 Oct 2026). Staff type the concrete job's
+ * details on the order; the bill carries them on the concrete phase's own
+ * line, so the Stripe invoice describes the pour the way the quote does.
+ * Label only: no amount, total or line count changes. Nothing happens when
+ * the text is empty or the order has no concrete. */
+function concreteRow(bd, config) {
+  const rows = (bd && Array.isArray(bd.rows)) ? bd.rows : [];
+  const f = rows.find((r) => r.kind === 'foundation');
+  if (!f) return null;
+  const isPad = (config && config.foundation === 'pad') || /concrete|slab|pad/i.test(String(f.label || ''));
+  return isPad ? f : null;
+}
+function addConcreteScope(inv, bd, text, config) {
+  const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  const row = concreteRow(bd, config);
+  if (!inv || !t || !row || !Array.isArray(inv.lines)) return inv;
+  const re = new RegExp('\\bPhase ' + row.phase + '\\b');
+  const line = inv.lines.find((l) => !l.discount && re.test(String(l.label || '')));
+  if (!line) return inv;
+  line.label = clip(line.label + ' \u00b7 Scope of work: ' + t, LIMITS.label);
+  return inv;
+}
+
 // ---- end inlined invoices.js ----
 
 // ---- inlined from worker/stripe.js by build-bundle.mjs — do not edit below by hand ----
@@ -6379,7 +6536,7 @@ function buildSpecLines(config) {
   const p = specPorchLine(c); if (p) out.push(p);
 
   const loft = sv(c.loft);
-  if (loft && loft !== "none") out.push("Loft: " + loft.replace("-", "ft "));
+  if (loft && loft !== "none") out.push("Loft: " + loft.replace("-", "ft ") + (c.loftSide === "sides" ? " (side walls: front=left, back=right)" : ""));
 
   const shelves = Array.isArray(c.shelves) ? c.shelves : [];
   if (shelves.length) {
@@ -7632,7 +7789,8 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensureSubmissionAdjustColumns(env);
   const { results: submissions } = await env.DB.prepare(
-    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
+    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price" +
+    ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
     .all();
@@ -7648,6 +7806,8 @@ async function handleGetCustomer(request, env, origin, id) {
     await applySavedPricing(env);
     travelPerDay = Number((SELL.travel || {}).perDay) || 0;
   } catch (e) {}   // a default that will not load must not stop the customer loading
+  try { await applySavedPricing(env); } catch (e) { /* no pricing table: shipped text */ }
+  submissions.forEach((sub) => { sub.concrete_scope_effective = concreteScopeFor(sub.concrete_scope); });
   submissions.forEach((sub) => {
     sub.travel_per_day = travelPerDay;
     sub.adjustment_list = adjustmentsOf(sub);
@@ -8208,7 +8368,8 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     for (const id of others) {
       if (builds.some((b) => Number(b.sub) === id)) continue;
       const o = await env.DB.prepare(
-        "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+        "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note" +
+     ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE id = ?"
       ).bind(id).first();
       if (!o) throw Object.assign(new Error("no such order #" + id), { status: 404 });
       if (Number(o.customer_id) !== Number(sub.customer_id)) {
@@ -8230,6 +8391,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
           summary: configSummary(details.config),
           submissionId: sub.id
         });
+        addConcreteScope(invoice, breakdown, concreteScopeFor(sub.concrete_scope), details.config);
       } else {
         const comped = {};
         builds.forEach((b) => Object.assign(comped, compedMap(b.details.redline, b.adjustments)));
@@ -8258,6 +8420,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     summary: configSummary(details.config),
     submissionId: sub.id
   });
+  addConcreteScope(invoice, breakdown, concreteScopeFor(sub.concrete_scope), details.config);
   return { sub, customer, breakdown, split, invoice, uplift };
 }
 
@@ -9171,6 +9334,7 @@ async function handleGetSubmission(request, env, origin, id) {
      withElecIncludes: the contents are filled back in from the stored package
      name, because a redline written before they existed has the name alone. */
   await applySavedPricing(env);
+  submission.concrete_scope_effective = concreteScopeFor(submission.concrete_scope);
   try {
     const parsed = JSON.parse(submission.details);
     if (parsed && parsed.redline) {
@@ -9635,6 +9799,45 @@ function validateAdjustments(raw) {
 //
 // ALTER TABLE at runtime, since submissions is live.
 const submissionAdjustColumnsReady = new WeakSet();
+/* CONCRETE SCOPE OF WORK — free text per order, optional (12 Oct 2026).
+   Additive: one nullable TEXT column, added the first time it is needed,
+   same as the columns above. Older builds ignore it. */
+const concreteScopeReady = new WeakSet();
+async function ensureConcreteScopeColumn(env) {
+  const binding = env && env.DB;
+  if (!binding || concreteScopeReady.has(binding)) return;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  if (!(results || []).some((r) => r.name === "concrete_scope")) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN concrete_scope TEXT").run();
+  }
+  concreteScopeReady.add(binding);
+}
+// Read side never ALTERs: a database that has not had the column added just
+// has no scope to show.
+async function hasConcreteScopeColumn(env) {
+  if (env && env.DB && concreteScopeReady.has(env.DB)) return true;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  const ok = (results || []).some((r) => r.name === "concrete_scope");
+  if (ok) concreteScopeReady.add(env.DB);
+  return ok;
+}
+export const CONCRETE_SCOPE_MAX = 4000;
+async function handleConcreteScope(request, env, origin, id) {
+  let body = {};
+  try { body = await request.json(); } catch (e) { return json({ error: "Invalid JSON" }, 400, origin); }
+  if (body.text != null && typeof body.text !== "string") return json({ error: "text must be a string" }, 400, origin);
+  const raw = String(body.text || "").replace(/\r\n?/g, "\n");
+  if (raw.length > CONCRETE_SCOPE_MAX) return json({ error: "Scope of work is limited to " + CONCRETE_SCOPE_MAX + " characters" }, 400, origin);
+  // useDefault: back to the standard text (null). Blank text: this order shows none ('').
+  const text = body.useDefault ? null : (raw.trim() ? raw.replace(/[ \t]+$/gm, "").trim() : "");
+  await ensureConcreteScopeColumn(env);
+  const row = await env.DB.prepare("SELECT id FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Order not found" }, 404, origin);
+  await env.DB.prepare("UPDATE submissions SET concrete_scope = ? WHERE id = ?").bind(text, id).run();
+  try { await applySavedPricing(env); } catch (e) {}
+  return json({ ok: true, id, concrete_scope: text, concrete_scope_effective: concreteScopeFor(text) }, 200, origin);
+}
+
 async function ensureSubmissionAdjustColumns(env) {
   const binding = env.DB;
   if (!binding) return;
@@ -10669,7 +10872,7 @@ function computeOptionPrices(cfg) {
   // floor/roof/wall area, same as wallHeight above — the client never gets
   // handed the $/sqft rate itself, only what it comes to for this build.
   const ADDON_FLAT_KEYS = {
-    shutters: "Shutters", flowerboxes: "Flowerboxes", ridgeVent: "Roof Ridge Vent",
+    shutters: "Shutters", flowerboxes: "Flowerboxes",
     skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder", ramp: "Ramp",
     shedRemoval: "Shed Removal", concreteRemoval: "Concrete Removal",
     atticLadder: "Attic Pull-Down Ladder"
@@ -10683,6 +10886,9 @@ function computeOptionPrices(cfg) {
   Object.keys(ADDON_PERSQFT_KEYS).forEach((k) => {
     addons[k] = sellPerSqft(ADDON_PERSQFT_KEYS[k], cfg.w, cfg.l, cfg.h);
   });
+  // Ridge vent: $/linear ft of the main ridge (the shed's length), 12 Oct 2026.
+  { const rate = (SELL.options.perLinFt || {})["Roof Ridge Vent"];
+    addons.ridgeVent = Math.ceil(Number(cfg.l) || 0) * (rate != null ? rate : 15); }
   addons.cupola = {
     black: SELL.options.flat['Cupola 16" Black Roof'] || 0,
     copper: SELL.options.flat['Cupola 16" Copper Roof'] || 0
@@ -12519,6 +12725,12 @@ export default {
         const mid = Number(path.slice("/admin/submissions/".length, -"/schedule-message".length));
         if (!mid) return json({ error: "bad order id" }, 400, origin);
         return await handleScheduleMessage(request, env, origin, mid);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/concrete-scope") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const cid = Number(path.slice("/admin/submissions/".length, -"/concrete-scope".length));
+        if (!cid) return json({ error: "bad order id" }, 400, origin);
+        return await handleConcreteScope(request, env, origin, cid);
       }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

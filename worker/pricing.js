@@ -20,6 +20,8 @@
    to exact. Prices below are HD baseline (national shelf, Jul 2026) — treat
    as placeholders until replaced with your real Logan/Pro numbers.
    ═══════════════════════════════════════════════════════════════════════ */
+export const CONCRETE_SCOPE_DEFAULT = "Site preparation (included): we grub, level and grade the area where the pad will be placed.\nAdditional work: clearing of excessive vegetation, or any work outside this scope, is billed separately.\nBase: 3/4\" compacted gravel beneath the concrete.\nConcrete: 4,000 PSI mix.\nDrainage: the pad is poured slightly raised above the surrounding ground so runoff does not flow straight toward the shed.";
+
 export let COST = {
   // Metal roofing — CONFIRMED: Metal Mart $1.00 / sq ft (replaces shingles+felt)
   metalRoofPerSqft: 1.00,
@@ -105,7 +107,7 @@ let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     PORCH_LEN=0, PORCH_OFF=0,
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
-    LOFT='none', ELEC='none', INT_FINISH='none', FLOOR='none',
+    LOFT='none', LOFT_SIDE='ends', ELEC='none', INT_FINISH='none', FLOOR='none',
     ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
       skylight:false, stairs:false, statLadder:false, atticLadder:false,
       weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
@@ -143,6 +145,8 @@ export function setConfig(cfg){
   if(cfg.foundation!=null) FOUNDATION=cfg.foundation;
   if(cfg.foundationFinish!=null) FOUNDATION_FINISH=cfg.foundationFinish;
   if(cfg.loft!=null) LOFT=cfg.loft;
+  // Absent = front/back walls, where every loft before the option was built.
+  LOFT_SIDE=(cfg.loftSide==='sides')?'sides':'ends';
   if(cfg.elec!=null) ELEC=cfg.elec;
   if(cfg.intFinish!=null) INT_FINISH=cfg.intFinish;
   if(cfg.floor!=null) FLOOR=cfg.floor;
@@ -165,7 +169,7 @@ export function resetConfig(){
   PORCH_LEN=0; PORCH_OFF=0;
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
-  LOFT='none'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
+  LOFT='none'; LOFT_SIDE='ends'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
   ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
     skylight:false, stairs:false, statLadder:false, atticLadder:false,
     weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
@@ -498,6 +502,10 @@ export let SELL = {
      non-card payer pays exactly today's price. OFF until Nando switches it on;
      a quote priced while it is off is never stamped and never changes. */
   cashDiscount: { enabled: 0, percent: 3 },
+  /* The standard concrete Scope of Work (Nando, 12 Oct 2026), shown on every
+     quote with concrete unless staff wrote one for that order. Admin →
+     Pricing edits it like any other group. Words only: priced nowhere. */
+  concreteScope: { text: CONCRETE_SCOPE_DEFAULT },
 
   // ── GRAVEL FOUNDATION ── tiered by the shed's own footprint (enclosure
   // sqft). $750 under 75 sqft, $1100 from 75-150 sqft, $1500 from 150-200
@@ -748,7 +756,10 @@ export let SELL = {
       "Exterior Bar Ledge": 695
     },
     perLinFt: { // × linear feet the customer specifies
-      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17
+      "16\" Deep Shelving": 15, "24\" Deep Shelving": 17,
+      // Nando, 12 Oct 2026: $15 per linear foot of ridge, replacing the flat
+      // $263 ("Roof Ridge Vent" in flat stays for anything that reads it).
+      "Roof Ridge Vent": 15
     },
     perSqft: {  // × area — see basis for each
       "Loft":               {rate:3.00,  basis:"loft"},   // customer-specified loft size
@@ -1748,14 +1759,21 @@ export function computePricing(cfgIn, opts){
   if(loftId && loftId!=='none'){
     var parts = String(loftId).split('-');
     var depthFt = parseFloat(parts[0])||0;
-    // Can't build (or charge for) a loft deeper than the shed itself.
-    if(depthFt > Df) depthFt = Df;
     var kind = parts[1]||'front';
     var lofts = (kind==='dual')?2:1;
-    var sqft = depthFt * Wf * lofts;
+    /* Placement (12 Oct 2026). 'ends' is unchanged: depth x shed WIDTH,
+       capped at the shed's depth. 'sides' runs along the side walls, so the
+       same $3/sqft is depth x shed LENGTH, capped at the width (half each
+       for a dual, which meets in the middle). */
+    var sides = (LOFT_SIDE==='sides');
+    if(sides){ var capW = (lofts===2) ? Wf/2 : Wf; if(depthFt > capW) depthFt = capW; }
+    // Can't build (or charge for) a loft deeper than the shed itself.
+    else if(depthFt > Df) depthFt = Df;
+    var sqft = depthFt * (sides ? Df : Wf) * lofts;
     var rate = SELL.options.perSqft['Loft'].rate;   // $3/sqft
     loftSell = sqft * rate;
-    var kindLabel = (kind==='dual')?'Dual':(kind==='back')?'Back Gable':'Front Gable';
+    var kindLabel = sides ? ((kind==='dual')?'Dual Side':(kind==='back')?'Right Side':'Left Side')
+                          : ((kind==='dual')?'Dual':(kind==='back')?'Back Gable':'Front Gable');
     loftSellName = depthFt+"' "+kindLabel+' Loft ('+sqft+' sqft)';
   }
   customerPrice += loftSell;
@@ -1796,8 +1814,18 @@ export function computePricing(cfgIn, opts){
        since ridge vent is normally sold by the linear foot. */
     // Same gate as the UI — a stale toggle from a previous style must not
     // keep billing after the customer switches to a Lean-To.
-    var _hasRidge=(STYLE==='gable'||STYLE==='3peak'||STYLE==='4peak');
-    _flat(ADDONS.ridgeVent && _hasRidge,'Roof Ridge Vent');
+    /* Now per linear foot of ridge (Nando, 12 Oct 2026), and offered on the
+       barn too. The ridge billed is the MAIN ridge, which runs the shed's
+       full length L: that is the run the designer draws the vent on (the
+       cross-gable ridges on a 3/4-peak die into the main roof and carry
+       none). Whole feet, so a 16ft shed is "16 ft x $15". */
+    var _hasRidge=(STYLE==='gable'||STYLE==='3peak'||STYLE==='4peak'||STYLE==='barn');
+    if(ADDONS.ridgeVent && _hasRidge){
+      var _rvFt=Math.ceil(Number(L)||0), _rvRate=(SELL.options.perLinFt||{})['Roof Ridge Vent'];
+      if(_rvRate==null) _rvRate=15;
+      var _rvAmt=_rvFt*_rvRate; addonSell+=_rvAmt;
+      addonLines.push({name:'Roof Ridge Vent '+_rvFt+' ft \u00d7 $'+_rvRate, amt:_rvAmt});
+    }
     _flat(ADDONS.skylight,'Skylight');
     _flat(ADDONS.stairs,'Stairs');
     _flat(ADDONS.ramp,'Ramp');
@@ -2012,7 +2040,7 @@ export function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel','cardFee','cashDiscount'];
+  'concretePromo','sprinkler','travel','cardFee','cashDiscount','concreteScope'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".
@@ -2101,4 +2129,12 @@ export function cashDiscountSettings() {
   const pct = Math.min(CASH_DISCOUNT_MAX_PERCENT, Math.max(0, Number(c.percent) || 0));
   const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
   return { enabled: on, percent: pct, uplift: on ? pct / 100 : 0 };
+}
+
+/* The order's scope of work: its own text when staff saved one (even an empty
+   one, which means "show none"), else the standard text. */
+export function concreteScopeFor(own) {
+  if (own != null) return String(own);
+  const t = SELL && SELL.concreteScope && SELL.concreteScope.text;
+  return typeof t === 'string' ? t : CONCRETE_SCOPE_DEFAULT;
 }

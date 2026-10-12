@@ -137,6 +137,7 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 }
 
 @media print{
+  .br-scope{color:#333 !important}
   body{background:#fff;color:#111;padding:0}
   .toolbar{display:none}
   .doc{border:none;background:#fff;max-width:100%}
@@ -436,6 +437,18 @@ function cardFeeNote() {
    them. The cash, check & bank transfer discount depends on how they pay, so
    it stays the last thing on the page, under the total. */
 function money2s(n) { return '\u2212' + money2(n); }
+/* CONCRETE SCOPE OF WORK (Nando, 12 Oct 2026): what staff typed on the
+   order about the concrete job, under the concrete pad line, line breaks
+   kept. Nothing when the order has no concrete or nothing was typed. */
+var CONCRETE_SCOPE = '';
+var CONCRETE_ORDER = false;
+function concreteScopeHtml(label) {
+  var t = String(CONCRETE_SCOPE || '').trim();
+  if (!t || !(CONCRETE_ORDER || /concrete|slab/i.test(String(label || '')))) return '';
+  return '<div class="br-scope" style="padding:6px 0 10px 20px;font-size:13px;color:var(--silver);line-height:1.5">'
+    + '<div style="font-size:10px;letter-spacing:.18em;text-transform:uppercase;opacity:.8;margin-bottom:3px">Scope of work</div>'
+    + esc(t).replace(/\n/g, '<br>') + '</div>';
+}
 function buildBreakdown(bd) {
   if (!bd) return '';
   function reg(r) { return r.regularAmt != null ? r.regularAmt : r.amt; }
@@ -455,6 +468,7 @@ function buildBreakdown(bd) {
     if (r.estimate) {
       html += '<div class="br-row br-inc br-est">Estimate. Final price may vary based on site conditions.</div>';
     }
+    if (r.kind === 'foundation') html += concreteScopeHtml(r.label);
     (r.regularSubLines || r.subLines || []).forEach(function (s) {
       html += '<div class="br-row" style="padding-left:20px;font-size:13px;color:var(--silver)">'
         + '<span class="br-label">&nbsp;&nbsp;+ ' + esc(s.label) + '</span>'
@@ -474,6 +488,7 @@ function buildBreakdown(bd) {
   (bd.freeRows || []).forEach(function (f) {
     rowsHtml += '<div class="br-row br-free"><span class="br-label">' + esc(f.label) + '</span>'
       + '<span class="br-amt">' + money2(f.regularAmt) + '</span></div>';
+    if (f.kind === 'foundation') rowsHtml += concreteScopeHtml(f.label);
   });
   var discounts = bd.discounts || [];
   var charges = bd.charges || [];
@@ -554,6 +569,20 @@ function sprinklerSpec(list) {
 }
 function wallLabel(w) { return w ? w.charAt(0).toUpperCase() + w.slice(1) : '—'; }
 
+/* Roof specs: rows come from roofSpec() in quotelines (one source for the
+   page and the tests). A design that saved nothing about its roof gets no
+   section at all. */
+function buildRoof(config, redline) {
+  var rows = (typeof roofSpec === 'function') ? roofSpec(config, redline) : [];
+  if (!rows.length) return '';
+  return '<div class="doc-section"><div class="doc-label">Roof</div>'
+    + rows.map(function (r) {
+        return '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
+          + '<span class="spec-val">' + esc(r.value) + '</span></div>';
+      }).join('')
+    + '</div>';
+}
+
 function buildSpecs(config) {
   var doors = Array.isArray(config.doors) ? config.doors : [];
   var windows = Array.isArray(config.windows) ? config.windows : [];
@@ -608,6 +637,8 @@ function render(submission, customer) {
     }
   });
 
+  CONCRETE_SCOPE = submission.concrete_scope_effective != null ? submission.concrete_scope_effective : (submission.concrete_scope || '');
+  CONCRETE_ORDER = config.foundation === 'pad';
   if (customer) document.getElementById('back-link').href = 'admin-customer.html?id=' + encodeURIComponent(customer.id);
 
   /* The state and the ZIP are one field joined by a SPACE. Joined with a
@@ -633,11 +664,10 @@ function render(submission, customer) {
       (_pg.partial ? ' (' + _pg.where + ')' : '') + ' · ' + (_pg.depth * _pg.len) + ' sq ft');
   }
   if (config.siding) fields += field('Siding', config.siding);
-  if (config.roofType) fields += field('Roof', config.roofType);
   if (Array.isArray(config.doors)) fields += field('Doors', config.doors.length);
   if (Array.isArray(config.windows)) fields += field('Windows', config.windows.length);
   if (config.foundation) fields += field('Foundation', config.foundation === 'pad' ? '4" Poured Concrete Pad' : config.foundation === 'blocks' ? 'Leveled on Cinder Blocks' : config.foundation);
-  if (config.loft) fields += field('Loft', config.loft);
+  if (config.loft) fields += field('Loft', (typeof loftSpec === 'function' && loftSpec(config)) || (config.loft === 'none' ? 'none' : config.loft));
   var _spr = sprinklerSpec(config.sprinklers);
   if (_spr) fields += field('Sprinklers', _spr);
   if (config.elec) fields += field('Electrical', config.elec);
@@ -684,6 +714,8 @@ function render(submission, customer) {
     +   '<div class="doc-grid">' + fields + '</div>'
     +   (safePermalink ? '<a class="design-link" href="' + esc(safePermalink) + '" target="_blank" rel="noopener">View this exact 3D design ↗</a>' : '')
     + '</div>'
+
+    + buildRoof(config, details.redline)
 
     + buildSpecs(config)
 

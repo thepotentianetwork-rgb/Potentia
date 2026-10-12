@@ -27,7 +27,7 @@ export const EXPORTED = ['TAX_RATE', 'DEPOSIT_RATE', 'BASE_SHED_INCLUDES',
   'REMOVAL_NAMES', 'compItemPrices', 'compedMap', 'nameList', 'quoteLines',
   'shedStyleName', 'isSitePrep', 'travelAmount', 'travelLabel', 'overrideMap', 'padPromoOf', 'overridePays',
   'cashDiscountDisclosure', 'cashDiscountPctLabel', 'CASH_DISCOUNT_LABEL', 'CARD_UPLIFT_MAX',
-  'cardUpliftOf', 'cashDiscountFraction'];
+  'cardUpliftOf', 'cashDiscountFraction', 'ROOF_PALETTES', 'RIDGE_STYLES', 'roofSpec', 'loftSpec'];
 
 export function generate(source) {
   const body = source.replace(/^export /gm, '');
