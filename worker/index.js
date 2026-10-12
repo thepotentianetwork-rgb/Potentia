@@ -2918,6 +2918,30 @@ async function handleDesignStatus(request, env, origin, id) {
    a line the new design no longer has are kept but reported as stale. The
    previous design is pushed onto details.history and a CRM note is written,
    so every change is on the record. */
+/* Quote line name -> what to switch off in config.addons (or config.sprinklers)
+   to drop that add-on. Names are the ones pricing.js gives addonLines. Vents
+   are placed openings, not a toggle, so they are removed in the designer. */
+const ADDON_LINE_KEYS = [
+  [/^Shutters$/i, "shutters"], [/^Flowerboxes\b/i, "flowerboxes"], [/^Cupola\b/i, "cupola"],
+  [/^Roof Ridge Vent\b/i, "ridgeVent"], [/^Skylight$/i, "skylight"], [/^Stairs$/i, "stairs"], [/^Ramp$/i, "ramp"],
+  [/^Stationary Ladder$/i, "statLadder"], [/^Attic Pull-Down Ladder$/i, "atticLadder"],
+  [/^Shed Removal$/i, "shedRemoval"], [/^Concrete Removal$/i, "concreteRemoval"],
+  [/^Sprinkler Relocation\b/i, "sprinklers"], [/^Floor Weather Guard$/i, "weatherGuard"],
+  [/^Radiant Roof Barrier$/i, "radiantBarrier"], [/^House Wrap$/i, "houseWrap"], [/^Hurricane Ties$/i, "hurricaneTies"]
+];
+function addonKeyForLine(name) {
+  const n = String(name || "").trim();
+  const hit = ADDON_LINE_KEYS.find(([re]) => re.test(n));
+  return hit ? hit[1] : null;
+}
+function configWithoutAddon(config, key) {
+  const c = JSON.parse(JSON.stringify(config || {}));
+  if (key === "sprinklers") { c.sprinklers = []; return c; }
+  c.addons = Object.assign({}, c.addons || {});
+  c.addons[key] = key === "cupola" ? "none" : false;
+  return c;
+}
+
 async function handleUpdateDesign(request, env, origin, id) {
   await ensureSubmissionAdjustColumns(env);
   const row = await env.DB.prepare(
@@ -2926,9 +2950,21 @@ async function handleUpdateDesign(request, env, origin, id) {
   if (!row) return json({ error: "Not found" }, 404, origin);
   if (await orderHasDeposit(env, row)) return json({ error: DEPOSIT_LOCK_MSG, locked: true }, 409, origin);
   const body = await request.json().catch(() => ({}));
-  if (!body.config || typeof body.config !== "object") return json({ error: "config required" }, 400, origin);
   let details = {};
   try { details = JSON.parse(row.details) || {}; } catch (e) {}
+  /* { removeAddon: "<quote line name>" } from the CRM / quote: the same update,
+     on the saved design with that one add-on switched off. */
+  let removed = null;
+  if (body.removeAddon != null) {
+    const key = addonKeyForLine(body.removeAddon);
+    const lines = (details.redline && Array.isArray(details.redline.addonLines)) ? details.redline.addonLines : [];
+    if (!key || !details.config) return json({ error: "That line can't be removed here; open the 3D design to change it." }, 400, origin);
+    if (!lines.some((l) => addonKeyForLine(l && l.name) === key)) return json({ error: "That add-on is not on this quote." }, 400, origin);
+    removed = String(body.removeAddon);
+    body.config = configWithoutAddon(details.config, key);
+    body.permalink = null;
+  }
+  if (!body.config || typeof body.config !== "object") return json({ error: "config required" }, 400, origin);
 
   let marginTarget = details.marginTarget != null ? details.marginTarget : null;
   if (body.overrides && body.overrides.marginTarget != null) marginTarget = clampMarginTarget(body.overrides.marginTarget);
@@ -2949,7 +2985,8 @@ async function handleUpdateDesign(request, env, origin, id) {
   const renders = body.renders ? await uploadRenders(env, body.renders) : null;
   const next = Object.assign({}, details, {
     config: body.config,
-    permalink: body.permalink || details.permalink || null,
+    // A removal re-encodes the link from config (the stored one is the old design).
+    permalink: removed ? null : (body.permalink || details.permalink || null),
     quotedPrice: result.customer,
     marginTarget: marginTarget,
     redline: result.redline,
@@ -2970,14 +3007,14 @@ async function handleUpdateDesign(request, env, origin, id) {
     .bind(text, effective, id).run();
 
   const money = (n) => (n == null ? "?" : "$" + Math.round(Number(n)).toLocaleString("en-US"));
-  const note = "Design updated from the designer (staff): quote " + money(prev.quotedPrice) + " \u2192 " + money(result.customer) +
+  const note = (removed ? "Add-on removed from the quote (staff): " + removed + "; quote " : "Design updated from the designer (staff): quote ") + money(prev.quotedPrice) + " \u2192 " + money(result.customer) +
     (stale.length ? ". Adjustments no longer matching a line: " + stale.map((a) => a.item).join(", ") : "");
   try {
     await env.DB.prepare("INSERT INTO notes (customer_id, text, created_at) VALUES (?,?,?)")
       .bind(row.customer_id, note, prev.at).run();
   } catch (e) {}
   return json({ ok: true, id: id, quotedPrice: result.customer, previousPrice: prev.quotedPrice,
-                effective_price: effective, stale: stale, compItems: compItems }, 200, origin);
+                effective_price: effective, stale: stale, compItems: compItems, removed: removed }, 200, origin);
 }
 
 // POST /admin/submissions/:id/adjustments — { adjustments: [...] }
