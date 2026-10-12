@@ -20,6 +20,7 @@
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor } from "./pricing.js";
 import { applyColorEdit, detailsWithColors } from "./colors.js";
+import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
@@ -757,8 +758,9 @@ async function handleGetCustomer(request, env, origin, id) {
     if (parsed && withElecIncludes(redline)) sub.details = JSON.stringify(parsed);
   });
 
+  try { await ensureNoteEditTables(env); } catch (e) {}
   const { results: notes } = await env.DB.prepare(
-    "SELECT id, text, created_at FROM notes WHERE customer_id = ? ORDER BY created_at DESC"
+    "SELECT id, text, created_at, edited_at, edited_by FROM notes WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
     .all();
@@ -5869,6 +5871,28 @@ export default {
       if (path === "/admin/customers" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleListCustomers(request, env, origin);
+      }
+      if (path.startsWith("/admin/notes/") && (request.method === "POST" || request.method === "DELETE")) {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/notes/".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        const body = await request.json().catch(() => ({}));
+        const r = request.method === "POST" ? await editCrmNote(env, id, body) : await deleteCrmNote(env, id, body);
+        return json(r.body, r.status, origin);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/customer-notes") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/customer-notes".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        const r = await editCustomerNotes(env, id, await request.json().catch(() => ({})));
+        return json(r.body, r.status, origin);
+      }
+      if (path.startsWith("/admin/customers/") && path.endsWith("/note-edits") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/customers/".length, -"/note-edits".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        const r = await listNoteEdits(env, id);
+        return json(r.body, r.status, origin);
       }
       if (path.startsWith("/admin/customers/") && path.endsWith("/notes") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
