@@ -554,6 +554,20 @@ function sprinklerSpec(list) {
 }
 function wallLabel(w) { return w ? w.charAt(0).toUpperCase() + w.slice(1) : '—'; }
 
+/* Roof specs: rows come from roofSpec() in quotelines (one source for the
+   page and the tests). A design that saved nothing about its roof gets no
+   section at all. */
+function buildRoof(config, redline) {
+  var rows = (typeof roofSpec === 'function') ? roofSpec(config, redline) : [];
+  if (!rows.length) return '';
+  return '<div class="doc-section"><div class="doc-label">Roof</div>'
+    + rows.map(function (r) {
+        return '<div class="br-row"><span class="br-label">' + esc(r.label) + '</span>'
+          + '<span class="spec-val">' + esc(r.value) + '</span></div>';
+      }).join('')
+    + '</div>';
+}
+
 function buildSpecs(config) {
   var doors = Array.isArray(config.doors) ? config.doors : [];
   var windows = Array.isArray(config.windows) ? config.windows : [];
@@ -633,7 +647,6 @@ function render(submission, customer) {
       (_pg.partial ? ' (' + _pg.where + ')' : '') + ' · ' + (_pg.depth * _pg.len) + ' sq ft');
   }
   if (config.siding) fields += field('Siding', config.siding);
-  if (config.roofType) fields += field('Roof', config.roofType);
   if (Array.isArray(config.doors)) fields += field('Doors', config.doors.length);
   if (Array.isArray(config.windows)) fields += field('Windows', config.windows.length);
   if (config.foundation) fields += field('Foundation', config.foundation === 'pad' ? '4" Poured Concrete Pad' : config.foundation === 'blocks' ? 'Leveled on Cinder Blocks' : config.foundation);
@@ -684,6 +697,8 @@ function render(submission, customer) {
     +   '<div class="doc-grid">' + fields + '</div>'
     +   (safePermalink ? '<a class="design-link" href="' + esc(safePermalink) + '" target="_blank" rel="noopener">View this exact 3D design ↗</a>' : '')
     + '</div>'
+
+    + buildRoof(config, details.redline)
 
     + buildSpecs(config)
 

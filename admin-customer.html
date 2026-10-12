@@ -815,6 +815,12 @@ function summarizeConfig(config) {
   if (config.w && config.l) parts.push(config.w + 'x' + config.l + ' ft');
   if (config.style) parts.push(/^(gable|a-?frame)$/i.test(config.style) ? 'Gable / A-Frame' : config.style);
   if (config.siding) parts.push(config.siding);
+  // Roof, short: pitch and covering, the way the quote's Roof section words it.
+  var st = String(config.style || '').toLowerCase();
+  if (/^(gable|3peak|4peak)$/.test(st) && Number(config.pitch) > 0) parts.push(config.pitch + '/12 roof');
+  else if (st === 'leanto' && Number(config.leantoDrop) > 0) parts.push(config.leantoDrop + ' ft drop roof');
+  if (config.roofType) parts.push(config.roofType === 'shingle' ? 'asphalt shingle' : config.roofType);
+  if (config.addons && config.addons.ridgeVent && /^(gable|3peak|4peak)$/.test(st)) parts.push('ridge vent');
   return parts.join(' · ');
 }
 
