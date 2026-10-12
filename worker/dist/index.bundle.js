@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "8f04af1";
-const WORKER_BUILT_AT = "2026-10-12T22:28:56.483Z";
+const WORKER_BUILD = "55d6349";
+const WORKER_BUILT_AT = "2026-10-12T22:43:29.244Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -7217,6 +7217,7 @@ function cleanPaint(p) {
   if (!p || typeof p !== "object") return null;
   const o = {};
   ["brand", "code", "name", "hex", "sheen"].forEach((k) => { const s = cleanStr(p[k]); if (s) o[k] = s; });
+  if (o.hex) o.hex = "#" + o.hex.replace(/^#/, "").toUpperCase();
   return Object.keys(o).length ? o : null;
 }
 
@@ -7252,6 +7253,16 @@ function applyColorEdit(config, edit) {
     const n = Object.assign({}, c.colorNames || {});
     for (const part of NAME_PARTS) { const s = cleanStr((edit.colorNames || {})[part], 120); if (s) n[part] = s; }
     if (JSON.stringify(n) !== JSON.stringify(c.colorNames || {})) { c.colorNames = n; changed.push("colorNames"); }
+  }
+  /* A brand pick must BE the colour it is stored against, or the designer's
+     restoreConfig would drop it as stale (paint.siding <-> sidingColor). */
+  if (edit.paint !== undefined && c.paint) {
+    for (const [part, key] of [["siding", "sidingColor"], ["trim", "trimColor"]]) {
+      const pp = c.paint[part];
+      if (!pp || !(edit.paint && edit.paint[part])) continue;
+      if (!/^#[0-9A-F]{6}$/.test(pp.hex || "") || !pp.brand || !pp.code) return { error: "Bad brand paint for " + part };
+      if (parseInt(pp.hex.slice(1), 16) !== c[key]) return { error: "Brand paint " + part + " does not match " + key };
+    }
   }
   /* Belt and braces: everything except colour fields must be byte-identical. */
   const strip = (x) => { const y = Object.assign({}, x); [...allowed].forEach((k) => delete y[k]); return JSON.stringify(y); };
