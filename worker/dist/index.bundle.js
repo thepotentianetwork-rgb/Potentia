@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "fb7ce1f-dirty";
-const WORKER_BUILT_AT = "2026-10-12T17:11:37.961Z";
+const WORKER_BUILD = "12a997d-dirty";
+const WORKER_BUILT_AT = "2026-10-12T17:12:16.866Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -7789,9 +7789,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensureSubmissionAdjustColumns(env);
   const { results: submissions } = await env.DB.prepare(
-    /* name/email/phone too: the CRM's "View design" link pre-fills the
-       designer's quote form from them, and without them it filled nothing. */
-    "SELECT id, name, email, phone, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price" +
+    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price" +
     ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)

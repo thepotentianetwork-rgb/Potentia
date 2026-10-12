@@ -724,9 +724,7 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensureSubmissionAdjustColumns(env);
   const { results: submissions } = await env.DB.prepare(
-    /* name/email/phone too: the CRM's "View design" link pre-fills the
-       designer's quote form from them, and without them it filled nothing. */
-    "SELECT id, name, email, phone, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price" +
+    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price" +
     ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
