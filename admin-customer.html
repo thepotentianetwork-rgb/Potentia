@@ -1518,6 +1518,7 @@ function renderAdjustBlock(card, s, details) {
   if (rmAdd) block.appendChild(rmAdd);
   var colEd = colorEditBlock(s, details);
   if (colEd) block.appendChild(colEd);
+  block.appendChild(customerNotesBlock(s, details));
 
   // Current list, each removable on its own — so taking back one comp doesn't
   // mean re-entering the percentage that went with it.
@@ -3035,26 +3036,129 @@ function renderOrders(submissions, installs) {
   });
 }
 
+/* EDITABLE NOTES (Nando, 12 Oct 2026). Every note can be edited or deleted;
+   the old text is kept server-side (note_edits) with who and when, shown under
+   "Edit history". The login is a shared password, so the editor's name is asked
+   once and kept in this browser. */
+function noteEditor() {
+  var n = '';
+  try { n = localStorage.getItem('crmEditorName') || ''; } catch (e) {}
+  if (!n) {
+    n = (window.prompt('Your name for the edit history (asked once on this device):', '') || '').trim();
+    if (n) try { localStorage.setItem('crmEditorName', n); } catch (e) {}
+  }
+  return n || 'staff';
+}
+function fmtWhen(t) { var d = new Date(t); return isNaN(d.getTime()) ? String(t || '') : d.toLocaleString(); }
+function noteEditBox(initial, onSave, onCancel, rows) {
+  var box = document.createElement('div'); box.className = 'note-edit-box';
+  var ta = document.createElement('textarea'); ta.className = 'note-edit-text'; ta.value = initial || '';
+  ta.rows = rows || 3; ta.style.cssText = 'width:100%;background:rgba(255,255,255,0.04);border:1px solid var(--sp-blue,#3b82f6);color:inherit;font:inherit;padding:8px 10px;resize:vertical';
+  var bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:8px;align-items:center;margin-top:6px';
+  var save = plainBtn('Save'); save.className += ' note-save';
+  var cancel = plainBtn('Cancel'); cancel.className += ' note-cancel';
+  var st = document.createElement('span'); st.style.cssText = 'font-size:12px;opacity:.8';
+  save.addEventListener('click', function () { save.disabled = true; st.textContent = 'Saving\u2026'; onSave(ta.value, function (err) { save.disabled = false; st.textContent = err || ''; }); });
+  cancel.addEventListener('click', onCancel);
+  bar.appendChild(save); bar.appendChild(cancel); bar.appendChild(st);
+  box.appendChild(ta); box.appendChild(bar);
+  setTimeout(function () { try { ta.focus(); } catch (e) {} }, 0);
+  return box;
+}
 function renderNotes(notes) {
   var wrap = document.getElementById('notes-list');
   wrap.innerHTML = '';
   if (!notes.length) {
     wrap.innerHTML = '<p class="empty">No notes yet.</p>';
-    return;
   }
   notes.forEach(function (n, i) {
     var item = document.createElement('div');
     item.className = 'note-item' + (i === 0 ? ' latest' : '');
+    item.dataset.noteId = n.id;
     var text = document.createElement('div');
     text.className = 'note-text';
     text.textContent = n.text;
     var time = document.createElement('div');
     time.className = 'note-time';
-    time.textContent = (i === 0 ? 'Latest — ' : '') + new Date(n.created_at).toLocaleString();
+    time.textContent = (i === 0 ? 'Latest — ' : '') + fmtWhen(n.created_at) +
+      (n.edited_at ? '  \u00b7  edited ' + fmtWhen(n.edited_at) + (n.edited_by ? ' by ' + n.edited_by : '') : '');
+    var acts = document.createElement('span'); acts.className = 'note-actions'; acts.style.cssText = 'margin-left:10px;display:inline-flex;gap:6px';
+    var edit = document.createElement('button'); edit.type = 'button'; edit.className = 'payment-del note-edit'; edit.textContent = 'Edit';
+    var del = document.createElement('button'); del.type = 'button'; del.className = 'payment-del note-delete'; del.textContent = 'Delete';
+    edit.addEventListener('click', function () {
+      var box = noteEditBox(n.text, function (val, done) {
+        if (!val.trim()) { done('A note can\u2019t be empty \u2014 use Delete.'); return; }
+        authFetch('/admin/notes/' + n.id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: val, editor: noteEditor() }) })
+          .then(function (r) { if (!r.ok) { done((r.data && r.data.error) || 'Could not save'); return; } loadCustomer(); })
+          .catch(function () { done('Could not reach the server.'); });
+      }, function () { item.replaceChild(text, box); acts.style.display = ''; });
+      item.replaceChild(box, text); acts.style.display = 'none';
+    });
+    del.addEventListener('click', function () {
+      if (!window.confirm('Delete this note?\n\n\u201c' + n.text.slice(0, 200) + '\u201d\n\nThe text is kept in the edit history.')) return;
+      authFetch('/admin/notes/' + n.id, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ editor: noteEditor() }) })
+        .then(function (r) { if (!r.ok) { alert((r.data && r.data.error) || 'Could not delete'); return; } loadCustomer(); })
+        .catch(function () { alert('Could not reach the server.'); });
+    });
+    acts.appendChild(edit); acts.appendChild(del); time.appendChild(acts);
     item.appendChild(text);
     item.appendChild(time);
     wrap.appendChild(item);
   });
+  wrap.appendChild(noteHistoryToggle());
+}
+/* "Edit history": every edit and delete of a CRM note or a quote's Customer
+   Notes for this customer, newest first, old text struck through. */
+function noteHistoryToggle() {
+  var box = document.createElement('div'); box.className = 'note-history'; box.style.cssText = 'margin-top:14px;font-size:13px';
+  var btn = plainBtn('Edit history'); btn.className += ' note-history-btn';
+  var list = document.createElement('div'); list.className = 'note-history-list'; list.style.display = 'none';
+  btn.addEventListener('click', function () {
+    if (list.style.display !== 'none') { list.style.display = 'none'; return; }
+    list.style.display = ''; list.textContent = 'Loading\u2026';
+    authFetch('/admin/customers/' + customerId + '/note-edits').then(function (r) {
+      var ed = (r.ok && r.data && r.data.edits) || [];
+      list.innerHTML = '';
+      if (!ed.length) { list.textContent = 'No edits yet.'; return; }
+      ed.forEach(function (e) {
+        var row = document.createElement('div'); row.className = 'note-history-row'; row.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--dim,#333)';
+        var hd = document.createElement('div'); hd.style.cssText = 'font-family:DM Mono,monospace;font-size:10px;text-transform:uppercase;opacity:.75';
+        hd.textContent = fmtWhen(e.edited_at) + ' \u00b7 ' + (e.editor || 'staff') + ' \u00b7 ' +
+          (e.kind === 'customer_notes' ? 'Customer Notes on quote #' + e.submission_id : 'CRM note') + ' \u00b7 ' + (e.action === 'delete' ? 'deleted' : 'edited');
+        var old = document.createElement('div'); old.style.cssText = 'text-decoration:line-through;opacity:.6;white-space:pre-wrap'; old.textContent = e.old_text || '(empty)';
+        row.appendChild(hd); row.appendChild(old);
+        if (e.action !== 'delete') { var nw = document.createElement('div'); nw.style.cssText = 'white-space:pre-wrap'; nw.textContent = e.new_text || '(empty)'; row.appendChild(nw); }
+        list.appendChild(row);
+      });
+    }).catch(function () { list.textContent = 'Could not load the history.'; });
+  });
+  box.appendChild(btn); box.appendChild(list);
+  return box;
+}
+/* CUSTOMER NOTES on a quote (details.notes, printed on the customer quote as
+   "Customer Notes"). Edited in place; never re-prices or touches adjustments,
+   so it is open on orders with a deposit. */
+function customerNotesBlock(s, details) {
+  var wrap = document.createElement('div'); wrap.className = 'cust-notes';
+  wrap.style.cssText = 'margin:6px 0 10px;font-size:13px';
+  var hd = document.createElement('div'); hd.style.cssText = 'display:flex;gap:8px;align-items:center';
+  var lbl = document.createElement('span'); lbl.textContent = 'Customer Notes (on the quote):'; lbl.style.opacity = '.8';
+  var edit = plainBtn(details.notes ? 'Edit' : 'Add'); edit.className += ' cust-notes-edit';
+  hd.appendChild(lbl); hd.appendChild(edit);
+  var body = document.createElement('div'); body.className = 'cust-notes-text'; body.style.cssText = 'white-space:pre-wrap;margin-top:4px;opacity:.95';
+  body.textContent = details.notes || '\u2014';
+  var meta = document.createElement('div'); meta.style.cssText = 'font-size:11px;opacity:.6;margin-top:2px';
+  if (details.notesEditedAt) meta.textContent = 'Edited ' + fmtWhen(details.notesEditedAt) + (details.notesEditedBy ? ' by ' + details.notesEditedBy : '');
+  edit.addEventListener('click', function () {
+    var box = noteEditBox(details.notes || '', function (val, done) {
+      authFetch('/admin/submissions/' + s.id + '/customer-notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ notes: val, editor: noteEditor() }) })
+        .then(function (r) { if (!r.ok) { done((r.data && r.data.error) || 'Could not save'); return; } loadCustomer(); })
+        .catch(function () { done('Could not reach the server.'); });
+    }, function () { wrap.replaceChild(body, box); edit.style.display = ''; }, 6);
+    wrap.replaceChild(box, body); edit.style.display = 'none';
+  });
+  wrap.appendChild(hd); wrap.appendChild(body); wrap.appendChild(meta);
+  return wrap;
 }
 
 var PAYMENT_METHOD_LABELS = {
