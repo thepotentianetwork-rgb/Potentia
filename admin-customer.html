@@ -820,7 +820,7 @@ function summarizeConfig(config) {
   if (/^(gable|3peak|4peak)$/.test(st) && Number(config.pitch) > 0) parts.push(config.pitch + '/12 roof');
   else if (st === 'leanto' && Number(config.leantoDrop) > 0) parts.push(config.leantoDrop + ' ft drop roof');
   if (config.roofType) parts.push(config.roofType === 'shingle' ? 'asphalt shingle' : config.roofType);
-  if (config.addons && config.addons.ridgeVent && /^(gable|3peak|4peak)$/.test(st)) parts.push('ridge vent');
+  if (config.addons && config.addons.ridgeVent && /^(gable|3peak|4peak|barn)$/.test(st)) parts.push('ridge vent');
   return parts.join(' · ');
 }
 
@@ -1180,6 +1180,55 @@ function adjLabelFor(a, compPrices, compPromos) {
   }
   if (a.kind === 'percent') return Math.abs(a.value) + '% ' + (a.value < 0 ? 'off' : 'added');
   return (a.value < 0 ? '\u2212' : '+') + '$' + Math.abs(a.value).toLocaleString();
+}
+
+/* CONCRETE SCOPE OF WORK — free text, saved per order, shown on the
+   customer's quote under the concrete pad line and on the concrete phase of
+   the Stripe bill. Only on orders that have concrete. */
+function orderHasConcrete(details) {
+  var c = (details && details.config) || {}, r = (details && details.redline) || {};
+  return c.foundation === 'pad' || /concrete|slab/i.test(String(r.foundName || ''));
+}
+function renderConcreteScopeBlock(card, s, details) {
+  if (!orderHasConcrete(details)) return;
+  var wrap = document.createElement('div');
+  wrap.className = 'concrete-scope';
+  wrap.style.cssText = 'margin-top:14px;padding-top:12px;border-top:1px solid var(--dim)';
+  var lbl = document.createElement('div');
+  lbl.className = 'fl'; lbl.textContent = 'Concrete scope of work (shows on the quote)' + (s.concrete_scope == null ? ' \u00b7 standard text' : ' \u00b7 edited for this order');
+  lbl.style.cssText = 'font-size:11px;letter-spacing:.12em;text-transform:uppercase;opacity:.75;margin-bottom:6px';
+  var ta = document.createElement('textarea');
+  ta.rows = 6; ta.maxLength = 4000;
+  ta.value = s.concrete_scope != null ? s.concrete_scope : (s.concrete_scope_effective || '');
+  ta.placeholder = 'Leave empty to show no scope on this quote';
+  ta.style.cssText = 'width:100%;box-sizing:border-box;background:transparent;color:inherit;border:1px solid var(--dim);padding:8px;font:inherit;resize:vertical';
+  var row = document.createElement('div'); row.style.cssText = 'display:flex;gap:10px;align-items:center;margin-top:6px';
+  var btn = document.createElement('button'); btn.type = 'button'; btn.textContent = 'Save scope';
+  var st = document.createElement('span'); st.style.cssText = 'font-size:12px;opacity:.75';
+  btn.addEventListener('click', function () {
+    btn.disabled = true; st.textContent = 'Saving\u2026';
+    authFetch('/admin/submissions/' + s.id + '/concrete-scope', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: ta.value })
+    }).then(function (r) {
+      btn.disabled = false;
+      if (r.ok) { s.concrete_scope = r.data ? r.data.concrete_scope : null; st.textContent = s.concrete_scope ? 'Saved' : 'Saved: no scope on this quote'; }
+      else st.textContent = (r.data && r.data.error) || 'Could not save';
+    });
+  });
+  var reset = document.createElement('button'); reset.type = 'button'; reset.className = 'ghost'; reset.textContent = 'Use standard text';
+  reset.addEventListener('click', function () {
+    reset.disabled = true;
+    authFetch('/admin/submissions/' + s.id + '/concrete-scope', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ useDefault: true })
+    }).then(function (r) {
+      reset.disabled = false;
+      if (r.ok) { s.concrete_scope = null; ta.value = (r.data && r.data.concrete_scope_effective) || ''; st.textContent = 'Standard text restored'; }
+    });
+  });
+  row.appendChild(btn); row.appendChild(reset); row.appendChild(st);
+  wrap.appendChild(lbl); wrap.appendChild(ta); wrap.appendChild(row);
+  card.appendChild(wrap);
 }
 
 function renderAdjustBlock(card, s, details) {
@@ -2671,6 +2720,7 @@ function renderOrders(submissions, installs) {
     // where they went. Not shown on lost or superseded orders: nothing is
     // waiting on those.
     renderAdjustBlock(card, s, details);
+    renderConcreteScopeBlock(card, s, details);
     /* Invoicing needs a priced build — a consult request has nothing to bill —
        and there is no point offering it on a job that was lost or replaced.
        Shown from 'new' onward rather than only on 'won' because the deposit

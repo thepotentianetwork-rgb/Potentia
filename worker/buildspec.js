@@ -180,7 +180,7 @@ export function buildSpecLines(config) {
   const p = specPorchLine(c); if (p) out.push(p);
 
   const loft = sv(c.loft);
-  if (loft && loft !== "none") out.push("Loft: " + loft.replace("-", "ft "));
+  if (loft && loft !== "none") out.push("Loft: " + loft.replace("-", "ft ") + (c.loftSide === "sides" ? " (side walls: front=left, back=right)" : ""));
 
   const shelves = Array.isArray(c.shelves) ? c.shelves : [];
   if (shelves.length) {

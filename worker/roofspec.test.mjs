@@ -22,7 +22,7 @@ test('a gable without the vent says so; a lean-to has no ridge row', () => {
 });
 test('barn: fixed gambrel and flush eaves whatever pitch/ovh were saved', () => {
   const b = m(roofSpec({ style: 'barn', pitch: 8, ovh: 12, ovType: 'all4' }));
-  assert.match(b['Pitch'], /Gambrel/); assert.equal(b['Overhang'], 'Flush eaves, 4\u2033 gable rake');
+  assert.match(b['Pitch'], /Gambrel/); assert.equal(b['Ridge vent'], 'Not included'); assert.equal(b['Overhang'], 'Flush eaves, 4\u2033 gable rake');
 });
 test('old or empty designs show only what is known', () => {
   assert.deepEqual(roofSpec({}), []); assert.deepEqual(roofSpec(null), []);

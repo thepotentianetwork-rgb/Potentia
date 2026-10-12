@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor } from "./pricing.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
@@ -33,7 +33,7 @@ import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, bala
          buildPhaseInvoice, buildTogetherInvoice, togetherStatus, phaseStatus, parseAlloc,
          addCardFee, splitFee, bankFooterNote, LIMITS,
          addCashDiscount, paidDiscountCents, manualDiscountCents, creditCentsOf, discountCentsOf,
-         DISCOUNT_METHODS, cardBillFooterNote, bankBillFooterNote } from "./invoices.js";
+         DISCOUNT_METHODS, cardBillFooterNote, bankBillFooterNote, addConcreteScope } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
@@ -724,7 +724,8 @@ async function handleGetCustomer(request, env, origin, id) {
 
   await ensureSubmissionAdjustColumns(env);
   const { results: submissions } = await env.DB.prepare(
-    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
+    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price" +
+    ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
     .all();
@@ -740,6 +741,8 @@ async function handleGetCustomer(request, env, origin, id) {
     await applySavedPricing(env);
     travelPerDay = Number((SELL.travel || {}).perDay) || 0;
   } catch (e) {}   // a default that will not load must not stop the customer loading
+  try { await applySavedPricing(env); } catch (e) { /* no pricing table: shipped text */ }
+  submissions.forEach((sub) => { sub.concrete_scope_effective = concreteScopeFor(sub.concrete_scope); });
   submissions.forEach((sub) => {
     sub.travel_per_day = travelPerDay;
     sub.adjustment_list = adjustmentsOf(sub);
@@ -1300,7 +1303,8 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     for (const id of others) {
       if (builds.some((b) => Number(b.sub) === id)) continue;
       const o = await env.DB.prepare(
-        "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+        "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note" +
+     ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE id = ?"
       ).bind(id).first();
       if (!o) throw Object.assign(new Error("no such order #" + id), { status: 404 });
       if (Number(o.customer_id) !== Number(sub.customer_id)) {
@@ -1322,6 +1326,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
           summary: configSummary(details.config),
           submissionId: sub.id
         });
+        addConcreteScope(invoice, breakdown, concreteScopeFor(sub.concrete_scope), details.config);
       } else {
         const comped = {};
         builds.forEach((b) => Object.assign(comped, compedMap(b.details.redline, b.adjustments)));
@@ -1350,6 +1355,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     summary: configSummary(details.config),
     submissionId: sub.id
   });
+  addConcreteScope(invoice, breakdown, concreteScopeFor(sub.concrete_scope), details.config);
   return { sub, customer, breakdown, split, invoice, uplift };
 }
 
@@ -2263,6 +2269,7 @@ async function handleGetSubmission(request, env, origin, id) {
      withElecIncludes: the contents are filled back in from the stored package
      name, because a redline written before they existed has the name alone. */
   await applySavedPricing(env);
+  submission.concrete_scope_effective = concreteScopeFor(submission.concrete_scope);
   try {
     const parsed = JSON.parse(submission.details);
     if (parsed && parsed.redline) {
@@ -2727,6 +2734,45 @@ function validateAdjustments(raw) {
 //
 // ALTER TABLE at runtime, since submissions is live.
 const submissionAdjustColumnsReady = new WeakSet();
+/* CONCRETE SCOPE OF WORK — free text per order, optional (12 Oct 2026).
+   Additive: one nullable TEXT column, added the first time it is needed,
+   same as the columns above. Older builds ignore it. */
+const concreteScopeReady = new WeakSet();
+async function ensureConcreteScopeColumn(env) {
+  const binding = env && env.DB;
+  if (!binding || concreteScopeReady.has(binding)) return;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  if (!(results || []).some((r) => r.name === "concrete_scope")) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN concrete_scope TEXT").run();
+  }
+  concreteScopeReady.add(binding);
+}
+// Read side never ALTERs: a database that has not had the column added just
+// has no scope to show.
+async function hasConcreteScopeColumn(env) {
+  if (env && env.DB && concreteScopeReady.has(env.DB)) return true;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  const ok = (results || []).some((r) => r.name === "concrete_scope");
+  if (ok) concreteScopeReady.add(env.DB);
+  return ok;
+}
+export const CONCRETE_SCOPE_MAX = 4000;
+async function handleConcreteScope(request, env, origin, id) {
+  let body = {};
+  try { body = await request.json(); } catch (e) { return json({ error: "Invalid JSON" }, 400, origin); }
+  if (body.text != null && typeof body.text !== "string") return json({ error: "text must be a string" }, 400, origin);
+  const raw = String(body.text || "").replace(/\r\n?/g, "\n");
+  if (raw.length > CONCRETE_SCOPE_MAX) return json({ error: "Scope of work is limited to " + CONCRETE_SCOPE_MAX + " characters" }, 400, origin);
+  // useDefault: back to the standard text (null). Blank text: this order shows none ('').
+  const text = body.useDefault ? null : (raw.trim() ? raw.replace(/[ \t]+$/gm, "").trim() : "");
+  await ensureConcreteScopeColumn(env);
+  const row = await env.DB.prepare("SELECT id FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Order not found" }, 404, origin);
+  await env.DB.prepare("UPDATE submissions SET concrete_scope = ? WHERE id = ?").bind(text, id).run();
+  try { await applySavedPricing(env); } catch (e) {}
+  return json({ ok: true, id, concrete_scope: text, concrete_scope_effective: concreteScopeFor(text) }, 200, origin);
+}
+
 async function ensureSubmissionAdjustColumns(env) {
   const binding = env.DB;
   if (!binding) return;
@@ -3761,7 +3807,7 @@ function computeOptionPrices(cfg) {
   // floor/roof/wall area, same as wallHeight above — the client never gets
   // handed the $/sqft rate itself, only what it comes to for this build.
   const ADDON_FLAT_KEYS = {
-    shutters: "Shutters", flowerboxes: "Flowerboxes", ridgeVent: "Roof Ridge Vent",
+    shutters: "Shutters", flowerboxes: "Flowerboxes",
     skylight: "Skylight", stairs: "Stairs", statLadder: "Stationary Ladder", ramp: "Ramp",
     shedRemoval: "Shed Removal", concreteRemoval: "Concrete Removal",
     atticLadder: "Attic Pull-Down Ladder"
@@ -3775,6 +3821,9 @@ function computeOptionPrices(cfg) {
   Object.keys(ADDON_PERSQFT_KEYS).forEach((k) => {
     addons[k] = sellPerSqft(ADDON_PERSQFT_KEYS[k], cfg.w, cfg.l, cfg.h);
   });
+  // Ridge vent: $/linear ft of the main ridge (the shed's length), 12 Oct 2026.
+  { const rate = (SELL.options.perLinFt || {})["Roof Ridge Vent"];
+    addons.ridgeVent = Math.ceil(Number(cfg.l) || 0) * (rate != null ? rate : 15); }
   addons.cupola = {
     black: SELL.options.flat['Cupola 16" Black Roof'] || 0,
     copper: SELL.options.flat['Cupola 16" Copper Roof'] || 0
@@ -5611,6 +5660,12 @@ export default {
         const mid = Number(path.slice("/admin/submissions/".length, -"/schedule-message".length));
         if (!mid) return json({ error: "bad order id" }, 400, origin);
         return await handleScheduleMessage(request, env, origin, mid);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/concrete-scope") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const cid = Number(path.slice("/admin/submissions/".length, -"/concrete-scope".length));
+        if (!cid) return json({ error: "bad order id" }, 400, origin);
+        return await handleConcreteScope(request, env, origin, cid);
       }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/plan") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

@@ -362,6 +362,13 @@ var TIER_GROUPS = [
     ]
   },
   {
+    key: 'concreteScope', label: 'Concrete Scope of Work (standard text)',
+    note: 'Shown under the concrete pad line on every quote with concrete, and on the concrete line of the Stripe bill, unless staff wrote a scope for that order in the CRM. One line per point. Words only: it changes no price.',
+    fields: [
+      { key: 'text', label: 'Standard scope of work', textarea: true }
+    ]
+  },
+  {
     /* The card surcharge group that sat here is retired (Stripe-hosted
        invoices cannot surcharge); its saved value is kept and ignored. */
     key: 'cashDiscount', label: 'Cash, Check & Bank Transfer Discount',
@@ -665,6 +672,15 @@ function buildTierGroup(label, note, fields, dataObj) {
     var row = el('div', { class: 'comp-row' });
     row.appendChild(el('span', { class: 'comp-name', text: f.label }));
     var priceWrap = el('div', { class: 'comp-price-wrap' });
+    if (f.textarea) {
+      /* Free text (the concrete Scope of Work): a full-width box. */
+      var ta = el('textarea', { class: 'comp-text', rows: '7' });
+      ta.style.cssText = 'width:100%;box-sizing:border-box;background:transparent;color:inherit;border:1px solid rgba(255,255,255,.2);padding:8px;font:inherit';
+      ta.value = dataObj[f.key] != null ? dataObj[f.key] : '';
+      ta.addEventListener('input', function () { dataObj[f.key] = ta.value; });
+      row.style.display = 'block'; row.appendChild(ta); list.appendChild(row);
+      return;
+    }
     if (f.toggle) {
       /* An on/off switch, stored as 1 / 0 like every other number here. */
       var cb = el('input', { type: 'checkbox', class: 'comp-toggle' });
@@ -814,7 +830,7 @@ document.getElementById('comp-import-btn').addEventListener('click', function ()
   }
   var FLAT_KEYS = ['doors', 'windows', 'dormers', 'wallHeight', 'siding', 'electrical',
     'porchFrontSqft', 'porchSideSqft', 'porchDeckSqft', 'foundation', 'foundationFinish', 'broomTiers', 'gravelTiers', 'interior',
-    'concretePromo', 'sprinkler', 'travel', 'cardFee', 'cashDiscount'];
+    'concretePromo', 'sprinkler', 'travel', 'cardFee', 'cashDiscount', 'concreteScope'];
   var groupCount = 0, itemCount = 0;
 
   FLAT_KEYS.forEach(function (groupKey) {

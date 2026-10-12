@@ -724,8 +724,9 @@ function withCardPrice(redline, bd) {
  *             Lean-to front (tall side) overhang: leantoFrontOvh, 'match' =
  *             same as the rest.
  *   ridge     the "Roof Ridge Vent" add-on (addons.ridgeVent, priced on its
- *             own line). The designer offers it on gable / 3-peak / 4-peak
- *             only, the same gate pricing uses. */
+ *             own line: $15/ft of ridge from 12 Oct 2026, a flat $263 before).
+ *             Offered on gable / 3-peak / 4-peak / barn, the same gate pricing
+ *             uses; a lean-to has no ridge. */
 const ROOF_PALETTES = {
   shingle: { 0x28282A: 'Black Asphalt', 0x44413C: 'Gray Asphalt', 0x453A2F: 'Brown Asphalt',
              // earlier designer swatches for the same three shingles
@@ -734,7 +735,7 @@ const ROOF_PALETTES = {
              // retired metal swatches (named in the designer's palette notes)
              0x4A3B32: 'Burnished Slate', 0x3A3C3E: 'Charcoal' },
 };
-const RIDGE_STYLES = ['gable', '3peak', '4peak'];
+const RIDGE_STYLES = ['gable', '3peak', '4peak', 'barn'];  // barn added 12 Oct 2026
 function roofSpec(config, redline) {
   const c = (config && typeof config === 'object') ? config : {};
   const st = String(c.style || '').toLowerCase();
@@ -745,7 +746,7 @@ function roofSpec(config, redline) {
     '4peak': '4-Peak: gable with two cross gables', barn: 'Gambrel (barn)', leanto: 'Lean-to, single slope' }[st];
   if (styleName) rows.push({ label: 'Roof style', value: styleName });
   const p = Number(c.pitch);
-  if (RIDGE_STYLES.includes(st) && p > 0) rows.push({ label: 'Pitch', value: p + '/12' });
+  if (RIDGE_STYLES.includes(st) && st !== 'barn' && p > 0) rows.push({ label: 'Pitch', value: p + '/12' });
   else if (st === 'barn') rows.push({ label: 'Pitch', value: 'Gambrel profile: steep lower slopes (about 61\u00b0), shallow upper (about 23\u00b0)' });
   else if (st === 'leanto') {
     const d = Number(c.leantoDrop) || null;
@@ -776,6 +777,28 @@ function roofSpec(config, redline) {
   return rows;
 }
 
+/* The loft, in words: "4' back gable loft · front & back walls, 12' (short
+ * side)". config.loft is "<depthFt>-<front|back|dual>"; config.loftSide is
+ * 'ends' (front/back walls; also every design saved before the option) or
+ * 'sides' (left/right walls, where front=left and back=right). */
+function loftSpec(config) {
+  const c = (config && typeof config === 'object') ? config : {};
+  const v = String(c.loft || '');
+  if (!v || v === 'none') return null;
+  const [d, k = 'front'] = v.split('-');
+  const sides = c.loftSide === 'sides';
+  const kind = sides ? { front: 'left side', back: 'right side', dual: 'dual (both sides)' }[k]
+                     : { front: 'front gable', back: 'back gable', dual: 'dual (front + back)' }[k];
+  let out = d + '\u2032 ' + (kind || k) + ' loft';
+  const W = Number(c.w), L = Number(c.l);
+  if (W > 0 && L > 0) {
+    const along = sides ? L : W, other = sides ? W : L;
+    out += ' \u00b7 ' + (sides ? 'side walls' : 'front & back walls') + ', ' + along + '\u2032' +
+      (along === other ? '' : along < other ? ' (short side)' : ' (long side)');
+  }
+  return out;
+}
+
   root.TAX_RATE = TAX_RATE;
   root.DEPOSIT_RATE = DEPOSIT_RATE;
   root.BASE_SHED_INCLUDES = BASE_SHED_INCLUDES;
@@ -800,4 +823,5 @@ function roofSpec(config, redline) {
   root.ROOF_PALETTES = ROOF_PALETTES;
   root.RIDGE_STYLES = RIDGE_STYLES;
   root.roofSpec = roofSpec;
+  root.loftSpec = loftSpec;
 })(typeof window !== 'undefined' ? window : globalThis);

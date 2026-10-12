@@ -1230,3 +1230,26 @@ export function bankBillFooterNote(pctLabel) {
   return 'This bill is for payment by bank transfer (ACH) and includes our ' + pctLabel +
     '% cash, check & bank transfer discount. Card payments are billed at our regular price.';
 }
+
+/* CONCRETE SCOPE OF WORK (Nando, 12 Oct 2026). Staff type the concrete job's
+ * details on the order; the bill carries them on the concrete phase's own
+ * line, so the Stripe invoice describes the pour the way the quote does.
+ * Label only: no amount, total or line count changes. Nothing happens when
+ * the text is empty or the order has no concrete. */
+export function concreteRow(bd, config) {
+  const rows = (bd && Array.isArray(bd.rows)) ? bd.rows : [];
+  const f = rows.find((r) => r.kind === 'foundation');
+  if (!f) return null;
+  const isPad = (config && config.foundation === 'pad') || /concrete|slab|pad/i.test(String(f.label || ''));
+  return isPad ? f : null;
+}
+export function addConcreteScope(inv, bd, text, config) {
+  const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  const row = concreteRow(bd, config);
+  if (!inv || !t || !row || !Array.isArray(inv.lines)) return inv;
+  const re = new RegExp('\\bPhase ' + row.phase + '\\b');
+  const line = inv.lines.find((l) => !l.discount && re.test(String(l.label || '')));
+  if (!line) return inv;
+  line.label = clip(line.label + ' \u00b7 Scope of work: ' + t, LIMITS.label);
+  return inv;
+}
