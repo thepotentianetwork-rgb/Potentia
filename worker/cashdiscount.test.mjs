@@ -166,7 +166,10 @@ test('/shed/quote: off = exactly as today; on = regular prices, scaled tiles, di
   const a = await api(off.env, 'POST', '/shed/quote', { config: CFG });
   const b = await api(on.env, 'POST', '/shed/quote', { config: CFG });
   assert.equal(a.data.cashDiscount, undefined);
-  assert.ok(Math.abs(b.data.total - a.data.total * 1.03) < 0.01);
+  /* 12 Oct 2026: the pad promo is not marked up, so the card price is the
+     sheet price x 1.03 plus 3% of the promo; cash stays the sheet price. */
+  const promo = Number((await api(on.env, 'POST', '/shed/quote?redline=1', { config: CFG }, await token(on.env))).data.redline.foundPromo) || 0;
+  assert.ok(Math.abs(b.data.total - (a.data.total * 1.03 + promo * 0.03)) < 0.01);
   assert.ok(Math.abs(b.data.cashDiscount.cashTotal - a.data.total) < 0.01);
   assert.equal(b.data.cashDiscount.percentLabel, '2.9');
   assert.match(b.data.cashDiscount.disclosure, /^Prices shown are our regular prices\./);

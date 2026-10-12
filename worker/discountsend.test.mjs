@@ -79,8 +79,11 @@ test('a positive adjustment is a charge, never listed as a discount', () => {
 
 test('a pad given away entirely is shown at its price with its comp among the discounts', () => {
   const bd = quoteLines(redline, ADJS.freePad);
-  assert.ok(!bd.rows.some((r) => r.kind === 'foundation'), 'no phase for a free pad (as before)');
-  assert.equal(bd.freeRows.length, 1);
+  /* The stain is its own line now (12 Oct 2026): a free pad leaves the stain
+     to pay for, so the phase stays with just the stain in it. */
+  const f = bd.rows.find((r) => r.kind === 'foundation');
+  if (redline.finishSell > 0) assert.equal(Math.round(f.amt * 100), Math.round(redline.finishSell * 100), 'the stain is still billed');
+  else { assert.ok(!f, 'no phase for a free pad (as before)'); assert.equal(bd.freeRows.length, 1); }
   assert.ok(bd.discounts.some((d) => d.label === redline.foundName + ' \u2014 included free'));
   const inv = buildInvoice(bd, 'deposit', [], { adjustments: ADJS.freePad });
   assert.equal(inv.lines.reduce((t, l) => t + l.amountCents, 0), inv.totalCents);
@@ -160,7 +163,9 @@ test('phase invoices: every part bills the same cents; its discount is shown at 
     if (!adj.some((a) => a.kind === 'amount' || a.kind === 'percent')) {
       P.forEach((p) => {
         const names = p.discount.names.join(',');
-        if (p.kind === 'foundation') assert.match(names, /Concrete pad promo/);
+        const padFree = adj.some((a) => a.kind === 'comp' && a.item === redline.foundName);
+        if (p.kind === 'foundation' && !padFree) assert.match(names, /Concrete pad promo/);
+        else if (p.kind === 'foundation') assert.doesNotMatch(names, /Concrete pad promo/);
         else assert.doesNotMatch(names, /Concrete pad promo/);
       });
     }

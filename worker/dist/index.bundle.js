@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "da3c7f7";
-const WORKER_BUILT_AT = "2026-10-12T17:21:41.571Z";
+const WORKER_BUILD = "92bee96";
+const WORKER_BUILT_AT = "2026-10-12T21:04:41.234Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -367,6 +367,7 @@ function concretePromoAmount(padList){
   var a=+((SELL.concretePromo||{}).amount)||0;
   return Math.max(0, Math.min(a, +padList||0));
 }
+const CONCRETE_STAIN_NAME = "Concrete Floor Stain (2 coats, customer\u2019s choice of color)";
 function foundationFinishPrice(kind, sqft){
   if(kind==='broom'){
     var t=SELL.broomTiers;
@@ -1856,7 +1857,7 @@ function computePricing(cfgIn, opts){
   customerPrice += addonSell;
 
   // ── FOUNDATION (flat price, from SELL.foundation / SELL.foundationFinish) ──
-  var foundSell=0, foundName='', foundPromo=0;
+  var foundSell=0, foundName='', foundPromo=0, finishSell=0, finishSellName='';
   // Levelling on blocks is complimentary, so only the pad adds anything.
   if(typeof FOUNDATION!=='undefined' && FOUNDATION==='pad'){
     /* foundSell is what the customer PAYS (list less promo), so every total,
@@ -1870,9 +1871,17 @@ function computePricing(cfgIn, opts){
     if(typeof FOUNDATION_FINISH!=='undefined'){
       var _sq=(typeof padSqft==='function')?padSqft():(Wf*Df);
       var fc = foundationFinishPrice(FOUNDATION_FINISH, _sq);
-      foundSell += fc;
-      if(FOUNDATION_FINISH==='broom') foundName+=' + Broom Finish ('+_sq+' sqft)';
-      else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
+      /* The stain is its own line (Nando, 12 Oct 2026). Folded into the pad,
+         a staff price typed for the pad replaced the stain with it, and #71
+         lost its $300 coat. Same phase as the pad; a pad price override, a
+         comp or the promo now touch the pad alone. Broom finish is still
+         part of the pad line. */
+      if(FOUNDATION_FINISH==='coated' && fc>0){ finishSell = fc; finishSellName = CONCRETE_STAIN_NAME; }
+      else {
+        foundSell += fc;
+        if(FOUNDATION_FINISH==='broom') foundName+=' + Broom Finish ('+_sq+' sqft)';
+        else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
+      }
     }
   } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='gravel'){
     var _gsq=(typeof padSqft==='function')?padSqft():(Wf*Df);
@@ -1885,7 +1894,7 @@ function computePricing(cfgIn, opts){
       ? 'Gravel Pad — not available over 200 sqft'
       : 'Gravel Pad + Leveled on Cinder Blocks ('+_gsq+' sqft)';
   }
-  customerPrice += foundSell;
+  customerPrice += foundSell + finishSell;
   var foundList = foundPromo>0 ? foundSell + foundPromo : 0;
 
   var profit = customerPrice - trueTotalCost;
@@ -1928,6 +1937,7 @@ function computePricing(cfgIn, opts){
       loftSell: loftSell, loftSellName: loftSellName,
       addonSell: addonSell, addonLines: addonLines,
       foundSell: foundSell, foundName: foundName,
+      finishSell: finishSell, finishSellName: finishSellName,
       foundPromo: foundPromo, foundList: foundList,
       foundPromoName: foundPromo>0 ? 'Concrete pad promo' : '',
       customerPrice: customerPrice,
@@ -3655,6 +3665,7 @@ function compItemPrices(redline) {
   push(redline.loftSellName, redline.loftSell);
   push(redline.intSellName, redline.intSell);
   push(redline.foundName, redline.foundSell);
+  push(redline.finishSellName, redline.finishSell);
   return out;
 }
 
@@ -3663,7 +3674,7 @@ function compItemPrices(redline) {
 function nameList(redline, which) {
   if (!redline) return [];
   if (which === 'interior') return [redline.intSellName].filter(Boolean);
-  if (which === 'foundation') return [redline.foundName].filter(Boolean);
+  if (which === 'foundation') return [redline.foundName, redline.finishSellName].filter(Boolean);
   const out = [];
   (redline.addonLines || []).forEach(function (l) {
     if (l && l.name && !isSitePrep(l.name)) out.push(l.name);
@@ -3752,6 +3763,13 @@ function removalTotal(redline) {
    keeps the two identical. */
 function quoteLines(redline, adjustments) {
   if (!redline || typeof redline !== 'object') return null;
+  /* Fixed-dollar discounts at their sheet value (Nando, 12 Oct 2026), only
+     on redlines stamped discountsAtSheet; every quote priced before (and
+     Lee O'Shields, grandfathered) keeps the old uniform markup. */
+  if (redline.discountsAtSheet && cardUpliftOf(redline)) return sheetDiscountLines(redline, adjustments);
+  return withCardPrice(redline, quoteLinesCore(redline, adjustments));
+}
+function quoteLinesCore(redline, adjustments) {
   const COMPED = compedMap(redline, adjustments);
   const OVR = overrideMap(redline, adjustments);
   const ADJUSTMENTS = adjustments || [];
@@ -3867,8 +3885,26 @@ function quoteLines(redline, adjustments) {
   if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
     foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
   }
-  const foundRow = add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
+  /* A stain priced on its own line (redlines from 12 Oct 2026 on) shares the
+     pad's phase: the row is "Concrete Foundation" and the pad and the stain
+     are its two lines. Older redlines have the stain inside foundSell and
+     read exactly as before. */
+  const hasFinish = !!(redline.finishSellName && num(redline.finishSell) > 0);
+  const padLabel = foundLabel;
+  if (hasFinish) foundLabel = 'Concrete Foundation';
+  const foundRow = add(foundLabel, num(redline.foundSell) + (hasFinish ? num(redline.finishSell) : 0) - compedIn(nameList(redline, 'foundation')));
   if (foundRow) foundRow.kind = 'foundation';
+  if (foundRow && hasFinish) {
+    const padOvr = OVR[redline.foundName];
+    const padNet = num(redline.foundSell) - (COMPED[redline.foundName] || 0) - (padOvr ? padOvr.delta : 0);
+    const finNet = num(redline.finishSell) - (COMPED[redline.finishSellName] || 0) - (OVR[redline.finishSellName] ? OVR[redline.finishSellName].delta : 0);
+    /* Regular: the pad before its promo (the promo is a discount line). */
+    const padReg = padOvr ? (padOvr.up ? padOvr.typed : padOvr.regular) : num(redline.foundSell) + num(redline.foundPromo);
+    /* Stripe's memo is 500 characters; this row reads as one line there. */
+    foundRow.memoCompact = true;
+    foundRow.subLines = [{ label: padLabel, amt: padNet, includes: null }, { label: redline.finishSellName, amt: finNet, includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }].filter(function (l) { return l.amt; });
+    foundRow.regularSubLines = [{ label: padLabel, amt: padReg, includes: null }, { label: redline.finishSellName, amt: regularOf(redline.finishSellName, redline.finishSell), includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }];
+  }
   /* A promo on the pad: the row's amount is already what they pay; this is
      only so the page can show the list price struck through and the promo
      as its own line. A comped pad has no row, so nothing to show. */
@@ -4119,7 +4155,7 @@ function quoteLines(redline, adjustments) {
   const savings = discounts.length
     ? Math.max(0, totalBefore - (adjustedSubtotal + tax))
     : Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE);
-  return withCardPrice(redline, {
+  return ({
     rows: rows,
     subtotal: subtotal,
     /* What a percentage adjustment is a percentage OF: the subtotal less any
@@ -4190,6 +4226,78 @@ function cashDiscountDisclosure(uplift, amount) {
 }
 function qlMoney(n) {
   return '$' + (Math.round(Number(n) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* ── DISCOUNTS AT THEIR SHEET VALUE (Nando, 12 Oct 2026) ───────────────────
+ * "Promo and discount lines must not get the 3% card markup." On a redline
+ * stamped discountsAtSheet, every REGULAR line is at its card price (sheet x
+ * (1 + uplift)) and every fixed-dollar discount is at its sheet value: the
+ * concrete promo reads -$500, not -$515; a loyalty or other flat discount
+ * and a staff price cut read what was typed. Percentages scale with the lines
+ * they are a percentage of; an item included free is free at its card price.
+ *
+ * Done by marking up the INPUTS (the regular sell figures, staff charges and
+ * raised prices, travel) and leaving the discounts alone, then running the
+ * same arithmetic as ever, so every rule above (comps, overrides, folding,
+ * phases, deposits) applies unchanged.
+ *
+ * Cash, check & bank transfer: the same quote with no markup at all, i.e. the
+ * sheet prices less the promo and the discounts. The discount is the
+ * difference, and cashDiscount.uplift is the EFFECTIVE uplift (card total /
+ * cash total - 1), which is what the payment and invoice code divides by, so
+ * a paid-in-full cash total comes out to the cent. */
+const SCALED_SELL = ['marginPrice', 'laborSell', 'porchSell', 'porchDeckSell', 'sidingSell', 'paintSell',
+  'heightSell', 'elecSell', 'floorSell', 'loftSell', 'intSell', 'finishSell', 'dormerSell', 'windowSell', 'shelfSell', 'addonSell'];
+const SCALED_LINES = [['addonLines', 'amt'], ['doorUpLines', 'up'], ['windowSellLines', 'price'],
+  ['dormerSellLines', 'price'], ['shelfSellLines', 'price']];
+function markUpRegular(redline, k) {
+  const r = Object.assign({}, redline);
+  SCALED_SELL.forEach(function (f) { if (typeof r[f] === 'number') r[f] = r[f] * k; });
+  SCALED_LINES.forEach(function (p) {
+    if (Array.isArray(r[p[0]])) r[p[0]] = r[p[0]].map(function (l) { const o = Object.assign({}, l); if (typeof o[p[1]] === 'number') o[p[1]] = o[p[1]] * k; return o; });
+  });
+  /* The pad: its regular price is marked up, the promo is not. */
+  const promo = num(redline.foundPromo);
+  if (typeof r.foundSell === 'number') r.foundSell = (r.foundSell + promo) * k - promo;
+  return r;
+}
+function markUpAdjustments(redline, adjustments, k) {
+  const prices = compItemPrices(redline);
+  return (adjustments || []).map(function (a) {
+    if (!a) return a;
+    if (a.kind === 'amount') { const v = Number(a.value); return v > 0 ? Object.assign({}, a, { value: v * k }) : a; }
+    if (a.kind === 'travel') return Object.assign({}, a, { rate: Number(a.rate) * k });
+    if (a.kind === 'override' && prices[a.item] != null) {
+      const regular = prices[a.item] + padPromoOf(redline, a.item);
+      const t = Number(a.amount);
+      if (!isFinite(t)) return a;
+      /* Raised: the new price is a regular price, marked up. Lowered: the cut
+         is a discount at what was taken off. */
+      return Object.assign({}, a, { amount: t >= regular ? t * k : Math.max(0, regular * k - (regular - t)) });
+    }
+    return a;
+  });
+}
+function sheetDiscountLines(redline, adjustments) {
+  const u = cardUpliftOf(redline), k = 1 + u;
+  const cash = quoteLinesCore(redline, adjustments);
+  const card = quoteLinesCore(markUpRegular(redline, k), markUpAdjustments(redline, adjustments, k));
+  if (!cash || !card) return card;
+  const eff = cash.total > 0 ? card.total / cash.total - 1 : u;
+  /* Charges typed by staff are marked up; discounts typed by staff are not. */
+  card.priceScale = k;
+  card.discountScale = 1;
+  card.discountsAtSheet = true;
+  card.cashDiscount = {
+    uplift: eff,
+    nominalUplift: u,
+    percentLabel: cashDiscountPctLabel(u),
+    fraction: cashDiscountFraction(eff),
+    amount: card.total - cash.total,
+    cashTotal: cash.total,
+    cashDepositTotal: cash.depositTotal
+  };
+  return card;
 }
 
 function withCardPrice(redline, bd) {
@@ -4459,7 +4567,7 @@ function adjustmentLines(bd, adjustments) {
     } else if (a.kind === 'amount') {
       /* On a regular (card) price quote a typed flat amount reads at the same
          scale as everything else (quoteLines bd.priceScale). */
-      named.push({ fold: v > 0 && !String(a.note || '').trim(), label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (Number(bd.priceScale) || 1)) });
+      named.push({ fold: v > 0 && !String(a.note || '').trim(), label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (v < 0 && bd.discountScale != null ? Number(bd.discountScale) : (Number(bd.priceScale) || 1))) });
     }
   });
 
@@ -4767,9 +4875,11 @@ function buildMemo(bd, opts = {}) {
     if (heading) out.push(heading, '');
     bd.rows.forEach((r) => {
       out.push(r.label + ' \u2014 ' + usd(r.regularAmt != null ? r.regularAmt : r.amt));
-      if (!withSubLines) return;
+      if (!withSubLines || r.memoCompact) return;
       (r.regularSubLines || r.subLines || []).forEach((s) => {
-        out.push('   + ' + s.label + ' \u2014 ' + usd(s.amt));
+        /* memoLabel: a shorter name where the full one would push the
+           itemised memo past Stripe's 500 characters (the stain line). */
+        out.push('   + ' + (s.memoLabel || s.label) + ' \u2014 ' + usd(s.amt));
         if (!withIncludes) return;
         (s.includes || []).forEach((item) => out.push('       \u2014 ' + item));
       });
@@ -8350,7 +8460,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
   const breakdown = quoteLines(details.redline, adjustmentsOf(sub));
   if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
-  const uplift = cardUpliftOf(details.redline);
+  const uplift = upliftOfQuote(details.redline, null, breakdown);
 
   const { results: payRows } = await env.DB.prepare(
     "SELECT id, amount, discount_amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
@@ -8695,10 +8805,10 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const builtSubs = ctx.builds || [sub.id];
   for (const sid of builtSubs) {
     if (Number(sid) === Number(sub.id)) { upliftBySub[sid] = ctx.uplift || 0; continue; }
-    const o = await env.DB.prepare("SELECT details FROM submissions WHERE id = ?").bind(sid).first();
+    const o = await env.DB.prepare("SELECT details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?").bind(sid).first();
     let d = {};
     try { d = JSON.parse((o && o.details) || "{}") || {}; } catch (e) {}
-    upliftBySub[sid] = cardUpliftOf(d.redline);
+    upliftBySub[sid] = upliftOfQuote(d.redline, o ? adjustmentsOf(o) : []);
   }
   const upliftFor = (sid) => upliftBySub[Number(sid)] || upliftBySub[String(sid)] || 0;
   const withDiscount = addCashDiscount(baseInvoice, upliftFor, sub.id);
@@ -8965,10 +9075,10 @@ async function manualDiscountFor(env, submissionId, method, amount, excludeId, w
   if (!sub) return null;
   let details = {};
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
-  const uplift = cardUpliftOf(details.redline);
-  if (!uplift) return null;
   const bd = quoteLines(details.redline, adjustmentsOf(sub));
   if (!bd) return null;
+  const uplift = upliftOfQuote(details.redline, null, bd);
+  if (!uplift) return null;
   const { results } = await env.DB.prepare(
     "SELECT id, amount, discount_amount FROM payments WHERE submission_id = ? AND id != ?"
   ).bind(submissionId, excludeId || 0).all();
@@ -9190,7 +9300,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     /* Quoted at regular (card) prices? Then what is left reads two ways: by
        card as it stands, and by cash / check / bank transfer less the discount
        — the figure to ask for when someone says they'll bring a check. */
-    const uplift = cardUpliftOf(details.redline);
+    const uplift = upliftOfQuote(details.redline, null, bd);
     const cashOf = (c) => c - cashDiscountCentsFor(c, uplift);
     builds.push({
       submission_id: sub.id,
@@ -9868,6 +9978,30 @@ async function ensureSubmissionAdjustColumns(env) {
 }
 
 
+/* The cash-discount uplift a bill divides by. Normally the redline's own
+   (3%). On a quote with discounts at their sheet value it is the EFFECTIVE
+   uplift quoteLines reports (card total / cash total - 1), so the cash price
+   of the whole job is the sheet prices less the discounts, to the cent. */
+function upliftOfQuote(redline, adjustments, bd) {
+  if (!redline || !redline.discountsAtSheet) return cardUpliftOf(redline);
+  const b = bd || quoteLines(redline, adjustments || []);
+  return (b && b.cashDiscount && b.cashDiscount.uplift) || 0;
+}
+/* A customer already quoted with the promo marked up (#71, Lee O'Shields,
+   who was sent -$515) keeps that on any redone estimate: true when any of
+   their stored quotes was priced at card prices, has the pad promo and
+   predates the sheet-value rule. */
+async function promoGrandfathered(env, customerId) {
+  if (!customerId) return false;
+  const { results } = await env.DB.prepare("SELECT details FROM submissions WHERE customer_id = ?").bind(customerId).all();
+  return (results || []).some((r) => {
+    try {
+      const rl = (JSON.parse(r.details) || {}).redline || {};
+      return cardUpliftOf(rl) > 0 && Number(rl.foundPromo) > 0 && !rl.discountsAtSheet;
+    } catch (e) { return false; }
+  });
+}
+
 // Reads whichever form a row is in. Rows predating the list carry a single
 // signed price_adjustment; they are presented as a one-entry list so nothing
 // downstream needs to know which era a row is from.
@@ -9974,8 +10108,11 @@ async function handleUpdateDesign(request, env, origin, id) {
   let marginTarget = details.marginTarget != null ? details.marginTarget : null;
   if (body.overrides && body.overrides.marginTarget != null) marginTarget = clampMarginTarget(body.overrides.marginTarget);
   let result;
+  /* A redone estimate keeps the promo treatment the customer was quoted. */
+  const legacyPromo = await promoGrandfathered(env, row.customer_id);
+  const qOpts = Object.assign({}, marginTarget != null ? { marginTarget } : {}, legacyPromo ? { legacyPromo: true } : {});
   try {
-    ({ result } = await computeQuoteResult(body.config, marginTarget != null ? { marginTarget } : undefined, env));
+    ({ result } = await computeQuoteResult(body.config, Object.keys(qOpts).length ? qOpts : undefined, env));
   } catch (e) {
     return json({ error: "Could not price that design" }, 400, origin);
   }
@@ -10353,7 +10490,7 @@ async function handleShedSubmit(request, env, origin) {
           heardAbout: body.heardAbout || null,
           heardAboutOther: body.heardAboutOther || null
         };
-  const details = JSON.stringify(detailsPayload).slice(0, 20000);
+  let details = JSON.stringify(detailsPayload).slice(0, 20000);
 
   const customerId = await findOrCreateCustomer(env, {
     name,
@@ -10371,6 +10508,19 @@ async function handleShedSubmit(request, env, origin) {
   // this same customer as superseded so they stop inflating the New count.
   // Submissions the admin already moved past "new" (contacted/quoted/etc.)
   // are left alone — that's real pipeline progress, not noise.
+  /* A customer already quoted with the promo marked up keeps it on a new
+     estimate (promoGrandfathered): re-priced the old way, same config. */
+  if (body.details === undefined && body.config && redline && redline.discountsAtSheet
+      && (await promoGrandfathered(env, customerId))) {
+    try {
+      const o = Object.assign({}, marginTarget != null ? { marginTarget } : {}, { legacyPromo: true });
+      const { result } = await computeQuoteResult(body.config, o, env);
+      detailsPayload.quotedPrice = result.customer;
+      detailsPayload.redline = result.redline;
+      details = JSON.stringify(detailsPayload).slice(0, 20000);
+    } catch (e) {}
+  }
+
   await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
     .bind(customerId)
     .run();
@@ -11149,7 +11299,9 @@ async function computeQuoteResult(rawConfig, overrides, env, keepToday) {
   await applySavedPricing(env);
 
   const opts = overrides && typeof overrides === "object" ? overrides : undefined;
-  const result = computePricing(cfg, opts);
+  /* legacyPromo is ours, not a pricing override: kept out of computePricing. */
+  const pOpts = opts && opts.legacyPromo ? Object.assign({}, opts, { legacyPromo: undefined }) : opts;
+  const result = computePricing(cfg, pOpts);
   /* CASH DISCOUNT ON: this quote is priced at REGULAR (card) prices. The
      redline is stamped with the uplift (quoteLines scales every figure by it)
      and the total moves with it, so the designer, the stored quotedPrice and
@@ -11158,7 +11310,16 @@ async function computeQuoteResult(rawConfig, overrides, env, keepToday) {
   const cd = keepToday ? { enabled: false } : cashDiscountSettings();
   if (cd.enabled && result && result.redline) {
     result.redline.cardUplift = cd.uplift;
-    result.customer = result.customer * (1 + cd.uplift);
+    result.sheetCustomer = result.customer;
+    /* Discounts at their sheet value (Nando, 12 Oct 2026): the regular lines
+       are marked up and the pad promo is not, so the card price is the sheet
+       price x (1 + uplift) plus the uplift on the promo it no longer scales.
+       legacyPromo keeps the old uniform markup (a customer grandfathered on
+       the treatment they were already quoted: see promoGrandfathered). */
+    const legacy = opts && opts.legacyPromo;
+    if (!legacy) result.redline.discountsAtSheet = true;
+    const promo = legacy ? 0 : (Number(result.redline.foundPromo) || 0);
+    result.customer = result.customer * (1 + cd.uplift) + promo * cd.uplift;
     result.cashDiscount = cd;
   }
   return { cfg, result };
@@ -11208,7 +11369,7 @@ async function handleShedQuote(request, env, origin) {
      Staff (redline) see the same line the customer does. */
   const cd = result.cashDiscount;
   const cashDiscount = cd && cd.enabled ? (() => {
-    const cashTotal = result.customer / (1 + cd.uplift);
+    const cashTotal = result.sheetCustomer != null ? result.sheetCustomer : result.customer / (1 + cd.uplift);
     return { percentLabel: cashDiscountPctLabel(cd.uplift), cashTotal,
              saving: result.customer - cashTotal, disclosure: cashDiscountDisclosure(cd.uplift) };
   })() : null;
