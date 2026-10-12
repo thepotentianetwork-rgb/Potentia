@@ -127,7 +127,7 @@ function adjustmentLines(bd, adjustments) {
     } else if (a.kind === 'amount') {
       /* On a regular (card) price quote a typed flat amount reads at the same
          scale as everything else (quoteLines bd.priceScale). */
-      named.push({ fold: v > 0 && !String(a.note || '').trim(), label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (Number(bd.priceScale) || 1)) });
+      named.push({ fold: v > 0 && !String(a.note || '').trim(), label: a.note || (v < 0 ? 'Discount' : 'Adjustment'), amountCents: toCents(v * (v < 0 && bd.discountScale != null ? Number(bd.discountScale) : (Number(bd.priceScale) || 1))) });
     }
   });
 
@@ -435,9 +435,11 @@ export function buildMemo(bd, opts = {}) {
     if (heading) out.push(heading, '');
     bd.rows.forEach((r) => {
       out.push(r.label + ' \u2014 ' + usd(r.regularAmt != null ? r.regularAmt : r.amt));
-      if (!withSubLines) return;
+      if (!withSubLines || r.memoCompact) return;
       (r.regularSubLines || r.subLines || []).forEach((s) => {
-        out.push('   + ' + s.label + ' \u2014 ' + usd(s.amt));
+        /* memoLabel: a shorter name where the full one would push the
+           itemised memo past Stripe's 500 characters (the stain line). */
+        out.push('   + ' + (s.memoLabel || s.label) + ' \u2014 ' + usd(s.amt));
         if (!withIncludes) return;
         (s.includes || []).forEach((item) => out.push('       \u2014 ' + item));
       });

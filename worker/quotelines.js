@@ -119,6 +119,7 @@ export function compItemPrices(redline) {
   push(redline.loftSellName, redline.loftSell);
   push(redline.intSellName, redline.intSell);
   push(redline.foundName, redline.foundSell);
+  push(redline.finishSellName, redline.finishSell);
   return out;
 }
 
@@ -127,7 +128,7 @@ export function compItemPrices(redline) {
 export function nameList(redline, which) {
   if (!redline) return [];
   if (which === 'interior') return [redline.intSellName].filter(Boolean);
-  if (which === 'foundation') return [redline.foundName].filter(Boolean);
+  if (which === 'foundation') return [redline.foundName, redline.finishSellName].filter(Boolean);
   const out = [];
   (redline.addonLines || []).forEach(function (l) {
     if (l && l.name && !isSitePrep(l.name)) out.push(l.name);
@@ -216,6 +217,13 @@ function removalTotal(redline) {
    keeps the two identical. */
 export function quoteLines(redline, adjustments) {
   if (!redline || typeof redline !== 'object') return null;
+  /* Fixed-dollar discounts at their sheet value (Nando, 12 Oct 2026), only
+     on redlines stamped discountsAtSheet; every quote priced before (and
+     Lee O'Shields, grandfathered) keeps the old uniform markup. */
+  if (redline.discountsAtSheet && cardUpliftOf(redline)) return sheetDiscountLines(redline, adjustments);
+  return withCardPrice(redline, quoteLinesCore(redline, adjustments));
+}
+function quoteLinesCore(redline, adjustments) {
   const COMPED = compedMap(redline, adjustments);
   const OVR = overrideMap(redline, adjustments);
   const ADJUSTMENTS = adjustments || [];
@@ -331,8 +339,26 @@ export function quoteLines(redline, adjustments) {
   if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
     foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
   }
-  const foundRow = add(foundLabel, num(redline.foundSell) - compedIn(nameList(redline, 'foundation')));
+  /* A stain priced on its own line (redlines from 12 Oct 2026 on) shares the
+     pad's phase: the row is "Concrete Foundation" and the pad and the stain
+     are its two lines. Older redlines have the stain inside foundSell and
+     read exactly as before. */
+  const hasFinish = !!(redline.finishSellName && num(redline.finishSell) > 0);
+  const padLabel = foundLabel;
+  if (hasFinish) foundLabel = 'Concrete Foundation';
+  const foundRow = add(foundLabel, num(redline.foundSell) + (hasFinish ? num(redline.finishSell) : 0) - compedIn(nameList(redline, 'foundation')));
   if (foundRow) foundRow.kind = 'foundation';
+  if (foundRow && hasFinish) {
+    const padOvr = OVR[redline.foundName];
+    const padNet = num(redline.foundSell) - (COMPED[redline.foundName] || 0) - (padOvr ? padOvr.delta : 0);
+    const finNet = num(redline.finishSell) - (COMPED[redline.finishSellName] || 0) - (OVR[redline.finishSellName] ? OVR[redline.finishSellName].delta : 0);
+    /* Regular: the pad before its promo (the promo is a discount line). */
+    const padReg = padOvr ? (padOvr.up ? padOvr.typed : padOvr.regular) : num(redline.foundSell) + num(redline.foundPromo);
+    /* Stripe's memo is 500 characters; this row reads as one line there. */
+    foundRow.memoCompact = true;
+    foundRow.subLines = [{ label: padLabel, amt: padNet, includes: null }, { label: redline.finishSellName, amt: finNet, includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }].filter(function (l) { return l.amt; });
+    foundRow.regularSubLines = [{ label: padLabel, amt: padReg, includes: null }, { label: redline.finishSellName, amt: regularOf(redline.finishSellName, redline.finishSell), includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }];
+  }
   /* A promo on the pad: the row's amount is already what they pay; this is
      only so the page can show the list price struck through and the promo
      as its own line. A comped pad has no row, so nothing to show. */
@@ -583,7 +609,7 @@ export function quoteLines(redline, adjustments) {
   const savings = discounts.length
     ? Math.max(0, totalBefore - (adjustedSubtotal + tax))
     : Math.max(0, subtotal - adjustedSubtotal) * (1 + TAX_RATE);
-  return withCardPrice(redline, {
+  return ({
     rows: rows,
     subtotal: subtotal,
     /* What a percentage adjustment is a percentage OF: the subtotal less any
@@ -654,6 +680,78 @@ export function cashDiscountDisclosure(uplift, amount) {
 }
 function qlMoney(n) {
   return '$' + (Math.round(Number(n) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* ── DISCOUNTS AT THEIR SHEET VALUE (Nando, 12 Oct 2026) ───────────────────
+ * "Promo and discount lines must not get the 3% card markup." On a redline
+ * stamped discountsAtSheet, every REGULAR line is at its card price (sheet x
+ * (1 + uplift)) and every fixed-dollar discount is at its sheet value: the
+ * concrete promo reads -$500, not -$515; a loyalty or other flat discount
+ * and a staff price cut read what was typed. Percentages scale with the lines
+ * they are a percentage of; an item included free is free at its card price.
+ *
+ * Done by marking up the INPUTS (the regular sell figures, staff charges and
+ * raised prices, travel) and leaving the discounts alone, then running the
+ * same arithmetic as ever, so every rule above (comps, overrides, folding,
+ * phases, deposits) applies unchanged.
+ *
+ * Cash, check & bank transfer: the same quote with no markup at all, i.e. the
+ * sheet prices less the promo and the discounts. The discount is the
+ * difference, and cashDiscount.uplift is the EFFECTIVE uplift (card total /
+ * cash total - 1), which is what the payment and invoice code divides by, so
+ * a paid-in-full cash total comes out to the cent. */
+const SCALED_SELL = ['marginPrice', 'laborSell', 'porchSell', 'porchDeckSell', 'sidingSell', 'paintSell',
+  'heightSell', 'elecSell', 'floorSell', 'loftSell', 'intSell', 'finishSell', 'dormerSell', 'windowSell', 'shelfSell', 'addonSell'];
+const SCALED_LINES = [['addonLines', 'amt'], ['doorUpLines', 'up'], ['windowSellLines', 'price'],
+  ['dormerSellLines', 'price'], ['shelfSellLines', 'price']];
+function markUpRegular(redline, k) {
+  const r = Object.assign({}, redline);
+  SCALED_SELL.forEach(function (f) { if (typeof r[f] === 'number') r[f] = r[f] * k; });
+  SCALED_LINES.forEach(function (p) {
+    if (Array.isArray(r[p[0]])) r[p[0]] = r[p[0]].map(function (l) { const o = Object.assign({}, l); if (typeof o[p[1]] === 'number') o[p[1]] = o[p[1]] * k; return o; });
+  });
+  /* The pad: its regular price is marked up, the promo is not. */
+  const promo = num(redline.foundPromo);
+  if (typeof r.foundSell === 'number') r.foundSell = (r.foundSell + promo) * k - promo;
+  return r;
+}
+function markUpAdjustments(redline, adjustments, k) {
+  const prices = compItemPrices(redline);
+  return (adjustments || []).map(function (a) {
+    if (!a) return a;
+    if (a.kind === 'amount') { const v = Number(a.value); return v > 0 ? Object.assign({}, a, { value: v * k }) : a; }
+    if (a.kind === 'travel') return Object.assign({}, a, { rate: Number(a.rate) * k });
+    if (a.kind === 'override' && prices[a.item] != null) {
+      const regular = prices[a.item] + padPromoOf(redline, a.item);
+      const t = Number(a.amount);
+      if (!isFinite(t)) return a;
+      /* Raised: the new price is a regular price, marked up. Lowered: the cut
+         is a discount at what was taken off. */
+      return Object.assign({}, a, { amount: t >= regular ? t * k : Math.max(0, regular * k - (regular - t)) });
+    }
+    return a;
+  });
+}
+function sheetDiscountLines(redline, adjustments) {
+  const u = cardUpliftOf(redline), k = 1 + u;
+  const cash = quoteLinesCore(redline, adjustments);
+  const card = quoteLinesCore(markUpRegular(redline, k), markUpAdjustments(redline, adjustments, k));
+  if (!cash || !card) return card;
+  const eff = cash.total > 0 ? card.total / cash.total - 1 : u;
+  /* Charges typed by staff are marked up; discounts typed by staff are not. */
+  card.priceScale = k;
+  card.discountScale = 1;
+  card.discountsAtSheet = true;
+  card.cashDiscount = {
+    uplift: eff,
+    nominalUplift: u,
+    percentLabel: cashDiscountPctLabel(u),
+    fraction: cashDiscountFraction(eff),
+    amount: card.total - cash.total,
+    cashTotal: cash.total,
+    cashDepositTotal: cash.depositTotal
+  };
+  return card;
 }
 
 function withCardPrice(redline, bd) {

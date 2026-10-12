@@ -46,8 +46,10 @@ test('the promo comes off the pad, never the floor finish', () => {
   assert.equal(redline.foundSell, 3000 + 1000);
   assert.equal(redline.foundList, 3500 + 1000);
   const coated = computePricing({ ...PAD, foundationFinish: 'coated' }).redline;
-  assert.equal(coated.foundSell, 3000 + 300);
-  assert.equal(coated.foundList, 3800);
+  /* The stain is its own line now (12 Oct 2026); the promo is still off the pad only. */
+  assert.equal(coated.foundSell, 3000);
+  assert.equal(coated.foundList, 3500);
+  assert.equal(coated.finishSell, 300);
 });
 
 test('every pad size pays the same $3,000 it paid before (the pad is a flat price)', () => {

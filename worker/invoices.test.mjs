@@ -366,8 +366,8 @@ test('the memo lists the build the way the quote lists it', () => {
   assert.ok(subs > 3, 'fixture should have sub-lines to show');
   /* At regular prices: the phase figure before its promo / free items. */
   bd.rows.forEach((r) => assert.ok(memo.includes(r.label + ' \u2014 $' + r.regularAmt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })), 'phase not at its regular price: ' + r.label));
-  bd.rows.forEach((r) => (r.regularSubLines || []).forEach((s) => {
-    assert.ok(memo.includes(s.label), 'missing item: ' + s.label);
+  bd.rows.filter((r) => !r.memoCompact).forEach((r) => (r.regularSubLines || []).forEach((s) => {
+    assert.ok(memo.includes(s.memoLabel || s.label), 'missing item: ' + s.label);
   }));
   assert.ok(memo.length <= LIMITS.memo, 'memo is ' + memo.length + ' chars');
 });

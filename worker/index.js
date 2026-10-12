@@ -1285,7 +1285,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
   const breakdown = quoteLines(details.redline, adjustmentsOf(sub));
   if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
-  const uplift = cardUpliftOf(details.redline);
+  const uplift = upliftOfQuote(details.redline, null, breakdown);
 
   const { results: payRows } = await env.DB.prepare(
     "SELECT id, amount, discount_amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
@@ -1630,10 +1630,10 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const builtSubs = ctx.builds || [sub.id];
   for (const sid of builtSubs) {
     if (Number(sid) === Number(sub.id)) { upliftBySub[sid] = ctx.uplift || 0; continue; }
-    const o = await env.DB.prepare("SELECT details FROM submissions WHERE id = ?").bind(sid).first();
+    const o = await env.DB.prepare("SELECT details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?").bind(sid).first();
     let d = {};
     try { d = JSON.parse((o && o.details) || "{}") || {}; } catch (e) {}
-    upliftBySub[sid] = cardUpliftOf(d.redline);
+    upliftBySub[sid] = upliftOfQuote(d.redline, o ? adjustmentsOf(o) : []);
   }
   const upliftFor = (sid) => upliftBySub[Number(sid)] || upliftBySub[String(sid)] || 0;
   const withDiscount = addCashDiscount(baseInvoice, upliftFor, sub.id);
@@ -1900,10 +1900,10 @@ async function manualDiscountFor(env, submissionId, method, amount, excludeId, w
   if (!sub) return null;
   let details = {};
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
-  const uplift = cardUpliftOf(details.redline);
-  if (!uplift) return null;
   const bd = quoteLines(details.redline, adjustmentsOf(sub));
   if (!bd) return null;
+  const uplift = upliftOfQuote(details.redline, null, bd);
+  if (!uplift) return null;
   const { results } = await env.DB.prepare(
     "SELECT id, amount, discount_amount FROM payments WHERE submission_id = ? AND id != ?"
   ).bind(submissionId, excludeId || 0).all();
@@ -2125,7 +2125,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     /* Quoted at regular (card) prices? Then what is left reads two ways: by
        card as it stands, and by cash / check / bank transfer less the discount
        — the figure to ask for when someone says they'll bring a check. */
-    const uplift = cardUpliftOf(details.redline);
+    const uplift = upliftOfQuote(details.redline, null, bd);
     const cashOf = (c) => c - cashDiscountCentsFor(c, uplift);
     builds.push({
       submission_id: sub.id,
@@ -2803,6 +2803,30 @@ async function ensureSubmissionAdjustColumns(env) {
 }
 
 
+/* The cash-discount uplift a bill divides by. Normally the redline's own
+   (3%). On a quote with discounts at their sheet value it is the EFFECTIVE
+   uplift quoteLines reports (card total / cash total - 1), so the cash price
+   of the whole job is the sheet prices less the discounts, to the cent. */
+function upliftOfQuote(redline, adjustments, bd) {
+  if (!redline || !redline.discountsAtSheet) return cardUpliftOf(redline);
+  const b = bd || quoteLines(redline, adjustments || []);
+  return (b && b.cashDiscount && b.cashDiscount.uplift) || 0;
+}
+/* A customer already quoted with the promo marked up (#71, Lee O'Shields,
+   who was sent -$515) keeps that on any redone estimate: true when any of
+   their stored quotes was priced at card prices, has the pad promo and
+   predates the sheet-value rule. */
+async function promoGrandfathered(env, customerId) {
+  if (!customerId) return false;
+  const { results } = await env.DB.prepare("SELECT details FROM submissions WHERE customer_id = ?").bind(customerId).all();
+  return (results || []).some((r) => {
+    try {
+      const rl = (JSON.parse(r.details) || {}).redline || {};
+      return cardUpliftOf(rl) > 0 && Number(rl.foundPromo) > 0 && !rl.discountsAtSheet;
+    } catch (e) { return false; }
+  });
+}
+
 // Reads whichever form a row is in. Rows predating the list carry a single
 // signed price_adjustment; they are presented as a one-entry list so nothing
 // downstream needs to know which era a row is from.
@@ -2909,8 +2933,11 @@ async function handleUpdateDesign(request, env, origin, id) {
   let marginTarget = details.marginTarget != null ? details.marginTarget : null;
   if (body.overrides && body.overrides.marginTarget != null) marginTarget = clampMarginTarget(body.overrides.marginTarget);
   let result;
+  /* A redone estimate keeps the promo treatment the customer was quoted. */
+  const legacyPromo = await promoGrandfathered(env, row.customer_id);
+  const qOpts = Object.assign({}, marginTarget != null ? { marginTarget } : {}, legacyPromo ? { legacyPromo: true } : {});
   try {
-    ({ result } = await computeQuoteResult(body.config, marginTarget != null ? { marginTarget } : undefined, env));
+    ({ result } = await computeQuoteResult(body.config, Object.keys(qOpts).length ? qOpts : undefined, env));
   } catch (e) {
     return json({ error: "Could not price that design" }, 400, origin);
   }
@@ -3288,7 +3315,7 @@ async function handleShedSubmit(request, env, origin) {
           heardAbout: body.heardAbout || null,
           heardAboutOther: body.heardAboutOther || null
         };
-  const details = JSON.stringify(detailsPayload).slice(0, 20000);
+  let details = JSON.stringify(detailsPayload).slice(0, 20000);
 
   const customerId = await findOrCreateCustomer(env, {
     name,
@@ -3306,6 +3333,19 @@ async function handleShedSubmit(request, env, origin) {
   // this same customer as superseded so they stop inflating the New count.
   // Submissions the admin already moved past "new" (contacted/quoted/etc.)
   // are left alone — that's real pipeline progress, not noise.
+  /* A customer already quoted with the promo marked up keeps it on a new
+     estimate (promoGrandfathered): re-priced the old way, same config. */
+  if (body.details === undefined && body.config && redline && redline.discountsAtSheet
+      && (await promoGrandfathered(env, customerId))) {
+    try {
+      const o = Object.assign({}, marginTarget != null ? { marginTarget } : {}, { legacyPromo: true });
+      const { result } = await computeQuoteResult(body.config, o, env);
+      detailsPayload.quotedPrice = result.customer;
+      detailsPayload.redline = result.redline;
+      details = JSON.stringify(detailsPayload).slice(0, 20000);
+    } catch (e) {}
+  }
+
   await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
     .bind(customerId)
     .run();
@@ -4084,7 +4124,9 @@ async function computeQuoteResult(rawConfig, overrides, env, keepToday) {
   await applySavedPricing(env);
 
   const opts = overrides && typeof overrides === "object" ? overrides : undefined;
-  const result = computePricing(cfg, opts);
+  /* legacyPromo is ours, not a pricing override: kept out of computePricing. */
+  const pOpts = opts && opts.legacyPromo ? Object.assign({}, opts, { legacyPromo: undefined }) : opts;
+  const result = computePricing(cfg, pOpts);
   /* CASH DISCOUNT ON: this quote is priced at REGULAR (card) prices. The
      redline is stamped with the uplift (quoteLines scales every figure by it)
      and the total moves with it, so the designer, the stored quotedPrice and
@@ -4093,7 +4135,16 @@ async function computeQuoteResult(rawConfig, overrides, env, keepToday) {
   const cd = keepToday ? { enabled: false } : cashDiscountSettings();
   if (cd.enabled && result && result.redline) {
     result.redline.cardUplift = cd.uplift;
-    result.customer = result.customer * (1 + cd.uplift);
+    result.sheetCustomer = result.customer;
+    /* Discounts at their sheet value (Nando, 12 Oct 2026): the regular lines
+       are marked up and the pad promo is not, so the card price is the sheet
+       price x (1 + uplift) plus the uplift on the promo it no longer scales.
+       legacyPromo keeps the old uniform markup (a customer grandfathered on
+       the treatment they were already quoted: see promoGrandfathered). */
+    const legacy = opts && opts.legacyPromo;
+    if (!legacy) result.redline.discountsAtSheet = true;
+    const promo = legacy ? 0 : (Number(result.redline.foundPromo) || 0);
+    result.customer = result.customer * (1 + cd.uplift) + promo * cd.uplift;
     result.cashDiscount = cd;
   }
   return { cfg, result };
@@ -4143,7 +4194,7 @@ async function handleShedQuote(request, env, origin) {
      Staff (redline) see the same line the customer does. */
   const cd = result.cashDiscount;
   const cashDiscount = cd && cd.enabled ? (() => {
-    const cashTotal = result.customer / (1 + cd.uplift);
+    const cashTotal = result.sheetCustomer != null ? result.sheetCustomer : result.customer / (1 + cd.uplift);
     return { percentLabel: cashDiscountPctLabel(cd.uplift), cashTotal,
              saving: result.customer - cashTotal, disclosure: cashDiscountDisclosure(cd.uplift) };
   })() : null;

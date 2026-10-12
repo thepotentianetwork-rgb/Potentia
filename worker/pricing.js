@@ -362,6 +362,7 @@ export function concretePromoAmount(padList){
   var a=+((SELL.concretePromo||{}).amount)||0;
   return Math.max(0, Math.min(a, +padList||0));
 }
+export const CONCRETE_STAIN_NAME = "Concrete Floor Stain (2 coats, customer\u2019s choice of color)";
 export function foundationFinishPrice(kind, sqft){
   if(kind==='broom'){
     var t=SELL.broomTiers;
@@ -1851,7 +1852,7 @@ export function computePricing(cfgIn, opts){
   customerPrice += addonSell;
 
   // ── FOUNDATION (flat price, from SELL.foundation / SELL.foundationFinish) ──
-  var foundSell=0, foundName='', foundPromo=0;
+  var foundSell=0, foundName='', foundPromo=0, finishSell=0, finishSellName='';
   // Levelling on blocks is complimentary, so only the pad adds anything.
   if(typeof FOUNDATION!=='undefined' && FOUNDATION==='pad'){
     /* foundSell is what the customer PAYS (list less promo), so every total,
@@ -1865,9 +1866,17 @@ export function computePricing(cfgIn, opts){
     if(typeof FOUNDATION_FINISH!=='undefined'){
       var _sq=(typeof padSqft==='function')?padSqft():(Wf*Df);
       var fc = foundationFinishPrice(FOUNDATION_FINISH, _sq);
-      foundSell += fc;
-      if(FOUNDATION_FINISH==='broom') foundName+=' + Broom Finish ('+_sq+' sqft)';
-      else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
+      /* The stain is its own line (Nando, 12 Oct 2026). Folded into the pad,
+         a staff price typed for the pad replaced the stain with it, and #71
+         lost its $300 coat. Same phase as the pad; a pad price override, a
+         comp or the promo now touch the pad alone. Broom finish is still
+         part of the pad line. */
+      if(FOUNDATION_FINISH==='coated' && fc>0){ finishSell = fc; finishSellName = CONCRETE_STAIN_NAME; }
+      else {
+        foundSell += fc;
+        if(FOUNDATION_FINISH==='broom') foundName+=' + Broom Finish ('+_sq+' sqft)';
+        else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
+      }
     }
   } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='gravel'){
     var _gsq=(typeof padSqft==='function')?padSqft():(Wf*Df);
@@ -1880,7 +1889,7 @@ export function computePricing(cfgIn, opts){
       ? 'Gravel Pad — not available over 200 sqft'
       : 'Gravel Pad + Leveled on Cinder Blocks ('+_gsq+' sqft)';
   }
-  customerPrice += foundSell;
+  customerPrice += foundSell + finishSell;
   var foundList = foundPromo>0 ? foundSell + foundPromo : 0;
 
   var profit = customerPrice - trueTotalCost;
@@ -1923,6 +1932,7 @@ export function computePricing(cfgIn, opts){
       loftSell: loftSell, loftSellName: loftSellName,
       addonSell: addonSell, addonLines: addonLines,
       foundSell: foundSell, foundName: foundName,
+      finishSell: finishSell, finishSellName: finishSellName,
       foundPromo: foundPromo, foundList: foundList,
       foundPromoName: foundPromo>0 ? 'Concrete pad promo' : '',
       customerPrice: customerPrice,
