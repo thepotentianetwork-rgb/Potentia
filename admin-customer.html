@@ -1325,6 +1325,57 @@ function copyAdjustmentsButton(s, list) {
   return wrap;
 }
 
+/* REMOVE AN ADD-ON from the quote. Goes through the same "Update this quote"
+   endpoint as the designer, so it re-prices from the saved design, records
+   history + a CRM note, flags adjustments that no longer match, and is refused
+   on an order with any deposit or payment. Patterns mirror ADDON_LINE_KEYS in
+   worker/index.js. */
+var REMOVABLE_ADDON_RE = /^(Shutters|Flowerboxes\b|Cupola\b|Roof Ridge Vent\b|Skylight|Stairs|Ramp|Stationary Ladder|Attic Pull-Down Ladder|Shed Removal|Concrete Removal|Sprinkler Relocation\b|Floor Weather Guard|Radiant Roof Barrier|House Wrap|Hurricane Ties)/i;
+function removeAddonBlock(s, details) {
+  var lines = ((details.redline && details.redline.addonLines) || []).filter(function (l) { return l && REMOVABLE_ADDON_RE.test(String(l.name)); });
+  if (!lines.length || !details.config) return null;
+  var wrap = document.createElement('div');
+  wrap.className = 'addon-remove';
+  wrap.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;font-size:12px';
+  var lbl = document.createElement('span'); lbl.textContent = 'Add-ons:'; lbl.style.opacity = '.8'; wrap.appendChild(lbl);
+  var st = document.createElement('span'); st.style.cssText = 'font-size:12px;opacity:.85';
+  var btns = [];
+  lines.forEach(function (l) {
+    var chip = document.createElement('span');
+    chip.className = 'addon-chip';
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 2px 2px 8px;border:1px solid rgba(255,255,255,.2);border-radius:999px';
+    chip.appendChild(document.createTextNode(l.name + ' $' + Math.round(l.amt || 0).toLocaleString()));
+    var x = document.createElement('button');
+    x.type = 'button'; x.className = 'adj-clear addon-x'; x.textContent = '\u00d7'; x.title = 'Remove ' + l.name + ' from this quote';
+    x.style.cssText = 'padding:0 7px;line-height:18px';
+    x.addEventListener('click', function () {
+      var msg = 'Remove \u201c' + l.name + '\u201d ($' + Math.round(l.amt || 0).toLocaleString() + ') from quote #' + s.id + '?\n\n' +
+        'The saved 3D design is updated without it and the quote is re-priced. The previous design is kept in the history and a CRM note is added.';
+      if (!window.confirm(msg)) return;
+      btns.forEach(function (b) { b.disabled = true; }); st.textContent = 'Removing\u2026';
+      authFetch('/admin/submissions/' + s.id + '/design', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ removeAddon: l.name })
+      }).then(function (r) {
+        if (!r.ok) { btns.forEach(function (b) { b.disabled = false; }); st.textContent = ''; alert((r.data && r.data.error) || 'Could not remove that.'); return; }
+        var d = r.data || {};
+        if (d.stale && d.stale.length) alert('Removed. Quote $' + Math.round(d.previousPrice).toLocaleString() + ' \u2192 $' + Math.round(d.quotedPrice).toLocaleString() +
+          '.\n\nThese adjustments no longer match a line and now do nothing:\n' + d.stale.map(function (a) { return '  \u2022 ' + a.item; }).join('\n'));
+        loadCustomer();
+      }).catch(function () { btns.forEach(function (b) { b.disabled = false; }); st.textContent = ''; alert('Could not reach the server.'); });
+    });
+    btns.push(x); chip.appendChild(x); wrap.appendChild(chip);
+  });
+  wrap.appendChild(st);
+  /* Same lock as "Update this quote": no removing once money has come in. */
+  authFetch('/admin/submissions/' + s.id + '/design-status').then(function (r) {
+    if (r.ok && r.data && r.data.locked) {
+      btns.forEach(function (b) { b.disabled = true; b.title = r.data.reason || 'Locked'; });
+      st.textContent = 'Locked: this order has a deposit or payment, so add-ons can\u2019t be removed here.'; st.style.color = '#f5a524';
+    }
+  });
+  return wrap;
+}
+
 function renderAdjustBlock(card, s, details) {
   var quoted = details.quotedPrice != null ? Number(details.quotedPrice) : null;
   var list = Array.isArray(s.adjustment_list) ? s.adjustment_list.slice() : [];
@@ -1339,6 +1390,8 @@ function renderAdjustBlock(card, s, details) {
   label.textContent = 'Adjustments';
   block.appendChild(label);
   block.appendChild(copyAdjustmentsButton(s, list));
+  var rmAdd = removeAddonBlock(s, details);
+  if (rmAdd) block.appendChild(rmAdd);
 
   // Current list, each removable on its own — so taking back one comp doesn't
   // mean re-entering the percentage that went with it.

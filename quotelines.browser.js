@@ -833,6 +833,9 @@ const ROOF_PALETTES = {
              // retired metal swatches (named in the designer's palette notes)
              0x4A3B32: 'Burnished Slate', 0x3A3C3E: 'Charcoal' },
 };
+// Designer trim swatches (WALL_COLORS in designer.html), hex -> name.
+const TRIM_NAMES = { 0xF2F0EC: 'White', 0xC8CBCE: 'Light Gray', 0x6E7377: 'Gray', 0x3C3F43: 'Charcoal',
+  0x1A1A1A: 'Black', 0xC9BDA4: 'Beige', 0x7C8A6E: 'Sage', 0x2C3E52: 'Navy' };
 const RIDGE_STYLES = ['gable', '3peak', '4peak', 'barn'];  // barn added 12 Oct 2026
 function roofSpec(config, redline) {
   const c = (config && typeof config === 'object') ? config : {};
@@ -866,7 +869,12 @@ function roofSpec(config, redline) {
     if (st === 'leanto' && Number(c.leantoFrontOvh) > 0) ovh += '; front (tall side) ' + (Number(c.leantoFrontOvh) % 12 ? inch(c.leantoFrontOvh) : (c.leantoFrontOvh / 12) + ' ft');
   }
   if (ovh) rows.push({ label: 'Overhang', value: ovh });
-  const sof = { match: 'Matches the walls', white: 'White', black: 'Black', cedar: 'Cedar' }[c.soffit];
+  let sof = { match: 'Matches the walls', white: 'White', black: 'Black', cedar: 'Cedar' }[c.soffit];
+  if (c.soffit === 'trim') {
+    // "Match Trim": the designer paints the soffit in the trim swatch (config.trimColor).
+    const tn = TRIM_NAMES[Number(c.trimColor)];
+    sof = 'Matches the trim' + (tn ? ' (' + tn + ')' : '');
+  }
   if (sof && st !== 'barn') rows.push({ label: 'Soffit', value: sof });
   const lines = (redline && Array.isArray(redline.addonLines)) ? redline.addonLines : [];
   const vent = lines.some((l) => /^Roof Ridge Vent/i.test(String(l && l.name || '')));
