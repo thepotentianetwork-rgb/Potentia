@@ -19,6 +19,7 @@
 // other module-level const here.
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor } from "./pricing.js";
+import { applyColorEdit, detailsWithColors } from "./colors.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
@@ -2940,6 +2941,29 @@ function configWithoutAddon(config, key) {
   c.addons = Object.assign({}, c.addons || {});
   c.addons[key] = key === "cupola" ? "none" : false;
   return c;
+}
+
+/* POST /admin/submissions/:id/colors — { colors: {...}, renders?: [...] }
+   Colour-only edit (worker/colors.js): never re-prices, never touches the
+   adjustments or effective_price, and is allowed on orders with a deposit. */
+async function handleUpdateColors(request, env, origin, id) {
+  const row = await env.DB.prepare("SELECT id, customer_id, details FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  const body = await request.json().catch(() => ({}));
+  let details = {};
+  try { details = JSON.parse(row.details) || {}; } catch (e) {}
+  const res = applyColorEdit(details.config, body.colors);
+  if (res.error) return json({ error: res.error }, 400, origin);
+  const renders = body.renders ? await uploadRenders(env, body.renders) : null;
+  if (!res.changed.length && !renders) return json({ ok: true, id, changed: [] }, 200, origin);
+  const at = new Date().toISOString();
+  const text = detailsWithColors(details, res.config, renders, at);
+  await env.DB.prepare("UPDATE submissions SET details = ? WHERE id = ?").bind(text, id).run();
+  try {
+    await env.DB.prepare("INSERT INTO notes (customer_id, text, created_at) VALUES (?,?,?)")
+      .bind(row.customer_id, "Colours changed on quote #" + id + " (staff): " + (res.changed.join(", ") || "renders") + ". Price unchanged.", at).run();
+  } catch (e) {}
+  return json({ ok: true, id, changed: res.changed, renders: !!renders, quotedPrice: details.quotedPrice }, 200, origin);
 }
 
 async function handleUpdateDesign(request, env, origin, id) {
@@ -6011,6 +6035,12 @@ export default {
         const id = Number(path.slice("/admin/submissions/".length, -"/design-status".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleDesignStatus(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/colors") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/colors".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleUpdateColors(request, env, origin, id);
       }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/design") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

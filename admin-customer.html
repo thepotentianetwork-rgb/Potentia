@@ -1376,6 +1376,65 @@ function removeAddonBlock(s, details) {
   return wrap;
 }
 
+/* COLOURS ONLY (Nando, 12 Oct 2026). Siding, trim and roof colour and the
+   soffit, saved straight onto the stored design via POST
+   /admin/submissions/:id/colors. Never re-prices and never touches the
+   adjustments, so it is open even when the order has a deposit. The 3D
+   renders are redrawn by "Re-render in 3D", which opens the designer in its
+   colours-only mode (crm_colors=) to capture new pictures. */
+function hexOfInt(n) { n = Number(n); return '#' + ((isFinite(n) ? n : 0) & 0xffffff).toString(16).padStart(6, '0'); }
+function intOfHex(h) { return parseInt(String(h).replace('#', ''), 16); }
+function colorEditBlock(s, details) {
+  var c = details && details.config;
+  if (!c) return null;
+  var wrap = document.createElement('div');
+  wrap.className = 'color-edit';
+  wrap.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;font-size:12px';
+  var lbl = document.createElement('span'); lbl.textContent = 'Colours:'; lbl.style.opacity = '.8'; wrap.appendChild(lbl);
+  var inputs = {};
+  [['sidingColor', 'Siding'], ['trimColor', 'Trim'], ['roofColor', 'Roof']].forEach(function (f) {
+    var l = document.createElement('label'); l.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
+    var i = document.createElement('input'); i.type = 'color'; i.value = hexOfInt(c[f[0]]); i.dataset.key = f[0]; i.className = 'color-' + f[0];
+    i.style.cssText = 'width:30px;height:22px;padding:0;border:0;background:none';
+    l.appendChild(document.createTextNode(f[1])); l.appendChild(i); wrap.appendChild(l); inputs[f[0]] = i;
+  });
+  var sl = document.createElement('label'); sl.style.cssText = 'display:inline-flex;gap:4px;align-items:center'; sl.appendChild(document.createTextNode('Soffit'));
+  var sel = document.createElement('select'); sel.className = 'color-soffit';
+  [['match', 'Match walls'], ['trim', 'Match trim'], ['white', 'White'], ['black', 'Black'], ['cedar', 'Cedar']].forEach(function (o) {
+    var op = document.createElement('option'); op.value = o[0]; op.textContent = o[1]; if (c.soffit === o[0]) op.selected = true; sel.appendChild(op);
+  });
+  sl.appendChild(sel); wrap.appendChild(sl);
+  var save = plainBtn('Save colours'); save.className += ' color-save';
+  var rr = plainBtn('Re-render in 3D'); rr.className += ' color-rerender';
+  var st = document.createElement('span'); st.className = 'color-status'; st.style.cssText = 'font-size:12px;opacity:.85';
+  save.addEventListener('click', function () {
+    var colors = { soffit: sel.value };
+    Object.keys(inputs).forEach(function (k) { colors[k] = intOfHex(inputs[k].value); });
+    /* A hand-picked hex is no longer the brand paint chip it was. */
+    var names = Object.assign({}, c.colorNames || {}), paint = {};
+    if (colors.sidingColor !== c.sidingColor) { names.siding = inputs.sidingColor.value.toUpperCase(); paint.siding = null; }
+    if (colors.trimColor !== c.trimColor) { names.trim = inputs.trimColor.value.toUpperCase(); paint.trim = null; }
+    if (colors.roofColor !== c.roofColor) names.roof = inputs.roofColor.value.toUpperCase();
+    colors.colorNames = names; if (Object.keys(paint).length) colors.paint = paint;
+    save.disabled = true; st.textContent = 'Saving\u2026';
+    authFetch('/admin/submissions/' + s.id + '/colors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ colors: colors }) })
+      .then(function (r) {
+        save.disabled = false;
+        if (!r.ok) { st.textContent = ''; alert((r.data && r.data.error) || 'Could not save the colours.'); return; }
+        st.textContent = (r.data.changed && r.data.changed.length) ? 'Saved. Price unchanged. Press Re-render in 3D to refresh the pictures.' : 'No change.';
+        st.style.color = '#6fcf97';
+      }).catch(function () { save.disabled = false; st.textContent = ''; alert('Could not reach the server.'); });
+  });
+  rr.addEventListener('click', function () {
+    var u = designUrlFor(details);
+    if (!u) { alert('No saved design to open.'); return; }
+    var i = u.indexOf('#'), base = i < 0 ? u : u.slice(0, i), hash = i < 0 ? '' : u.slice(i);
+    window.open(base + (base.indexOf('?') < 0 ? '?' : '&') + 'crm_colors=' + encodeURIComponent(s.id) + hash, '_blank');
+  });
+  wrap.appendChild(save); wrap.appendChild(rr); wrap.appendChild(st);
+  return wrap;
+}
+
 function renderAdjustBlock(card, s, details) {
   var quoted = details.quotedPrice != null ? Number(details.quotedPrice) : null;
   var list = Array.isArray(s.adjustment_list) ? s.adjustment_list.slice() : [];
@@ -1392,6 +1451,8 @@ function renderAdjustBlock(card, s, details) {
   block.appendChild(copyAdjustmentsButton(s, list));
   var rmAdd = removeAddonBlock(s, details);
   if (rmAdd) block.appendChild(rmAdd);
+  var colEd = colorEditBlock(s, details);
+  if (colEd) block.appendChild(colEd);
 
   // Current list, each removable on its own — so taking back one comp doesn't
   // mean re-entering the percentage that went with it.
