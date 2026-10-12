@@ -44,11 +44,11 @@ db.prepare("INSERT INTO payments (customer_id,amount,method,paid_at,created_at,s
 const lock = await call("POST","/admin/submissions/71/design",{config:before.d.config},tok);
 check("design update refused with a deposit (409)", lock.status === 409, lock.status);
 
-const r = await call("POST","/admin/submissions/71/colors",{colors:{ sidingColor:0x2f4f4f, trimColor:0xffffff, roofColor:0x3a3a3a, soffit:"white",
+const r = await call("POST","/admin/submissions/71/colors",{colors:{ sidingColor:0x2F3D4C, trimColor:0xffffff, roofColor:0x3a3a3a, soffit:"white",
   paint:{ siding:{brand:"Sherwin-Williams",code:"SW 6244",name:"Naval",hex:"#2F3D4C"} }, colorNames:{siding:"Sherwin-Williams SW 6244 Naval", trim:"White"} }},tok);
 check("colour edit accepted with a deposit (200)", r.status === 200, r);
 const after = totals();
-check("config colours changed", after.d.config.sidingColor===0x2f4f4f && after.d.config.trimColor===0xffffff && after.d.config.soffit==="white" && after.d.config.paint.siding.code==="SW 6244");
+check("config colours changed", after.d.config.sidingColor===0x2F3D4C && after.d.config.trimColor===0xffffff && after.d.config.soffit==="white" && after.d.config.paint.siding.code==="SW 6244");
 check("old trim paint kept", after.d.config.paint.trim && after.d.config.paint.trim.code==="SW 7073");
 check("total unchanged $18,151.27", after.total === before.total, after.total);
 check("cash total unchanged", after.cash === before.cash, after.cash);

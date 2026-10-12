@@ -456,6 +456,7 @@ select:focus{border-color:var(--sp-blue)}
 </main>
 
 <script src="admin-nav.js"></script>
+<script src="crm-paint.js"></script>
 <script src="admin-voice.js"></script>
 <script src="admin-activity.js"></script>
 <script>
@@ -1384,20 +1385,81 @@ function removeAddonBlock(s, details) {
    colours-only mode (crm_colors=) to capture new pictures. */
 function hexOfInt(n) { n = Number(n); return '#' + ((isFinite(n) ? n : 0) & 0xffffff).toString(16).padStart(6, '0'); }
 function intOfHex(h) { return parseInt(String(h).replace('#', ''), 16); }
+/* Siding and trim are picked from the designer's brand paint books
+   (crm-paint.js): search by brand, code or name, see the swatch, and the pick
+   is saved as the designer saves it (hex integer + config.paint + colorNames).
+   Roof stays a plain colour (the designer has no brand list for roofs). */
+function paintPickerFor(part, title, current) {
+  var box = document.createElement('div');
+  box.className = 'paint-pick paint-pick-' + part;
+  box.style.cssText = 'position:relative;display:inline-flex;align-items:center;gap:6px';
+  var sw = document.createElement('span');
+  sw.style.cssText = 'width:20px;height:20px;border-radius:4px;border:1px solid rgba(255,255,255,.35);display:inline-block';
+  var lab = document.createElement('span'); lab.className = 'paint-label'; lab.style.cssText = 'max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+  var q = document.createElement('input'); q.type = 'search'; q.className = 'paint-search'; q.placeholder = 'Search ' + title.toLowerCase() + ' paint (e.g. SW 7006, Behr white)';
+  q.style.cssText = 'width:230px;font-size:12px;padding:3px 6px;display:none';
+  var list = document.createElement('div'); list.className = 'paint-results';
+  list.style.cssText = 'position:absolute;top:26px;left:0;z-index:50;background:#1d2330;border:1px solid #3a4152;border-radius:6px;max-height:260px;overflow:auto;width:330px;display:none;box-shadow:0 6px 18px #0008';
+  var state = { pick: current.pick || null, hex: current.hex, name: current.name, changed: false };
+  function show() {
+    sw.style.background = state.hex;
+    lab.textContent = title + ': ' + (state.pick ? CrmPaint.label(state.pick) : (state.name || state.hex.toUpperCase()));
+  }
+  function results() {
+    var hits = CrmPaint.search(q.value, 30);
+    list.innerHTML = '';
+    if (!q.value.trim()) { list.style.display = 'none'; return; }
+    if (!hits.length) { list.innerHTML = '<div style="padding:8px;opacity:.7">No matching colour</div>'; }
+    hits.forEach(function (p) {
+      var row = document.createElement('div'); row.className = 'paint-hit';
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;padding:5px 8px;cursor:pointer';
+      row.innerHTML = '<span style="width:22px;height:18px;border-radius:3px;border:1px solid #fff4;background:' + p.hex + '"></span>' +
+        '<span><b>' + p.brand + '</b> ' + p.code + ' \u00b7 ' + p.name + '</span>';
+      row.addEventListener('mouseenter', function () { row.style.background = '#2c3446'; });
+      row.addEventListener('mouseleave', function () { row.style.background = ''; });
+      row.addEventListener('click', function () {
+        state.pick = p; state.hex = p.hex; state.name = CrmPaint.label(p); state.changed = true;
+        q.value = ''; q.style.display = 'none'; list.style.display = 'none'; show();
+      });
+      list.appendChild(row);
+    });
+    list.style.display = 'block';
+  }
+  var change = plainBtn('Change'); change.className += ' paint-change';
+  change.addEventListener('click', function () {
+    q.style.display = ''; q.focus();
+    q.placeholder = 'Loading colour books\u2026';
+    CrmPaint.loadAll().then(function () { q.placeholder = 'Search ' + title.toLowerCase() + ' paint (e.g. SW 7006, Behr white)'; results(); });
+  });
+  q.addEventListener('input', results);
+  q.addEventListener('keydown', function (e) { if (e.key === 'Escape') { q.style.display = 'none'; list.style.display = 'none'; } });
+  box.appendChild(sw); box.appendChild(lab); box.appendChild(change); box.appendChild(q); box.appendChild(list);
+  show();
+  box.paintState = state;
+  return box;
+}
+function currentPaint(c, part, key) {
+  var p = c.paint && c.paint[part];
+  var hex = hexOfInt(c[key]).toUpperCase();
+  /* A stored pick counts only while it is still the colour (designer rule). */
+  var live = p && p.brand && p.code && /^#?[0-9a-fA-F]{6}$/.test(String(p.hex || '')) && parseInt(String(p.hex).replace('#', ''), 16) === Number(c[key]);
+  return { pick: live ? { brand: p.brand, code: p.code, name: p.name || '', hex: '#' + String(p.hex).replace('#', '').toUpperCase() } : null,
+           hex: hex, name: (c.colorNames && c.colorNames[part]) || '' };
+}
 function colorEditBlock(s, details) {
   var c = details && details.config;
   if (!c) return null;
   var wrap = document.createElement('div');
   wrap.className = 'color-edit';
-  wrap.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;font-size:12px';
+  wrap.style.cssText = 'display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:4px 0 8px;font-size:12px';
   var lbl = document.createElement('span'); lbl.textContent = 'Colours:'; lbl.style.opacity = '.8'; wrap.appendChild(lbl);
-  var inputs = {};
-  [['sidingColor', 'Siding'], ['trimColor', 'Trim'], ['roofColor', 'Roof']].forEach(function (f) {
-    var l = document.createElement('label'); l.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
-    var i = document.createElement('input'); i.type = 'color'; i.value = hexOfInt(c[f[0]]); i.dataset.key = f[0]; i.className = 'color-' + f[0];
-    i.style.cssText = 'width:30px;height:22px;padding:0;border:0;background:none';
-    l.appendChild(document.createTextNode(f[1])); l.appendChild(i); wrap.appendChild(l); inputs[f[0]] = i;
-  });
+  var siding = paintPickerFor('siding', 'Siding', currentPaint(c, 'siding', 'sidingColor'));
+  var trim = paintPickerFor('trim', 'Trim', currentPaint(c, 'trim', 'trimColor'));
+  wrap.appendChild(siding); wrap.appendChild(trim);
+  var rl = document.createElement('label'); rl.style.cssText = 'display:inline-flex;gap:4px;align-items:center';
+  var roof = document.createElement('input'); roof.type = 'color'; roof.value = hexOfInt(c.roofColor); roof.className = 'color-roofColor';
+  roof.style.cssText = 'width:30px;height:22px;padding:0;border:0;background:none';
+  rl.appendChild(document.createTextNode('Roof')); rl.appendChild(roof); wrap.appendChild(rl);
   var sl = document.createElement('label'); sl.style.cssText = 'display:inline-flex;gap:4px;align-items:center'; sl.appendChild(document.createTextNode('Soffit'));
   var sel = document.createElement('select'); sel.className = 'color-soffit';
   [['match', 'Match walls'], ['trim', 'Match trim'], ['white', 'White'], ['black', 'Black'], ['cedar', 'Cedar']].forEach(function (o) {
@@ -1408,14 +1470,17 @@ function colorEditBlock(s, details) {
   var rr = plainBtn('Re-render in 3D'); rr.className += ' color-rerender';
   var st = document.createElement('span'); st.className = 'color-status'; st.style.cssText = 'font-size:12px;opacity:.85';
   save.addEventListener('click', function () {
-    var colors = { soffit: sel.value };
-    Object.keys(inputs).forEach(function (k) { colors[k] = intOfHex(inputs[k].value); });
-    /* A hand-picked hex is no longer the brand paint chip it was. */
-    var names = Object.assign({}, c.colorNames || {}), paint = {};
-    if (colors.sidingColor !== c.sidingColor) { names.siding = inputs.sidingColor.value.toUpperCase(); paint.siding = null; }
-    if (colors.trimColor !== c.trimColor) { names.trim = inputs.trimColor.value.toUpperCase(); paint.trim = null; }
-    if (colors.roofColor !== c.roofColor) names.roof = inputs.roofColor.value.toUpperCase();
-    colors.colorNames = names; if (Object.keys(paint).length) colors.paint = paint;
+    var colors = { soffit: sel.value }, paint = {}, names = {};
+    [['siding', 'sidingColor', siding.paintState], ['trim', 'trimColor', trim.paintState]].forEach(function (x) {
+      var stt = x[2]; if (!stt.changed || !stt.pick) return;
+      colors[x[1]] = CrmPaint.hexInt(stt.pick);
+      paint[x[0]] = { brand: stt.pick.brand, code: stt.pick.code, name: stt.pick.name, hex: stt.pick.hex };
+      names[x[0]] = CrmPaint.label(stt.pick);
+    });
+    var rc = intOfHex(roof.value);
+    if (rc !== Number(c.roofColor)) { colors.roofColor = rc; names.roof = roof.value.toUpperCase(); }
+    if (Object.keys(paint).length) colors.paint = paint;
+    if (Object.keys(names).length) colors.colorNames = names;
     save.disabled = true; st.textContent = 'Saving\u2026';
     authFetch('/admin/submissions/' + s.id + '/colors', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ colors: colors }) })
       .then(function (r) {
