@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "0082a73-dirty";
-const WORKER_BUILT_AT = "2026-10-12T21:21:05.883Z";
+const WORKER_BUILD = "8f04af1";
+const WORKER_BUILT_AT = "2026-10-12T22:28:56.483Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -7199,6 +7199,80 @@ function renderThumb(details) {
 
 // ---- end inlined dashboard.js ----
 
+// ---- inlined from worker/colors.js by build-bundle.mjs — do not edit below by hand ----
+/* COLOR-ONLY EDIT of a saved quote (Nando, 12 Oct 2026).
+   Changes the stored design's colours and its renders, and NOTHING else:
+   no re-price, the redline / quotedPrice / effective_price / adjustments are
+   left exactly as they are, so a staff override can never be dropped by it.
+   Colours are not priced (pricing.js never reads them), which is why this is
+   allowed even on an order with a deposit. Door colours are NOT editable
+   here: a roll-up door's colour changes its line name and upcharge. */
+const COLOR_KEYS = ["sidingColor", "trimColor", "roofColor"];
+const SOFFIT_VALUES = ["match", "trim", "white", "black", "cedar"];
+const PAINT_PARTS = ["siding", "trim"];
+const NAME_PARTS = ["siding", "trim", "roof"];
+
+function cleanStr(v, n) { return typeof v === "string" ? v.slice(0, n || 80) : null; }
+function cleanPaint(p) {
+  if (!p || typeof p !== "object") return null;
+  const o = {};
+  ["brand", "code", "name", "hex", "sheen"].forEach((k) => { const s = cleanStr(p[k]); if (s) o[k] = s; });
+  return Object.keys(o).length ? o : null;
+}
+
+/* Returns { error } or { config, changed } with only colour fields replaced. */
+function applyColorEdit(config, edit) {
+  if (!config || typeof config !== "object") return { error: "This quote has no saved design." };
+  if (!edit || typeof edit !== "object") return { error: "colors required" };
+  const allowed = new Set([...COLOR_KEYS, "soffit", "paint", "colorNames"]);
+  const extra = Object.keys(edit).filter((k) => !allowed.has(k));
+  if (extra.length) return { error: "Only colours can be changed here: " + extra.join(", ") };
+  const c = JSON.parse(JSON.stringify(config));
+  const changed = [];
+  for (const k of COLOR_KEYS) {
+    if (edit[k] === undefined) continue;
+    const v = Number(edit[k]);
+    if (!Number.isInteger(v) || v < 0 || v > 0xffffff) return { error: "Bad colour for " + k };
+    if (c[k] !== v) { c[k] = v; changed.push(k); }
+  }
+  if (edit.soffit !== undefined) {
+    if (!SOFFIT_VALUES.includes(edit.soffit)) return { error: "Bad soffit" };
+    if (c.soffit !== edit.soffit) { c.soffit = edit.soffit; changed.push("soffit"); }
+  }
+  if (edit.paint !== undefined) {
+    const p = Object.assign({}, c.paint || {});
+    for (const part of PAINT_PARTS) {
+      if (!(part in (edit.paint || {}))) continue;
+      const v = edit.paint[part] === null ? null : cleanPaint(edit.paint[part]);
+      if (v) p[part] = v; else delete p[part];
+    }
+    if (JSON.stringify(p) !== JSON.stringify(c.paint || {})) { if (Object.keys(p).length) c.paint = p; else delete c.paint; changed.push("paint"); }
+  }
+  if (edit.colorNames !== undefined) {
+    const n = Object.assign({}, c.colorNames || {});
+    for (const part of NAME_PARTS) { const s = cleanStr((edit.colorNames || {})[part], 120); if (s) n[part] = s; }
+    if (JSON.stringify(n) !== JSON.stringify(c.colorNames || {})) { c.colorNames = n; changed.push("colorNames"); }
+  }
+  /* Belt and braces: everything except colour fields must be byte-identical. */
+  const strip = (x) => { const y = Object.assign({}, x); [...allowed].forEach((k) => delete y[k]); return JSON.stringify(y); };
+  if (strip(c) !== strip(config)) return { error: "colour edit touched a non-colour field" };
+  return { config: c, changed };
+}
+
+/* The new details: config + renders (+ history entry). Pricing fields untouched. */
+function detailsWithColors(details, config, renders, at) {
+  const prev = { at, kind: "colors", config: details.config, renders: details.renders || null };
+  const history = Array.isArray(details.history) ? details.history.slice(-9) : [];
+  history.push(prev);
+  const next = Object.assign({}, details, { config, renders: renders || details.renders || null,
+    permalink: null, colorsUpdatedAt: at, history });
+  let text = JSON.stringify(next);
+  while (text.length > 20000 && next.history.length) { next.history.shift(); text = JSON.stringify(next); }
+  return text;
+}
+
+// ---- end inlined colors.js ----
+
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
 //  2. /admin/*          — password-gated dashboard for the shed company
@@ -10123,6 +10197,29 @@ function configWithoutAddon(config, key) {
   c.addons = Object.assign({}, c.addons || {});
   c.addons[key] = key === "cupola" ? "none" : false;
   return c;
+}
+
+/* POST /admin/submissions/:id/colors — { colors: {...}, renders?: [...] }
+   Colour-only edit (worker/colors.js): never re-prices, never touches the
+   adjustments or effective_price, and is allowed on orders with a deposit. */
+async function handleUpdateColors(request, env, origin, id) {
+  const row = await env.DB.prepare("SELECT id, customer_id, details FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  const body = await request.json().catch(() => ({}));
+  let details = {};
+  try { details = JSON.parse(row.details) || {}; } catch (e) {}
+  const res = applyColorEdit(details.config, body.colors);
+  if (res.error) return json({ error: res.error }, 400, origin);
+  const renders = body.renders ? await uploadRenders(env, body.renders) : null;
+  if (!res.changed.length && !renders) return json({ ok: true, id, changed: [] }, 200, origin);
+  const at = new Date().toISOString();
+  const text = detailsWithColors(details, res.config, renders, at);
+  await env.DB.prepare("UPDATE submissions SET details = ? WHERE id = ?").bind(text, id).run();
+  try {
+    await env.DB.prepare("INSERT INTO notes (customer_id, text, created_at) VALUES (?,?,?)")
+      .bind(row.customer_id, "Colours changed on quote #" + id + " (staff): " + (res.changed.join(", ") || "renders") + ". Price unchanged.", at).run();
+  } catch (e) {}
+  return json({ ok: true, id, changed: res.changed, renders: !!renders, quotedPrice: details.quotedPrice }, 200, origin);
 }
 
 async function handleUpdateDesign(request, env, origin, id) {
@@ -13194,6 +13291,12 @@ export default {
         const id = Number(path.slice("/admin/submissions/".length, -"/design-status".length));
         if (!id) return json({ error: "Invalid id" }, 400, origin);
         return await handleDesignStatus(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/colors") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/colors".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleUpdateColors(request, env, origin, id);
       }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/design") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
