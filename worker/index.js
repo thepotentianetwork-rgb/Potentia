@@ -2794,6 +2794,11 @@ async function ensureSubmissionAdjustColumns(env) {
   if (have.indexOf("effective_price") === -1) {
     await env.DB.prepare("ALTER TABLE submissions ADD COLUMN effective_price REAL").run();
   }
+  /* When the list was last saved, so "copy adjustments from the last quote"
+     can find the most recent one (additive column, null on older rows). */
+  if (have.indexOf("adjustments_updated_at") === -1) {
+    await env.DB.prepare("ALTER TABLE submissions ADD COLUMN adjustments_updated_at TEXT").run();
+  }
   submissionAdjustColumnsReady.add(binding);
 }
 
@@ -2812,6 +2817,140 @@ function adjustmentsOf(row) {
     return [{ kind: "amount", value: Number(row.price_adjustment), note: row.adjustment_note || null }];
   }
   return [];
+}
+
+/* GET /admin/adjustments/last?exclude=<id>
+   The most recently saved quote that HAS adjustments, by anyone, other than
+   the one being edited. "Last edited by anyone" would usually be the quote
+   just created, with nothing on it, so the button would copy nothing. Rows
+   saved before adjustments_updated_at existed fall back to newest id. */
+async function handleLastAdjustments(request, env, origin, url) {
+  await ensureSubmissionAdjustColumns(env);
+  const exclude = Number(url.searchParams.get("exclude")) || 0;
+  const { results } = await env.DB.prepare(
+    "SELECT s.id, s.customer_id, s.name, s.adjustments, s.price_adjustment, s.adjustment_note, s.adjustments_updated_at" +
+    " FROM submissions s WHERE s.id != ? AND ((s.adjustments IS NOT NULL AND s.adjustments != '[]') OR (s.price_adjustment IS NOT NULL AND s.price_adjustment != 0))" +
+    " ORDER BY (s.adjustments_updated_at IS NULL), s.adjustments_updated_at DESC, s.id DESC LIMIT 5"
+  ).bind(exclude).all();
+  for (const row of results || []) {
+    const list = adjustmentsOf(row);
+    if (list.length) {
+      return json({ source: { id: row.id, customer_id: row.customer_id, name: row.name, saved_at: row.adjustments_updated_at || null }, adjustments: list }, 200, origin);
+    }
+  }
+  return json({ source: null, adjustments: [] }, 200, origin);
+}
+
+/* Which saved adjustments name a line this quote no longer has. They stay
+   stored (and do nothing to the price, see applyAdjustments) so staff can
+   see them and decide; the CRM flags them. */
+function staleAdjustments(list, compItems) {
+  const names = {};
+  (compItems || []).forEach((i) => { names[i.name] = true; });
+  return (list || []).filter((a) => (a.kind === "comp" || a.kind === "override") && !names[a.item]);
+}
+
+/* An order with money against it is not re-priced from the designer
+   (Nando, 12 Oct 2026): a deposit was taken on a price, and changing the
+   design under it would leave the deposit, the invoices and the quote out
+   of step. Counted as money: a CRM payment on this order, a payment on the
+   customer not tied to any order (it cannot be ruled out as this one's), or a
+   paid invoice for this order. Tables that do not exist yet mean no money. */
+const DEPOSIT_LOCK_MSG = "This order has a deposit, so it can't be updated from the designer. Save as new quote instead.";
+async function orderHasDeposit(env, sub) {
+  try {
+    const p = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM payments WHERE amount > 0 AND (submission_id = ? OR (customer_id = ? AND submission_id IS NULL))"
+    ).bind(sub.id, sub.customer_id).first();
+    if (p && Number(p.n) > 0) return true;
+  } catch (e) {
+    try {
+      const p2 = await env.DB.prepare("SELECT COUNT(*) AS n FROM payments WHERE amount > 0 AND customer_id = ?").bind(sub.customer_id).first();
+      if (p2 && Number(p2.n) > 0) return true;
+    } catch (e2) {}
+  }
+  try {
+    const i = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM invoices WHERE submission_id = ? AND (status = 'paid' OR paid_at IS NOT NULL)"
+    ).bind(sub.id).first();
+    if (i && Number(i.n) > 0) return true;
+  } catch (e) {}
+  return false;
+}
+/* GET /admin/submissions/:id/design-status — staff only. Lets the designer
+   disable "Update this quote" before anyone presses it. */
+async function handleDesignStatus(request, env, origin, id) {
+  const row = await env.DB.prepare("SELECT id, customer_id FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  const locked = await orderHasDeposit(env, row);
+  return json({ id: id, locked: locked, reason: locked ? DEPOSIT_LOCK_MSG : null }, 200, origin);
+}
+
+/* POST /admin/submissions/:id/design — staff only.
+   "Update this quote" from the designer: the revised design is saved back
+   onto the SAME order instead of arriving as a new lead. Re-priced here from
+   the config (the browser's price is never trusted). Contact, address, geo,
+   status, notes, payments and adjustments are kept. Adjustments that point at
+   a line the new design no longer has are kept but reported as stale. The
+   previous design is pushed onto details.history and a CRM note is written,
+   so every change is on the record. */
+async function handleUpdateDesign(request, env, origin, id) {
+  await ensureSubmissionAdjustColumns(env);
+  const row = await env.DB.prepare(
+    "SELECT id, customer_id, details, status, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+  ).bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  if (await orderHasDeposit(env, row)) return json({ error: DEPOSIT_LOCK_MSG, locked: true }, 409, origin);
+  const body = await request.json().catch(() => ({}));
+  if (!body.config || typeof body.config !== "object") return json({ error: "config required" }, 400, origin);
+  let details = {};
+  try { details = JSON.parse(row.details) || {}; } catch (e) {}
+
+  let marginTarget = details.marginTarget != null ? details.marginTarget : null;
+  if (body.overrides && body.overrides.marginTarget != null) marginTarget = clampMarginTarget(body.overrides.marginTarget);
+  let result;
+  try {
+    ({ result } = await computeQuoteResult(body.config, marginTarget != null ? { marginTarget } : undefined, env));
+  } catch (e) {
+    return json({ error: "Could not price that design" }, 400, origin);
+  }
+
+  const prev = { at: new Date().toISOString(), config: details.config || null, permalink: details.permalink || null,
+                 quotedPrice: details.quotedPrice != null ? details.quotedPrice : null };
+  const history = Array.isArray(details.history) ? details.history.slice(-9) : [];
+  history.push(prev);
+  const renders = body.renders ? await uploadRenders(env, body.renders) : null;
+  const next = Object.assign({}, details, {
+    config: body.config,
+    permalink: body.permalink || details.permalink || null,
+    quotedPrice: result.customer,
+    marginTarget: marginTarget,
+    redline: result.redline,
+    renders: renders || details.renders || null,
+    designUpdatedAt: prev.at,
+    history: history
+  });
+  let text = JSON.stringify(next);
+  /* details is capped at 20000 like a submit; old history goes first. */
+  while (text.length > 20000 && next.history.length) { next.history.shift(); text = JSON.stringify(next); }
+  if (text.length > 20000) { next.renders = details.renders || null; text = JSON.stringify(next); }
+
+  const list = adjustmentsOf(row);
+  const compItems = compItemsFromRedline(result.redline);
+  const stale = staleAdjustments(list, compItems);
+  const effective = list.length ? applyAdjustments(result.customer, list, compItems).adjusted : null;
+  await env.DB.prepare("UPDATE submissions SET details = ?, effective_price = ? WHERE id = ?")
+    .bind(text, effective, id).run();
+
+  const money = (n) => (n == null ? "?" : "$" + Math.round(Number(n)).toLocaleString("en-US"));
+  const note = "Design updated from the designer (staff): quote " + money(prev.quotedPrice) + " \u2192 " + money(result.customer) +
+    (stale.length ? ". Adjustments no longer matching a line: " + stale.map((a) => a.item).join(", ") : "");
+  try {
+    await env.DB.prepare("INSERT INTO notes (customer_id, text, created_at) VALUES (?,?,?)")
+      .bind(row.customer_id, note, prev.at).run();
+  } catch (e) {}
+  return json({ ok: true, id: id, quotedPrice: result.customer, previousPrice: prev.quotedPrice,
+                effective_price: effective, stale: stale, compItems: compItems }, 200, origin);
 }
 
 // POST /admin/submissions/:id/adjustments — { adjustments: [...] }
@@ -2859,9 +2998,9 @@ async function handleSetAdjustments(request, env, origin, id) {
   }
 
   await env.DB.prepare(
-    "UPDATE submissions SET adjustments = ?, effective_price = ?, price_adjustment = NULL, adjustment_note = NULL WHERE id = ?"
+    "UPDATE submissions SET adjustments = ?, effective_price = ?, price_adjustment = NULL, adjustment_note = NULL, adjustments_updated_at = ? WHERE id = ?"
   )
-    .bind(v.list.length ? JSON.stringify(v.list) : null, effective, id)
+    .bind(v.list.length ? JSON.stringify(v.list) : null, effective, new Date().toISOString(), id)
     .run();
 
   return json({ ok: true, adjustments: v.list, effective_price: effective, compItems: compItems }, 200, origin);
@@ -5775,6 +5914,22 @@ export default {
         return await handleDeleteCustomer(request, env, origin, id);
       }
 
+      if (path === "/admin/adjustments/last" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleLastAdjustments(request, env, origin, url);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/design-status") && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/design-status".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleDesignStatus(request, env, origin, id);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/design") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/design".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        return await handleUpdateDesign(request, env, origin, id);
+      }
       if (path.startsWith("/admin/submissions/") && path.endsWith("/adjustments") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const id = Number(path.slice("/admin/submissions/".length, -"/adjustments".length));

@@ -533,20 +533,28 @@ function renderPhoneCell(el, phone) {
   el.appendChild(wrap);
 }
 
-function appendContactParams(permalink, submission, details) {
+function appendContactParams(permalink, submission, details, staffOrder) {
+  /* The order's own contact first, then the customer record, so an order
+     row without them still opens the designer filled in. */
+  var cr = (typeof CUSTOMER_REC !== 'undefined' && CUSTOMER_REC) || {};
   var fields = {
-    name: submission.name || '',
-    email: submission.email || '',
-    phone: submission.phone || '',
-    address: details.address || '',
-    city: details.city || '',
-    state: details.state || '',
-    zip: details.zip || ''
+    name: submission.name || cr.name || '',
+    email: submission.email || cr.email || '',
+    phone: submission.phone || cr.phone || '',
+    address: details.address || cr.address || '',
+    city: details.city || cr.city || '',
+    state: details.state || cr.state || '',
+    zip: details.zip || cr.zip || '',
+    notes: details.notes || ''
   };
   var qs = Object.keys(fields)
     .filter(function (k) { return fields[k]; })
     .map(function (k) { return 'prefill_' + k + '=' + encodeURIComponent(fields[k]); })
     .join('&');
+  /* The order id lets staff "Update this quote" from the designer. It is not
+     a secret: the designer still needs a staff login, and the worker checks
+     the token on every update (POST /admin/submissions/:id/design). */
+  if (staffOrder && submission.id) qs += (qs ? '&' : '') + 'crm_order=' + encodeURIComponent(submission.id);
   if (!qs) return permalink;
   var hashIdx = permalink.indexOf('#');
   var base = hashIdx === -1 ? permalink : permalink.slice(0, hashIdx);
@@ -1231,6 +1239,92 @@ function renderConcreteScopeBlock(card, s, details) {
   card.appendChild(wrap);
 }
 
+/* ---- COPY ADJUSTMENTS FROM THE LAST QUOTE (Nando, 12 Oct 2026) ----
+   Source: the most recently saved quote that HAS adjustments, by anyone
+   (GET /admin/adjustments/last). Lines are matched by name, the same key the
+   comp and price pickers use. Anything naming a line this quote does not
+   have is skipped and listed. Nothing here re-implements a pricing rule: the
+   copied entries are the same objects the form would have made, so a raised
+   price still shows only the new price, a lowered one still becomes a
+   discount line with its reason, and the pad promo still comes off a typed
+   pad price, all decided by the worker as before. */
+function planAdjustmentCopy(source, current, compItems) {
+  var names = {};
+  (compItems || []).forEach(function (i) { names[i.name] = true; });
+  var cur = current || [];
+  var has = function (pred) { return cur.some(pred); };
+  var apply = [], skipped = [];
+  (source || []).forEach(function (a) {
+    if (!a || !a.kind) return;
+    var key = JSON.stringify(a);
+    if (a.kind === 'comp' || a.kind === 'override') {
+      if (!names[a.item]) { skipped.push({ a: a, why: 'not on this quote' }); return; }
+      if (has(function (x) { return (x.kind === 'comp' || x.kind === 'override') && x.item === a.item; })
+          || apply.some(function (x) { return (x.kind === 'comp' || x.kind === 'override') && x.item === a.item; })) {
+        skipped.push({ a: a, why: 'already adjusted here' }); return;
+      }
+    } else if (a.kind === 'travel') {
+      if (has(function (x) { return x.kind === 'travel'; })) { skipped.push({ a: a, why: 'this quote already has travel' }); return; }
+    }
+    if (has(function (x) { return JSON.stringify(x) === key; })) { skipped.push({ a: a, why: 'already on this quote' }); return; }
+    apply.push(a);
+  });
+  return { apply: apply, skipped: skipped, next: cur.concat(apply).slice(0, 20) };
+}
+function adjPlainText(a) {
+  var t = a.kind === 'comp' ? 'Free: ' + a.item
+    : a.kind === 'override' ? 'Price: ' + a.item + ' \u2192 $' + fmtN(a.amount)
+    : a.kind === 'travel' ? travelText(a)
+    : a.kind === 'percent' ? Math.abs(a.value) + '% ' + (a.value < 0 ? 'off' : 'added')
+    : (a.value < 0 ? '\u2212$' : '+$') + fmtN(Math.abs(a.value));
+  return t + (a.note && a.kind !== 'comp' ? ' (' + a.note + ')' : '');
+}
+function copyAdjustmentsButton(s, list) {
+  var wrap = document.createElement('div');
+  wrap.className = 'adj-copy';
+  wrap.style.cssText = 'display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 8px';
+  var b = document.createElement('button');
+  b.type = 'button'; b.className = 'ghost'; b.textContent = 'Copy adjustments from last quote';
+  var st = document.createElement('span'); st.style.cssText = 'font-size:12px;opacity:.8';
+  b.addEventListener('click', function () {
+    b.disabled = true; st.textContent = 'Looking\u2026';
+    authFetch('/admin/adjustments/last?exclude=' + s.id).then(function (r) {
+      b.disabled = false; st.textContent = '';
+      var src = r.ok && r.data ? r.data : null;
+      if (!src || !src.source || !(src.adjustments || []).length) { st.textContent = 'No other quote has adjustments yet.'; return; }
+      var plan = planAdjustmentCopy(src.adjustments, list, s.comp_items);
+      var from = 'Quote #' + src.source.id + ' (' + (src.source.name || 'customer') + ')' +
+        (src.source.saved_at ? ', saved ' + new Date(src.source.saved_at).toLocaleString() : '');
+      var msg = 'Copy adjustments from ' + from + '\n\n' +
+        (plan.apply.length ? 'Will add:\n' + plan.apply.map(function (a) { return '  \u2022 ' + adjPlainText(a); }).join('\n') : 'Nothing to add.') +
+        (plan.skipped.length ? '\n\nSkipped:\n' + plan.skipped.map(function (x) { return '  \u2022 ' + adjPlainText(x.a) + ' \u2014 ' + x.why; }).join('\n') : '') +
+        (plan.apply.length ? '\n\nYou can undo this with \u201cUndo copy\u201d.' : '');
+      if (!plan.apply.length) { alert(msg); return; }
+      if (!window.confirm(msg)) return;
+      try { sessionStorage.setItem('adjUndo:' + s.id, JSON.stringify({ prev: list, skipped: plan.skipped.length, from: src.source.id })); } catch (e) {}
+      saveAdjustments(s.id, plan.next);
+    });
+  });
+  wrap.appendChild(b);
+  var undo = null;
+  try { undo = JSON.parse(sessionStorage.getItem('adjUndo:' + s.id) || 'null'); } catch (e) {}
+  if (undo) {
+    var u = document.createElement('button');
+    u.type = 'button'; u.className = 'ghost adj-undo'; u.textContent = 'Undo copy';
+    u.addEventListener('click', function () {
+      try { sessionStorage.removeItem('adjUndo:' + s.id); } catch (e) {}
+      saveAdjustments(s.id, undo.prev || []);
+    });
+    var x = document.createElement('button');
+    x.type = 'button'; x.className = 'ghost'; x.textContent = 'Keep';
+    x.addEventListener('click', function () { try { sessionStorage.removeItem('adjUndo:' + s.id); } catch (e) {} wrap.removeChild(u); wrap.removeChild(x); st.textContent = ''; });
+    st.textContent = 'Copied from quote #' + undo.from + (undo.skipped ? ' (' + undo.skipped + ' skipped)' : '') + '.';
+    wrap.appendChild(u); wrap.appendChild(x);
+  }
+  wrap.appendChild(st);
+  return wrap;
+}
+
 function renderAdjustBlock(card, s, details) {
   var quoted = details.quotedPrice != null ? Number(details.quotedPrice) : null;
   var list = Array.isArray(s.adjustment_list) ? s.adjustment_list.slice() : [];
@@ -1244,6 +1338,7 @@ function renderAdjustBlock(card, s, details) {
   label.className = 'adj-label';
   label.textContent = 'Adjustments';
   block.appendChild(label);
+  block.appendChild(copyAdjustmentsButton(s, list));
 
   // Current list, each removable on its own — so taking back one comp doesn't
   // mean re-entering the percentage that went with it.
@@ -1268,6 +1363,13 @@ function renderAdjustBlock(card, s, details) {
       note.className = 'adj-note-shown';
       if (a.note && a.kind !== 'comp') note.textContent = a.note;
       if (a.kind === 'travel') note.textContent = (a.note ? a.note + ' \u00b7 ' : '') + 'in the Shed phase, taxed with it';
+      /* After a design update a line can disappear; the adjustment stays
+         stored but does nothing, so say so instead of showing it as live. */
+      if ((a.kind === 'comp' || a.kind === 'override') && compPrices[a.item] == null) {
+        row.classList.add('adj-stale');
+        note.textContent = '\u26a0 no longer on this quote \u2014 has no effect; remove or re-add';
+        note.style.color = '#f5a524';
+      }
       var del = document.createElement('button');
       del.type = 'button';
       del.className = 'adj-clear';
@@ -2683,7 +2785,7 @@ function renderOrders(submissions, installs) {
     if (designUrl) {
       var designLink = document.createElement('a');
       designLink.className = 'order-link';
-      designLink.href = appendContactParams(designUrl, s, details);
+      designLink.href = appendContactParams(designUrl, s, details, true);
       designLink.target = '_blank';
       designLink.rel = 'noopener';
       designLink.textContent = 'View 3D Design ↗';
@@ -3049,6 +3151,7 @@ function paymentEditor(p) {
 }
 
 var CUSTOMER_NAME = '';
+var CUSTOMER_REC = null;
 var CUSTOMER_EMAIL = '';
 
 function el(id) { return document.getElementById(id); }
@@ -3214,6 +3317,7 @@ function loadCustomer() {
       return;
     }
     var c = r.data.customer;
+    CUSTOMER_REC = c;
     CUSTOMER_NAME = c.name || '';
     CUSTOMER_EMAIL = c.email || '';
     document.getElementById('customer-name').textContent = c.name || 'Unnamed customer';
