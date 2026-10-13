@@ -60,7 +60,8 @@ test('ridge vent: $15 x the ridge (shed length), on barns too, never on a lean-t
 
 test('the standard text says exactly what Nando said, and nothing more', async () => {
   const { CONCRETE_SCOPE_DEFAULT: t } = await import('./pricing.js');
-  for (const must of [/grub, level and grade/, /excessive vegetation/, /outside this scope, is billed separately/, /3\/4" compacted gravel/, /4,000 PSI/, /slightly raised/, /runoff/])
+  for (const must of [/grub, level and grade/, /excessive vegetation/, /outside this scope, is billed separately/, /3\/4" compacted gravel/, /4,000 PSI/, /slightly raised/, /runoff/, /4" thick slab/, /wire mesh/, /control joints/, /Vapor barrier: not included; available as an add-on/])
     assert.match(t, must);
-  assert.doesNotMatch(t, /rebar|warrant|thick|inch slab|4" slab/i);
+  assert.doesNotMatch(t, /rebar|warrant|inch slab/i);
+  assert.doesNotMatch(t.replace(/Vapor barrier: not included; available as an add-on\./,''), /vapor/i, 'vapor barrier is an add-on, not standard');
 });

@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "d80d71a";
-const WORKER_BUILT_AT = "2026-10-13T23:26:24.295Z";
+const WORKER_BUILD = "b777620";
+const WORKER_BUILT_AT = "2026-10-13T23:28:34.423Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -25,7 +25,9 @@ const WORKER_BUILT_AT = "2026-10-13T23:26:24.295Z";
    to exact. Prices below are HD baseline (national shelf, Jul 2026) — treat
    as placeholders until replaced with your real Logan/Pro numbers.
    ═══════════════════════════════════════════════════════════════════════ */
-const CONCRETE_SCOPE_DEFAULT = "Site preparation (included): we grub, level and grade the area where the pad will be placed.\nAdditional work: clearing of excessive vegetation, or any work outside this scope, is billed separately.\nBase: 3/4\" compacted gravel beneath the concrete.\nConcrete: 4,000 PSI mix.\nDrainage: the pad is poured slightly raised above the surrounding ground so runoff does not flow straight toward the shed.";
+/* Nando, 13 Oct 2026: wire mesh + control joints are standard; a vapor
+   barrier is an extra, never part of the standard scope. */
+const CONCRETE_SCOPE_DEFAULT = "Site preparation (included): we grub, level and grade the area where the pad will be placed.\nAdditional work: clearing of excessive vegetation, or any work outside this scope, is billed separately.\nBase: 3/4\" compacted gravel beneath the concrete.\nConcrete: 4\" thick slab, 4,000 PSI mix, reinforced with wire mesh, with control joints.\nVapor barrier: not included; available as an add-on.\nDrainage: the pad is poured slightly raised above the surrounding ground so runoff does not flow straight toward the shed.";
 
 let COST = {
   // Metal roofing — CONFIRMED: Metal Mart $1.00 / sq ft (replaces shingles+felt)
