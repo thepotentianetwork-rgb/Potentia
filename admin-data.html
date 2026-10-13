@@ -539,6 +539,10 @@ authFetch('/admin/analytics').then(function (r) {
   document.getElementById('st-total').textContent = d.totalSubmissions != null ? d.totalSubmissions : '—';
   document.getElementById('st-customers').textContent = d.totalCustomers != null ? d.totalCustomers : '—';
   document.getElementById('st-avg').textContent = money(d.avgPrice);
+  /* Quoted customers only, one price each (chosen > won > latest sent quote). */
+  var avgTile = document.getElementById('st-avg');
+  if (avgTile) avgTile.title = (d.quotedCustomers != null ? d.quotedCustomers + ' quoted customers' : '') +
+    (d.avgPriceAllSubmissions != null ? ' \u00b7 all designer submissions: ' + money(d.avgPriceAllSubmissions) : '');
   document.getElementById('st-median').textContent = money(d.medianPrice);
 
   renderWon(d.won);

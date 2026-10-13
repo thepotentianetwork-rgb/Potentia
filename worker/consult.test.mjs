@@ -120,9 +120,11 @@ check("address was recorded", row(alexId).address==="1 Main St", row(alexId).add
 await call("POST","/shed/consult",{name:"Alex",phone:"4355550505"});
 check("  and survives a later consult", row(alexId).address==="1 Main St", row(alexId).address);
 check("  as does the city", row(alexId).city==="Cedar City", row(alexId).city);
-check("a present value still overwrites",
+/* 13 Oct 2026: public submits only FILL blanks; a value on file is never
+   replaced by whatever someone typed (anyone can type a customer's phone). */
+check("a present value is NOT overwritten by a public consult",
   (await call("POST","/shed/consult",{name:"Alexandra",phone:"4355550505"})).status===200 &&
-  row(alexId).name==="Alexandra", row(alexId).name);
+  row(alexId).name==="Alex", row(alexId).name);
 
 console.log("\n-- the admin list can tell the two apart --");
 const tok=(await call("POST","/admin/login",{password:"pw"})).data.token;

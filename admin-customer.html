@@ -2828,6 +2828,25 @@ function renderOrders(submissions, installs) {
     var date = document.createElement('div');
     date.className = 'order-date';
     date.textContent = new Date(s.created_at).toLocaleString();
+    // QUOTE HISTORY: every submission is its own quote, kept as it was sent.
+    // Number them oldest = 1 so staff can say "they went back to quote 2".
+    var qNum = submissions.length - submissions.indexOf(s);
+    var qLabel = document.createElement('span');
+    qLabel.className = 'quote-num';
+    qLabel.style.cssText = "font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--dim);margin-right:8px";
+    qLabel.textContent = 'Quote ' + qNum + ' of ' + submissions.length + ' \u00b7 #' + s.id +
+      (details.resubmitOf ? ' \u00b7 resubmit of #' + details.resubmitOf : '');
+    date.insertBefore(qLabel, date.firstChild);
+    if (s.chosen_at) {
+      card.classList.add('order-chosen');
+      card.style.boxShadow = '0 0 0 2px var(--accent, #c8a24a)';
+      var chosenTag = document.createElement('span');
+      chosenTag.className = 'chosen-badge';
+      chosenTag.style.cssText = "display:inline-block;margin-left:8px;padding:2px 8px;border-radius:10px;background:var(--accent,#c8a24a);color:#111;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase";
+      chosenTag.textContent = '\u2605 Chosen quote';
+      chosenTag.title = 'Marked chosen ' + new Date(s.chosen_at).toLocaleString();
+      date.appendChild(chosenTag);
+    }
     var price = document.createElement('div');
     price.className = 'order-price';
     if (details.quotedPrice != null) {
@@ -2893,6 +2912,27 @@ function renderOrders(submissions, installs) {
 
     var actions = document.createElement('div');
     actions.className = 'order-actions';
+
+    // Pick which quote the customer is going with — an older one is fine.
+    // Only chosen_at (and superseded -> quoted) changes; prices never do.
+    var chooseBtn = document.createElement('button');
+    chooseBtn.type = 'button';
+    chooseBtn.className = 'sep-btn choose-btn';
+    chooseBtn.textContent = s.chosen_at ? 'Unmark chosen' : 'Mark as chosen \u2605';
+    chooseBtn.title = s.chosen_at ? 'Stop treating this as the accepted quote.' :
+      'This is the quote the customer is going with. Clears the mark on their other quotes. Prices are not changed.';
+    chooseBtn.addEventListener('click', function () {
+      chooseBtn.disabled = true;
+      authFetch('/admin/submissions/' + s.id + '/choose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chosen: !s.chosen_at })
+      }).then(function (r) {
+        chooseBtn.disabled = false;
+        if (r.ok) loadCustomer();
+      });
+    });
+    actions.appendChild(chooseBtn);
 
     if (s.status === 'superseded') {
       // Auto-replaced by a newer submission from this same customer. That is
