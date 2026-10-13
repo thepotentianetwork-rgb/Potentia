@@ -86,9 +86,12 @@ const a=(await call("GET","/admin/analytics",null,tok)).data;
 console.log("\n-- one customer, one price --");
 /* Per submission it would be (8+12+30+30+50)/5 = 26,000.
    Per customer it is (20,000 + 50,000)/2 = 35,000. */
-check("avg price averages CUSTOMERS, not submissions", a.avgPrice===35000, a.avgPrice);
+/* Since 13 Oct 2026 avgPrice/medianPrice count only customers we QUOTED (see
+   quotehistory.test.mjs); these two never got a quote, so the per-customer
+   mean over all designer submissions now lives in avgPriceAllSubmissions. */
+check("all-submissions avg averages CUSTOMERS, not submissions", a.avgPriceAllSubmissions===35000, a.avgPriceAllSubmissions);
 check("two priced data points, not five", a.pricedCount===2, a.pricedCount);
-check("median is over the two customers", a.medianPrice===50000, a.medianPrice);
+check("quoted-only avg is empty: nobody here was quoted", a.avgPrice===null && a.quotedCustomers===0, [a.avgPrice,a.quotedCustomers]);
 
 console.log("\n-- what they want comes from their newest --");
 /* Per submission: gable 3, leanto 1, barn 1 — gable looks dominant because

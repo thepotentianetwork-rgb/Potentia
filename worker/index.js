@@ -20,6 +20,7 @@
 
 import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor } from "./pricing.js";
 import { applyColorEdit, detailsWithColors } from "./colors.js";
+import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.js";
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
@@ -424,17 +425,19 @@ async function findOrCreateCustomer(env, { name, email, phone, address, city, st
     existing = await env.DB.prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1").bind(phone).first();
   }
   if (existing) {
-    // COALESCE(NULLIF(?, ''), col) — a blank field in this submission must not
-    // erase what we already know. Every column here used to be overwritten
-    // unconditionally, so a customer who left the address off their second
-    // design lost the address from their first, and a consult request (phone
-    // required, email optional) that matched an existing customer by phone
-    // would blank out their email. Absent stays absent; present always wins.
+    /* FILL BLANKS ONLY (Nando, 13 Oct 2026). Both callers are PUBLIC and
+       unauthenticated (/shed/submit, /shed/consult), and the match is on an
+       email or phone anyone can type. Overwriting here let anybody who knew a
+       customer's email replace that customer's phone, address and name on
+       their profile. Now a resubmit only fills fields we do not have yet; what
+       they typed is still kept on the new submission row itself (name, email,
+       phone, details.address...), so nothing is lost and staff can copy a
+       genuinely new address across. */
     await env.DB.prepare(
-      "UPDATE customers SET name = COALESCE(NULLIF(?, ''), name), email = COALESCE(NULLIF(?, ''), email), " +
-        "phone = COALESCE(NULLIF(?, ''), phone), address = COALESCE(NULLIF(?, ''), address), " +
-        "city = COALESCE(NULLIF(?, ''), city), state = COALESCE(NULLIF(?, ''), state), " +
-        "zip = COALESCE(NULLIF(?, ''), zip), updated_at = ? WHERE id = ?"
+      "UPDATE customers SET name = COALESCE(NULLIF(name, ''), NULLIF(?, '')), email = COALESCE(NULLIF(email, ''), NULLIF(?, '')), " +
+        "phone = COALESCE(NULLIF(phone, ''), NULLIF(?, '')), address = COALESCE(NULLIF(address, ''), NULLIF(?, '')), " +
+        "city = COALESCE(NULLIF(city, ''), NULLIF(?, '')), state = COALESCE(NULLIF(state, ''), NULLIF(?, '')), " +
+        "zip = COALESCE(NULLIF(zip, ''), NULLIF(?, '')), updated_at = ? WHERE id = ?"
     )
       .bind(name || null, email || null, phone || null, address || null, city || null, state || null, zip || null, now, existing.id)
       .run();
@@ -725,8 +728,9 @@ async function handleGetCustomer(request, env, origin, id) {
   if (!customer) return json({ error: "Not found" }, 404, origin);
 
   await ensureSubmissionAdjustColumns(env);
+  try { await ensureChosenColumn(env); } catch (e) {}
   const { results: submissions } = await env.DB.prepare(
-    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price" +
+    "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price, chosen_at" +
     ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
@@ -3409,6 +3413,18 @@ async function handleShedSubmit(request, env, origin) {
     } catch (e) {}
   }
 
+  /* A resubmit from a design link (resubmitOf = the order it was opened
+     from) is linked to that order ONLY when the order already belongs to this
+     same customer; otherwise the hint is dropped. Either way it is a brand
+     new quote row: the older quote is never rewritten. */
+  const resubmitOf = Number(body.resubmitOf);
+  if (Number.isInteger(resubmitOf) && resubmitOf > 0) {
+    const prior = await env.DB.prepare("SELECT customer_id FROM submissions WHERE id = ?").bind(resubmitOf).first();
+    if (prior && prior.customer_id === customerId) {
+      try { const dp = JSON.parse(details); dp.resubmitOf = resubmitOf; details = JSON.stringify(dp).slice(0, 20000); } catch (e) {}
+    }
+  }
+
   await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
     .bind(customerId)
     .run();
@@ -3507,7 +3523,7 @@ async function handleAnalytics(request, env, origin) {
   await ensureSubmissionWonColumn(env);
   await ensureSubmissionAdjustColumns(env);
   const { results } = await env.DB.prepare(
-    "SELECT id, customer_id, details, status, created_at, won_at, price_adjustment, effective_price FROM submissions ORDER BY created_at DESC LIMIT 3000"
+    "SELECT * FROM submissions ORDER BY created_at DESC LIMIT 3000"
   ).all();
 
   // ---- install state of won jobs ----
@@ -3572,6 +3588,7 @@ async function handleAnalytics(request, env, origin) {
      Won and lost deliberately stay per submission further down. Those are
      jobs with money attached, and averaging a sale would misreport revenue. */
   const perCustomer = new Map();
+  const quotedRows = [];
   const sizeCounts = {};
   const heardCounts = {};
 
@@ -3604,6 +3621,7 @@ async function handleAnalytics(request, env, origin) {
         price = rawPrice + (isFinite(legacy) ? legacy : 0);
       }
       const adjust = (price != null && rawPrice != null && isFinite(rawPrice)) ? price - rawPrice : 0;
+      quotedRows.push({ id: row.id, customer_id: row.customer_id, status, created_at: row.created_at, chosen_at: row.chosen_at || null, price });
 
       /* results is ordered created_at DESC, so the FIRST row seen for a
          customer is their most recent one. A row with no customer_id (older
@@ -3701,9 +3719,14 @@ async function handleAnalytics(request, env, origin) {
     }
   }
 
+  /* Avg/median quoted price: only customers ShedPro actually quoted, one
+     price each (chosen > won > latest sent quote) — see quotedAverage. The
+     old all-submissions figure stays available as avgPriceAllSubmissions. */
   prices.sort((a, b) => a - b);
-  const avgPrice = prices.length ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : null;
-  const medianPrice = prices.length ? prices[Math.floor(prices.length / 2)] : null;
+  const avgPriceAllSubmissions = prices.length ? Math.round(prices.reduce((a, b) => a + b, 0) / prices.length) : null;
+  const qa = quotedAverage(quotedRows);
+  const avgPrice = qa.avg;
+  const medianPrice = qa.median;
 
   const custRow = await env.DB.prepare("SELECT COUNT(*) AS n FROM customers").first();
   // Superseded rows are earlier, never-actioned resubmissions from the same
@@ -3776,6 +3799,8 @@ async function handleAnalytics(request, env, origin) {
       sizeCounts,
       heardCounts,
       avgPrice,
+      avgPriceAllSubmissions,
+      quotedCustomers: qa.count,
       medianPrice,
       pricedCount: prices.length,
       points
@@ -5871,6 +5896,13 @@ export default {
       if (path === "/admin/customers" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleListCustomers(request, env, origin);
+      }
+      if (path.startsWith("/admin/submissions/") && path.endsWith("/choose") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const id = Number(path.slice("/admin/submissions/".length, -"/choose".length));
+        if (!id) return json({ error: "Invalid id" }, 400, origin);
+        const r = await chooseQuote(env, id, await request.json().catch(() => ({})));
+        return json(r.body, r.status, origin);
       }
       if (path.startsWith("/admin/notes/") && (request.method === "POST" || request.method === "DELETE")) {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
