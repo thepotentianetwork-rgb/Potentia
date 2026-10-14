@@ -16,6 +16,7 @@ import { quoteLines, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure 
 import { balanceSummary, phaseStatus, cashDiscountCents, manualDiscountCents, paidDiscountCents,
          addCashDiscount, buildInvoice, creditCentsOf } from './invoices.js';
 import worker from './index.js';
+const TEST_DUE = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);  // deposits need a due date when no start is booked
 
 const c = (n) => Math.round(Number(n) * 100);          // dollars -> cents
 const CFG = { style: 'gable', w: 10, l: 16, h: 9, foundation: 'pad', foundationFinish: 'coated', intFinish: 'painted' };
@@ -199,7 +200,7 @@ test('regular-price job, ACH bill (default): discount line, ACH only, sums exact
   const { env } = setup(OFF);       // the BUILD decides, not today's switch
   const t = await token(env); const s = stubStripe();
   try {
-    const p = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', preview: true }, t);
+    const p = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', due_date: TEST_DUE, preview: true }, t);
     assert.equal(s.calls.length, 0, 'preview never calls Stripe');
     assert.equal(p.data.pay_by, 'bank');
     assert.deepEqual(p.data.payment_methods, ['us_bank_account']);
@@ -217,7 +218,7 @@ test('regular-price job, card bill: regular price, card only, no discount line, 
   const { env, db } = setup(OFF);
   const t = await token(env); const s = stubStripe();
   try {
-    const r = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', pay_by: 'card' }, t);
+    const r = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', due_date: TEST_DUE, pay_by: 'card' }, t);
     assert.equal(r.status, 200, JSON.stringify(r.data));
     assert.equal(c(r.data.amount), c(BD.depositTotal));
     const inv = s.calls.find((x) => x.path === '/v1/invoices');
@@ -233,7 +234,7 @@ test('regular-price job, card bill: regular price, card only, no discount line, 
 test('ACH deposit paid: money as billed, discount booked beside it, deposit fully covered', async () => {
   const { env, db } = setup(OFF);
   const t = await token(env);
-  const { r } = await sendAndPay(env, db, t, { submission_id: 8, kind: 'deposit', pay_by: 'bank' });
+  const { r } = await sendAndPay(env, db, t, { submission_id: 8, kind: 'deposit', due_date: TEST_DUE, pay_by: 'bank' });
   const [p] = pays(db, 8);
   assert.equal(c(p.amount), c(r.data.amount));
   assert.equal(c(p.discount_amount), c(r.data.cash_discount.discount));
@@ -252,7 +253,7 @@ test('a part-paid ACH bill earns that share of the discount', async () => {
   const { env, db } = setup(OFF);
   const t = await token(env);
   let s = stubStripe(); let r;
-  try { r = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', pay_by: 'bank' }, t); } finally { s.restore(); }
+  try { r = await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', due_date: TEST_DUE, pay_by: 'bank' }, t); } finally { s.restore(); }
   const billed = c(r.data.amount); PAID = Math.round(billed / 2);
   const row = db.prepare('SELECT id, discount_cents FROM invoices').get();
   s = stubStripe();

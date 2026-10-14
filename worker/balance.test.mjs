@@ -17,6 +17,7 @@ import { computePricing } from './pricing.js';
 import { quoteLines } from './quotelines.js';
 import { buildInvoice, balanceSummary, toCents } from './invoices.js';
 import worker from './index.js';
+const TEST_DUE = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);  // deposits need a due date when no start is booked
 
 const { redline } = computePricing({ style: 'gable', w: 10, l: 16, h: 9,
   foundation: 'pad', foundationFinish: 'coated', intFinish: 'painted' });
@@ -174,7 +175,7 @@ test('marking an outside payment lowers the balance and the Stripe preview', asy
 
   const s = stubStripe();
   const bal = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
-  const dep = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true }, t);
+  const dep = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE, preview: true }, t);
   s.restore();
   assert.equal(s.calls.length, 0, 'previews never reach Stripe');
   assert.equal(c(bal.data.amount), JOB - 96525, 'Stripe would be asked for total minus the deposit');
@@ -247,7 +248,7 @@ test('a covered job gets no Stripe bill, with a code the CRM can show as "Paid i
   assert.equal(b.balance_due, 0);
   const s = stubStripe();
   const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance' }, t);
-  const d = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const d = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.equal(r.status, 400);
   assert.equal(r.data.code, 'paid_in_full');
@@ -260,7 +261,7 @@ test('a Stripe payment already received is not counted twice', async () => {
   const t = await token(env);
   /* A deposit sent through the CRM and paid — the webhook path, via Check Stripe. */
   let s = stubStripe();
-  const sent = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const sent = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.equal(sent.status, 200);
   const orig = globalThis.fetch;
@@ -279,7 +280,7 @@ test('an open Stripe invoice is listed but not subtracted', async () => {
   const { env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   const b = await build7(env, t);
   assert.equal(c(b.balance_due), JOB, 'money not yet received is not taken off');

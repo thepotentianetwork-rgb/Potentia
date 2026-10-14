@@ -77,7 +77,7 @@ test('a preview prices the invoice without touching Stripe', async () => {
   const { env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE, preview: true }, t);
   s.restore();
   assert.equal(r.status, 200);
   assert.equal(r.data.preview, true);
@@ -89,7 +89,7 @@ test('sending records what went out, with the link to it', async () => {
   const { db, env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.hosted_url, 'https://pay.stripe/x');
@@ -104,12 +104,12 @@ test('the Stripe customer is stored, so a second invoice does not create another
   const { db, env } = setup();
   const t = await token(env);
   let s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.equal(db.prepare('SELECT stripe_customer_id FROM customers WHERE id=1').get().stripe_customer_id, 'cus_new');
 
   s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.ok(!s.calls.some((c) => c.path === '/v1/customers'), 'it created a duplicate customer');
 });
@@ -118,11 +118,11 @@ test('a second invoice of the same kind is refused until the first is voided', a
   const { env } = setup();
   const t = await token(env);
   let s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
 
   s = stubStripe();
-  const again = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const again = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.equal(again.status, 409, 'a double send should be refused');
   assert.match(again.data.error, /already exists/);
@@ -163,7 +163,7 @@ test('voiding clears it here and in Stripe', async () => {
   const { db, env } = setup();
   const t = await token(env);
   let s = stubStripe();
-  const made = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const made = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
 
   s = stubStripe();
@@ -178,7 +178,7 @@ test('a paid invoice is not voidable — that would be a refund', async () => {
   const { db, env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  const made = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const made = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   db.prepare("UPDATE invoices SET status='paid' WHERE id=?").run(made.data.id);
 
@@ -192,7 +192,7 @@ test('a Stripe refusal is reported, and nothing is recorded as sent', async () =
   const t = await token(env);
   const s = stubStripe({ '/v1/invoices': { ok: false, status: 400,
     json: async () => ({ error: { message: 'Customer has no payment method.' } }) } });
-  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.equal(r.status, 502);
   assert.match(r.data.error, /no payment method/);
@@ -213,7 +213,7 @@ test('the list shows what was billed and links back to each one', async () => {
   const { env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   const r = await api(env, 'GET', '/admin/customers/1/invoices', null, t);
   assert.equal(r.status, 200);
@@ -318,6 +318,7 @@ test('the payments list carries the build, so the page can show it', async () =>
  * event does to the database.
  */
 import { computeSignature } from './stripewebhook.js';
+const TEST_DUE = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);  // deposits need a due date when no start is booked
 
 const WH_SECRET = 'whsec_test_secret';
 
@@ -342,7 +343,7 @@ const paidEvent = (stripeId, cents) => ({
 
 async function issued(env, t, kind = 'deposit', submission = 7) {
   const s = stubStripe();
-  const r = await api(env, 'POST', '/admin/invoices', { submission_id: submission, kind }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: submission, kind, ...(kind === 'deposit' ? { due_date: TEST_DUE } : {}) }, t);
   s.restore();
   return r;
 }
@@ -449,7 +450,7 @@ test('an unpaid invoice on the same shed is called out on the next one', async (
   const { env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
   s.restore();
   const warn = (r.data.warnings || []).find((w) => w.code === 'unpaid_invoice');
@@ -465,7 +466,7 @@ test('a PAID deposit is credited instead of warned about', async () => {
   const { db, env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   db.prepare("UPDATE invoices SET status = 'paid' WHERE kind = 'deposit'").run();
   const inv = db.prepare("SELECT amount FROM invoices WHERE kind = 'deposit'").get();
   db.prepare(`INSERT INTO payments (customer_id, amount, method, note, paid_at, created_at, submission_id)
@@ -483,7 +484,7 @@ test('a VOIDED invoice is neither credited nor warned about', async () => {
   const { db, env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   db.prepare("UPDATE invoices SET status = 'void' WHERE kind = 'deposit'").run();
   const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
   s.restore();
@@ -498,7 +499,7 @@ test('an unpaid invoice on a DIFFERENT shed is not warned about here', async () 
   const { env } = setup();
   const t = await token(env);
   const s = stubStripe();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', due_date: TEST_DUE }, t);
   const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true }, t);
   s.restore();
   assert.equal((r.data.warnings || []).filter((w) => w.code === 'unpaid_invoice').length, 0,
@@ -528,7 +529,7 @@ async function sentInvoice() {
   const { db, env } = setup();
   const t = await token(env);
   const s = stubGet({});
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   const row = db.prepare("SELECT * FROM invoices WHERE kind='deposit'").get();
   return { db, env, t, row };
@@ -649,7 +650,7 @@ test('the address Stripe sent to is recorded on the invoice', async () => {
          asked for — the two differ when the customer record says otherwise. */
       customer_email: 'where-it-went@roof.test', email: 'where-it-went@roof.test' }) };
   };
-  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   globalThis.fetch = orig;
 
   /* Deliberately NOT the address in the CRM (hank@roof.test). Storing what we
@@ -685,14 +686,14 @@ test('a corrected email reaches Stripe on the next invoice, not just the first',
       customer_email: 'typo@roof.test' }) };
   };
 
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   assert.equal(db.prepare('SELECT stripe_customer_id FROM customers WHERE id=1').get()
     .stripe_customer_id, 'cus_new');
 
   /* Someone fixes the address in the CRM. */
   db.prepare("UPDATE customers SET email = 'fixed@roof.test' WHERE id = 1").run();
   calls.length = 0;
-  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 8, kind: 'deposit', due_date: TEST_DUE }, t);
   globalThis.fetch = orig;
 
   const cust = calls.find((c) => c.path.startsWith('/v1/customers'));
@@ -744,7 +745,7 @@ test('and a new one can be raised straight after', async () => {
   await api(env, 'POST', `/admin/invoices/${row.id}/void`, {}, t);
   s.restore();
   const g = stubGet({});
-  const again = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const again = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   g.restore();
   assert.equal(again.status, 200, 'the voided row must not block a reissue: ' + JSON.stringify(again.data));
 });
@@ -831,13 +832,13 @@ test('the same invoice, sent twice from the same state, uses the same key', asyn
   };
 
   let s = stubKeys();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   const first = invoiceKey(s);
   s.restore();
 
   reset();
   s = stubKeys();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   const second = invoiceKey(s);
   s.restore();
 
@@ -865,7 +866,7 @@ test('a retry after a half-finished send is not locked out', async () => {
     return { ok: false, status: 400,
       json: async () => ({ error: { message: 'must be at most 500 characters' } }) };
   };
-  const failed = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const failed = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   globalThis.fetch = orig;
 
   assert.equal(failed.status, 502);
@@ -874,7 +875,7 @@ test('a retry after a half-finished send is not locked out', async () => {
     .stripe_customer_id, 'cus_new', 'but the customer was created and stored');
 
   const s = stubKeys();
-  const retry = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const retry = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
   assert.equal(retry.status, 200, JSON.stringify(retry.data));
   assert.notEqual(invoiceKey(s), firstKey,
@@ -887,7 +888,7 @@ test('a changed invoice gets a new key, rather than being locked out', async () 
   const t = await token(env);
 
   let s = stubKeys();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   const before = invoiceKey(s);
   s.restore();
 
@@ -898,7 +899,7 @@ test('a changed invoice gets a new key, rather than being locked out', async () 
     .run(JSON.stringify([{ kind: 'amount', value: -500, note: 'Neighbour discount' }]));
 
   s = stubKeys();
-  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   const after = invoiceKey(s);
   s.restore();
 
@@ -911,7 +912,7 @@ test('every call in one send shares the base key, and none repeat', async () => 
   const { env } = setup();
   const t = await token(env);
   const s = stubKeys();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   s.restore();
 
   const base = invoiceKey(s).replace(/:invoice$/, '');
@@ -928,7 +929,7 @@ test('the deposit and the balance never share a key', async () => {
   const { db, env } = setup();
   const t = await token(env);
   let s = stubKeys();
-  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE }, t);
   const dep = invoiceKey(s);
   s.restore();
   db.prepare("UPDATE invoices SET status = 'paid' WHERE kind = 'deposit'").run();
@@ -937,4 +938,63 @@ test('the deposit and the balance never share a key', async () => {
   const bal = invoiceKey(s);
   s.restore();
   assert.notEqual(dep, bal);
+});
+
+test('draft: true creates the invoice in Stripe but never sends it', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const s = stubStripe({ '/v1/invoices': { ok: true, status: 200, json: async () => ({ id: 'in_d', status: 'draft' }) } });
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE, draft: true }, t);
+  s.restore();
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.status, 'draft');
+  assert.ok(!s.calls.some((c) => /\/send$/.test(c.path)), 'a draft must not be sent');
+  assert.equal(db.prepare('SELECT status FROM invoices').get().status, 'draft');
+
+  const s2 = stubStripe();
+  const sent = await api(env, 'POST', '/admin/invoices/' + r.data.id + '/send', null, t);
+  s2.restore();
+  assert.equal(sent.status, 200, JSON.stringify(sent.data));
+  assert.ok(s2.calls.some((c) => c.path === '/v1/invoices/in_d/send'));
+  assert.equal(db.prepare('SELECT status FROM invoices').get().status, 'open');
+});
+
+test('a deposit bill lists the quote at $0 and charges one line per phase deposit, with a due date', async () => {
+  const { env } = setup();
+  const t = await token(env);
+  const d = new Date(Date.now() + 9 * 86400000).toISOString().slice(0, 10);
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true, due_date: d }, t);
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.due_date, d);
+  const money = r.data.lines.filter((l) => l.amount !== 0);
+  assert.ok(money.length >= 1 && money.every((l) => /^Phase \d+ Deposit \(30%\)$/.test(l.label) || l.discount), JSON.stringify(money));
+  assert.ok(!r.data.lines.some((l) => /Less balance due/.test(l.label)));
+  assert.ok(Math.abs(r.data.lines.reduce((t2, l) => t2 + l.amount, 0) - r.data.amount) < 0.005);
+});
+
+/* Deposits are due at least 7 days before the job starts (14 Oct 2026). */
+test('deposit due date: start minus 7 by default, later refused, required when no start is booked', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const none = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true }, t);
+  assert.equal(none.status, 200);
+  assert.equal(none.data.due_date_required, true);
+  const s0 = stubStripe();
+  const blocked = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit' }, t);
+  s0.restore();
+  assert.equal(blocked.status, 400);
+  assert.equal(blocked.data.code, 'due_date_required');
+  assert.equal(s0.calls.length, 0);
+
+  const iso = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  db.exec('CREATE TABLE installs (id INTEGER PRIMARY KEY, submission_id INTEGER, item TEXT, install_date TEXT)');
+  db.prepare('INSERT INTO installs (submission_id,item,install_date) VALUES (7,?,?),(7,?,?)').run('shed', iso(30), 'prep', iso(20));
+  const def = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true }, t);
+  assert.equal(def.data.job_start, iso(20));
+  assert.equal(def.data.due_date, iso(13));
+  const late = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true, due_date: iso(15) }, t);
+  assert.equal(late.status, 400);
+  assert.equal(late.data.code, 'deposit_due_too_late');
+  const early = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true, due_date: iso(5) }, t);
+  assert.equal(early.data.due_date, iso(5));
 });
