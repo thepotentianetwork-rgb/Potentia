@@ -23,7 +23,7 @@ import { applyColorEdit, detailsWithColors } from "./colors.js";
 import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.js";
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
-import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
+import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure, normalizeColorNames, designColorDiffs } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
 import { buildSpecLines, designLinkFor } from "./buildspec.js";
@@ -769,6 +769,31 @@ async function handleGetCustomer(request, env, origin, id) {
     sub.comp_items = compItemsFromRedline(redline);
     // Backfill the electrical contents for orders taken before they existed.
     if (parsed && withElecIncludes(redline)) sub.details = JSON.stringify(parsed);
+  });
+
+  /* Colour check: each quote against the customer's latest saved designer
+     design (matched on email). The CRM warns before a quote whose roof,
+     siding or trim differs from it is marked won or billed. */
+  let latestDesign = null;
+  try {
+    if (customer.email) {
+      await ensureSavedDesignsTable(env);
+      const d = await env.DB.prepare(
+        "SELECT code, config, created_at FROM saved_designs WHERE lower(contact_email) = lower(?) ORDER BY created_at DESC LIMIT 1"
+      ).bind(customer.email).first();
+      if (d) {
+        const cfg = JSON.parse(d.config);
+        latestDesign = { code: d.code, created_at: d.created_at, cfg };
+      }
+    }
+  } catch (e) { latestDesign = null; }   // a check that cannot run must not stop the page
+  submissions.forEach((sub) => {
+    sub.color_drift = [];
+    if (!latestDesign) return;
+    let cfg = null;
+    try { cfg = (JSON.parse(sub.details) || {}).config; } catch (e) {}
+    const diffs = designColorDiffs(cfg, latestDesign.cfg);
+    if (diffs.length) sub.color_drift = diffs.map((x) => Object.assign(x, { design_code: latestDesign.code, design_at: latestDesign.created_at }));
   });
 
   try { await ensureNoteEditTables(env); } catch (e) {}
@@ -3004,6 +3029,7 @@ async function handleUpdateDesign(request, env, origin, id) {
     body.permalink = null;
   }
   if (!body.config || typeof body.config !== "object") return json({ error: "config required" }, 400, origin);
+  normalizeColorNames(body.config);
 
   let marginTarget = details.marginTarget != null ? details.marginTarget : null;
   if (body.overrides && body.overrides.marginTarget != null) marginTarget = clampMarginTarget(body.overrides.marginTarget);
@@ -3318,6 +3344,8 @@ async function handleShedSubmit(request, env, origin) {
   const body = await request.json().catch(() => ({}));
   // Answered as if it worked. See looksAutomated: nothing is stored.
   if (looksAutomated(body)) return json({ ok: true }, 200, origin);
+  // Colour labels follow the painted hex (see normalizeColorNames).
+  if (body.config && typeof body.config === "object") normalizeColorNames(body.config);
   // Accepts either the designer tool's shape ({contact:{...}, config, permalink,
   // quotedPrice, redline, renders, page}) or a plain {name, email, phone, details} shape.
   const contact = body.contact || {};
@@ -4346,6 +4374,7 @@ async function handleSaveDesign(request, env, origin) {
   if (!body || typeof body !== "object" || !body.config) {
     return json({ error: "config required" }, 400, origin);
   }
+  if (typeof body.config === "object") normalizeColorNames(body.config);
   const config = JSON.stringify(body.config).slice(0, 40000);
   const contact = body.contact || {};
   const name = String(contact.name || "").slice(0, 200) || null;

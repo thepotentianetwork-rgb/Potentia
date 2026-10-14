@@ -829,6 +829,44 @@ export const ROOF_PALETTES = {
 // Designer trim swatches (WALL_COLORS in designer.html), hex -> name.
 const TRIM_NAMES = { 0xF2F0EC: 'White', 0xC8CBCE: 'Light Gray', 0x6E7377: 'Gray', 0x3C3F43: 'Charcoal',
   0x1A1A1A: 'Black', 0xC9BDA4: 'Beige', 0x7C8A6E: 'Sage', 0x2C3E52: 'Navy' };
+/* Colour names derived from the hex values the 3D designer actually paints.
+   The designer's colorNames can drift from the hex (a design reopened from a
+   link restores roofColor but kept the default 'Black Asphalt' label: quote #73,
+   Oct 2026), so the hex is the truth and the label is rewritten from it. */
+export function roofColorName(c) {
+  const pal = c ? ROOF_PALETTES[String(c.roofType || '').toLowerCase()] : null;
+  return (pal && c.roofColor != null) ? (pal[Number(c.roofColor)] || null) : null;
+}
+export function trimColorName(c) {
+  return (c && c.trimColor != null) ? (TRIM_NAMES[Number(c.trimColor)] || null) : null;
+}
+/* Rewrites config.colorNames.roof / .trim from the hex in place. Returns the
+   list of labels it corrected (empty when they already agreed). */
+export function normalizeColorNames(c) {
+  const fixed = [];
+  if (!c || typeof c !== 'object' || !c.colorNames || typeof c.colorNames !== 'object') return fixed;
+  const want = { roof: roofColorName(c), trim: trimColorName(c) };
+  for (const k of ['roof', 'trim']) {
+    if (want[k] && c.colorNames[k] !== want[k]) { fixed.push({ part: k, was: c.colorNames[k] || null, now: want[k] }); c.colorNames[k] = want[k]; }
+  }
+  return fixed;
+}
+/* Where a quote's colours differ from a saved designer design: roof, siding,
+   trim, compared on the painted hex (and roof material). */
+export function designColorDiffs(quoteCfg, designCfg) {
+  const out = [];
+  if (!quoteCfg || !designCfg) return out;
+  const hex = (v) => (v == null || v === '' ? null : Number(v));
+  const nm = (c, k) => (c.colorNames && c.colorNames[k]) || null;
+  const label = (c, k) => k === 'roof' ? (roofColorName(c) || nm(c, k)) : k === 'trim' ? (trimColorName(c) || nm(c, k)) : nm(c, k);
+  const parts = [['roof', 'roofColor'], ['siding', 'sidingColor'], ['trim', 'trimColor']];
+  for (const [k, f] of parts) {
+    const a = hex(quoteCfg[f]), b = hex(designCfg[f]);
+    const typeDiff = k === 'roof' && quoteCfg.roofType && designCfg.roofType && quoteCfg.roofType !== designCfg.roofType;
+    if ((a != null && b != null && a !== b) || typeDiff) out.push({ part: k, quote: label(quoteCfg, k), design: label(designCfg, k) });
+  }
+  return out;
+}
 export const RIDGE_STYLES = ['gable', '3peak', '4peak', 'barn'];  // barn added 12 Oct 2026
 export function roofSpec(config, redline) {
   const c = (config && typeof config === 'object') ? config : {};
