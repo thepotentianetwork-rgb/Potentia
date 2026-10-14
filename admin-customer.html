@@ -293,6 +293,14 @@ select:focus{border-color:var(--sp-blue)}
   .note-form{flex-direction:column}
   .payment-form{flex-direction:column}
   .payment-form input,.payment-form select{width:100%}
+  /* Phone overflow (13 Oct 2026): the phase-bill labels are set width:auto
+     inline and .inv-kind never shrinks, so a long "#7 + #38 · ALL OF PHASE 1 …"
+     line sized itself to one unbroken row and widened the whole page, which
+     iOS then zoomed out to fit. On a phone let them shrink and wrap, and let
+     the schedule rows wrap so the Remove buttons stay on screen. */
+  .inv-kind{flex-shrink:1;min-width:0;max-width:100%;overflow-wrap:anywhere}
+  .install-row{flex-wrap:wrap}
+  .install-done{min-width:0;overflow-wrap:anywhere}
 }
 @media (max-width:420px){
   .h-title{font-size:11px}
