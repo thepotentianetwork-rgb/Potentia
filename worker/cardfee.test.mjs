@@ -19,6 +19,7 @@ import { addCardFee, cardFeeCents, splitFee, cardFeeLabel, buildInvoice, balance
 import { quoteLines } from './quotelines.js';
 import { invoiceMethods, STRIPE_PAYMENT_METHODS } from './stripe.js';
 import worker from './index.js';
+const TEST_DUE = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);  // deposits need a due date when no start is booked
 
 function makeD1(db) {
   function shape(sql) {
@@ -130,12 +131,12 @@ test('a saved "enabled: 1" surcharge never reaches a bill, a payment or the quot
   const t = await token(env); const s = stubStripe(() => ({ ok: true, status: 200,
     json: async () => ({ id: 'in_1', status: 'paid', amount_paid: Math.round(BD.depositTotal * 100) }) }));
   try {
-    const p = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', preview: true, pay_by: 'card' }, t);
+    const p = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE, preview: true, pay_by: 'card' }, t);
     assert.equal(p.data.card_fee, null); assert.equal(p.data.pay_by, null);
     assert.equal(p.data.amount, Math.round(BD.depositTotal * 100) / 100);
     assert.deepEqual(p.data.payment_methods, STRIPE_PAYMENT_METHODS);
     assert.ok(!p.data.lines.some((l) => /surcharge/i.test(l.label)));
-    const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', pay_by: 'card' }, t);
+    const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', due_date: TEST_DUE, pay_by: 'card' }, t);
     assert.equal(r.status, 200);
     const inv = s.calls.find((c) => c.path === '/v1/invoices');
     assert.equal(inv.params['payment_settings[payment_method_types][0]'], 'us_bank_account');

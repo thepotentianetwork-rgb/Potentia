@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "46c06fc";
-const WORKER_BUILT_AT = "2026-10-14T21:58:17.607Z";
+const WORKER_BUILD = "7429349-dirty";
+const WORKER_BUILT_AT = "2026-10-14T22:03:08.234Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4710,7 +4710,7 @@ function depositInvoice(bd, adjustments, payments) {
   const deferred = toCents(bd.total) - depositCents;
   if (deferred > 0) {
     lines.push({
-      label: 'Less balance due on completion — ' + pct(1 - depositRateOf(bd)) + '% of each phase',
+      label: 'Less balance due on completion \u2014 ' + pct(1 - depositRateOf(bd)) + '% of each phase',
       amountCents: -deferred,
       residue: true
     });
@@ -4719,6 +4719,35 @@ function depositInvoice(bd, adjustments, payments) {
   const totalCents = depositCents - creditedCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
+
+/* THE DEPOSIT, LAID OUT AS THE QUOTE LAYS IT OUT (Nando, 14 Oct 2026) — the
+   default for every deposit invoice the worker sends. Every quote line (each
+   item, each discount, sales tax) is listed in the quote's order with the
+   quote's figure written beside it, as a $0 line: they describe the job, and
+   only the deposits are charged. The single "Less balance due on completion"
+   line is replaced by the quote's own "Deposits due": one line per phase,
+   "Phase 1 Deposit (30%)" and so on, collected together on this one invoice.
+   Payment credits stay as money lines. Same total as before. */
+function depositAsQuote(inv, bd) {
+  if (!inv || !Array.isArray(inv.lines) || !bd) return inv;
+  const out = [];
+  inv.lines.forEach((l) => {
+    if (l.residue) return;                                   // the deferral
+    if (/^Payment received|on the .* payment/.test(l.label) && l.fixed) { out.push(l); return; }
+    if (!l.amountCents) { out.push(l); return; }
+    out.push({ label: clip(l.label + ' \u2014 ' + usdSigned(l.amountCents), LIMITS.label), amountCents: 0, fixed: true, note: true, listCents: l.amountCents, discount: !!l.discount });
+  });
+  const credits = out.filter((l) => l.amountCents);
+  const head = out.filter((l) => !l.amountCents);
+  head.push({ label: 'Total (tax included) \u2014 ' + usd(fromCents(toCents(bd.total))), amountCents: 0, fixed: true, note: true });
+  const pctTxt = pct(depositRateOf(bd)) + '%';
+  const deps = (bd.rows || []).filter((r) => toCents(r.deposit))
+    .map((r) => ({ label: 'Phase ' + r.phase + ' Deposit (' + pctTxt + ')', amountCents: toCents(r.deposit) }));
+  if (deps.length) deps[deps.length - 1].residue = true;
+  inv.lines = reconcile(head.concat(deps, credits), inv.totalCents);
+  return inv;
+}
+function usdSigned(c) { return (c < 0 ? '\u2212' : '') + usd(fromCents(Math.abs(c))); }
 
 /* One credit line per payment received, exactly as the money arrived. Fixed:
    reconcile() never nudges a payment by a penny. */
@@ -5887,7 +5916,7 @@ async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
  * overcharge by 7.25% and nothing in this code would notice.
  */
 async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods, draft
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods, draft, dueDate
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -5895,7 +5924,9 @@ async function createAndSendInvoice(env, {
   const invoice = await stripeCall(env, '/invoices', {
     customer: customerId,
     collection_method: 'send_invoice',
-    days_until_due: days,
+    /* A set due date (unix seconds) replaces days_until_due; Stripe takes one
+       or the other, never both. */
+    ...(dueDate ? { due_date: dueDate } : { days_until_due: days }),
     /* NESTED, not top level. On the Invoice API a top-level
        payment_method_types is rejected outright — "Received unknown
        parameter: payment_method_types. Did you mean payment_settings?" — and
@@ -8857,6 +8888,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     submissionId: sub.id
   });
   addConcreteScope(invoice, breakdown, concreteScopeFor(sub.concrete_scope), details.config);
+  if (kind === "deposit") depositAsQuote(invoice, breakdown);
   return { sub, customer, breakdown, split, invoice, uplift };
 }
 
@@ -9110,6 +9142,33 @@ async function handleSyncInvoice(request, env, origin, id) {
  * the one button in the system that asks a customer for money, and sending it
  * blind is how a wrong figure reaches someone who then has to be apologised to.
  */
+/* "2026-10-23" -> due at noon Mountain time that day (18:00 UTC), so Stripe
+   shows the same calendar date whatever zone it renders in. Today through a
+   year out; anything else is refused rather than guessed at. */
+/* The first date booked for a build in the install calendar, or null. */
+async function jobStartDate(env, submissionId) {
+  try {
+    const r = await env.DB.prepare("SELECT MIN(install_date) AS d FROM installs WHERE submission_id = ?").bind(submissionId).first();
+    return r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.d || "")) ? String(r.d) : null;
+  } catch (e) { return null; }   // no installs table yet
+}
+function addDaysIso(iso, n) {
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function parseInvoiceDueDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v).trim());
+  if (!m) return null;
+  const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], 18, 0, 0);
+  const d = new Date(ms);
+  if (d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return null;
+  const now = Date.now();
+  if (ms < now - 18 * 3600 * 1000 || ms > now + 366 * 86400 * 1000) return null;
+  return { iso: m[1] + "-" + m[2] + "-" + m[3], unix: Math.floor(ms / 1000) };
+}
+
 async function handleCreateInvoice(request, env, origin, actor) {
   const body = await request.json().catch(() => ({}));
   const submissionId = Number(body.submission_id);
@@ -9162,8 +9221,41 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const clipFooter = (note, f) => String(note + (f ? " " + f : "")).slice(0, LIMITS.footer);
   const cardInvoice = discountOn ? Object.assign({}, baseInvoice, { footer: clipFooter(cardBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
   const bankInvoice = discountOn ? Object.assign({}, withDiscount, { footer: clipFooter(bankBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
-  const invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
+  let invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
   const methods = invoiceMethods(discountOn, payBy);
+
+  /* Optional, phase bills only (13 Oct 2026): a due date instead of "due on
+     receipt", and a note from us printed at the top of the footer. Both
+     default to exactly what was sent before. */
+  let dueDate = null;
+  if (body.due_date != null && body.due_date !== "") {
+    if (kind !== "phase" && kind !== "deposit") return json({ error: "a due date can only be set on a deposit or phase bill" }, 400, origin);
+    dueDate = parseInvoiceDueDate(body.due_date);
+    if (!dueDate) return json({ error: "due date must be a YYYY-MM-DD date from today up to a year out" }, 400, origin);
+  }
+  /* DEPOSITS ARE DUE AT LEAST 7 DAYS BEFORE THE JOB STARTS (Nando, 14 Oct
+     2026). The start is the earliest date booked for this build in the
+     install calendar (prep / pour / shed). With a start booked, a deposit
+     with no due date given is due start minus 7 days, and a later one is
+     refused. With nothing booked, a due date has to be entered before the
+     bill can go out (a preview still works, and says so). */
+  let depositStart = null, dueRequired = false;
+  if (kind === "deposit") {
+    depositStart = await jobStartDate(env, sub.id);
+    const latest = depositStart ? addDaysIso(depositStart, -7) : null;
+    if (!dueDate && latest) {
+      dueDate = parseInvoiceDueDate(latest);
+      if (!dueDate) return json({ error: "this job starts " + depositStart + ", so its deposit was due by " + latest + ", which has passed. Move the start date or bill it another way.", code: "deposit_due_passed" }, 400, origin);
+    } else if (dueDate && latest && dueDate.iso > latest) {
+      return json({ error: "a deposit must be due at least 7 days before the job starts (" + depositStart + "): " + latest + " or earlier", code: "deposit_due_too_late" }, 400, origin);
+    }
+    if (!dueDate) dueRequired = true;
+  }
+  if (dueRequired && !body.preview) {
+    return json({ error: "this job has no start date booked, so enter a due date for the deposit", code: "due_date_required" }, 400, origin);
+  }
+  const note = (kind === "phase" || kind === "deposit") ? String(body.note || "").replace(/\s+/g, " ").trim().slice(0, 300) : "";
+  if (note) invoice = Object.assign({}, invoice, { footer: clipFooter(note, invoice.footer) });
 
   /* Payments nobody attributed to a job. Not applied and not ignored — both
      are wrong in a way that costs a customer money — so they ride along on
@@ -9250,6 +9342,10 @@ async function handleCreateInvoice(request, env, origin, actor) {
       footer_bank: bankInvoice.footer
     } : null,
     card_fee: null,
+    due_date: dueDate ? dueDate.iso : null,
+    job_start: depositStart,
+    due_date_required: dueRequired,
+    note: note || null,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -9284,6 +9380,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
     memo: invoice.memo,
     footer: invoice.footer,
     fields: invoice.customFields,
+    due: dueDate ? dueDate.iso : null,
     covers: invoice.covers || null,
   }) + (body.draft ? ":draft" : "");
 
@@ -9311,6 +9408,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
       paymentMethods: methods,
       /* draft: created in Stripe for review, not finalized or emailed. */
       draft: !!body.draft,
+      dueDate: dueDate ? dueDate.unix : null,
       idempotencyKey,
       metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
                               billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),

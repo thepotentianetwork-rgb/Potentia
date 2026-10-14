@@ -260,7 +260,7 @@ function depositInvoice(bd, adjustments, payments) {
   const deferred = toCents(bd.total) - depositCents;
   if (deferred > 0) {
     lines.push({
-      label: 'Less balance due on completion — ' + pct(1 - depositRateOf(bd)) + '% of each phase',
+      label: 'Less balance due on completion \u2014 ' + pct(1 - depositRateOf(bd)) + '% of each phase',
       amountCents: -deferred,
       residue: true
     });
@@ -269,6 +269,35 @@ function depositInvoice(bd, adjustments, payments) {
   const totalCents = depositCents - creditedCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
+
+/* THE DEPOSIT, LAID OUT AS THE QUOTE LAYS IT OUT (Nando, 14 Oct 2026) — the
+   default for every deposit invoice the worker sends. Every quote line (each
+   item, each discount, sales tax) is listed in the quote's order with the
+   quote's figure written beside it, as a $0 line: they describe the job, and
+   only the deposits are charged. The single "Less balance due on completion"
+   line is replaced by the quote's own "Deposits due": one line per phase,
+   "Phase 1 Deposit (30%)" and so on, collected together on this one invoice.
+   Payment credits stay as money lines. Same total as before. */
+export function depositAsQuote(inv, bd) {
+  if (!inv || !Array.isArray(inv.lines) || !bd) return inv;
+  const out = [];
+  inv.lines.forEach((l) => {
+    if (l.residue) return;                                   // the deferral
+    if (/^Payment received|on the .* payment/.test(l.label) && l.fixed) { out.push(l); return; }
+    if (!l.amountCents) { out.push(l); return; }
+    out.push({ label: clip(l.label + ' \u2014 ' + usdSigned(l.amountCents), LIMITS.label), amountCents: 0, fixed: true, note: true, listCents: l.amountCents, discount: !!l.discount });
+  });
+  const credits = out.filter((l) => l.amountCents);
+  const head = out.filter((l) => !l.amountCents);
+  head.push({ label: 'Total (tax included) \u2014 ' + usd(fromCents(toCents(bd.total))), amountCents: 0, fixed: true, note: true });
+  const pctTxt = pct(depositRateOf(bd)) + '%';
+  const deps = (bd.rows || []).filter((r) => toCents(r.deposit))
+    .map((r) => ({ label: 'Phase ' + r.phase + ' Deposit (' + pctTxt + ')', amountCents: toCents(r.deposit) }));
+  if (deps.length) deps[deps.length - 1].residue = true;
+  inv.lines = reconcile(head.concat(deps, credits), inv.totalCents);
+  return inv;
+}
+function usdSigned(c) { return (c < 0 ? '\u2212' : '') + usd(fromCents(Math.abs(c))); }
 
 /* One credit line per payment received, exactly as the money arrived. Fixed:
    reconcile() never nudges a payment by a penny. */
