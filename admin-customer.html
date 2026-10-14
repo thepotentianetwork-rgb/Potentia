@@ -59,6 +59,12 @@ section{margin-bottom:56px}
 .show-all-btn{display:block;width:100%;min-height:56px;margin:0 0 28px;font-family:'DM Mono',monospace;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;color:var(--bright);background:transparent;border:2px solid var(--sp-blue);cursor:pointer;padding:14px 16px}
 .show-all-btn:hover{background:rgba(255,255,255,0.04)}
 #history-section.collapsed{display:none}
+.fold{margin-top:16px;border:1px solid var(--dim)}
+.fold-head{cursor:pointer;list-style:none;min-height:52px;display:flex;align-items:center;padding:12px 16px;font-family:'DM Mono',monospace;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;color:var(--bright);user-select:none}
+.fold-head::-webkit-details-marker{display:none}
+.fold-head::before{content:'\25B8';margin-right:10px;color:var(--sp-blue);transition:transform .15s}
+.fold[open]>.fold-head::before{transform:rotate(90deg)}
+.fold>.adj-block,.fold>.install-block{margin-top:0;padding:4px 16px 16px;border-top:none}
 .est-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;padding-bottom:6px;scrollbar-width:thin}
 .est-track>.order-card{flex:0 0 88%;max-width:88%;scroll-snap-align:start;margin-bottom:0;min-width:0;box-sizing:border-box}
 .est-track>.order-card:only-child{flex-basis:100%;max-width:100%}
@@ -1055,6 +1061,43 @@ function renderPlanner(block, s, details, installs) {
   block.appendChild(wrap);
 }
 
+/* COLLAPSED BY DEFAULT (shop view, 13 Oct 2026). Adjustments and the build
+   schedule each sit behind a tap-to-open header with the one fact worth
+   seeing at a glance. Which ones are open is remembered for the page's life,
+   so the re-render after saving something never snaps them shut. */
+var OPEN_BLOCKS = {};
+function collapsibleBlock(block, key, summaryText) {
+  var d = document.createElement('details');
+  d.className = 'fold';
+  d.open = !!OPEN_BLOCKS[key];
+  var sm = document.createElement('summary');
+  sm.className = 'fold-head';
+  sm.textContent = summaryText;
+  d.appendChild(sm);
+  d.appendChild(block);
+  d.addEventListener('toggle', function () { OPEN_BLOCKS[key] = d.open; });
+  return d;
+}
+function adjustSummary(list, quoted, effective) {
+  var n = (list || []).length;
+  var t = 'Adjustments (' + n + ')';
+  if (n && quoted != null && effective != null) {
+    var net = Math.round(Number(effective) - Number(quoted));
+    if (net) t += ' \u00b7 net ' + (net < 0 ? '\u2212$' : '+$') + Math.abs(net).toLocaleString();
+  }
+  return t;
+}
+function scheduleSummary(s, installs) {
+  var mine = (installs || []).filter(function (i) { return Number(i.submission_id) === Number(s.id) && i.install_date; })
+    .map(function (i) { return String(i.install_date).slice(0, 10); }).sort();
+  if (!mine.length) return 'Build schedule \u00b7 nothing booked';
+  var today = new Date(); var t = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+  var next = mine.filter(function (d) { return d >= t; })[0];
+  var d = next || mine[mine.length - 1];
+  var label = new Date(d + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  return 'Build schedule \u00b7 ' + (next ? 'next ' : 'last ') + label + ' (' + mine.length + ' booked)';
+}
+
 function renderInstallBlock(card, s, details, installs) {
   var items = stagesFor(details, installs, s.id);
 
@@ -1176,7 +1219,7 @@ function renderInstallBlock(card, s, details, installs) {
     block.appendChild(row);
   });
 
-  card.appendChild(block);
+  card.appendChild(collapsibleBlock(block, 'sched-' + s.id, scheduleSummary(s, installs)));
 }
 
 // ---- per-quote adjustments ----
@@ -1793,7 +1836,7 @@ function renderAdjustBlock(card, s, details) {
   form.appendChild(hint);
   block.appendChild(form);
   syncKind();
-  card.appendChild(block);
+  card.appendChild(collapsibleBlock(block, 'adj-' + s.id, adjustSummary(list, quoted, s.effective_price)));
 }
 
 function saveAdjustments(submissionId, adjustments) {
