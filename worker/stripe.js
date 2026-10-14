@@ -143,7 +143,7 @@ export async function ensureCustomer(env, { stripeCustomerId, name, email, phone
  * overcharge by 7.25% and nothing in this code would notice.
  */
 export async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods, draft
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -188,7 +188,10 @@ export async function createAndSendInvoice(env, {
   /* Sending finalizes it. From here the monetary values cannot be edited —
      which is the behaviour we want, and why a mistake is fixed by voiding and
      reissuing rather than by editing. */
-  const sent = await stripeCall(env, `/invoices/${invoice.id}/send`, {},
+  /* draft: stop here. The invoice exists in Stripe with every line on it,
+     unfinalized and unsent (auto_advance false, so Stripe will not finalize
+     it on its own), for someone to review before sendDraftInvoice(). */
+  const sent = draft ? invoice : await stripeCall(env, `/invoices/${invoice.id}/send`, {},
     { idempotencyKey: idempotencyKey ? idempotencyKey + ':send' : undefined });
 
   /* Normalised, so nothing downstream has to know Stripe's spelling.
@@ -201,7 +204,7 @@ export async function createAndSendInvoice(env, {
      the real one is `hosted_invoice_url`. */
   return {
     id: sent.id,
-    status: sent.status || 'open',
+    status: sent.status || (draft ? 'draft' : 'open'),
     hostedUrl: sent.hosted_invoice_url || null,
     /* Where Stripe says it sent it, not where we asked it to. The whole point
        is to be able to answer "which address did this actually go to?" from
@@ -232,6 +235,13 @@ export async function getInvoice(env, stripeInvoiceId) {
     customerEmail: inv.customer_email || null,
     amountPaidCents: Number(inv.amount_paid) || 0,
   };
+}
+
+/* Send an invoice created with draft: true. Finalizes it and emails it. */
+export async function sendDraftInvoice(env, stripeInvoiceId) {
+  const sent = await stripeCall(env, `/invoices/${encodeURIComponent(stripeInvoiceId)}/send`, {});
+  return { id: sent.id, status: sent.status || 'open', hostedUrl: sent.hosted_invoice_url || null,
+           customerEmail: sent.customer_email || null };
 }
 
 export async function voidInvoice(env, stripeInvoiceId) {

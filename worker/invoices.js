@@ -208,10 +208,30 @@ function rowDiscountLines(bd) {
 }
 function jobLines(bd, adjustments) {
   const rowDisc = rowDiscountLines(bd);
-  const lines = bd.rows
-    .map((r) => ({ label: phaseLabel(r),
-                   amountCents: toCents(r.amt) + toCents(r.foldAmt || 0) - rowDisc.filter((d) => d.phase === r.phase).reduce((t, d) => t + d.amountCents, 0) }))
-    .filter((l) => l.amountCents !== 0);
+  /* INVOICES MIRROR THE QUOTE (Nando, 14 Oct 2026). One line per item the
+     quote lists, under its phase, at the price the quote prints beside it —
+     not one rolled-up line per phase with the item names run together. The
+     quote's notes go with them as $0 lines: the base shed's "includes", and
+     the estimate caveat on a concrete phase. Lines of a phase still sum to
+     exactly what the single phase line used to carry, so totals, tax and
+     reconcile() are unchanged. */
+  const lines = [];
+  bd.rows.forEach((r) => {
+    const rowCents = toCents(r.amt) + toCents(r.foldAmt || 0) - rowDisc.filter((d) => d.phase === r.phase).reduce((t, d) => t + d.amountCents, 0);
+    const subs = (r.regularSubLines || r.subLines || []).filter((x) => x && x.label);
+    if (!subs.length) { if (rowCents) lines.push({ label: phaseLabel(r), amountCents: rowCents }); return; }
+    const items = subs.map((x) => ({ label: r.label + ': ' + x.label, amountCents: toCents(x.amt) }));
+    /* A rise folded into the phase, and any penny of rounding, go on the
+       phase's largest item — the base shed, nearly always. */
+    const drift = rowCents - items.reduce((t, l) => t + l.amountCents, 0);
+    if (drift) items.reduce((a, b) => (Math.abs(b.amountCents) > Math.abs(a.amountCents) ? b : a)).amountCents += drift;
+    if (r.estimate) lines.push({ label: r.label + ': Estimate. Final price may vary based on site conditions.', amountCents: 0, fixed: true, note: true });
+    items.forEach((it, i) => {
+      lines.push(it);
+      const inc = subs[i].includes;
+      if (Array.isArray(inc) && inc.length) inc.forEach((n) => lines.push({ label: '\u2014 ' + n, amountCents: 0, fixed: true, note: true }));
+    });
+  });
   (bd.freeRows || []).forEach((f) => {
     const c = -rowDisc.filter((d) => d.free === f).reduce((t, d) => t + d.amountCents, 0);
     if (c) lines.push({ label: f.label, amountCents: c, fixed: true });
@@ -1250,8 +1270,21 @@ export function addConcreteScope(inv, bd, text, config) {
   const row = concreteRow(bd, config);
   if (!inv || !t || !row || !Array.isArray(inv.lines)) return inv;
   const re = new RegExp('\\bPhase ' + row.phase + '\\b');
-  const line = inv.lines.find((l) => !l.discount && re.test(String(l.label || '')));
-  if (!line) return inv;
+  /* Itemised bills (deposit / balance): the scope is printed in full, as $0
+     lines after the phase's items, one per line of the quote's scope — a 250
+     character label cut it off mid-sentence. Phase bills keep it on the
+     phase line. */
+  const idx = inv.lines.map((l, i) => (!l.discount && re.test(String(l.label || '')) ? i : -1)).filter((i) => i > -1);
+  if (!idx.length) return inv;
+  const raw = String(text).split(/\n+/).map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (idx.length > 1 || inv.lines[idx[0]].note) {
+    const scope = [{ label: row.label + ': Scope of work', amountCents: 0, fixed: true, note: true }]
+      .concat(raw.map((x) => ({ label: clip('\u2014 ' + x, LIMITS.label), amountCents: 0, fixed: true, note: true })));
+    const at = inv.lines[idx[0]].note ? idx[0] + 1 : idx[0];
+    inv.lines.splice(at, 0, ...scope);
+    return inv;
+  }
+  const line = inv.lines[idx[0]];
   line.label = clip(line.label + ' \u00b7 Scope of work: ' + t, LIMITS.label);
   return inv;
 }

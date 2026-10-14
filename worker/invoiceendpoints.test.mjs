@@ -938,3 +938,22 @@ test('the deposit and the balance never share a key', async () => {
   s.restore();
   assert.notEqual(dep, bal);
 });
+
+test('draft: true creates the invoice in Stripe but never sends it', async () => {
+  const { db, env } = setup();
+  const t = await token(env);
+  const s = stubStripe({ '/v1/invoices': { ok: true, status: 200, json: async () => ({ id: 'in_d', status: 'draft' }) } });
+  const r = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'deposit', draft: true }, t);
+  s.restore();
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.status, 'draft');
+  assert.ok(!s.calls.some((c) => /\/send$/.test(c.path)), 'a draft must not be sent');
+  assert.equal(db.prepare('SELECT status FROM invoices').get().status, 'draft');
+
+  const s2 = stubStripe();
+  const sent = await api(env, 'POST', '/admin/invoices/' + r.data.id + '/send', null, t);
+  s2.restore();
+  assert.equal(sent.status, 200, JSON.stringify(sent.data));
+  assert.ok(s2.calls.some((c) => c.path === '/v1/invoices/in_d/send'));
+  assert.equal(db.prepare('SELECT status FROM invoices').get().status, 'open');
+});

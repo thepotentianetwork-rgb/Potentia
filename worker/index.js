@@ -37,7 +37,7 @@ import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, bala
          addCardFee, splitFee, bankFooterNote, LIMITS,
          addCashDiscount, paidDiscountCents, manualDiscountCents, creditCentsOf, discountCentsOf,
          DISCOUNT_METHODS, cardBillFooterNote, bankBillFooterNote, addConcreteScope } from "./invoices.js";
-import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods } from "./stripe.js";
+import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods, sendDraftInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
@@ -1287,8 +1287,12 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   await ensurePaymentsTable(env);
   await ensureInvoicesTable(env);
 
+  /* concrete_scope too: without it every invoice printed the DEFAULT scope,
+     not the one written for this customer's quote (#73: the quote says the
+     vapor barrier is included; the invoice said it was not). */
   const sub = await env.DB.prepare(
-    "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+    "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note" +
+    ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE id = ?"
   ).bind(submissionId).first();
   if (!sub) throw Object.assign(new Error("no such submission"), { status: 404 });
 
@@ -1530,6 +1534,24 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   await env.DB.batch(stmts);
 
   return { already: false, amount, fee: fromCents(fee.feeCents), discount: fromCents(discCents) };
+}
+
+/* POST /admin/invoices/:id/send — send an invoice that was created as a
+   draft. Finalizes and emails it from Stripe; nothing else does. */
+async function handleSendDraftInvoice(request, env, origin, id) {
+  await ensureInvoicesTable(env);
+  const row = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "no such invoice" }, 404, origin);
+  if (row.status !== "draft" || !row.stripe_invoice_id) {
+    return json({ error: "only a draft invoice can be sent (this one is " + row.status + ")" }, 409, origin);
+  }
+  let sent;
+  try { sent = await sendDraftInvoice(env, row.stripe_invoice_id); }
+  catch (e) { return json({ error: e.message || "Stripe would not send this invoice" }, 502, origin); }
+  await env.DB.prepare("UPDATE invoices SET status = ?, hosted_url = ?, sent_to = COALESCE(?, sent_to) WHERE id = ?")
+    .bind(sent.status || "open", sent.hostedUrl, sent.customerEmail, id).run();
+  return json({ ok: true, id, stripe_invoice_id: row.stripe_invoice_id, status: sent.status || "open",
+                hosted_url: sent.hostedUrl, sent_to: sent.customerEmail || row.sent_to }, 200, origin);
 }
 
 /* POST /admin/invoices/:id/sync — ask Stripe what it thinks and believe it.
@@ -1782,7 +1804,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
     footer: invoice.footer,
     fields: invoice.customFields,
     covers: invoice.covers || null,
-  });
+  }) + (body.draft ? ":draft" : "");
 
   let stripeCustomerId = customer.stripe_customer_id || null;
   let sent;
@@ -1806,6 +1828,8 @@ async function handleCreateInvoice(request, env, origin, actor) {
       footer: invoice.footer,
       customFields: invoice.customFields,
       paymentMethods: methods,
+      /* draft: created in Stripe for review, not finalized or emailed. */
+      draft: !!body.draft,
       idempotencyKey,
       metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
                               billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
@@ -1820,12 +1844,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
        amount, status, lines, created_at, created_by, sent_to, fee_cents, discount_cents, pay_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
-         fromCents(invoice.totalCents), sent.status || "open",
+         fromCents(invoice.totalCents), sent.status || (body.draft ? "draft" : "open"),
          JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo,
          invoice.feeCents || 0, invoice.discountCents || 0, payBy).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
-                hosted_url: sent.hostedUrl, status: sent.status || "open",
+                hosted_url: sent.hostedUrl, status: sent.status || (body.draft ? "draft" : "open"),
                 sent_to: sentTo,
                 ...shape }, 200, origin);
 }
@@ -6017,6 +6041,12 @@ export default {
         const sid = Number(path.split("/")[3]);
         if (!sid) return json({ error: "bad invoice id" }, 400, origin);
         return await handleSyncInvoice(request, env, origin, sid);
+      }
+      if (path.startsWith("/admin/invoices/") && path.endsWith("/send") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const iid = Number(path.split("/")[3]);
+        if (!iid) return json({ error: "bad invoice id" }, 400, origin);
+        return await handleSendDraftInvoice(request, env, origin, iid);
       }
       if (path.startsWith("/admin/invoices/") && path.endsWith("/void") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
