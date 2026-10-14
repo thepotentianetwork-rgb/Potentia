@@ -522,13 +522,19 @@ async function handleSetFollowUp(request, env, origin, customerId) {
 async function handleListCustomers(request, env, origin) {
   await ensureCustomerTempColumns(env);
   await ensureCallsTable(env);
+  try { await ensureChosenColumn(env); } catch (e) {}
   /* Once for the whole list, not once per row: withCurrentFinish reads SELL
      directly, so the owner's saved edits have to be layered on before the map
      below runs. */
   await applySavedPricing(env);
   const { results } = await env.DB.prepare(
-    `SELECT c.id, c.name, c.email, c.phone, c.city, c.state, c.created_at, c.updated_at,
+    `SELECT c.id, c.name, c.email, c.phone, c.address, c.city, c.state, c.zip, c.created_at, c.updated_at,
        c.temp_override, c.follow_up_at,
+       /* Every order, newest first, so the list can search by quote number and
+          open the shop's quote (chosen, else won, else newest) in one tap. */
+       (SELECT json_group_array(json_object('id', o.id, 'status', o.status, 'chosen_at', o.chosen_at))
+          FROM (SELECT s.id, s.status, s.chosen_at FROM submissions s WHERE s.customer_id = c.id
+                ORDER BY s.created_at DESC, s.id DESC) o) AS orders_json,
        (SELECT s.id FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_submission_id,
        (SELECT s.details FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_details,
        (SELECT s.status FROM submissions s WHERE s.customer_id = c.id ORDER BY s.created_at DESC LIMIT 1) AS latest_status,
@@ -562,9 +568,12 @@ async function handleListCustomers(request, env, origin) {
         if (d.estimateAtRequest != null) consultEstimate = d.estimateAtRequest;
       }
     } catch (e) {}
-    const { latest_details, ...rest } = c;
+    const { latest_details, orders_json, ...rest } = c;
+    let orders = [];
+    try { orders = JSON.parse(orders_json || "[]") || []; } catch (e) {}
     return {
       ...rest,
+      orders,
       latest_quoted_price: quotedPrice,
       latest_is_consult: isConsult,
       latest_consult_estimate: consultEstimate

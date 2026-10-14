@@ -127,6 +127,19 @@ a.row-name:hover{color:var(--sp-blue)}
   .day-body{padding:9px 12px;gap:2px}
   .day-name{font-size:18px}
   .day-tag{padding:6px 11px}
+  /* ALIGNMENT PASS (13 Oct 2026, phones only). The one-column .cols grid let
+     its track grow to the widest nowrap row (a name + "28 days late" + CALL),
+     so Follow Ups, Ready to Schedule and Payments Due ran ~120px past the
+     screen while the panels above them fitted. Bound the track and let a row
+     wrap its date/button under the name instead of pushing the page wide. */
+  .cols{grid-template-columns:minmax(0,1fr);gap:0}
+  .cols>*{min-width:0}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kpi{min-width:0}
+  .krow{flex-wrap:wrap;gap:8px}
+  .row{flex-wrap:wrap;row-gap:6px}
+  .row-main{flex:1 1 150px}
+  .row-act{min-height:40px;display:inline-flex;align-items:center}
 }
 </style>
 </head>
