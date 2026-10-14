@@ -143,7 +143,7 @@ export async function ensureCustomer(env, { stripeCustomerId, name, email, phone
  * overcharge by 7.25% and nothing in this code would notice.
  */
 export async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods, dueDate
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -151,7 +151,9 @@ export async function createAndSendInvoice(env, {
   const invoice = await stripeCall(env, '/invoices', {
     customer: customerId,
     collection_method: 'send_invoice',
-    days_until_due: days,
+    /* A set due date (unix seconds) replaces days_until_due; Stripe takes one
+       or the other, never both. */
+    ...(dueDate ? { due_date: dueDate } : { days_until_due: days }),
     /* NESTED, not top level. On the Invoice API a top-level
        payment_method_types is rejected outright — "Received unknown
        parameter: payment_method_types. Did you mean payment_settings?" — and

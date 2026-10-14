@@ -1906,6 +1906,13 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
   box.className = 'inv-preview';
   var cf = data.cash_discount || null;
   INV_PAY_BY = 'bank';
+  if (data.due_date || data.note) {
+    var ex = document.createElement('div');
+    ex.className = 'inv-note';
+    ex.textContent = (data.due_date ? 'Due ' + new Date(data.due_date + 'T12:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Due on receipt')
+      + (data.note ? ' \u00b7 Note on the bill: \u201c' + data.note + '\u201d' : '');
+    box.appendChild(ex);
+  }
 
   /* The choice comes first: it decides what the lines below say. */
   if (cf) {
@@ -2266,6 +2273,8 @@ function renderPhasePanel(block, s, bal) {
   err.className = 'inv-err';
   err.style.display = 'none';
   actions.appendChild(btn);
+  var extras = billExtras();
+  panel.appendChild(extras.el);
   panel.appendChild(actions);
   panel.appendChild(err);
 
@@ -2290,9 +2299,10 @@ function renderPhasePanel(block, s, bal) {
     btn.disabled = true;
     btn.textContent = 'Working it out\u2026';
     err.style.display = 'none';
+    var sentExtras = extras.values();
     authFetch('/admin/invoices', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ submission_id: s.id, kind: 'phase', parts: parts, preview: true })
+      body: JSON.stringify(Object.assign({ submission_id: s.id, kind: 'phase', parts: parts, preview: true }, extras.values()))
     }).then(function (r) {
       btn.disabled = false;
       btn.textContent = label;
@@ -2304,7 +2314,7 @@ function renderPhasePanel(block, s, bal) {
       var prev = invPreviewPanel('phase', r.data, function (fail) {
         authFetch('/admin/invoices', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ submission_id: s.id, kind: 'phase', parts: parts, pay_by: INV_PAY_BY })
+          body: JSON.stringify(Object.assign({ submission_id: s.id, kind: 'phase', parts: parts, pay_by: INV_PAY_BY }, sentExtras))
         }).then(function (sent) {
           if (sent.ok) { loadCustomer(); return; }
           fail((sent.data && sent.data.error) || 'Stripe would not take it.');
@@ -2343,6 +2353,37 @@ function renderPhasePanel(block, s, bal) {
   });
 
   block.appendChild(panel);
+}
+
+/* Optional due date and note on a phase bill (13 Oct 2026). Left blank, the
+   bill is exactly what it always was: due on receipt, standard footer. The
+   values are read when the preview is made, and the same ones go out with
+   the send, so what was previewed is what is billed. */
+function billExtras() {
+  var el = document.createElement('div');
+  el.className = 'ph-extras';
+  el.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;margin:12px 0';
+  var dl = document.createElement('label');
+  dl.style.cssText = "display:flex;flex-direction:column;gap:4px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--dim)";
+  dl.textContent = 'Due date (blank = on receipt)';
+  var d = document.createElement('input');
+  d.type = 'date';
+  d.style.cssText = 'min-height:44px;font-size:16px';
+  dl.appendChild(d);
+  var nl = document.createElement('label');
+  nl.style.cssText = dl.style.cssText + ';flex:1 1 220px';
+  nl.textContent = 'Note on the bill (optional)';
+  var n = document.createElement('textarea');
+  n.rows = 2; n.maxLength = 300;
+  n.style.cssText = 'font-size:16px;min-height:44px;width:100%;box-sizing:border-box';
+  nl.appendChild(n);
+  el.appendChild(dl); el.appendChild(nl);
+  return { el: el, values: function () {
+    var v = {};
+    if (d.value) v.due_date = d.value;
+    if (n.value.trim()) v.note = n.value.trim();
+    return v;
+  } };
 }
 
 /* ---- Bill builds together ------------------------------------------------
@@ -2559,6 +2600,8 @@ function drawTogether(body, tg) {
   err.className = 'inv-err';
   err.style.display = 'none';
   actions.appendChild(btn);
+  var extras = billExtras();
+  body.appendChild(extras.el);
   body.appendChild(actions);
   body.appendChild(err);
 
@@ -2584,7 +2627,7 @@ function drawTogether(body, tg) {
     btn.disabled = true;
     btn.textContent = 'Working it out\u2026';
     err.style.display = 'none';
-    var req = { submission_id: subs[0], builds: subs, kind: 'phase', parts: parts };
+    var req = Object.assign({ submission_id: subs[0], builds: subs, kind: 'phase', parts: parts }, extras.values());
     authFetch('/admin/invoices', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ preview: true }, req))

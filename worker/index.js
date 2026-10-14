@@ -1607,6 +1607,20 @@ async function handleSyncInvoice(request, env, origin, id) {
  * the one button in the system that asks a customer for money, and sending it
  * blind is how a wrong figure reaches someone who then has to be apologised to.
  */
+/* "2026-10-23" -> due at noon Mountain time that day (18:00 UTC), so Stripe
+   shows the same calendar date whatever zone it renders in. Today through a
+   year out; anything else is refused rather than guessed at. */
+function parseInvoiceDueDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v).trim());
+  if (!m) return null;
+  const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], 18, 0, 0);
+  const d = new Date(ms);
+  if (d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return null;
+  const now = Date.now();
+  if (ms < now - 18 * 3600 * 1000 || ms > now + 366 * 86400 * 1000) return null;
+  return { iso: m[1] + "-" + m[2] + "-" + m[3], unix: Math.floor(ms / 1000) };
+}
+
 async function handleCreateInvoice(request, env, origin, actor) {
   const body = await request.json().catch(() => ({}));
   const submissionId = Number(body.submission_id);
@@ -1659,8 +1673,20 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const clipFooter = (note, f) => String(note + (f ? " " + f : "")).slice(0, LIMITS.footer);
   const cardInvoice = discountOn ? Object.assign({}, baseInvoice, { footer: clipFooter(cardBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
   const bankInvoice = discountOn ? Object.assign({}, withDiscount, { footer: clipFooter(bankBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
-  const invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
+  let invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
   const methods = invoiceMethods(discountOn, payBy);
+
+  /* Optional, phase bills only (13 Oct 2026): a due date instead of "due on
+     receipt", and a note from us printed at the top of the footer. Both
+     default to exactly what was sent before. */
+  let dueDate = null;
+  if (body.due_date != null && body.due_date !== "") {
+    if (kind !== "phase") return json({ error: "a due date can only be set on a phase bill" }, 400, origin);
+    dueDate = parseInvoiceDueDate(body.due_date);
+    if (!dueDate) return json({ error: "due date must be a YYYY-MM-DD date from today up to a year out" }, 400, origin);
+  }
+  const note = kind === "phase" ? String(body.note || "").replace(/\s+/g, " ").trim().slice(0, 300) : "";
+  if (note) invoice = Object.assign({}, invoice, { footer: clipFooter(note, invoice.footer) });
 
   /* Payments nobody attributed to a job. Not applied and not ignored — both
      are wrong in a way that costs a customer money — so they ride along on
@@ -1747,6 +1773,8 @@ async function handleCreateInvoice(request, env, origin, actor) {
       footer_bank: bankInvoice.footer
     } : null,
     card_fee: null,
+    due_date: dueDate ? dueDate.iso : null,
+    note: note || null,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -1781,6 +1809,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
     memo: invoice.memo,
     footer: invoice.footer,
     fields: invoice.customFields,
+    due: dueDate ? dueDate.iso : null,
     covers: invoice.covers || null,
   });
 
@@ -1806,6 +1835,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
       footer: invoice.footer,
       customFields: invoice.customFields,
       paymentMethods: methods,
+      dueDate: dueDate ? dueDate.unix : null,
       idempotencyKey,
       metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
                               billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
