@@ -23,7 +23,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.join(dir, 'quotelines.js');
 const OUT = path.join(dir, '..', 'quotelines.browser.js');
 
-export const EXPORTED = ['TAX_RATE', 'DEPOSIT_RATE', 'BASE_SHED_INCLUDES',
+export const EXPORTED = ['roofColorName', 'trimColorName', 'normalizeColorNames', 'designColorDiffs', 'TAX_RATE', 'DEPOSIT_RATE', 'BASE_SHED_INCLUDES',
   'REMOVAL_NAMES', 'compItemPrices', 'compedMap', 'nameList', 'quoteLines',
   'shedStyleName', 'isSitePrep', 'travelAmount', 'travelLabel', 'overrideMap', 'padPromoOf', 'overridePays',
   'cashDiscountDisclosure', 'cashDiscountPctLabel', 'CASH_DISCOUNT_LABEL', 'CARD_UPLIFT_MAX',
