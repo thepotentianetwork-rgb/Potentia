@@ -39,6 +39,7 @@ import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, bala
          DISCOUNT_METHODS, cardBillFooterNote, bankBillFooterNote, addConcreteScope } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
+import { loadBriefing, parseParams as parseBriefingParams, briefingRateOk } from "./briefing.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -5862,11 +5863,40 @@ async function handleIntakeDeposit(request, env, origin) {
   return json({ ok: true, received, at, amount: received ? amount : null }, 200, origin);
 }
 
+function briefingJson(data, status, extra) {
+  return new Response(JSON.stringify(data), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...(extra || {}) }
+  });
+}
+async function handleBriefing(request, env) {
+  if (request.method !== "GET") return briefingJson({ error: "Method not allowed" }, 405, { Allow: "GET" });
+  const secret = env.BRIEFING_API_KEY;
+  if (!secret) return briefingJson({ error: "Briefing is not configured" }, 503);
+  const m = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") || "");
+  if (!m || !timingSafeEqual(m[1].trim(), secret)) return briefingJson({ error: "Unauthorized" }, 401);
+  if (!briefingRateOk("briefing:" + clientIp(request), Date.now())) {
+    return briefingJson({ error: "Too many requests" }, 429, { "Retry-After": "60" });
+  }
+  const { days, sections } = parseBriefingParams(new URL(request.url).searchParams);
+  try {
+    return briefingJson(await loadBriefing(env.DB, { nowMs: Date.now(), days, sections }), 200);
+  } catch (e) {
+    return briefingJson({ error: "Briefing failed" }, 500);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
     const url = new URL(request.url);
     const path = url.pathname;
+
+    /* GET /api/briefing — server-to-server, read-only. Handled before the
+       CORS/OPTIONS path on purpose: no browser should be able to call it, so
+       it never carries Access-Control-* headers. See briefing.js. */
+    if (path === "/api/briefing") {
+      return await handleBriefing(request, env);
+    }
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(origin) });
