@@ -50,6 +50,21 @@ section{margin-bottom:56px}
 
 /* order history */
 .order-card{border:1px solid var(--dim);margin-bottom:16px;padding:20px 24px}
+/* SHOP VIEW (13 Oct 2026): the page opens on the build that matters (chosen,
+   else won, else newest) and keeps everything else one big tap away. */
+#focus-builds{margin:0 0 28px}
+#focus-builds:empty{display:none}
+.focus-label{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--sp-blue);text-transform:uppercase;margin:0 0 10px}
+.focus-card{border-color:var(--sp-blue);border-width:2px}
+.show-all-btn{display:block;width:100%;min-height:56px;margin:0 0 28px;font-family:'DM Mono',monospace;font-size:14px;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;color:var(--bright);background:transparent;border:2px solid var(--sp-blue);cursor:pointer;padding:14px 16px}
+.show-all-btn:hover{background:rgba(255,255,255,0.04)}
+#history-section.collapsed{display:none}
+.est-track{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;padding-bottom:6px;scrollbar-width:thin}
+.est-track>.order-card{flex:0 0 88%;max-width:88%;scroll-snap-align:start;margin-bottom:0;min-width:0;box-sizing:border-box}
+.est-track>.order-card:only-child{flex-basis:100%;max-width:100%}
+.won-card{border-color:#3fb47a}
+.focus-card{border-color:var(--sp-blue)}
+.est-ind{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--dim);text-align:center;margin:10px 0 0;pointer-events:none;user-select:none}
 .order-top{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px}
 .order-date{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim)}
 .order-price{font-size:24px;color:var(--bright);font-weight:300}
@@ -336,6 +351,9 @@ select:focus{border-color:var(--sp-blue)}
     <div class="info-item"><div class="il">Customer Since</div><div class="iv" id="c-since">—</div></div>
   </div>
 
+  <div id="focus-builds"></div>
+  <button type="button" class="show-all-btn" id="show-all-btn" hidden></button>
+
   <div class="followup">
     <div class="fu-field">
       <label for="fu-temp">Lead Temperature</label>
@@ -361,7 +379,7 @@ select:focus{border-color:var(--sp-blue)}
     </p>
   </div>
 
-  <section>
+  <section id="history-section">
     <p class="sec-label">History</p>
     <h2>Order History</h2>
     <div id="orders-list"><p class="empty">Loading…</p></div>
@@ -2830,6 +2848,7 @@ function renderOrders(submissions, installs) {
 
     var card = document.createElement('div');
     card.className = 'order-card';
+    card.dataset.sid = s.id;
 
     var top = document.createElement('div');
     top.className = 'order-top';
@@ -3082,6 +3101,84 @@ function renderOrders(submissions, installs) {
     }
     wrap.appendChild(card);
   });
+  placeFocusBuilds(submissions);
+}
+
+/* SHOP VIEW (13 Oct 2026). Every estimate is laid side by side in one
+   swipeable row (CSS scroll-snap, one card per view, the next one peeking in),
+   and the row opens positioned on the build that matters: the chosen one,
+   else a won one, else the newest. No arrows or dots: swipe on a phone, and on
+   a desktop the native horizontal scroll (trackpad, shift+wheel) moves it.
+   Cards are MOVED, not copied, so every button on them works as before.
+   Bill-together and anything else left in Order History stays behind one big
+   button; that choice is kept while the page is open, so a re-render after an
+   action never snaps it shut. */
+var SHOW_ALL_BUILDS = false;
+function focusSubmissionIds(submissions) {
+  var picked = submissions.filter(function (s) { return s.chosen_at; });
+  if (!picked.length) picked = submissions.filter(function (s) { return s.status === 'won'; });
+  if (!picked.length && submissions.length) picked = [submissions[0]];
+  return picked.map(function (s) { return String(s.id); });
+}
+function placeFocusBuilds(submissions) {
+  var focus = document.getElementById('focus-builds');
+  var btn = document.getElementById('show-all-btn');
+  var hist = document.getElementById('history-section');
+  var list = document.getElementById('orders-list');
+  if (!focus || !btn || !hist || !list) return;
+  focus.innerHTML = '';
+  submissions = submissions || [];
+  if (!submissions.length) { btn.hidden = true; hist.classList.remove('collapsed'); return; }
+  var ids = focusSubmissionIds(submissions);
+  var won = submissions.filter(function (s) { return s.status === 'won'; }).length;
+
+  var lbl = document.createElement('p');
+  lbl.className = 'focus-label';
+  lbl.textContent = 'Estimates' + (won > 1 ? ' \u00b7 ' + won + ' won builds' : '');
+  focus.appendChild(lbl);
+  var track = document.createElement('div');
+  track.className = 'est-track';
+  focus.appendChild(track);
+  var cards = [];
+  submissions.forEach(function (s) {
+    var card = list.querySelector('.order-card[data-sid="' + s.id + '"]');
+    if (!card) return;
+    if (ids.indexOf(String(s.id)) > -1) card.classList.add('focus-card');
+    if (s.status === 'won') card.classList.add('won-card');
+    track.appendChild(card);
+    cards.push(card);
+  });
+  var ind = document.createElement('p');
+  ind.className = 'est-ind';
+  ind.setAttribute('aria-live', 'polite');
+  focus.appendChild(ind);
+  function current() {
+    var x = track.scrollLeft, best = 0, d = Infinity;
+    cards.forEach(function (c, k) { var dd = Math.abs(c.offsetLeft - track.offsetLeft - x); if (dd < d) { d = dd; best = k; } });
+    return best;
+  }
+  function paintInd() {
+    ind.textContent = cards.length > 1 ? (current() + 1) + ' of ' + cards.length + ' \u00b7 swipe' : '1 of 1';
+  }
+  var raf = null;
+  track.addEventListener('scroll', function () { if (raf) return; raf = requestAnimationFrame(function () { raf = null; paintInd(); }); }, { passive: true });
+  var start = cards.filter(function (c) { return c.classList.contains('focus-card'); })[0];
+  if (start) track.scrollLeft = start.offsetLeft - track.offsetLeft;
+  paintInd();
+
+  var hasMore = list.children.length > 0;
+  btn.hidden = !hasMore;
+  if (!hasMore) { hist.classList.add('collapsed'); return; }
+  function paint() {
+    hist.classList.toggle('collapsed', !SHOW_ALL_BUILDS);
+    btn.textContent = SHOW_ALL_BUILDS ? 'Hide billing & order history' : 'Show billing & order history';
+    btn.setAttribute('aria-expanded', SHOW_ALL_BUILDS ? 'true' : 'false');
+  }
+  btn.onclick = function () {
+    SHOW_ALL_BUILDS = !SHOW_ALL_BUILDS; paint();
+    if (SHOW_ALL_BUILDS) hist.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+  paint();
 }
 
 /* EDITABLE NOTES (Nando, 12 Oct 2026). Every note can be edited or deleted;

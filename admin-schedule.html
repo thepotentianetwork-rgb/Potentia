@@ -40,6 +40,8 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 
 /* ---- range ---- */
 .ranges{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.ev-toggle{display:block;width:100%;min-height:52px;margin:0 0 18px;font-family:'DM Mono',monospace;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;font-weight:700;color:var(--bright,#fff);background:transparent;border:2px solid var(--sp-blue,#29a8e0);cursor:pointer;padding:12px 16px}
+.ev-more{font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:var(--sp-blue,#29a8e0);background:none;border:1px solid var(--sp-blue,#29a8e0);padding:10px 14px;min-height:44px;margin-top:8px;cursor:pointer}
 .range-btn{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--silver);background:none;border:1px solid var(--dim);padding:8px 13px;cursor:pointer;transition:all 0.2s}
 .range-btn:hover{border-color:var(--sp-blue);color:var(--bright)}
 .range-btn.on{border-color:var(--sp-blue);color:var(--sp-blue);background:rgba(44,192,253,0.08)}
@@ -158,6 +160,7 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
     <button class="range-btn" id="this-month" type="button">Today</button>
   </div>
   <div class="count" id="count"></div>
+  <button type="button" class="ev-toggle" id="ev-toggle" hidden></button>
   <div id="cal" hidden></div>
   <div id="list"><p class="empty">Loading…</p></div>
 </main>
@@ -580,7 +583,40 @@ function renderCalendar(installs) {
     n ? n + (n === 1 ? ' job this month' : ' jobs this month') : 'Nothing booked this month';
 }
 
+/* ONE EVENT PER CUSTOMER (13 Oct 2026). The list opens on each customer's
+   next upcoming stage (or their latest, if nothing is ahead in this range),
+   so a shop hand sees one line per job site. "+N more" opens one customer's
+   other stages; "Show all events" is the old full list. Calendar unchanged. */
+var SHOW_ALL_EVENTS = false;
+var EXPANDED_CUST = {};
+function custKey(i) { return String(i.customer_id != null ? i.customer_id : 'sub' + i.submission_id); }
+function onePerCustomer(installs) {
+  var t = isoDay(todayLocal());
+  var by = {};
+  installs.forEach(function (i) { var k = custKey(i); (by[k] = by[k] || []).push(i); });
+  var keep = [], more = {};
+  Object.keys(by).forEach(function (k) {
+    var rows = by[k].slice().sort(function (a, b) { return String(a.install_date).localeCompare(String(b.install_date)) || a.id - b.id; });
+    var next = rows.filter(function (i) { return String(i.install_date).slice(0, 10) >= t; })[0] || rows[rows.length - 1];
+    more[k] = rows.length - 1;
+    if (EXPANDED_CUST[k]) keep = keep.concat(rows); else keep.push(next);
+    next._lead = true;
+  });
+  return { rows: keep, more: more };
+}
 function renderList(installs, newestFirst) {
+  var all = installs;
+  var toggle = document.getElementById('ev-toggle');
+  var picked1 = onePerCustomer(all);
+  var hidden = all.length - picked1.rows.length;
+  if (toggle) {
+    var extra = all.length - Object.keys(picked1.more).length;
+    toggle.hidden = extra <= 0;
+    toggle.textContent = SHOW_ALL_EVENTS ? 'Show one event per customer' : 'Show all events (' + all.length + ')';
+    toggle.onclick = function () { SHOW_ALL_EVENTS = !SHOW_ALL_EVENTS; EXPANDED_CUST = {}; renderList(all, newestFirst); };
+  }
+  if (!SHOW_ALL_EVENTS) installs = picked1.rows;
+  var MORE = SHOW_ALL_EVENTS ? {} : picked1.more;
   var list = document.getElementById('list');
   var count = document.getElementById('count');
   list.innerHTML = '';
@@ -592,7 +628,8 @@ function renderList(installs, newestFirst) {
     return;
   }
 
-  count.textContent = installs.length + (installs.length === 1 ? ' job' : ' jobs');
+  count.textContent = SHOW_ALL_EVENTS || !hidden ? all.length + (all.length === 1 ? ' job' : ' jobs')
+    : Object.keys(picked1.more).length + ' customers \u00b7 ' + all.length + ' jobs in all';
 
   var t = todayLocal();
   var days = [];
@@ -626,7 +663,19 @@ function renderList(installs, newestFirst) {
     h.appendChild(when);
     sec.appendChild(h);
 
-    group.jobs.forEach(function (i) { sec.appendChild(jobRow(i)); });
+    group.jobs.forEach(function (i) {
+      var row = jobRow(i);
+      var k = custKey(i);
+      if (i._lead && MORE[k] > 0) {
+        var mb = document.createElement('button');
+        mb.type = 'button';
+        mb.className = 'ev-more';
+        mb.textContent = EXPANDED_CUST[k] ? 'Show less' : '+' + MORE[k] + ' more for this customer';
+        mb.addEventListener('click', function () { EXPANDED_CUST[k] = !EXPANDED_CUST[k]; renderList(all, newestFirst); });
+        (row.querySelector('.job-body') || row).appendChild(mb);
+      }
+      sec.appendChild(row);
+    });
     list.appendChild(sec);
   });
 }

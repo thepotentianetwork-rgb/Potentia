@@ -94,6 +94,15 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
 }
 
 .table-wrap{overflow-x:auto}
+/* Search + shop-order button (13 Oct 2026). */
+.cust-search{display:block;width:100%;box-sizing:border-box;font-size:17px;padding:14px 16px;margin:0 0 18px;background:transparent;color:var(--bright,#fff);border:2px solid var(--sp-blue,#29a8e0);border-radius:0;font-family:inherit}
+.cust-search::placeholder{color:var(--dim)}
+.search-count{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--dim);margin:-8px 0 14px;min-height:14px}
+.shop-btn{display:inline-flex;align-items:center;gap:6px;min-height:40px;min-width:44px;padding:6px 10px;margin-left:8px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--sp-blue,#29a8e0);background:transparent;border:1px solid var(--sp-blue,#29a8e0);cursor:pointer;text-decoration:none;vertical-align:middle;position:relative}
+.shop-btn svg{width:18px;height:18px;flex:0 0 auto}
+.shop-pick{position:absolute;z-index:20;top:100%;left:0;margin-top:4px;background:var(--black,#0b0b0b);border:1px solid var(--sp-blue,#29a8e0);min-width:200px;display:flex;flex-direction:column}
+.shop-pick a{display:block;padding:14px 14px;min-height:44px;box-sizing:border-box;color:var(--bright,#fff);text-decoration:none;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.05em;border-bottom:1px solid var(--dim)}
+.shop-pick a:last-child{border-bottom:none}
 @media (max-width:760px){
   header{padding:16px 20px}
   .h-actions{gap:8px}
@@ -136,6 +145,8 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   <section>
     <p class="sec-label">ShedPro Partner</p>
     <h2>Customers</h2>
+    <input type="search" id="cust-search" class="cust-search" placeholder="Search name, email, phone, address or quote #" autocomplete="off" aria-label="Search customers">
+    <div class="search-count" id="search-count"></div>
     <div class="table-wrap">
     <table>
       <thead>
@@ -303,11 +314,103 @@ function renderActivityCell(td, c) {
   }
 }
 
-function renderCustomers(list) {
+/* Lost customers always sit at the bottom, below everyone else, keeping the
+   server's order (newest activity first) inside each group. "Lost" is a
+   submission status, not a customer field, so it is read the way the Status
+   column reads it: from the customer's latest order. */
+function isLostCustomer(c) { return c.latest_status === 'lost'; }
+function lostLast(list) {
+  return list.filter(function (c) { return !isLostCustomer(c); })
+    .concat(list.filter(isLostCustomer));
+}
+function digits(v) { return String(v || '').replace(/\D/g, ''); }
+function customerMatches(c, q) {
+  q = q.trim().toLowerCase();
+  if (!q) return true;
+  var ids = (c.orders || []).map(function (o) { return String(o.id); });
+  if (c.latest_submission_id != null) ids.push(String(c.latest_submission_id));
+  var hay = [c.name, c.email, c.phone, c.address, c.city, c.state, c.zip].join(' ').toLowerCase();
+  return q.split(/\s+/).every(function (w) {
+    var num = w.replace(/^#/, '');
+    if (/^\d+$/.test(num) && ids.indexOf(num) > -1) return true;
+    if (hay.indexOf(w) > -1) return true;
+    var d = digits(w);
+    return d.length >= 3 && digits(c.phone).indexOf(d) > -1;
+  });
+}
+var ALL_CUSTOMERS = [];
+function applySearch() {
+  var box = document.getElementById('cust-search');
+  var q = box ? box.value : '';
+  var shown = lostLast(ALL_CUSTOMERS.filter(function (c) { return customerMatches(c, q); }));
+  var cnt = document.getElementById('search-count');
+  if (cnt) cnt.textContent = q.trim() ? shown.length + ' of ' + ALL_CUSTOMERS.length + ' customers' : '';
+  renderCustomers(shown, !!q.trim());
+}
+(function () {
+  var box = document.getElementById('cust-search');
+  if (box) box.addEventListener('input', applySearch);
+})();
+
+/* Shop order: the quote for the build the shop is making, the same
+   quote.html?id= link as "Generate Quote" on the customer page, picked the
+   same way (chosen, else won, else newest). Several won builds open a picker. */
+var SHOP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg>';
+function shopOrders(c) {
+  var orders = c.orders || [];
+  var chosen = orders.filter(function (o) { return o.chosen_at; });
+  if (chosen.length) return chosen;
+  var won = orders.filter(function (o) { return o.status === 'won'; });
+  if (won.length) return won;
+  if (orders.length) return [orders[0]];
+  return c.latest_submission_id ? [{ id: c.latest_submission_id, status: c.latest_status }] : [];
+}
+function closeShopPicks() {
+  document.querySelectorAll('.shop-pick').forEach(function (p) { p.remove(); });
+}
+document.addEventListener('click', function (e) { if (!e.target.closest('.shop-btn')) closeShopPicks(); });
+function shopButton(c) {
+  var picks = shopOrders(c);
+  if (!picks.length) return null;
+  var b = document.createElement(picks.length === 1 ? 'a' : 'span');
+  b.className = 'shop-btn';
+  b.title = picks.length === 1 ? 'Open the shop order (quote #' + picks[0].id + ')' : 'Open a shop order (' + picks.length + ' builds)';
+  b.setAttribute('aria-label', b.title);
+  b.innerHTML = SHOP_ICON + '<span>Shop order</span>';
+  if (picks.length === 1) {
+    b.href = 'quote.html?id=' + picks[0].id;
+    b.target = '_blank';
+  } else {
+    b.setAttribute('role', 'button');
+    b.tabIndex = 0;
+    b.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); b.click(); } });
+    b.addEventListener('click', function (e) {
+      if (e.target.closest('.shop-pick')) return;
+      e.preventDefault();
+      var open = b.querySelector('.shop-pick');
+      closeShopPicks();
+      if (open) return;
+      var m = document.createElement('div');
+      m.className = 'shop-pick';
+      picks.forEach(function (o) {
+        var a = document.createElement('a');
+        a.href = 'quote.html?id=' + o.id;
+        a.target = '_blank';
+        a.textContent = 'Quote #' + o.id + (o.chosen_at ? ' \u2605 chosen' : o.status === 'won' ? ' \u00b7 won' : '');
+        a.addEventListener('click', function (ev) { ev.stopPropagation(); setTimeout(closeShopPicks, 0); });
+        m.appendChild(a);
+      });
+      b.appendChild(m);
+    });
+  }
+  return b;
+}
+
+function renderCustomers(list, searching) {
   var body = document.getElementById('customers-body');
   body.innerHTML = '';
   if (!list.length) {
-    body.innerHTML = '<tr><td class="empty" colspan="8">No customers yet.</td></tr>';
+    body.innerHTML = '<tr><td class="empty" colspan="8">' + (searching ? 'No customers match that search.' : 'No customers yet.') + '</td></tr>';
     return;
   }
   list.forEach(function (c) {
@@ -338,6 +441,8 @@ function renderCustomers(list) {
       cb.textContent = 'Wants a call';
       nameWrap.appendChild(cb);
     }
+    var shop = shopButton(c);
+    if (shop) nameWrap.appendChild(shop);
     tdName.appendChild(nameWrap);
 
     var tdEmail = document.createElement('td');
@@ -446,7 +551,7 @@ function renderCustomers(list) {
 
 function loadCustomers() {
   authFetch('/admin/customers').then(function (r) {
-    if (r.ok) renderCustomers(r.data.customers || []);
+    if (r.ok) { ALL_CUSTOMERS = r.data.customers || []; applySearch(); }
   });
 }
 
