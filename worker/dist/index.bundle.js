@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "b799aaa-dirty";
-const WORKER_BUILT_AT = "2026-10-15T03:19:05.522Z";
+const WORKER_BUILD = "033c4a1-dirty";
+const WORKER_BUILT_AT = "2026-10-15T03:20:43.916Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -8234,7 +8234,11 @@ function describeDesign(config) {
   if (c.addons && c.addons.ridgeVent === true) lines.push("Ridge vent: yes");
   /* Shop spec (siding type, doors, windows, porch, loft, add-ons...) from the
      same helper the install invite uses, so names never drift. */
-  const shop = buildSpecLines(c).filter((l) => !/^\d/.test(l));
+  /* Drop the shell line (said above) and the bare "Roof:" line (said with its
+     colour above); keep only add-ons that are actually switched on —
+     fbColor/shutterColor are colour settings, not add-ons. */
+  const ad = c.addons && typeof c.addons === "object" ? Object.fromEntries(Object.entries(c.addons).filter(([k, v]) => v === true || (typeof v === "string" && v !== "none" && !/Color$/.test(k)))) : c.addons;
+  const shop = buildSpecLines({ ...c, addons: ad }).filter((l) => !/^\d/.test(l) && !/^Roof: /.test(l));
   for (const l of shop) lines.push(l);
   const doors = (Array.isArray(c.doors) ? c.doors : []).map((d) => cdPlaceOn(d)).filter(Boolean);
   if (doors.length) lines.push("Door placement: " + doors.join("; "));
@@ -8275,17 +8279,21 @@ async function findCustomerDesign(db, q) {
     .map(cdStr))].filter((n) => normName(n) !== normName(name));
   const base = { found: true, query, customer: { id: customer ? customer.id : null, name }, other_matches: ambiguous.slice(0, 5) };
 
-  // 1. saved 3D design: same name, or same email as the CRM customer.
-  const saved = designs.find((d) => d.score === best && cdJson(d.config)) ||
-    (email ? (await cdAll(db, CD_SQL.designs)).find((d) => cdStr(d.contact_email).toLowerCase() === email && cdJson(d.config)) : null);
+  /* Which design? A WON quote is what is being built, so it wins outright.
+     Otherwise the newest of saved 3D designs and quotes: saved designs are
+     often earlier drafts of a quote that came later. Ties go to the saved
+     design. */
+  const savedAll = designs.filter((d) => d.score === best && cdJson(d.config));
+  if (email) for (const d of await cdAll(db, CD_SQL.designs)) if (cdStr(d.contact_email).toLowerCase() === email && cdJson(d.config) && !savedAll.some((x) => x.code === d.code)) savedAll.push(d);
+  const subs = customer ? await cdAll(db, CD_SQL.subs, customer.id) : [];
+  const quotes = subs.map((q) => ({ q, d: cdJson(q.details) })).filter((x) => x.d && x.d.config && typeof x.d.config === "object");
+  const won = quotes.find((x) => x.q.status === "won");
+  const saved = savedAll.sort((x, y) => cdStr(y.created_at).localeCompare(cdStr(x.created_at)))[0];
+  const quote = won || quotes[0];
+  const useQuote = quote && (won || !saved || cdStr(quote.q.created_at) > cdStr(saved.created_at));
+  if (useQuote) return cdFinish(base, "quote", quote.d.config, { submission_id: quote.q.id, status: quote.q.status, created_at: quote.q.created_at });
   if (saved) return cdFinish(base, "saved_design", cdJson(saved.config), { code: saved.code, created_at: saved.created_at });
 
-  const subs = customer ? await cdAll(db, CD_SQL.subs, customer.id) : [];
-  // 2. latest quote carrying a design config
-  for (const s of subs) {
-    const d = cdJson(s.details);
-    if (d && d.config && typeof d.config === "object") return cdFinish(base, "quote", d.config, { submission_id: s.id, status: s.status, created_at: s.created_at });
-  }
   // 3. inquiry / lead notes: no config to render from, only the words.
   const words = [];
   for (const s of subs) { const d = cdJson(s.details); if (d) for (const k of ["notes", "message", "description"]) if (cdStr(d[k])) words.push(cdStr(d[k])); }

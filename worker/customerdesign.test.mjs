@@ -24,7 +24,7 @@ function makeD1(db) {
       run() { const s = db.prepare(sql); return isSelect ? { results: s.all(...args) } : (s.run(...args), {}); }
     });
   }
-  return { writes, prepare(sql) { const m = shape(sql); return { ...m([]), bind: (...a) => m(a) }; } };
+  return { raw: db, writes, prepare(sql) { const m = shape(sql); return { ...m([]), bind: (...a) => m(a) }; } };
 }
 
 function setup() {
@@ -60,6 +60,8 @@ test('spec: style label, Sherwin-Williams trim, colors, ridge vent, placement â€
   assert.match(s, /Door placement: centered on the right side wall/);
   assert.match(s, /Window placement: centered on the front wall; near the right end of the right side wall; near the left end of the right side wall/);
   assert.doesNotMatch(s, /\$|\d+\.\d\d\b/, 'no prices');
+  assert.doesNotMatch(s, /fb color|shutter color/, 'colour settings are not add-ons');
+  assert.equal(s.match(/^Roof/gm).length, 1, 'one roof line');
 });
 
 test('barn style and missing fields are left out, not invented', () => {
@@ -75,10 +77,13 @@ test('fuzzy names', () => {
   assert.ok(nameScore('Nahui Lopez', 'Nahui Lopez') > nameScore('nahui', 'Nahui Lopez'));
 });
 
-test('source order: saved design (by email) beats quote; quote; inquiry; nothing', async () => {
+test('source order: won quote > newest of saved design (by email) / quote > inquiry > nothing', async () => {
   const db = setup();
   const a = await findCustomerDesign(db, 'nahui');
   assert.equal(a.source, 'saved_design'); assert.equal(a.ref.code, 'abcd1234'); assert.equal(a.customer.name, 'Nahui Lopez');
+  db.raw.prepare("UPDATE submissions SET status='won' WHERE id=73").run();
+  const w = await findCustomerDesign(db, 'nahui');
+  assert.equal(w.source, 'quote'); assert.equal(w.ref.submission_id, 73);
   const b = await findCustomerDesign(db, 'ann');
   assert.equal(b.source, 'quote'); assert.equal(b.ref.submission_id, 80); assert.match(b.spec_text, /Style: Barn/);
   const c = await findCustomerDesign(db, 'ivan inquiry');
