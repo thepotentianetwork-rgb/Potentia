@@ -39,6 +39,9 @@ import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, bala
          DISCOUNT_METHODS, cardBillFooterNote, bankBillFooterNote, addConcreteScope, depositAsQuote } from "./invoices.js";
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods, sendDraftInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
+import { findCustomerDesign } from "./customerdesign.js";
+import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
+import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -5953,11 +5956,83 @@ async function handleIntakeDeposit(request, env, origin) {
   return json({ ok: true, received, at, amount: received ? amount : null }, 200, origin);
 }
 
+function briefingJson(data, status, extra) {
+  return new Response(JSON.stringify(data), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...(extra || {}) }
+  });
+}
+async function handleBriefing(request, env, path) {
+  if (request.method !== "GET") return briefingJson({ error: "Method not allowed" }, 405, { Allow: "GET" });
+  const secret = env.BRIEFING_API_KEY;
+  if (!secret) return briefingJson({ error: "Briefing is not configured" }, 503);
+  const m = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") || "");
+  if (!m || !timingSafeEqual(m[1].trim(), secret)) return briefingJson({ error: "Unauthorized" }, 401);
+  if (!briefingRateOk("briefing:" + clientIp(request), Date.now())) {
+    return briefingJson({ error: "Too many requests" }, 429, { "Retry-After": "60" });
+  }
+  const url = new URL(request.url);
+  const nowMs = Date.now();
+  const fetchThreads = makeThreadFetcher(env);
+  const self = gmailSelfAddresses(env);
+  const ok = (body) => briefingJson({ ...body, ...NO_SIDE_EFFECTS }, 200);
+  try {
+    if (path === "/api/briefing") {
+      const { days, sections } = parseBriefingParams(url.searchParams);
+      return ok(await loadBriefing(env.DB, { nowMs, days, sections, fetchThreads, selfAddresses: self }));
+    }
+    const lead = /^\/api\/briefing\/lead\/(\d+)$/.exec(path);
+    if (lead) {
+      const d = await loadLeadDetail(env.DB, Number(lead[1]), { nowMs });
+      return d ? ok(d) : briefingJson({ error: "Not found", ...NO_SIDE_EFFECTS }, 404);
+    }
+    if (path === "/api/briefing/customer-design") {
+      const r = await findCustomerDesign(env.DB, url.searchParams.get("q"));
+      if (r.status === 400) return briefingJson({ error: r.error, ...NO_SIDE_EFFECTS }, 400);
+      return r.found ? ok(r) : briefingJson({ ...r, ...NO_SIDE_EFFECTS }, 404);
+    }
+    if (path === "/api/briefing/follow-ups") {
+      const b = buildBriefing(await loadRows(env.DB, { nowMs, days: 1 }), { nowMs, sections: ["follow_ups"] });
+      return ok({ generated_at: b.generated_at, follow_ups: b.display.follow_ups });
+    }
+    if (path === "/api/briefing/emails") {
+      const e = await loadEmails(env.DB, fetchThreads, self);
+      return ok({ generated_at: new Date(nowMs).toISOString(), status: e.enabled ? (e.error ? "error" : "ok") : "disabled", emails: e.items });
+    }
+    if (path === "/api/briefing/draft") {
+      const kind = url.searchParams.get("kind");
+      const id = url.searchParams.get("id") || "";
+      let target = null;
+      if (kind === "lead" || kind === "follow_up") {
+        const d = await loadLeadDetail(env.DB, Number(id), { nowMs });
+        if (d) target = { ...d.lead, design: (d.designs.find((x) => x.status !== "superseded") || {}).summary || null };
+      } else if (kind === "email") {
+        const e = await loadEmails(env.DB, fetchThreads, self);
+        if (!e.enabled) return briefingJson({ error: "Email is not enabled", ...NO_SIDE_EFFECTS }, 503);
+        target = e.items.find((x) => x.thread_id === id) || null;
+      } else {
+        return briefingJson({ error: "kind must be lead, follow_up or email", ...NO_SIDE_EFFECTS }, 400);
+      }
+      const draft = buildDraft(kind, target);
+      return briefingJson(draft, draft.error ? 404 : 200);
+    }
+    return briefingJson({ error: "Not found", ...NO_SIDE_EFFECTS }, 404);
+  } catch (e) {
+    return briefingJson({ error: "Briefing failed", ...NO_SIDE_EFFECTS }, 500);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
     const url = new URL(request.url);
     const path = url.pathname;
+
+    /* GET /api/briefing — server-to-server, read-only. Handled before the
+       CORS/OPTIONS path on purpose: no browser should be able to call it, so
+       it never carries Access-Control-* headers. See briefing.js. */
+    if (path === "/api/briefing" || path.startsWith("/api/briefing/")) {
+      return await handleBriefing(request, env, path);
+    }
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(origin) });

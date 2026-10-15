@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "9afe1f6";
-const WORKER_BUILT_AT = "2026-10-14T22:03:12.634Z";
+const WORKER_BUILD = "033c4a1-dirty";
+const WORKER_BUILT_AT = "2026-10-15T03:20:43.916Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -7531,6 +7531,784 @@ function quotedAverage(rows) {
 
 // ---- end inlined quotehistory.js ----
 
+// ---- inlined from worker/briefing.js by build-bundle.mjs — do not edit below by hand ----
+/* GET /api/briefing — the read-only "Good morning, Jarvis" briefing for a
+ * server-to-server caller (the dashboard's Node process shows it and reads
+ * the `spoken` field aloud). Nothing here sends, writes, or schedules anything;
+ * every response says so with requires_approval / side_effects.
+ *
+ * Everything here is PURE: the handler in index.js fetches rows with plain
+ * SELECTs and hands them in, together with "now". No clock, no database, so
+ * the same functions run in tests and against live rows from a script.
+ *
+ * Source tables (potentia-shed, bound as DB):
+ *   new_leads          customers.created_at in window; source = heardAbout of
+ *                      the customer's first submission; city = customers.city
+ *                      or that submission's details.city
+ *   new_designs        submissions.created_at in window, excluding 'superseded'
+ *   pending_proposals  submissions.status = 'quoted' (sent, neither won nor lost),
+ *                      ONLY each customer's latest one (older quoted versions of
+ *                      the same customer are revisions, not separate deals);
+ *                      total = effective_price ?? details.quotedPrice;
+ *                      "sent" = created_at (there is no separate sent stamp).
+ *                      Display only; never read aloud as a count or a total.
+ *   emails             Gmail, read-only, metadata + short snippet; see gmail.js.
+ *                      Off unless the Gmail secrets are set. Never stored.
+ *   urgent             installs scheduled today, and unanswered customer emails
+ *                      older than 24 hours.
+ *   upcoming_installs  installs.install_date in [today, today+14], done_at null,
+ *                      order status 'won'
+ *   follow_ups         customers.follow_up_at <= today (dormant included)
+ */
+
+const BRIEFING_TZ = 'America/Denver';
+const SECTIONS = ['new_leads', 'emails', 'follow_ups', 'upcoming_installs', 'urgent', 'new_designs', 'pending_proposals'];
+const INSTALL_HORIZON_DAYS = 14;
+
+/* The calendar day in Denver for an instant. */
+function denverDay(ms) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: BRIEFING_TZ, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date(ms));
+}
+
+/* The UTC instant of Denver midnight starting `day` (YYYY-MM-DD). */
+function denverMidnightUtc(day) {
+  const guess = Date.parse(day + 'T00:00:00Z');
+  // Offset of Denver at that moment (in minutes); iterate once for DST edges.
+  let t = guess;
+  for (let i = 0; i < 2; i++) {
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: BRIEFING_TZ, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      .formatToParts(new Date(t)).reduce((o, p) => (o[p.type] = p.value, o), {});
+    const asUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour % 24, +parts.minute, +parts.second);
+    t = guess - (asUtc - t);
+  }
+  return new Date(t).toISOString();
+}
+
+function shiftDay(day, n) {
+  const d = new Date(day + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function parseBriefingParams(searchParams) {
+  const raw = searchParams.get('days');
+  let days = raw == null || raw === '' ? 1 : Math.floor(Number(raw));
+  if (!Number.isFinite(days) || days < 1) days = 1;
+  if (days > 30) days = 30;
+  const s = searchParams.get('sections');
+  let sections = SECTIONS.slice();
+  if (s) {
+    const want = s.split(',').map((x) => x.trim()).filter(Boolean);
+    sections = SECTIONS.filter((k) => want.includes(k));
+  }
+  return { days, sections };
+}
+
+/* Window: from Denver midnight (days-1) days ago, to now. */
+function briefingWindow(nowMs, days) {
+  const today = denverDay(nowMs);
+  const fromDay = shiftDay(today, -(days - 1));
+  return { today, from: denverMidnightUtc(fromDay), to: new Date(nowMs).toISOString() };
+}
+
+function parseDetails(d) {
+  if (!d) return {};
+  if (typeof d === 'object') return d;
+  try { return JSON.parse(d) || {}; } catch { return {}; }
+}
+
+const STYLE_NAMES = { barn: 'barn', gable: 'gable', leanto: 'lean-to', 'lean-to': 'lean-to', modern: 'modern', quaker: 'quaker' };
+function designSummary(details) {
+  const c = parseDetails(details).config || {};
+  const size = c.w && c.l ? `${c.w}x${c.l}` : null;
+  const style = c.style ? (STYLE_NAMES[c.style] || String(c.style)) : null;
+  const bits = [size, style].filter(Boolean);
+  return bits.length ? bits.join(' ') : null;
+}
+
+function quoteTotal(row) {
+  if (row.effective_price != null && Number.isFinite(Number(row.effective_price))) return Math.round(Number(row.effective_price) * 100) / 100;
+  const q = parseDetails(row.details).quotedPrice;
+  return q != null && Number.isFinite(Number(q)) ? Math.round(Number(q) * 100) / 100 : null;
+}
+
+function daysSince(iso, today) {
+  const d = String(iso || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  return Math.round((Date.parse(today + 'T00:00:00Z') - Date.parse(d + 'T00:00:00Z')) / 86400000);
+}
+
+/* ---- money in words ---- */
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+  'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+function under1000(n) {
+  const out = [];
+  if (n >= 100) { out.push(ONES[Math.floor(n / 100)] + ' hundred'); n %= 100; }
+  if (n >= 20) { out.push(TENS[Math.floor(n / 10)] + (n % 10 ? '-' + ONES[n % 10] : '')); }
+  else if (n > 0) out.push(ONES[n]);
+  return out.join(' ');
+}
+function numberWords(n) {
+  n = Math.floor(Math.abs(n));
+  if (n === 0) return 'zero';
+  const scales = [[1e9, 'billion'], [1e6, 'million'], [1e3, 'thousand']];
+  const out = [];
+  for (const [v, w] of scales) {
+    if (n >= v) { out.push(under1000(Math.floor(n / v)) + ' ' + w); n %= v; }
+  }
+  if (n) out.push(under1000(n));
+  return out.join(' ');
+}
+/* Whole dollars, spoken. Cents are rounded away: nobody wants them read out. */
+function moneyWords(amount) {
+  const d = Math.round(Number(amount) || 0);
+  return numberWords(d) + (d === 1 ? ' dollar' : ' dollars');
+}
+
+function plural(n, one, many) { return `${numberWords(n)} ${n === 1 ? one : many}`; }
+function spokenDate(day, today) {
+  if (day === today) return 'today';
+  if (day === shiftDay(today, 1)) return 'tomorrow';
+  const d = new Date(day + 'T12:00:00Z');
+  return d.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric' });
+}
+/* Strip anything a TTS engine would read as a symbol. */
+function speakable(s) { return String(s || '').replace(/[^\p{L}\p{N}\s'’.,-]/gu, ' ').replace(/\s+/g, ' ').trim(); }
+
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function firstName(n) { return speakable(String(n || '').split(/\s+/)[0]); }
+
+/* Every response carries this. The dashboard must ask the user before doing
+   anything the briefing suggests; the endpoint itself never does anything. */
+const NO_SIDE_EFFECTS = Object.freeze({ requires_approval: true, side_effects: 'none' });
+
+/* ---- the daily quote ----
+   Curated, real, and attributed to where each one is actually documented.
+   Rotation is deterministic by Denver calendar date. Do not add a quote here
+   without a verifiable source; popular misattributions (Twain, Edison's
+   "overalls", "Aristotle" on habit) are deliberately left out. */
+const QUOTES = [
+  { text: 'Well done is better than well said.', author: 'Benjamin Franklin', source: "Poor Richard's Almanack, 1737" },
+  { text: 'Lost time is never found again.', author: 'Benjamin Franklin', source: "Poor Richard's Almanack, 1748" },
+  { text: 'Diligence is the mother of good luck.', author: 'Benjamin Franklin', source: "Poor Richard's Almanack, 1736" },
+  { text: 'Little strokes fell great oaks.', author: 'Benjamin Franklin', source: "Poor Richard's Almanack, 1750" },
+  { text: 'Plans are worthless, but planning is everything.', author: 'Dwight D. Eisenhower', source: 'Speech to the National Defense Executive Reserve Conference, 1957' },
+  { text: 'Far and away the best prize that life offers is the chance to work hard at work worth doing.', author: 'Theodore Roosevelt', source: 'Labor Day address, Syracuse, 1903' },
+  { text: 'Do what you can, with what you have, where you are.', author: 'Theodore Roosevelt', source: 'Theodore Roosevelt: An Autobiography, 1913, quoting Squire Bill Widener' },
+  { text: 'The best way out is always through.', author: 'Robert Frost', source: 'A Servant to Servants, 1914' },
+  { text: 'Nothing will ever be attempted, if all possible objections must be first overcome.', author: 'Samuel Johnson', source: 'Rasselas, 1759' },
+  { text: 'We are what we repeatedly do. Excellence, then, is not an act, but a habit.', author: 'Will Durant', source: 'The Story of Philosophy, 1926, summarizing Aristotle' },
+  { text: 'Well begun is half done.', author: 'Aristotle', source: 'Politics, Book V, citing the proverb' },
+  { text: 'Either write something worth reading or do something worth writing.', author: 'Benjamin Franklin', source: "Poor Richard's Almanack, 1738" }
+];
+function quoteForDay(day) {
+  const n = Math.floor(Date.parse(day + 'T00:00:00Z') / 86400000);
+  return QUOTES[((n % QUOTES.length) + QUOTES.length) % QUOTES.length];
+}
+
+/* ---- email filtering (pure; gmail.js does the fetching) ----
+   Input: threads [{ id, messages:[{ id, from, subject, date, labelIds, snippet }] }]
+   in oldest-first order. Output: threads whose LAST message is an unread inbound
+   message that plausibly wants a reply. Metadata + a short snippet only. */
+const AUTOMATED = /(^|[._+-])(no-?reply|do-?not-?reply|notifications?|alerts?|mailer-daemon|postmaster|newsletter|news|marketing|updates?|billing|receipts?|info-?noreply|bounce)([._+-]|@)/i;
+const BULK_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS', 'SPAM', 'TRASH'];
+function emailAddress(from) {
+  const m = /<([^>]+)>/.exec(String(from || ''));
+  return (m ? m[1] : String(from || '')).trim().toLowerCase();
+}
+function emailDisplayName(from) {
+  const m = /^\s*"?([^"<]+?)"?\s*</.exec(String(from || ''));
+  return m ? m[1].trim() : null;
+}
+function cleanSnippet(s) {
+  const t = String(s || '').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/[\u034f\u200b-\u200d\u00a0]/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.length > 140 ? t.slice(0, 137).trimEnd() + '...' : t;
+}
+function filterImportantEmails(threads, { selfAddresses = [], customers = [] } = {}) {
+  const self = new Set(selfAddresses.map((a) => a.toLowerCase()));
+  const byEmail = new Map(customers.filter((c) => c.email).map((c) => [String(c.email).trim().toLowerCase(), c]));
+  const out = [];
+  for (const t of threads || []) {
+    const msgs = (t.messages || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const last = msgs[msgs.length - 1];
+    if (!last) continue;
+    const addr = emailAddress(last.from);
+    const labels = last.labelIds || [];
+    if (self.has(addr)) continue;                          // we spoke last: no reply owed
+    if (!labels.includes('INBOX') || !labels.includes('UNREAD')) continue;
+    if (BULK_LABELS.some((l) => labels.includes(l))) continue;
+    if (AUTOMATED.test(addr)) continue;
+    const customer = byEmail.get(addr) || null;
+    if (!labels.includes('IMPORTANT') && !customer) continue;
+    out.push({ thread_id: t.id, message_id: last.id, from: addr,
+      from_name: customer ? customer.name : emailDisplayName(last.from),
+      customer_id: customer ? customer.id : null,
+      subject: String(last.subject || '').trim(), received_at: last.date,
+      snippet: cleanSnippet(last.snippet), important: labels.includes('IMPORTANT'),
+      we_replied_before: msgs.some((m) => self.has(emailAddress(m.from))) });
+  }
+  return out.sort((a, b) => (b.customer_id != null) - (a.customer_id != null) || String(b.received_at).localeCompare(String(a.received_at)));
+}
+function spokenSubject(s) { return speakable(String(s || '').replace(/^((re|fwd?)\s*:\s*)+/i, '')); }
+
+/**
+ * rows: { customers, submissions, installs, followups, won_orders, won_with_dates }
+ * emails: { enabled, items, error? } (already filtered) or undefined.
+ */
+function buildBriefing(rows, { nowMs, days = 1, sections = SECTIONS, emails } = {}) {
+  const win = briefingWindow(nowMs, days);
+  const today = win.today, tomorrow = shiftDay(today, 1);
+  const horizon = shiftDay(today, INSTALL_HORIZON_DAYS);
+  const inWindow = (iso) => { const t = Date.parse(iso || ''); return !isNaN(t) && t >= Date.parse(win.from) && t <= nowMs; };
+  const subs = (rows.submissions || []).slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || a.id - b.id);
+  const firstSub = new Map(), latestSub = new Map();
+  for (const s of subs) {
+    if (s.customer_id == null) continue;
+    if (!firstSub.has(s.customer_id)) firstSub.set(s.customer_id, s);
+    if (s.status !== 'superseded') latestSub.set(s.customer_id, s);
+  }
+  const want = new Set(sections);
+  const display = {}, counts = {};
+
+  const leads = (rows.customers || []).filter((c) => inWindow(c.created_at))
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+    .map((c) => {
+      const f = firstSub.get(c.id), l = latestSub.get(c.id) || f;
+      const d = f ? parseDetails(f.details) : {};
+      return { customer_id: c.id, name: c.name || null, source: d.heardAbout || null,
+        city: c.city || d.city || null, phone: c.phone || null, created_at: c.created_at,
+        design: l ? designSummary(l.details) : null, latest_status: l ? l.status : null,
+        detail_endpoint: `/api/briefing/lead/${c.id}` };
+    });
+  if (want.has('new_leads')) display.new_leads = leads;
+
+  const emailState = emails || { enabled: false, items: [] };
+  if (want.has('emails')) {
+    display.emails = emailState.items || [];
+    display.emails_status = emailState.enabled ? (emailState.error ? 'error' : 'ok') : 'disabled';
+  }
+
+  const followUps = (rows.followups || [])
+    .filter((c) => c.follow_up_at && String(c.follow_up_at).slice(0, 10) <= today)
+    .sort((a, b) => String(a.follow_up_at).localeCompare(String(b.follow_up_at)))
+    .map((c) => ({ customer_id: c.id, name: c.name || null, phone: c.phone || null,
+      follow_up_at: String(c.follow_up_at).slice(0, 10), days_overdue: daysSince(c.follow_up_at, today),
+      dormant: c.temp_override === 'dormant', temp_override: c.temp_override || null }));
+  if (want.has('follow_ups')) display.follow_ups = followUps;
+
+  const allInstalls = rows.installs || [];
+  const installs = allInstalls
+    .filter((i) => !i.done_at && i.install_date >= today && i.install_date <= horizon)
+    .sort((a, b) => String(a.install_date).localeCompare(String(b.install_date)) || a.id - b.id)
+    .map((i) => ({ install_id: i.id, submission_id: i.submission_id, customer: i.customer_name || null,
+      customer_id: i.customer_id ?? null, city: i.city || null, item: i.item, install_date: i.install_date,
+      days: i.days ?? null, when: i.install_date === today ? 'today' : i.install_date === tomorrow ? 'tomorrow' : 'later' }));
+  if (want.has('upcoming_installs')) {
+    display.upcoming_installs = installs;
+    counts.install_date_coverage = { won_orders: rows.won_orders ?? null,
+      won_orders_with_dates: rows.won_with_dates ?? null, install_rows: allInstalls.length,
+      past_dates_excluded: allInstalls.filter((i) => !i.done_at && i.install_date < today).length };
+  }
+
+  const urgent = [];
+  for (const i of installs.filter((x) => x.when === 'today')) urgent.push({ kind: 'install_today', ...i });
+  for (const e of (emailState.items || [])) {
+    const t = Date.parse(e.received_at || '');
+    if (e.customer_id != null && !isNaN(t) && nowMs - t > 86400000) urgent.push({ kind: 'customer_email_waiting', ...e });
+  }
+  if (want.has('urgent')) display.urgent = urgent;
+
+  if (want.has('new_designs')) {
+    display.new_designs = subs.filter((s) => s.status !== 'superseded' && inWindow(s.created_at)).reverse()
+      .map((s) => ({ submission_id: s.id, customer_id: s.customer_id, customer: s.customer_name || s.name || null,
+        summary: designSummary(s.details), status: s.status, total: quoteTotal(s), created_at: s.created_at }));
+  }
+  if (want.has('pending_proposals')) {
+    const latestQuoted = new Map();
+    for (const s of subs) if (s.status === 'quoted') latestQuoted.set(s.customer_id ?? ('s' + s.id), s);
+    display.pending_proposals = [...latestQuoted.values()]
+      .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+      .map((s) => ({ submission_id: s.id, quote_number: s.id, customer_id: s.customer_id, customer: s.customer_name || s.name || null,
+        total: quoteTotal(s), sent_at: s.created_at, days_since_sent: daysSince(s.created_at, today) }));
+  }
+  for (const k of SECTIONS) if (Array.isArray(display[k])) counts[k] = display[k].length;
+  display.counts = counts;
+
+  const quote = quoteForDay(today);
+  const recommended_action = recommend({ leads, emails: emailState.items || [], followUps, installs, want });
+  const spoken = buildSpoken({ leads, emails: emailState.items || [], followUps, installs, urgent, want, quote, recommended_action, days, today });
+
+  return { ...NO_SIDE_EFFECTS, generated_at: new Date(nowMs).toISOString(), timezone: BRIEFING_TZ,
+    window: { from: win.from, to: win.to, days, today }, quote, recommended_action,
+    display, spoken, intents: buildIntents({ leads, emails: emailState.items || [], followUps, recommended_action }) };
+}
+
+/* One thing to do first, in the same priority order the briefing is read in. */
+function recommend({ leads, emails, followUps, installs, want }) {
+  const on = (k) => !want || want.has(k);
+  const l = on('new_leads') && leads[0];
+  if (l) return { kind: 'call_lead', customer_id: l.customer_id, text: `Call ${l.name || 'the new lead'}${l.design ? ` about their ${l.design.replace(/(\d+)x(\d+)/, '$1 by $2')} design` : ''}`,
+    endpoint: `/api/briefing/lead/${l.customer_id}` };
+  const e = on('emails') && emails[0];
+  if (e) return { kind: 'reply_email', thread_id: e.thread_id, customer_id: e.customer_id,
+    text: `Reply to ${e.from_name || e.from} about ${spokenSubject(e.subject) || 'their email'}`,
+    endpoint: `/api/briefing/draft?kind=email&id=${encodeURIComponent(e.thread_id)}` };
+  const f = on('follow_ups') && followUps[0];
+  if (f) return { kind: 'follow_up', customer_id: f.customer_id, text: `Follow up with ${f.name || 'your oldest follow up'}`,
+    endpoint: `/api/briefing/draft?kind=follow_up&id=${f.customer_id}` };
+  const i = on('upcoming_installs') && installs.find((x) => x.when !== 'later');
+  if (i) return { kind: 'confirm_install', customer_id: i.customer_id, text: `Confirm ${i.when}'s ${i.item} job for ${i.customer || 'the customer'}`, endpoint: null };
+  return { kind: 'none', text: 'Check in on your open proposals', endpoint: null };
+}
+
+function names(list, key, max) {
+  const n = list.slice(0, max).map((x) => speakable(x[key]) || 'someone');
+  if (list.length > max) n.push(`${numberWords(list.length - max)} more`);
+  return n.length <= 1 ? n.join('') : n.slice(0, -1).join(', ') + ' and ' + n[n.length - 1];
+}
+
+/* Short, action-first, read aloud. Target: under about 150 words. */
+function buildSpoken({ leads, emails, followUps, installs, urgent, want, quote, recommended_action, days, today }) {
+  const on = (k) => want.has(k);
+  const out = [`Good morning. As ${quote.author} put it, ${quote.text}`];
+  const span = days === 1 ? 'overnight' : `in the last ${numberWords(days)} days`;
+  if (on('new_leads')) {
+    if (leads.length) {
+      const l = leads[0];
+      const bits = [l.city ? `from ${speakable(l.city)}` : '', l.source ? `found us through ${speakable(l.source.replace(/-/g, ' '))}` : ''].filter(Boolean).join(', ');
+      out.push(leads.length === 1
+        ? `One new lead ${span}: ${speakable(l.name) || 'a new customer'}${bits ? ', ' + bits : ''}${l.design ? `, looking at a ${l.design.replace(/(\d+)x(\d+)/, '$1 by $2')}` : ''}.`
+        : `${cap(numberWords(leads.length))} new leads ${span}, newest is ${speakable(l.name) || 'a new customer'}${l.city ? ' from ' + speakable(l.city) : ''}.`);
+    } else out.push(`No new leads ${span}.`);
+  }
+  if (on('emails') && emails.length) {
+    const e = emails[0];
+    out.push(`${cap(plural(emails.length, 'email needs', 'emails need'))} a reply, starting with ${speakable(e.from_name) || 'a customer'} about ${spokenSubject(e.subject) || 'their message'}.`);
+  }
+  if (on('follow_ups') && followUps.length) {
+    const late = followUps[0].days_overdue > 0 ? `, the oldest ${plural(followUps[0].days_overdue, 'day', 'days')} overdue` : '';
+    out.push(`Follow ups due: ${names(followUps, 'name', 2)}${late}.`);
+  }
+  if (on('upcoming_installs')) {
+    const soon = installs.filter((i) => i.when !== 'later');
+    if (soon.length) {
+      for (const w of ['today', 'tomorrow']) {
+        const g = soon.filter((i) => i.when === w);
+        if (g.length) out.push(`${cap(w)}: ${g.slice(0, 3).map((i) => `${speakable(i.item)} for ${speakable(i.customer) || 'a customer'}`).join(', ')}.`);
+      }
+    } else if (installs.length) {
+      out.push(`Next on the schedule is ${speakable(installs[0].item)} for ${speakable(installs[0].customer)} on ${spokenDate(installs[0].install_date, today)}.`);
+    }
+  }
+  if (on('urgent')) {
+    const waiting = urgent.filter((u) => u.kind === 'customer_email_waiting' && !(emails[0] && emails[0].thread_id === u.thread_id));
+    if (waiting.length) out.push(`Also, ${speakable(waiting[0].from_name)} has been waiting over a day for a reply.`);
+  }
+  out.push(`Start with this: ${recommended_action.text}.`);
+  return out.join(' ');
+}
+
+/* Phrases the dashboard should map to follow-up calls, with ids pre-resolved
+   so "that new lead" means the top lead from THIS briefing. */
+function buildIntents({ leads, emails, followUps, recommended_action }) {
+  const lead = leads[0], email = emails[0];
+  const draftTarget = recommended_action.kind === 'call_lead' ? `/api/briefing/draft?kind=lead&id=${lead.customer_id}`
+    : recommended_action.kind === 'reply_email' ? recommended_action.endpoint
+    : recommended_action.kind === 'follow_up' ? recommended_action.endpoint : null;
+  return {
+    tell_me_about_that_new_lead: { phrases: ['tell me about that new lead', 'who is the new lead', 'more on that lead'],
+      method: 'GET', endpoint: lead ? `/api/briefing/lead/${lead.customer_id}` : null, resolves_to: lead ? { customer_id: lead.customer_id, name: lead.name } : null },
+    draft_a_response: { phrases: ['draft a response', 'write them back', 'draft a reply'],
+      method: 'GET', endpoint: draftTarget, resolves_to: draftTarget ? recommended_action : null,
+      note: 'Returns draft text only. Nothing is sent or saved; the user must approve and send it themselves.' },
+    what_follow_ups_do_i_have: { phrases: ['what follow-ups do I have', 'who do I need to call'],
+      method: 'GET', endpoint: '/api/briefing/follow-ups', count: followUps.length },
+    read_my_important_emails: { phrases: ['read my important emails', 'any emails I need to answer'],
+      method: 'GET', endpoint: '/api/briefing/emails', count: emails.length, top_thread_id: email ? email.thread_id : null }
+  };
+}
+
+/* ---- follow-up endpoints (pure builders) ---- */
+function buildLeadDetail({ customer, submissions = [], notes = [], calls = [] }, { nowMs }) {
+  if (!customer) return null;
+  const today = denverDay(nowMs);
+  const subs = submissions.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const first = subs[subs.length - 1];
+  const d = first ? parseDetails(first.details) : {};
+  return { ...NO_SIDE_EFFECTS,
+    lead: { customer_id: customer.id, name: customer.name, email: customer.email || null, phone: customer.phone || null,
+      city: customer.city || d.city || null, source: d.heardAbout || null, created_at: customer.created_at,
+      days_since_created: daysSince(customer.created_at, today), temp_override: customer.temp_override || null,
+      follow_up_at: customer.follow_up_at || null },
+    designs: subs.map((s) => ({ submission_id: s.id, status: s.status, summary: designSummary(s.details), total: quoteTotal(s), created_at: s.created_at })),
+    recent_notes: notes.slice(0, 3).map((n) => ({ created_at: n.created_at, text: String(n.text || '').slice(0, 280) })),
+    calls: { count: calls.length, last_called_at: calls.length ? calls.map((c) => c.called_at).sort().pop() : null },
+    spoken: leadSpoken(customer, subs, d, calls) };
+}
+function leadSpoken(c, subs, d, calls) {
+  const s = subs.find((x) => x.status !== 'superseded') || subs[0];
+  const bits = [`${speakable(c.name) || 'This lead'}${(c.city || d.city) ? ' is in ' + speakable(c.city || d.city) : ''}`];
+  if (d.heardAbout) bits.push(`and found us through ${speakable(d.heardAbout.replace(/-/g, ' '))}`);
+  let t = bits.join(' ') + '.';
+  if (s) t += ` They designed a ${String(designSummary(s.details) || 'shed').replace(/(\d+)x(\d+)/, '$1 by $2')}${quoteTotal(s) ? ` priced at ${moneyWords(quoteTotal(s))}` : ''}.`;
+  t += calls.length ? ` You have called them ${plural(calls.length, 'time', 'times')}.` : ' Nobody has called them yet.';
+  return t;
+}
+
+/* Draft text only. Never sent, never saved. Signed generically on purpose. */
+function buildDraft(kind, target) {
+  const base = { ...NO_SIDE_EFFECTS, sent: false, saved: false, kind };
+  if (!target) return { ...base, error: 'Not found' };
+  const first = firstName(target.name || target.from_name) || 'there';
+  if (kind === 'lead') {
+    return { ...base, to: target.email || null, phone: target.phone || null,
+      subject: 'Your ShedPro shed design',
+      body: `Hi ${first},\n\nThanks for designing your ${target.design ? target.design + ' ' : ''}shed with ShedPro. I would love to go over it with you and answer any questions. When is a good time for a quick call?\n\nThanks,\nShedPro` };
+  }
+  if (kind === 'follow_up') {
+    return { ...base, to: target.email || null, phone: target.phone || null,
+      subject: 'Checking in on your shed',
+      body: `Hi ${first},\n\nJust checking in on your shed project. Are you still thinking about moving forward? Happy to adjust the design or answer any questions.\n\nThanks,\nShedPro` };
+  }
+  if (kind === 'email') {
+    return { ...base, to: target.from, thread_id: target.thread_id,
+      subject: /^re:/i.test(target.subject || '') ? target.subject : `Re: ${target.subject || ''}`.trim(),
+      in_reply_to_snippet: target.snippet,
+      body: `Hi ${first},\n\nThanks for your message. [Your reply here]\n\nThanks,\nShedPro` };
+  }
+  return { ...base, error: 'Unknown kind' };
+}
+
+/* ---- SQL (SELECT only), shared by the worker and the live-data script ---- */
+const BRIEFING_SQL = {
+  customers: `SELECT id, name, phone, city, created_at FROM customers WHERE created_at >= ?`,
+  submissions: `SELECT s.id, s.customer_id, s.name, s.status, s.created_at, s.effective_price, s.details,
+                       c.name AS customer_name
+                FROM submissions s LEFT JOIN customers c ON c.id = s.customer_id
+                WHERE s.status = 'quoted' OR s.created_at >= ?
+                   OR s.customer_id IN (SELECT id FROM customers WHERE created_at >= ?)`,
+  installs: `SELECT i.id, i.submission_id, i.item, i.install_date, i.days, i.done_at,
+                    c.id AS customer_id, c.name AS customer_name, c.city
+             FROM installs i JOIN submissions s ON s.id = i.submission_id
+             LEFT JOIN customers c ON c.id = s.customer_id
+             WHERE s.status = 'won'`,
+  coverage: `SELECT COUNT(*) AS won_orders,
+                    SUM(EXISTS(SELECT 1 FROM installs i WHERE i.submission_id = s.id)) AS won_with_dates
+             FROM submissions s WHERE s.status = 'won'`,
+  followups: `SELECT id, name, phone, email, follow_up_at, temp_override FROM customers
+              WHERE follow_up_at IS NOT NULL AND follow_up_at <> '' AND substr(follow_up_at,1,10) <= ?`,
+  customerEmails: `SELECT id, name, email FROM customers WHERE email IS NOT NULL AND email <> ''`,
+  customer: `SELECT id, name, email, phone, city, created_at, temp_override, follow_up_at FROM customers WHERE id = ?`,
+  customerSubs: `SELECT id, status, created_at, effective_price, details FROM submissions WHERE customer_id = ? ORDER BY created_at DESC LIMIT 20`,
+  customerNotes: `SELECT created_at, text FROM notes WHERE customer_id = ? ORDER BY created_at DESC LIMIT 3`,
+  customerCalls: `SELECT called_at FROM calls WHERE customer_id = ?`
+};
+
+async function q(db, sql, ...args) {
+  try { return (await db.prepare(sql).bind(...args).all()).results || []; }
+  catch { return []; }   // a table that does not exist yet is an empty section
+}
+
+async function loadRows(db, { nowMs, days }) {
+  const win = briefingWindow(nowMs, days);
+  const [customers, submissions, installs, cov, followups] = await Promise.all([
+    q(db, BRIEFING_SQL.customers, win.from),
+    q(db, BRIEFING_SQL.submissions, win.from, win.from),
+    q(db, BRIEFING_SQL.installs),
+    q(db, BRIEFING_SQL.coverage),
+    q(db, BRIEFING_SQL.followups, win.today)
+  ]);
+  const c = cov[0] || {};
+  return { customers, submissions, installs, followups, won_orders: c.won_orders ?? null, won_with_dates: c.won_with_dates ?? null };
+}
+
+/* fetchThreads: async () => threads (see gmail.js) or null when email is off. */
+async function loadEmails(db, fetchThreads, selfAddresses) {
+  if (!fetchThreads) return { enabled: false, items: [] };
+  try {
+    const [threads, customers] = await Promise.all([fetchThreads(), q(db, BRIEFING_SQL.customerEmails)]);
+    return { enabled: true, items: filterImportantEmails(threads, { selfAddresses, customers }) };
+  } catch (e) {
+    return { enabled: true, items: [], error: 'Email fetch failed' };
+  }
+}
+
+async function loadBriefing(db, { nowMs, days, sections, fetchThreads, selfAddresses = [] }) {
+  const [rows, emails] = await Promise.all([loadRows(db, { nowMs, days }), loadEmails(db, fetchThreads, selfAddresses)]);
+  return buildBriefing(rows, { nowMs, days, sections, emails });
+}
+
+async function loadLeadDetail(db, id, { nowMs }) {
+  const [customer] = await q(db, BRIEFING_SQL.customer, id);
+  if (!customer) return null;
+  const [submissions, notes, calls] = await Promise.all([
+    q(db, BRIEFING_SQL.customerSubs, id), q(db, BRIEFING_SQL.customerNotes, id), q(db, BRIEFING_SQL.customerCalls, id)]);
+  return buildLeadDetail({ customer, submissions, notes, calls }, { nowMs });
+}
+
+/* Per-isolate rate limit. In memory on purpose: the endpoint is read-only and
+   must not write a counter row to D1. Coarse, but it stops a runaway loop. */
+const _hits = new Map();
+function briefingRateOk(key, nowMs, limit = 30, windowMs = 60000) {
+  const h = _hits.get(key);
+  if (!h || nowMs - h.start >= windowMs) { _hits.set(key, { start: nowMs, n: 1 }); return true; }
+  if (h.n >= limit) return false;
+  h.n++;
+  return true;
+}
+
+// ---- end inlined briefing.js ----
+
+// ---- inlined from worker/gmail.js by build-bundle.mjs — do not edit below by hand ----
+/* READ-ONLY Gmail access for the briefing's email section.
+ *
+ * Design (see README "Briefing email"): an OAuth refresh token for the ShedPro
+ * mailbox, consented with ONLY the gmail.readonly scope, stored as Worker
+ * secrets. The worker trades it for a short-lived access token per request,
+ * reads thread METADATA (From / Subject / Date / labels) plus Gmail's own short
+ * snippet, and returns it. Nothing is cached, nothing is written to D1, and
+ * there is no code path that sends, labels, archives or marks anything read
+ * (threads.get with format=metadata does not change UNREAD).
+ *
+ * Off unless BRIEFING_EMAIL_ENABLED === "true" AND all three secrets are set.
+ * If the token's granted scopes include anything beyond read-only Gmail, it is
+ * refused rather than used — a broader token pasted in by mistake fails closed.
+ *
+ * No imports: build-bundle.mjs inlines this file. `fetchImpl` is injectable
+ * so tests never touch the network.
+ */
+
+const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+const GMAIL_QUERY = 'in:inbox is:unread newer_than:3d -category:promotions -category:social -category:forums -category:updates';
+
+function gmailConfigured(env) {
+  return !!(env && String(env.BRIEFING_EMAIL_ENABLED || '').toLowerCase() === 'true'
+    && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN);
+}
+
+function gmailSelfAddresses(env) {
+  return String((env && env.GMAIL_SELF_ADDRESSES) || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+}
+
+/* Only read-only scopes are acceptable. */
+function scopesAreReadOnly(scopeStr) {
+  const scopes = String(scopeStr || '').split(/\s+/).filter(Boolean);
+  if (!scopes.length) return false;
+  const ok = new Set([GMAIL_READONLY_SCOPE, 'https://www.googleapis.com/auth/gmail.metadata']);
+  return scopes.every((s) => ok.has(s));
+}
+
+async function accessToken(env, fetchImpl) {
+  const r = await fetchImpl('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: env.GMAIL_CLIENT_ID, client_secret: env.GMAIL_CLIENT_SECRET,
+      refresh_token: env.GMAIL_REFRESH_TOKEN, grant_type: 'refresh_token' }).toString()
+  });
+  if (!r.ok) throw new Error('token ' + r.status);
+  const j = await r.json();
+  if (!scopesAreReadOnly(j.scope)) throw new Error('refusing a Gmail token that is not read-only');
+  return j.access_token;
+}
+
+function header(msg, name) {
+  const h = ((msg.payload && msg.payload.headers) || []).find((x) => String(x.name).toLowerCase() === name.toLowerCase());
+  return h ? h.value : '';
+}
+
+/* Returns a function that fetches recent unread inbox threads as
+   [{ id, messages:[{ id, from, subject, date, labelIds, snippet }] }], or null
+   when email is not configured. */
+function makeThreadFetcher(env, fetchImpl = fetch, maxThreads = 15) {
+  if (!gmailConfigured(env)) return null;
+  return async () => {
+    const token = await accessToken(env, fetchImpl);
+    const auth = { Authorization: 'Bearer ' + token };
+    const base = 'https://gmail.googleapis.com/gmail/v1/users/me';
+    const list = await fetchImpl(`${base}/threads?maxResults=${maxThreads}&q=${encodeURIComponent(GMAIL_QUERY)}`, { headers: auth });
+    if (!list.ok) throw new Error('list ' + list.status);
+    const ids = ((await list.json()).threads || []).map((t) => t.id);
+    const threads = await Promise.all(ids.map(async (id) => {
+      const r = await fetchImpl(`${base}/threads/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, { headers: auth });
+      if (!r.ok) return null;
+      const t = await r.json();
+      return { id: t.id, messages: (t.messages || []).map((m) => ({ id: m.id, from: header(m, 'From'), subject: header(m, 'Subject'),
+        date: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : header(m, 'Date'),
+        labelIds: m.labelIds || [], snippet: m.snippet || '' })) };
+    }));
+    return threads.filter(Boolean);
+  };
+}
+
+// ---- end inlined gmail.js ----
+
+// ---- inlined from worker/customerdesign.js by build-bundle.mjs — do not edit below by hand ----
+/* GET /api/briefing/customer-design?q=<name> — what a customer's shed IS,
+ * read out of the CRM so Jarvis can render it ("Jarvis, render Nahui's shed").
+ *
+ * Read-only, behind the same BRIEFING_API_KEY as the rest of /api/briefing.
+ * Source order, best first:
+ *   1. saved 3D design   (saved_designs, matched by contact name/email)
+ *   2. latest quote      (submissions.details.config)
+ *   3. inquiry / notes   (no config: the customer's own words and CRM notes)
+ * Nothing here is invented: every spec line comes from a stored field, and a
+ * field that is missing is simply left out. No prices.
+ */
+
+const CD_STYLE_SHEET = { gable: "aframe", barn: "barn", leanto: "leanto", hip: "poolhouse", "3peak": "3peak", "4peak": "4peak" };
+const CD_WALL = { front: "front", back: "back", left: "left side", right: "right side" };
+const CD_ROOF_MAT = { shingle: "asphalt shingle", metal: "metal" };
+
+function cdStr(v) { return String(v == null ? "" : v).trim(); }
+function cdJson(s) { if (s && typeof s === "object") return s; try { return JSON.parse(s); } catch { return null; } }
+function cdHex(n) { const v = Number(n); return Number.isInteger(v) && v >= 0 && v <= 0xffffff ? "#" + v.toString(16).toUpperCase().padStart(6, "0") : ""; }
+
+function normName(s) {
+  return cdStr(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/['’]s\b/g, "").replace(/[^a-z0-9@. ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+/* 0 = no match. Higher is better. "nahui" matches "Nahui Lopez"; "nahui lopes"
+   still matches by one-edit tolerance on tokens of 5+ letters. */
+function cdLev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function nameScore(query, name) {
+  const q = normName(query), n = normName(name);
+  if (!q || !n) return 0;
+  if (q === n) return 100;
+  const qt = q.split(" "), nt = n.split(" ");
+  let hit = 0;
+  for (const t of qt) {
+    if (nt.includes(t)) { hit += 2; continue; }
+    if (t.length >= 3 && nt.some((x) => x.startsWith(t))) { hit += 1.5; continue; }
+    if (t.length >= 5 && nt.some((x) => Math.abs(x.length - t.length) <= 1 && cdLev(t, x) <= 1)) { hit += 1; continue; }
+    return 0; // every query word must land
+  }
+  return Math.round((hit / (2 * qt.length)) * 90);
+}
+
+function cdColorLine(label, name, paint, num) {
+  const bits = [];
+  if (paint && paint.brand && paint.code) {
+    bits.push(paint.brand + " " + paint.code + (paint.name ? " " + paint.name : ""));
+  } else if (name) bits.push(name);
+  const h = (paint && paint.hex) || cdHex(num);
+  if (!bits.length && !h) return "";
+  return label + ": " + (bits.join(" ") || "custom color") + (h ? " (" + h + ")" : "");
+}
+
+function cdPlaceOn(item) {
+  const w = CD_WALL[cdStr(item.wall)];
+  if (!w) return "";
+  const p = Number(item.pos);
+  let where = "";
+  if (Number.isFinite(p)) where = p < 0.2 ? "near the left end of the " : p > 0.8 ? "near the right end of the " : (Math.abs(p - 0.5) < 0.08 ? "centered on the " : "on the ");
+  else where = "on the ";
+  return where + w + " wall";
+}
+
+/* The plain-English spec, and a render prompt built only from it. */
+function describeDesign(config) {
+  const c = config && typeof config === "object" ? config : null;
+  if (!c) return null;
+  const style = cdStr(c.style);
+  const styleLabel = SHEET_LABEL[CD_STYLE_SHEET[style]] || (style ? style : "");
+  const lines = [];
+  const size = c.w && c.l ? c.w + "' wide x " + c.l + "' deep" : "";
+  if (size) lines.push("Size: " + size + (c.h ? ", " + c.h + "' walls" : "") + (c.pitch ? ", " + c.pitch + "/12 roof pitch" : ""));
+  if (styleLabel) lines.push("Style: " + styleLabel);
+  const names = c.colorNames || {}, paint = c.paint || {};
+  const sid = cdColorLine("Siding color", names.siding, paint.siding, c.sidingColor); if (sid) lines.push(sid);
+  const trim = cdColorLine("Trim color", names.trim, paint.trim, c.trimColor); if (trim) lines.push(trim);
+  const roofMat = CD_ROOF_MAT[cdStr(c.roofType)];
+  const roof = cdColorLine("Roof", names.roof, null, c.roofColor);
+  if (roof || roofMat) lines.push((roof || "Roof: ") + (roofMat ? (roof ? ", " : "") + roofMat : ""));
+  if (cdStr(c.soffit)) lines.push("Soffit: " + (c.soffit === "trim" ? "matches trim" : c.soffit === "match" ? "matches siding" : c.soffit));
+  if (c.addons && c.addons.ridgeVent === true) lines.push("Ridge vent: yes");
+  /* Shop spec (siding type, doors, windows, porch, loft, add-ons...) from the
+     same helper the install invite uses, so names never drift. */
+  /* Drop the shell line (said above) and the bare "Roof:" line (said with its
+     colour above); keep only add-ons that are actually switched on —
+     fbColor/shutterColor are colour settings, not add-ons. */
+  const ad = c.addons && typeof c.addons === "object" ? Object.fromEntries(Object.entries(c.addons).filter(([k, v]) => v === true || (typeof v === "string" && v !== "none" && !/Color$/.test(k)))) : c.addons;
+  const shop = buildSpecLines({ ...c, addons: ad }).filter((l) => !/^\d/.test(l) && !/^Roof: /.test(l));
+  for (const l of shop) lines.push(l);
+  const doors = (Array.isArray(c.doors) ? c.doors : []).map((d) => cdPlaceOn(d)).filter(Boolean);
+  if (doors.length) lines.push("Door placement: " + doors.join("; "));
+  const wins = (Array.isArray(c.windows) ? c.windows : []).map((w) => cdPlaceOn(w)).filter(Boolean);
+  if (wins.length) lines.push("Window placement: " + wins.join("; "));
+  return { style: styleLabel, lines, text: lines.join("\n") };
+}
+
+function renderPrompt(name, spec) {
+  if (!spec || !spec.lines.length) return "";
+  return "Photorealistic exterior render of a custom backyard storage shed, built exactly to this spec. " +
+    "Front wall faces the viewer at a three-quarter angle; show the front and right side. Keep proportions true to the dimensions. " +
+    "Do not add features that are not listed.\n" + spec.text;
+}
+
+const CD_SQL = {
+  designs: "SELECT code, config, contact_name, contact_email, created_at FROM saved_designs ORDER BY created_at DESC LIMIT 2000",
+  customers: "SELECT id, name, email FROM customers ORDER BY id DESC LIMIT 5000",
+  subs: "SELECT id, details, status, created_at FROM submissions WHERE customer_id = ? ORDER BY created_at DESC, id DESC LIMIT 20",
+  notes: "SELECT text, created_at FROM notes WHERE customer_id = ? ORDER BY created_at DESC LIMIT 5"
+};
+async function cdAll(db, sql, ...args) {
+  try { const r = await db.prepare(sql).bind(...args).all(); return (r && r.results) || []; } catch { return []; }
+}
+
+async function findCustomerDesign(db, q) {
+  const query = cdStr(q).slice(0, 120);
+  if (normName(query).length < 2) return { error: "q required", status: 400 };
+  const customers = (await cdAll(db, CD_SQL.customers)).map((r) => ({ ...r, score: nameScore(query, r.name) })).filter((r) => r.score > 0);
+  const designs = (await cdAll(db, CD_SQL.designs)).map((r) => ({ ...r, score: nameScore(query, r.contact_name) })).filter((r) => r.score > 0);
+  const best = Math.max(0, ...customers.map((r) => r.score), ...designs.map((r) => r.score));
+  if (!best) return { found: false, query, error: "No customer matches" };
+  const cust = customers.filter((r) => r.score === best);
+  const customer = cust[0] || null;
+  const name = customer ? customer.name : designs.find((d) => d.score === best).contact_name;
+  const email = customer && cdStr(customer.email).toLowerCase();
+  const ambiguous = [...new Set([...cust.map((r) => r.name), ...designs.filter((d) => d.score === best).map((d) => d.contact_name)]
+    .map(cdStr))].filter((n) => normName(n) !== normName(name));
+  const base = { found: true, query, customer: { id: customer ? customer.id : null, name }, other_matches: ambiguous.slice(0, 5) };
+
+  /* Which design? A WON quote is what is being built, so it wins outright.
+     Otherwise the newest of saved 3D designs and quotes: saved designs are
+     often earlier drafts of a quote that came later. Ties go to the saved
+     design. */
+  const savedAll = designs.filter((d) => d.score === best && cdJson(d.config));
+  if (email) for (const d of await cdAll(db, CD_SQL.designs)) if (cdStr(d.contact_email).toLowerCase() === email && cdJson(d.config) && !savedAll.some((x) => x.code === d.code)) savedAll.push(d);
+  const subs = customer ? await cdAll(db, CD_SQL.subs, customer.id) : [];
+  const quotes = subs.map((q) => ({ q, d: cdJson(q.details) })).filter((x) => x.d && x.d.config && typeof x.d.config === "object");
+  const won = quotes.find((x) => x.q.status === "won");
+  const saved = savedAll.sort((x, y) => cdStr(y.created_at).localeCompare(cdStr(x.created_at)))[0];
+  const quote = won || quotes[0];
+  const useQuote = quote && (won || !saved || cdStr(quote.q.created_at) > cdStr(saved.created_at));
+  if (useQuote) return cdFinish(base, "quote", quote.d.config, { submission_id: quote.q.id, status: quote.q.status, created_at: quote.q.created_at });
+  if (saved) return cdFinish(base, "saved_design", cdJson(saved.config), { code: saved.code, created_at: saved.created_at });
+
+  // 3. inquiry / lead notes: no config to render from, only the words.
+  const words = [];
+  for (const s of subs) { const d = cdJson(s.details); if (d) for (const k of ["notes", "message", "description"]) if (cdStr(d[k])) words.push(cdStr(d[k])); }
+  const notes = customer ? (await cdAll(db, CD_SQL.notes, customer.id)).map((n) => cdStr(n.text)).filter(Boolean) : [];
+  if (words.length || notes.length) return { ...base, source: "inquiry", config: null, spec: null, spec_text: "", inquiry: words.slice(0, 3), notes: notes.slice(0, 5) };
+  return { ...base, source: null, config: null, spec: null, spec_text: "", error: "No saved design, quote or inquiry notes" };
+}
+
+function cdFinish(base, source, config, ref) {
+  const spec = describeDesign(config);
+  return { ...base, source, ref, config, spec: spec.lines, style: spec.style, spec_text: spec.text, prompt: renderPrompt(base.customer.name, spec) };
+}
+
+// ---- end inlined customerdesign.js ----
+
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
 //  2. /admin/*          — password-gated dashboard for the shed company
@@ -13465,11 +14243,83 @@ async function handleIntakeDeposit(request, env, origin) {
   return json({ ok: true, received, at, amount: received ? amount : null }, 200, origin);
 }
 
+function briefingJson(data, status, extra) {
+  return new Response(JSON.stringify(data), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...(extra || {}) }
+  });
+}
+async function handleBriefing(request, env, path) {
+  if (request.method !== "GET") return briefingJson({ error: "Method not allowed" }, 405, { Allow: "GET" });
+  const secret = env.BRIEFING_API_KEY;
+  if (!secret) return briefingJson({ error: "Briefing is not configured" }, 503);
+  const m = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") || "");
+  if (!m || !timingSafeEqual(m[1].trim(), secret)) return briefingJson({ error: "Unauthorized" }, 401);
+  if (!briefingRateOk("briefing:" + clientIp(request), Date.now())) {
+    return briefingJson({ error: "Too many requests" }, 429, { "Retry-After": "60" });
+  }
+  const url = new URL(request.url);
+  const nowMs = Date.now();
+  const fetchThreads = makeThreadFetcher(env);
+  const self = gmailSelfAddresses(env);
+  const ok = (body) => briefingJson({ ...body, ...NO_SIDE_EFFECTS }, 200);
+  try {
+    if (path === "/api/briefing") {
+      const { days, sections } = parseBriefingParams(url.searchParams);
+      return ok(await loadBriefing(env.DB, { nowMs, days, sections, fetchThreads, selfAddresses: self }));
+    }
+    const lead = /^\/api\/briefing\/lead\/(\d+)$/.exec(path);
+    if (lead) {
+      const d = await loadLeadDetail(env.DB, Number(lead[1]), { nowMs });
+      return d ? ok(d) : briefingJson({ error: "Not found", ...NO_SIDE_EFFECTS }, 404);
+    }
+    if (path === "/api/briefing/customer-design") {
+      const r = await findCustomerDesign(env.DB, url.searchParams.get("q"));
+      if (r.status === 400) return briefingJson({ error: r.error, ...NO_SIDE_EFFECTS }, 400);
+      return r.found ? ok(r) : briefingJson({ ...r, ...NO_SIDE_EFFECTS }, 404);
+    }
+    if (path === "/api/briefing/follow-ups") {
+      const b = buildBriefing(await loadRows(env.DB, { nowMs, days: 1 }), { nowMs, sections: ["follow_ups"] });
+      return ok({ generated_at: b.generated_at, follow_ups: b.display.follow_ups });
+    }
+    if (path === "/api/briefing/emails") {
+      const e = await loadEmails(env.DB, fetchThreads, self);
+      return ok({ generated_at: new Date(nowMs).toISOString(), status: e.enabled ? (e.error ? "error" : "ok") : "disabled", emails: e.items });
+    }
+    if (path === "/api/briefing/draft") {
+      const kind = url.searchParams.get("kind");
+      const id = url.searchParams.get("id") || "";
+      let target = null;
+      if (kind === "lead" || kind === "follow_up") {
+        const d = await loadLeadDetail(env.DB, Number(id), { nowMs });
+        if (d) target = { ...d.lead, design: (d.designs.find((x) => x.status !== "superseded") || {}).summary || null };
+      } else if (kind === "email") {
+        const e = await loadEmails(env.DB, fetchThreads, self);
+        if (!e.enabled) return briefingJson({ error: "Email is not enabled", ...NO_SIDE_EFFECTS }, 503);
+        target = e.items.find((x) => x.thread_id === id) || null;
+      } else {
+        return briefingJson({ error: "kind must be lead, follow_up or email", ...NO_SIDE_EFFECTS }, 400);
+      }
+      const draft = buildDraft(kind, target);
+      return briefingJson(draft, draft.error ? 404 : 200);
+    }
+    return briefingJson({ error: "Not found", ...NO_SIDE_EFFECTS }, 404);
+  } catch (e) {
+    return briefingJson({ error: "Briefing failed", ...NO_SIDE_EFFECTS }, 500);
+  }
+}
+
 export default {
   async fetch(request, env) {
     const origin = request.headers.get("Origin") || "";
     const url = new URL(request.url);
     const path = url.pathname;
+
+    /* GET /api/briefing — server-to-server, read-only. Handled before the
+       CORS/OPTIONS path on purpose: no browser should be able to call it, so
+       it never carries Access-Control-* headers. See briefing.js. */
+    if (path === "/api/briefing" || path.startsWith("/api/briefing/")) {
+      return await handleBriefing(request, env, path);
+    }
 
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(origin) });

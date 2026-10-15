@@ -1259,3 +1259,59 @@ returns the combined view and suggestion. Builds must belong to one customer.
 
 Every line is what is LEFT on that part, payments folded in; the memo says what
 was applied. Payments not assigned to a build are never credited (warning).
+
+## Briefing API (`/api/briefing`, "Good morning, Jarvis")
+
+Read-only, server-to-server JSON for the Jarvis dashboard's Node server. Never
+called from a browser (no CORS headers). Every response includes
+`requires_approval: true` and `side_effects: "none"`: the API suggests and
+drafts, and the user acts. Nothing in it sends, saves or schedules anything.
+
+| Route | What it returns |
+|---|---|
+| `GET /api/briefing?days=1&sections=...` | Full briefing: `quote`, `recommended_action`, `display` sections, `spoken` (about 150 words max), `intents` |
+| `GET /api/briefing/lead/:id` | One lead: contact info, designs, last 3 notes, call count, plus a `spoken` summary |
+| `GET /api/briefing/follow-ups` | Follow-ups due today or overdue, dormant customers included |
+| `GET /api/briefing/emails` | Important emails waiting on a reply (`status`: ok, disabled or error) |
+| `GET /api/briefing/draft?kind=lead\|follow_up\|email&id=...` | Draft text only (`sent: false, saved: false`) |
+
+All routes need `Authorization: Bearer <BRIEFING_API_KEY>`. Without the
+secret they return 503; with a wrong key, 401. The limit is 30 requests a
+minute per IP, kept in memory, so the API makes no D1 writes.
+
+### Secrets
+
+| Name | Required | Purpose |
+|---|---|---|
+| `BRIEFING_API_KEY` | yes | Shared bearer key. Keep it only in the Jarvis Node server's env, never in browser code. |
+| `BRIEFING_EMAIL_ENABLED` | for email | Must be exactly `true`, otherwise the email section is `disabled`. |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | for email | OAuth client (type "Web application" or "Desktop") in a Google Cloud project you own. |
+| `GMAIL_REFRESH_TOKEN` | for email | Refresh token for info@shedpro-utah.com, consented with ONLY `https://www.googleapis.com/auth/gmail.readonly`. |
+| `GMAIL_SELF_ADDRESSES` | for email | Comma list of your own addresses, e.g. `info@shedpro-utah.com`. Threads where you wrote last are skipped. |
+
+### Why this email design
+
+The options considered:
+
+- **OAuth refresh token restricted to `gmail.readonly`, stored as Worker secrets (chosen).** Read-only is enforced twice. Google grants only that scope, and `gmail.js` checks the scope Google reports on every token exchange: a token carrying send, modify or full-mail access is refused and the section shows `error`. Revoking access takes one click at myaccount.google.com → Security → Third-party access.
+- **Google Workspace service account with domain-wide delegation (rejected).** The key is a long-lived private key that can impersonate any user in the domain. That is far more power than reading one inbox needs.
+- **Jarvis's Node server reads Gmail itself (acceptable alternative).** This keeps Google credentials off Cloudflare entirely. If you prefer it, leave `BRIEFING_EMAIL_ENABLED` unset and run the same `filterImportantEmails` logic in Node. The worker's briefing works without email.
+
+What is read: unread inbox threads from the last 3 days, excluding the
+Promotions, Social, Updates and Forums categories. For each thread the worker
+fetches only From, Subject and Date headers plus Gmail's own short snippet
+(`format=metadata`, which does not mark anything read). The snippet is trimmed
+to 140 characters. A thread counts as needing a reply when its last message is
+unread and inbound, is not from you or from an automated or no-reply sender,
+and is either marked IMPORTANT by Gmail or comes from a CRM customer's email
+address. Email content is never written to D1 or cached; it is fetched fresh
+for each request.
+
+### Setup steps (when you decide to turn email on)
+
+1. In Google Cloud Console (a project you own), enable the **Gmail API**.
+2. Under OAuth consent screen, add the single scope `.../auth/gmail.readonly`. Use Internal if this is a Workspace account, otherwise add info@shedpro-utah.com as a test user.
+3. Create an OAuth client ID. Note the client ID and secret.
+4. Get a refresh token for info@shedpro-utah.com with `access_type=offline&prompt=consent&scope=https://www.googleapis.com/auth/gmail.readonly`, for example via the OAuth 2.0 Playground with "Use your own OAuth credentials" ticked.
+5. Add the secrets above to the Worker (Settings → Variables and Secrets, type Secret), then set `BRIEFING_EMAIL_ENABLED` = `true`.
+6. Check it: `curl -H "Authorization: Bearer $KEY" https://<worker>/api/briefing/emails` should show `"status":"ok"`.
