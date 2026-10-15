@@ -40,6 +40,7 @@ import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, bala
 import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceMethods, sendDraftInvoice } from "./stripe.js";
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 import { findCustomerDesign } from "./customerdesign.js";
+import { runQuery, parseQueryParams } from "./crmquery.js";
 import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
 import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
 
@@ -5989,6 +5990,11 @@ async function handleBriefing(request, env, path) {
       const r = await findCustomerDesign(env.DB, url.searchParams.get("q"));
       if (r.status === 400) return briefingJson({ error: r.error, ...NO_SIDE_EFFECTS }, 400);
       return r.found ? ok(r) : briefingJson({ ...r, ...NO_SIDE_EFFECTS }, 404);
+    }
+    if (path === "/api/briefing/query") {
+      const r = await runQuery(env.DB, parseQueryParams(url.searchParams), { nowMs });
+      if (r.status) { const { status, ...rest } = r; return briefingJson({ ...rest, ...NO_SIDE_EFFECTS }, status); }
+      return ok(r);
     }
     if (path === "/api/briefing/follow-ups") {
       const b = buildBriefing(await loadRows(env.DB, { nowMs, days: 1 }), { nowMs, sections: ["follow_ups"] });
