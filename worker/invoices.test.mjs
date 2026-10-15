@@ -88,15 +88,15 @@ test('the deposit invoice shows the whole quote, then defers the rest', () => {
     const inv = buildInvoice(bd, 'deposit', [], { adjustments: adj });
     const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
 
-    phases.forEach((r, i) => {
-      /* startsWith, not equals: the phase line now names what is in the
-         phase after a colon, because the memo cannot carry it at 500
-         characters. The phase's own name still has to lead. */
-      assert.ok(inv.lines[i].label.startsWith(r.label),
-        `${label}: "${inv.lines[i].label}" should lead with "${r.label}"`);
-      assert.equal(inv.lines[i].amountCents, regC(r),
-        `${label}: "${r.label}" should be the quote's pre-tax regular figure`);
+    /* Itemised like the quote (14 Oct 2026): every item is its own line,
+       led by its phase's name, and a phase's items add up to the quote's
+       pre-tax regular figure for that phase. */
+    const phaseSum = (r) => inv.lines.filter((l) => !l.discount && l.label.startsWith(r.label)).reduce((t, l) => t + l.amountCents, 0);
+    phases.forEach((r) => {
+      assert.ok(inv.lines.some((l) => l.label.startsWith(r.label)), `${label}: no line for "${r.label}"`);
+      assert.equal(phaseSum(r), regC(r), `${label}: "${r.label}" should be the quote's pre-tax regular figure`);
     });
+    const lastPhaseLine = inv.lines.reduce((m, l, i) => (phases.some((r) => l.label.startsWith(r.label)) || l.note ? i : m), -1);
 
     const tax = inv.lines.filter((l) => /Sales Tax/.test(l.label));
     assert.equal(tax.length, 1, `${label}: one tax line`);
@@ -110,7 +110,7 @@ test('the deposit invoice shows the whole quote, then defers the rest', () => {
     /* Every discount sits together, after the phases and before tax. */
     const iTax = inv.lines.findIndex((l) => /Sales Tax/.test(l.label));
     const disc = inv.lines.map((l, i) => (l.discount ? i : -1)).filter((i) => i > -1);
-    disc.forEach((i) => assert.ok(i > phases.length - 1 && i < iTax, `${label}: discount line ${i} out of place`));
+    disc.forEach((i) => assert.ok(i > lastPhaseLine && i < iTax, `${label}: discount line ${i} out of place`));
     if (disc.length) assert.equal(disc[disc.length - 1] - disc[0] + 1, disc.length, `${label}: discounts are not grouped`);
     const wantDisc = bd.rows.reduce((t, r) => t + (r.discounts || []).reduce((u, d) => u + toCents(d.amt), 0), 0) - Math.min(0, toCents(bd.adjust));
     assert.equal(0 - disc.reduce((t, i) => t + inv.lines[i].amountCents, 0) + 0, wantDisc + 0, `${label}: the discount lines`);
@@ -136,8 +136,9 @@ test('an invoice built without the adjustment list still matches the quote', () 
   for (const [label, bd] of cases()) {
     const inv = buildInvoice(bd, 'deposit', []);              // no opts at all
     const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
-    phases.forEach((r, i) => {
-      assert.equal(inv.lines[i].amountCents, regC(r), `${label}: "${r.label}" drifted`);
+    phases.forEach((r) => {
+      const sum = inv.lines.filter((l) => !l.discount && l.label.startsWith(r.label)).reduce((t, l) => t + l.amountCents, 0);
+      assert.equal(sum, regC(r), `${label}: "${r.label}" drifted`);
     });
     const adjLines = inv.lines.filter((l) => /Discount|Adjustment/.test(l.label));
     assert.equal(adjLines.reduce((t, l) => t + l.amountCents, 0), toCents(bd.adjust), label);
@@ -196,14 +197,10 @@ test('the balance invoice shows the same quote, then credits what was paid', () 
   for (const [label, bd, adj] of cases()) {
     const inv = buildInvoice(bd, 'balance', [{ amount: 1500, method: 'check' }], { adjustments: adj });
     const phases = bd.rows.filter((r) => toCents(r.amt) !== 0);
-    phases.forEach((r, i) => {
-      /* startsWith, not equals: the phase line now names what is in the
-         phase after a colon, because the memo cannot carry it at 500
-         characters. The phase's own name still has to lead. */
-      assert.ok(inv.lines[i].label.startsWith(r.label),
-        `${label}: "${inv.lines[i].label}" should lead with "${r.label}"`);
-      assert.ok(Math.abs(inv.lines[i].amountCents - regC(r)) <= 2,
-        `${label}: "${r.label}" is ${inv.lines[i].amountCents}, the quote says ${regC(r)}`);
+    const phaseSum = (r) => inv.lines.filter((l) => !l.discount && l.label.startsWith(r.label)).reduce((t, l) => t + l.amountCents, 0);
+    phases.forEach((r) => {
+      assert.ok(Math.abs(phaseSum(r) - regC(r)) <= 2,
+        `${label}: "${r.label}" is ${phaseSum(r)}, the quote says ${regC(r)}`);
     });
     const tax = inv.lines.find((l) => /Sales Tax/.test(l.label));
     assert.equal(tax.amountCents, toCents(bd.tax), `${label}: tax`);
@@ -212,9 +209,9 @@ test('the balance invoice shows the same quote, then credits what was paid', () 
     assert.equal(inv.totalCents, toCents(bd.total) - 150000, `${label}: balance total`);
     /* Nothing on a balance invoice may be the tax-inclusive phase figure: that
        would double-count the separate tax line. */
-    phases.forEach((r, i) => {
+    phases.forEach((r) => {
       if (Math.abs(toCents(r.total) - regC(r)) > 5) {
-        assert.notEqual(inv.lines[i].amountCents, toCents(r.total),
+        assert.notEqual(phaseSum(r), toCents(r.total),
           `${label}: "${r.label}" is tax-inclusive AND there is a tax line`);
       }
     });
@@ -632,5 +629,24 @@ test('the key stays well inside what Stripe accepts', () => {
 test('it does not fall over on the shapes a caller might pass', () => {
   for (const v of [undefined, null, {}, [], 0, '', { a: undefined }]) {
     assert.match(fingerprint(v), /^[0-9a-z]+$/, JSON.stringify(v));
+  }
+});
+
+/* INVOICES MIRROR THE QUOTE (Nando, 14 Oct 2026): each item the quote lists is
+   its own line, in the quote's order and with the quote's names, and the base
+   shed's "includes" and a concrete phase's scope of work come through in full
+   as $0 note lines instead of being cut off inside one long label. */
+test('a deposit invoice lists every quote item, in order, under its phase', () => {
+  for (const [label, bd, adj] of cases()) {
+    const inv = buildInvoice(bd, 'deposit', [], { adjustments: adj });
+    const want = [];
+    bd.rows.filter((r) => toCents(r.amt) !== 0).forEach((r) => {
+      const subs = r.regularSubLines || r.subLines || [];
+      if (!subs.length) want.push(r.label);
+      subs.forEach((x) => want.push(r.label + ': ' + x.label));
+    });
+    const got = inv.lines.filter((l) => !l.note && !l.discount && !/Sales Tax|Less balance/.test(l.label)).map((l) => l.label);
+    assert.deepEqual(got.slice(0, want.length), want, label);
+    inv.lines.filter((l) => l.note).forEach((l) => assert.equal(l.amountCents, 0, label + ': a note line carries no money'));
   }
 });

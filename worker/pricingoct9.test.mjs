@@ -250,7 +250,8 @@ test('phase and deposit invoices carry the travel inside the Shed phase and add 
   const bd = quoteLines(redline, adj);
   const inv = buildInvoice(bd, 'deposit', [], { adjustments: adj });
   assert.equal(inv.lines.reduce((t, l) => t + l.amountCents, 0), inv.totalCents);
-  const shedLine = inv.lines.find((l) => /^Phase 3 — Shed/.test(l.label));
+  /* Itemised like the quote: the travel is its own item under the Shed phase. */
+  const shedLine = inv.lines.find((l) => /^Phase 3 — Shed.*Travel/.test(l.label));
   assert.match(shedLine.label, /Travel & fuel surcharge — 3 days × \$250/);
   assert.ok(inv.lines.some((l) => l.label === 'Fall promo' && l.amountCents === -50000));
   assert.ok(!inv.lines.some((l) => /^Travel/.test(l.label)), 'not a separate adjustment line');

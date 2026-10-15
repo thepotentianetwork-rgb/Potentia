@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "52508a5";
-const WORKER_BUILT_AT = "2026-10-14T02:53:35.864Z";
+const WORKER_BUILD = "9afe1f6";
+const WORKER_BUILT_AT = "2026-10-14T22:03:12.634Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4658,10 +4658,30 @@ function rowDiscountLines(bd) {
 }
 function jobLines(bd, adjustments) {
   const rowDisc = rowDiscountLines(bd);
-  const lines = bd.rows
-    .map((r) => ({ label: phaseLabel(r),
-                   amountCents: toCents(r.amt) + toCents(r.foldAmt || 0) - rowDisc.filter((d) => d.phase === r.phase).reduce((t, d) => t + d.amountCents, 0) }))
-    .filter((l) => l.amountCents !== 0);
+  /* INVOICES MIRROR THE QUOTE (Nando, 14 Oct 2026). One line per item the
+     quote lists, under its phase, at the price the quote prints beside it —
+     not one rolled-up line per phase with the item names run together. The
+     quote's notes go with them as $0 lines: the base shed's "includes", and
+     the estimate caveat on a concrete phase. Lines of a phase still sum to
+     exactly what the single phase line used to carry, so totals, tax and
+     reconcile() are unchanged. */
+  const lines = [];
+  bd.rows.forEach((r) => {
+    const rowCents = toCents(r.amt) + toCents(r.foldAmt || 0) - rowDisc.filter((d) => d.phase === r.phase).reduce((t, d) => t + d.amountCents, 0);
+    const subs = (r.regularSubLines || r.subLines || []).filter((x) => x && x.label);
+    if (!subs.length) { if (rowCents) lines.push({ label: phaseLabel(r), amountCents: rowCents }); return; }
+    const items = subs.map((x) => ({ label: r.label + ': ' + x.label, amountCents: toCents(x.amt) }));
+    /* A rise folded into the phase, and any penny of rounding, go on the
+       phase's largest item — the base shed, nearly always. */
+    const drift = rowCents - items.reduce((t, l) => t + l.amountCents, 0);
+    if (drift) items.reduce((a, b) => (Math.abs(b.amountCents) > Math.abs(a.amountCents) ? b : a)).amountCents += drift;
+    if (r.estimate) lines.push({ label: r.label + ': Estimate. Final price may vary based on site conditions.', amountCents: 0, fixed: true, note: true });
+    items.forEach((it, i) => {
+      lines.push(it);
+      const inc = subs[i].includes;
+      if (Array.isArray(inc) && inc.length) inc.forEach((n) => lines.push({ label: '\u2014 ' + n, amountCents: 0, fixed: true, note: true }));
+    });
+  });
   (bd.freeRows || []).forEach((f) => {
     const c = -rowDisc.filter((d) => d.free === f).reduce((t, d) => t + d.amountCents, 0);
     if (c) lines.push({ label: f.label, amountCents: c, fixed: true });
@@ -4690,7 +4710,7 @@ function depositInvoice(bd, adjustments, payments) {
   const deferred = toCents(bd.total) - depositCents;
   if (deferred > 0) {
     lines.push({
-      label: 'Less balance due on completion — ' + pct(1 - depositRateOf(bd)) + '% of each phase',
+      label: 'Less balance due on completion \u2014 ' + pct(1 - depositRateOf(bd)) + '% of each phase',
       amountCents: -deferred,
       residue: true
     });
@@ -4699,6 +4719,35 @@ function depositInvoice(bd, adjustments, payments) {
   const totalCents = depositCents - creditedCentsOf(payments);
   return { lines: reconcile(lines, totalCents), totalCents };
 }
+
+/* THE DEPOSIT, LAID OUT AS THE QUOTE LAYS IT OUT (Nando, 14 Oct 2026) — the
+   default for every deposit invoice the worker sends. Every quote line (each
+   item, each discount, sales tax) is listed in the quote's order with the
+   quote's figure written beside it, as a $0 line: they describe the job, and
+   only the deposits are charged. The single "Less balance due on completion"
+   line is replaced by the quote's own "Deposits due": one line per phase,
+   "Phase 1 Deposit (30%)" and so on, collected together on this one invoice.
+   Payment credits stay as money lines. Same total as before. */
+function depositAsQuote(inv, bd) {
+  if (!inv || !Array.isArray(inv.lines) || !bd) return inv;
+  const out = [];
+  inv.lines.forEach((l) => {
+    if (l.residue) return;                                   // the deferral
+    if (/^Payment received|on the .* payment/.test(l.label) && l.fixed) { out.push(l); return; }
+    if (!l.amountCents) { out.push(l); return; }
+    out.push({ label: clip(l.label + ' \u2014 ' + usdSigned(l.amountCents), LIMITS.label), amountCents: 0, fixed: true, note: true, listCents: l.amountCents, discount: !!l.discount });
+  });
+  const credits = out.filter((l) => l.amountCents);
+  const head = out.filter((l) => !l.amountCents);
+  head.push({ label: 'Total (tax included) \u2014 ' + usd(fromCents(toCents(bd.total))), amountCents: 0, fixed: true, note: true });
+  const pctTxt = pct(depositRateOf(bd)) + '%';
+  const deps = (bd.rows || []).filter((r) => toCents(r.deposit))
+    .map((r) => ({ label: 'Phase ' + r.phase + ' Deposit (' + pctTxt + ')', amountCents: toCents(r.deposit) }));
+  if (deps.length) deps[deps.length - 1].residue = true;
+  inv.lines = reconcile(head.concat(deps, credits), inv.totalCents);
+  return inv;
+}
+function usdSigned(c) { return (c < 0 ? '\u2212' : '') + usd(fromCents(Math.abs(c))); }
 
 /* One credit line per payment received, exactly as the money arrived. Fixed:
    reconcile() never nudges a payment by a penny. */
@@ -5700,8 +5749,21 @@ function addConcreteScope(inv, bd, text, config) {
   const row = concreteRow(bd, config);
   if (!inv || !t || !row || !Array.isArray(inv.lines)) return inv;
   const re = new RegExp('\\bPhase ' + row.phase + '\\b');
-  const line = inv.lines.find((l) => !l.discount && re.test(String(l.label || '')));
-  if (!line) return inv;
+  /* Itemised bills (deposit / balance): the scope is printed in full, as $0
+     lines after the phase's items, one per line of the quote's scope — a 250
+     character label cut it off mid-sentence. Phase bills keep it on the
+     phase line. */
+  const idx = inv.lines.map((l, i) => (!l.discount && re.test(String(l.label || '')) ? i : -1)).filter((i) => i > -1);
+  if (!idx.length) return inv;
+  const raw = String(text).split(/\n+/).map((x) => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (idx.length > 1 || inv.lines[idx[0]].note) {
+    const scope = [{ label: row.label + ': Scope of work', amountCents: 0, fixed: true, note: true }]
+      .concat(raw.map((x) => ({ label: clip('\u2014 ' + x, LIMITS.label), amountCents: 0, fixed: true, note: true })));
+    const at = inv.lines[idx[0]].note ? idx[0] + 1 : idx[0];
+    inv.lines.splice(at, 0, ...scope);
+    return inv;
+  }
+  const line = inv.lines[idx[0]];
   line.label = clip(line.label + ' \u00b7 Scope of work: ' + t, LIMITS.label);
   return inv;
 }
@@ -5854,7 +5916,7 @@ async function ensureCustomer(env, { stripeCustomerId, name, email, phone }) {
  * overcharge by 7.25% and nothing in this code would notice.
  */
 async function createAndSendInvoice(env, {
-  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods
+  customerId, lines, kind, description, footer, customFields, idempotencyKey, metadata, paymentMethods, draft, dueDate
 }) {
   const days = DAYS_UNTIL_DUE[kind];
   if (days === undefined) throw new Error(`unknown invoice kind: ${kind}`);
@@ -5862,7 +5924,9 @@ async function createAndSendInvoice(env, {
   const invoice = await stripeCall(env, '/invoices', {
     customer: customerId,
     collection_method: 'send_invoice',
-    days_until_due: days,
+    /* A set due date (unix seconds) replaces days_until_due; Stripe takes one
+       or the other, never both. */
+    ...(dueDate ? { due_date: dueDate } : { days_until_due: days }),
     /* NESTED, not top level. On the Invoice API a top-level
        payment_method_types is rejected outright — "Received unknown
        parameter: payment_method_types. Did you mean payment_settings?" — and
@@ -5899,7 +5963,10 @@ async function createAndSendInvoice(env, {
   /* Sending finalizes it. From here the monetary values cannot be edited —
      which is the behaviour we want, and why a mistake is fixed by voiding and
      reissuing rather than by editing. */
-  const sent = await stripeCall(env, `/invoices/${invoice.id}/send`, {},
+  /* draft: stop here. The invoice exists in Stripe with every line on it,
+     unfinalized and unsent (auto_advance false, so Stripe will not finalize
+     it on its own), for someone to review before sendDraftInvoice(). */
+  const sent = draft ? invoice : await stripeCall(env, `/invoices/${invoice.id}/send`, {},
     { idempotencyKey: idempotencyKey ? idempotencyKey + ':send' : undefined });
 
   /* Normalised, so nothing downstream has to know Stripe's spelling.
@@ -5912,7 +5979,7 @@ async function createAndSendInvoice(env, {
      the real one is `hosted_invoice_url`. */
   return {
     id: sent.id,
-    status: sent.status || 'open',
+    status: sent.status || (draft ? 'draft' : 'open'),
     hostedUrl: sent.hosted_invoice_url || null,
     /* Where Stripe says it sent it, not where we asked it to. The whole point
        is to be able to answer "which address did this actually go to?" from
@@ -5943,6 +6010,13 @@ async function getInvoice(env, stripeInvoiceId) {
     customerEmail: inv.customer_email || null,
     amountPaidCents: Number(inv.amount_paid) || 0,
   };
+}
+
+/* Send an invoice created with draft: true. Finalizes it and emails it. */
+async function sendDraftInvoice(env, stripeInvoiceId) {
+  const sent = await stripeCall(env, `/invoices/${encodeURIComponent(stripeInvoiceId)}/send`, {});
+  return { id: sent.id, status: sent.status || 'open', hostedUrl: sent.hosted_invoice_url || null,
+           customerEmail: sent.customer_email || null };
 }
 
 async function voidInvoice(env, stripeInvoiceId) {
@@ -8725,8 +8799,12 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   await ensurePaymentsTable(env);
   await ensureInvoicesTable(env);
 
+  /* concrete_scope too: without it every invoice printed the DEFAULT scope,
+     not the one written for this customer's quote (#73: the quote says the
+     vapor barrier is included; the invoice said it was not). */
   const sub = await env.DB.prepare(
-    "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+    "SELECT id, customer_id, details, adjustments, price_adjustment, adjustment_note" +
+    ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE id = ?"
   ).bind(submissionId).first();
   if (!sub) throw Object.assign(new Error("no such submission"), { status: 404 });
 
@@ -8810,6 +8888,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
     submissionId: sub.id
   });
   addConcreteScope(invoice, breakdown, concreteScopeFor(sub.concrete_scope), details.config);
+  if (kind === "deposit") depositAsQuote(invoice, breakdown);
   return { sub, customer, breakdown, split, invoice, uplift };
 }
 
@@ -8970,6 +9049,24 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
   return { already: false, amount, fee: fromCents(fee.feeCents), discount: fromCents(discCents) };
 }
 
+/* POST /admin/invoices/:id/send — send an invoice that was created as a
+   draft. Finalizes and emails it from Stripe; nothing else does. */
+async function handleSendDraftInvoice(request, env, origin, id) {
+  await ensureInvoicesTable(env);
+  const row = await env.DB.prepare("SELECT * FROM invoices WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "no such invoice" }, 404, origin);
+  if (row.status !== "draft" || !row.stripe_invoice_id) {
+    return json({ error: "only a draft invoice can be sent (this one is " + row.status + ")" }, 409, origin);
+  }
+  let sent;
+  try { sent = await sendDraftInvoice(env, row.stripe_invoice_id); }
+  catch (e) { return json({ error: e.message || "Stripe would not send this invoice" }, 502, origin); }
+  await env.DB.prepare("UPDATE invoices SET status = ?, hosted_url = ?, sent_to = COALESCE(?, sent_to) WHERE id = ?")
+    .bind(sent.status || "open", sent.hostedUrl, sent.customerEmail, id).run();
+  return json({ ok: true, id, stripe_invoice_id: row.stripe_invoice_id, status: sent.status || "open",
+                hosted_url: sent.hostedUrl, sent_to: sent.customerEmail || row.sent_to }, 200, origin);
+}
+
 /* POST /admin/invoices/:id/sync — ask Stripe what it thinks and believe it.
  *
  * A missed webhook leaves the CRM saying a customer has not paid when they
@@ -9045,6 +9142,33 @@ async function handleSyncInvoice(request, env, origin, id) {
  * the one button in the system that asks a customer for money, and sending it
  * blind is how a wrong figure reaches someone who then has to be apologised to.
  */
+/* "2026-10-23" -> due at noon Mountain time that day (18:00 UTC), so Stripe
+   shows the same calendar date whatever zone it renders in. Today through a
+   year out; anything else is refused rather than guessed at. */
+/* The first date booked for a build in the install calendar, or null. */
+async function jobStartDate(env, submissionId) {
+  try {
+    const r = await env.DB.prepare("SELECT MIN(install_date) AS d FROM installs WHERE submission_id = ?").bind(submissionId).first();
+    return r && /^\d{4}-\d{2}-\d{2}$/.test(String(r.d || "")) ? String(r.d) : null;
+  } catch (e) { return null; }   // no installs table yet
+}
+function addDaysIso(iso, n) {
+  const d = new Date(iso + "T12:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function parseInvoiceDueDate(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v).trim());
+  if (!m) return null;
+  const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], 18, 0, 0);
+  const d = new Date(ms);
+  if (d.getUTCFullYear() !== +m[1] || d.getUTCMonth() !== +m[2] - 1 || d.getUTCDate() !== +m[3]) return null;
+  const now = Date.now();
+  if (ms < now - 18 * 3600 * 1000 || ms > now + 366 * 86400 * 1000) return null;
+  return { iso: m[1] + "-" + m[2] + "-" + m[3], unix: Math.floor(ms / 1000) };
+}
+
 async function handleCreateInvoice(request, env, origin, actor) {
   const body = await request.json().catch(() => ({}));
   const submissionId = Number(body.submission_id);
@@ -9097,8 +9221,41 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const clipFooter = (note, f) => String(note + (f ? " " + f : "")).slice(0, LIMITS.footer);
   const cardInvoice = discountOn ? Object.assign({}, baseInvoice, { footer: clipFooter(cardBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
   const bankInvoice = discountOn ? Object.assign({}, withDiscount, { footer: clipFooter(bankBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
-  const invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
+  let invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
   const methods = invoiceMethods(discountOn, payBy);
+
+  /* Optional, phase bills only (13 Oct 2026): a due date instead of "due on
+     receipt", and a note from us printed at the top of the footer. Both
+     default to exactly what was sent before. */
+  let dueDate = null;
+  if (body.due_date != null && body.due_date !== "") {
+    if (kind !== "phase" && kind !== "deposit") return json({ error: "a due date can only be set on a deposit or phase bill" }, 400, origin);
+    dueDate = parseInvoiceDueDate(body.due_date);
+    if (!dueDate) return json({ error: "due date must be a YYYY-MM-DD date from today up to a year out" }, 400, origin);
+  }
+  /* DEPOSITS ARE DUE AT LEAST 7 DAYS BEFORE THE JOB STARTS (Nando, 14 Oct
+     2026). The start is the earliest date booked for this build in the
+     install calendar (prep / pour / shed). With a start booked, a deposit
+     with no due date given is due start minus 7 days, and a later one is
+     refused. With nothing booked, a due date has to be entered before the
+     bill can go out (a preview still works, and says so). */
+  let depositStart = null, dueRequired = false;
+  if (kind === "deposit") {
+    depositStart = await jobStartDate(env, sub.id);
+    const latest = depositStart ? addDaysIso(depositStart, -7) : null;
+    if (!dueDate && latest) {
+      dueDate = parseInvoiceDueDate(latest);
+      if (!dueDate) return json({ error: "this job starts " + depositStart + ", so its deposit was due by " + latest + ", which has passed. Move the start date or bill it another way.", code: "deposit_due_passed" }, 400, origin);
+    } else if (dueDate && latest && dueDate.iso > latest) {
+      return json({ error: "a deposit must be due at least 7 days before the job starts (" + depositStart + "): " + latest + " or earlier", code: "deposit_due_too_late" }, 400, origin);
+    }
+    if (!dueDate) dueRequired = true;
+  }
+  if (dueRequired && !body.preview) {
+    return json({ error: "this job has no start date booked, so enter a due date for the deposit", code: "due_date_required" }, 400, origin);
+  }
+  const note = (kind === "phase" || kind === "deposit") ? String(body.note || "").replace(/\s+/g, " ").trim().slice(0, 300) : "";
+  if (note) invoice = Object.assign({}, invoice, { footer: clipFooter(note, invoice.footer) });
 
   /* Payments nobody attributed to a job. Not applied and not ignored — both
      are wrong in a way that costs a customer money — so they ride along on
@@ -9185,6 +9342,10 @@ async function handleCreateInvoice(request, env, origin, actor) {
       footer_bank: bankInvoice.footer
     } : null,
     card_fee: null,
+    due_date: dueDate ? dueDate.iso : null,
+    job_start: depositStart,
+    due_date_required: dueRequired,
+    note: note || null,
     warnings
   };
   if (body.preview) return json({ ok: true, preview: true, ...shape }, 200, origin);
@@ -9219,8 +9380,9 @@ async function handleCreateInvoice(request, env, origin, actor) {
     memo: invoice.memo,
     footer: invoice.footer,
     fields: invoice.customFields,
+    due: dueDate ? dueDate.iso : null,
     covers: invoice.covers || null,
-  });
+  }) + (body.draft ? ":draft" : "");
 
   let stripeCustomerId = customer.stripe_customer_id || null;
   let sent;
@@ -9244,6 +9406,9 @@ async function handleCreateInvoice(request, env, origin, actor) {
       footer: invoice.footer,
       customFields: invoice.customFields,
       paymentMethods: methods,
+      /* draft: created in Stripe for review, not finalized or emailed. */
+      draft: !!body.draft,
+      dueDate: dueDate ? dueDate.unix : null,
       idempotencyKey,
       metadata: Object.assign({ submission_id: String(sub.id), customer_id: String(customer.id), kind },
                               billedSubs.length > 1 ? { builds: billedSubs.join(",") } : {}),
@@ -9258,12 +9423,12 @@ async function handleCreateInvoice(request, env, origin, actor) {
     `INSERT INTO invoices (customer_id, submission_id, kind, stripe_invoice_id, hosted_url,
        amount, status, lines, created_at, created_by, sent_to, fee_cents, discount_cents, pay_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
   ).bind(customer.id, sub.id, kind, sent.id, sent.hostedUrl,
-         fromCents(invoice.totalCents), sent.status || "open",
+         fromCents(invoice.totalCents), sent.status || (body.draft ? "draft" : "open"),
          JSON.stringify(storedLines(shape.lines, invoice.covers, invoice.description)), now, (actor && actor.name) || null, sentTo,
          invoice.feeCents || 0, invoice.discountCents || 0, payBy).run();
 
   return json({ ok: true, id: row.meta.last_row_id, stripe_invoice_id: sent.id,
-                hosted_url: sent.hostedUrl, status: sent.status || "open",
+                hosted_url: sent.hostedUrl, status: sent.status || (body.draft ? "draft" : "open"),
                 sent_to: sentTo,
                 ...shape }, 200, origin);
 }
@@ -13455,6 +13620,12 @@ export default {
         const sid = Number(path.split("/")[3]);
         if (!sid) return json({ error: "bad invoice id" }, 400, origin);
         return await handleSyncInvoice(request, env, origin, sid);
+      }
+      if (path.startsWith("/admin/invoices/") && path.endsWith("/send") && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        const iid = Number(path.split("/")[3]);
+        if (!iid) return json({ error: "bad invoice id" }, 400, origin);
+        return await handleSendDraftInvoice(request, env, origin, iid);
       }
       if (path.startsWith("/admin/invoices/") && path.endsWith("/void") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
