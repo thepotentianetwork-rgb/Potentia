@@ -652,6 +652,32 @@ function designUrlFor(details) {
   return '';
 }
 
+/* Colour check (worker: designColorDiffs). s.color_drift lists the parts
+   whose colour differs from the customer's latest saved designer design. */
+function colorDriftText(s) {
+  var d = (s && s.color_drift) || [];
+  if (!d.length) return '';
+  return d.map(function (x) {
+    return x.part.charAt(0).toUpperCase() + x.part.slice(1) + ': quote ' + (x.quote || '?') + ', latest design ' + (x.design || '?');
+  }).join('; ');
+}
+function colorDriftConfirm(s, action) {
+  var t = colorDriftText(s);
+  if (!t) return true;
+  return window.confirm('Colours on quote #' + s.id + ' differ from the customer\'s latest saved design (' +
+    (s.color_drift[0].design_code || '') + '):\n\n' + t + '\n\n' + action + ' anyway?');
+}
+function colorDriftBanner(s) {
+  var t = colorDriftText(s);
+  if (!t) return null;
+  var b = document.createElement('div');
+  b.className = 'color-drift-warn';
+  b.setAttribute('role', 'alert');
+  b.style.cssText = 'margin:8px 0;padding:8px 10px;border-radius:8px;background:rgba(232,168,56,0.15);border:1px solid #e8a838;color:#e8a838;font-size:12px;line-height:1.4';
+  b.textContent = '\u26a0 Colours differ from the latest saved design: ' + t + '. Check before marking won or billing.';
+  return b;
+}
+
 function copyText(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     return navigator.clipboard.writeText(text);
@@ -2301,6 +2327,7 @@ function renderPhasePanel(block, s, bal) {
   btn.addEventListener('click', function () {
     var parts = picked();
     if (!parts.length) return;
+    if (!colorDriftConfirm(s, 'Bill')) return;
     var label = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Working it out\u2026';
@@ -3104,6 +3131,8 @@ function renderOrders(submissions, installs) {
         select.appendChild(o);
       });
       select.addEventListener('change', function () {
+        if ((select.value === 'won' || select.value === 'quoted') && select.value !== s.status &&
+            !colorDriftConfirm(s, 'Mark ' + select.value)) { select.value = s.status; return; }
         dot.className = 'status-dot status-' + select.value;
         authFetch('/admin/submissions/status', {
           method: 'POST',
@@ -3155,6 +3184,8 @@ function renderOrders(submissions, installs) {
     }
 
     card.appendChild(top);
+    var driftBox = colorDriftBanner(s);
+    if (driftBox) card.appendChild(driftBox);
     if (consultBox) card.appendChild(consultBox);
     card.appendChild(summary);
     if (details.heardAbout) card.appendChild(heard);
