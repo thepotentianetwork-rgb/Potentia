@@ -180,6 +180,8 @@ export function quoteForDay(day) {
    in oldest-first order. Output: threads whose LAST message is an unread inbound
    message that plausibly wants a reply. Metadata + a short snippet only. */
 const AUTOMATED = /(^|[._+-])(no-?reply|do-?not-?reply|notifications?|alerts?|mailer-daemon|postmaster|newsletter|news|marketing|updates?|billing|receipts?|info-?noreply|bounce)([._+-]|@)/i;
+const AUTOMATED_DOMAIN = /(^|\.)(google\.com|googlemail\.com|docusign\.(net|com)|acquisition\.com|facebookmail\.com|linkedin\.com|mailchimp\.com|hubspot\.com|stripe\.com|paypal\.com|intuit\.com|amazon\.com)$/i;
+const AUTOMATED_SUBJECT = /(security alert|verification code|your code is|new device|password|account (was )?recovered|delivery status notification|newsletter|webinar|product update|receipt|completed:|viewed .*agreement)/i;
 const BULK_LABELS = ['CATEGORY_PROMOTIONS', 'CATEGORY_SOCIAL', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS', 'SPAM', 'TRASH'];
 export function emailAddress(from) {
   const m = /<([^>]+)>/.exec(String(from || ''));
@@ -205,7 +207,9 @@ export function filterImportantEmails(threads, { selfAddresses = [], customers =
     const addr = emailAddress(last.from);
     const labels = last.labelIds || [];
     if (self.has(addr)) continue;                          // we spoke last: no reply owed
-    if (!labels.includes('INBOX') || !labels.includes('UNREAD')) continue;
+    if (!labels.includes('INBOX')) continue;                // read or unread: the last message is theirs, so a reply is owed
+    if (last.list_unsubscribe || last.list_id) continue;     // mailing lists / newsletters
+    if (AUTOMATED_DOMAIN.test(addr.split('@')[1] || '') || AUTOMATED_SUBJECT.test(String(last.subject || ''))) continue;
     if (BULK_LABELS.some((l) => labels.includes(l))) continue;
     if (AUTOMATED.test(addr)) continue;
     const customer = byEmail.get(addr) || null;
@@ -214,7 +218,7 @@ export function filterImportantEmails(threads, { selfAddresses = [], customers =
       from_name: customer ? customer.name : emailDisplayName(last.from),
       customer_id: customer ? customer.id : null,
       subject: String(last.subject || '').trim(), received_at: last.date,
-      snippet: cleanSnippet(last.snippet), important: labels.includes('IMPORTANT'),
+      snippet: cleanSnippet(last.snippet), unread: labels.includes('UNREAD'), important: labels.includes('IMPORTANT'),
       we_replied_before: msgs.some((m) => self.has(emailAddress(m.from))) });
   }
   return out.sort((a, b) => (b.customer_id != null) - (a.customer_id != null) || String(b.received_at).localeCompare(String(a.received_at)));

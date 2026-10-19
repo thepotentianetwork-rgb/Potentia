@@ -162,7 +162,7 @@ test('quotes rotate daily, deterministically, all attributed', () => {
 
 const T = (id, msgs) => ({ id, messages: msgs.map((m, i) => ({ id: id + i, subject: 'Re: Quote', snippet: 'hi &#39;there', ...m })) });
 const SELF = ['info@shedpro-utah.com'];
-test('email filter: unread inbound, not self/automated/bulk, important or customer', () => {
+test('email filter: inbound awaiting reply (read or unread), not self/automated/bulk, important or customer', () => {
   const threads = [
     T('a', [{ from: 'Lee <lee@x.com>', date: '2026-10-14T10:00:00Z', labelIds: ['INBOX', 'UNREAD'] }]),             // customer, not IMPORTANT
     T('b', [{ from: 'cust@y.com', date: '2026-10-13T10:00:00Z', labelIds: ['INBOX', 'UNREAD', 'IMPORTANT'] },
@@ -171,10 +171,13 @@ test('email filter: unread inbound, not self/automated/bulk, important or custom
     T('d', [{ from: 'deals@shop.com', date: '2026-10-14T10:00:00Z', labelIds: ['INBOX', 'UNREAD', 'IMPORTANT', 'CATEGORY_PROMOTIONS'] }]),
     T('e', [{ from: 'Stranger <s@z.com>', date: '2026-10-14T09:00:00Z', labelIds: ['INBOX', 'UNREAD'] }]),            // not important, not customer
     T('f', [{ from: 'Pat <pat@w.com>', date: '2026-10-14T11:00:00Z', labelIds: ['INBOX', 'UNREAD', 'IMPORTANT'] }]),
-    T('g', [{ from: 'read@w.com', date: '2026-10-14T11:00:00Z', labelIds: ['INBOX', 'IMPORTANT'] }])                   // already read
+    T('g', [{ from: 'read@w.com', date: '2026-10-14T11:00:00Z', labelIds: ['INBOX', 'IMPORTANT'] }]),                  // already read, still owed a reply
+    T('h', [{ from: 'Promo <promo@w.com>', date: '2026-10-14T11:30:00Z', labelIds: ['INBOX', 'IMPORTANT'], list_unsubscribe: true }]), // mailing list
+    T('i', [{ from: 'info@account.docusign.net', date: '2026-10-14T11:40:00Z', subject: 'Your code is 1234', labelIds: ['INBOX', 'IMPORTANT'] }])
   ];
   const out = filterImportantEmails(threads, { selfAddresses: SELF, customers: [{ id: 9, name: 'Lee O', email: 'LEE@x.com' }] });
-  assert.deepEqual(out.map((e) => e.thread_id), ['a', 'f']);
+  assert.deepEqual(out.map((e) => e.thread_id), ['a', 'f', 'g']);
+  assert.equal(out[2].unread, false);
   assert.equal(out[0].customer_id, 9);
   assert.equal(out[0].snippet, "hi 'there");
   assert.equal(out[1].from_name, 'Pat');

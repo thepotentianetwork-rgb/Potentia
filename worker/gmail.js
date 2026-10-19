@@ -17,7 +17,7 @@
  */
 
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
-export const GMAIL_QUERY = 'in:inbox is:unread newer_than:3d -category:promotions -category:social -category:forums -category:updates';
+export const GMAIL_QUERY = 'in:inbox newer_than:7d -category:promotions -category:social -category:forums -category:updates';
 
 export function gmailConfigured(env) {
   return !!(env && String(env.BRIEFING_EMAIL_ENABLED || '').toLowerCase() === 'true'
@@ -67,12 +67,13 @@ export function makeThreadFetcher(env, fetchImpl = fetch, maxThreads = 15) {
     if (!list.ok) throw new Error('list ' + list.status);
     const ids = ((await list.json()).threads || []).map((t) => t.id);
     const threads = await Promise.all(ids.map(async (id) => {
-      const r = await fetchImpl(`${base}/threads/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, { headers: auth });
+      const r = await fetchImpl(`${base}/threads/${encodeURIComponent(id)}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=List-Unsubscribe&metadataHeaders=List-Id`, { headers: auth });
       if (!r.ok) return null;
       const t = await r.json();
       return { id: t.id, messages: (t.messages || []).map((m) => ({ id: m.id, from: header(m, 'From'), subject: header(m, 'Subject'),
         date: m.internalDate ? new Date(Number(m.internalDate)).toISOString() : header(m, 'Date'),
-        labelIds: m.labelIds || [], snippet: m.snippet || '' })) };
+        labelIds: m.labelIds || [], snippet: m.snippet || '',
+        list_unsubscribe: !!header(m, 'List-Unsubscribe'), list_id: !!header(m, 'List-Id') })) };
     }));
     return threads.filter(Boolean);
   };
