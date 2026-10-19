@@ -19,7 +19,7 @@
  *   revenue    payments, won quotes and open invoices over `days` (default 30)
  */
 
-export const QUERY_VIEWS = ['customers', 'customer', 'leads', 'quotes', 'invoices', 'payments', 'schedule', 'revenue'];
+export const QUERY_VIEWS = ['customers', 'customer', 'leads', 'quotes', 'invoices', 'payments', 'schedule', 'revenue', 'stats'];
 const CQ_TZ = 'America/Denver';
 
 function cqStr(v) { return String(v == null ? '' : v).trim(); }
@@ -77,6 +77,7 @@ export async function runQuery(db, p, { nowMs }) {
   const base = { view: p.view, generated_at: new Date(nowMs).toISOString() };
 
   if (!QUERY_VIEWS.includes(p.view)) return { status: 400, error: 'view must be one of ' + QUERY_VIEWS.join(', ') };
+  if (p.view === 'stats') return statsView(db, nowMs);
 
   if (p.view === 'customers' || p.view === 'customer') {
     const toks = cqTokens(p.q);
@@ -183,4 +184,52 @@ export async function runQuery(db, p, { nowMs }) {
       { metric: 'Open invoices outstanding', value: cqMoney(owed) + ' (' + open.length + ')' },
     ],
     summary: cqMoney(collected) + ' collected and ' + cqMoney(booked) + ' booked in the last ' + days + ' days.' };
+}
+
+/* ---- stats: monthly + weekly (Mon-Sun, America/Denver) funnel, all history. Pure. ----
+   leads = new customers; requests = non-superseded submissions; quotes = non-superseded
+   submissions past 'new' with a price; quoted customers counted once, in the period of their
+   first quote (cohort), converted if any of their submissions is won (ever);
+   revenue/avg sale = won totals by won date; collected = payments by paid date. */
+const ST_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' });
+function stDay(iso) { const t = Date.parse(iso || ''); return isNaN(t) ? null : ST_FMT.format(new Date(t)); }
+function stWeek(day) { const d = new Date(day + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.toISOString().slice(0, 10); }
+function stPrice(s) { if (s.effective_price != null && isFinite(Number(s.effective_price))) return Number(s.effective_price);
+  try { const q = JSON.parse(s.details || '{}').quotedPrice; return isFinite(Number(q)) ? Number(q) : 0; } catch { return 0; } }
+export function computeStats(subs, custs, pays) {
+  const live = subs.filter((s) => s.status !== 'superseded');
+  const isQuote = (s) => s.status !== 'new' && stPrice(s) > 0;
+  const firstQuote = new Map(), wonCust = new Set();
+  for (const s of live.slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))) {
+    if (isQuote(s) && !firstQuote.has(s.customer_id)) firstQuote.set(s.customer_id, stDay(s.created_at));
+    if (s.status === 'won') wonCust.add(s.customer_id);
+  }
+  const build = (key) => {
+    const m = new Map(); const g = (k) => { if (!m.has(k)) m.set(k, { period: k, leads: 0, requests: 0, quotes: 0, quoted_customers: 0, converted_customers: 0, won_quotes: 0, revenue: 0, collected: 0, lost: 0, lost_value: 0, lost_by_reason: {} }); return m.get(k); };
+    for (const c of custs) { const d = stDay(c.created_at); if (d) g(key(d)).leads++; }
+    for (const s of live) { const d = stDay(s.created_at); if (!d) continue; g(key(d)).requests++; if (isQuote(s)) g(key(d)).quotes++;
+      if (s.status === 'won') { const w = g(key(stDay(s.won_at || s.created_at))); w.won_quotes++; w.revenue += stPrice(s); }
+      if (s.status === 'lost') { const l = g(key(stDay(s.lost_at || s.created_at))); l.lost++; l.lost_value += stPrice(s); const rk = s.lost_reason || 'unknown'; l.lost_by_reason[rk] = (l.lost_by_reason[rk] || 0) + 1; } }
+    for (const [cid, d] of firstQuote) { const r = g(key(d)); r.quoted_customers++; if (wonCust.has(cid)) r.converted_customers++; }
+    for (const p of pays) { const d = stDay(p.paid_at); if (d) g(key(d)).collected += Number(p.amount) || 0; }
+    return [...m.values()].sort((a, b) => a.period.localeCompare(b.period)).map(fin);
+  };
+  const fin = (r) => ({ ...r, lost_value: Math.round((r.lost_value || 0) * 100) / 100, revenue: Math.round(r.revenue * 100) / 100, collected: Math.round(r.collected * 100) / 100,
+    customer_conversion_pct: r.quoted_customers ? Math.round(1000 * r.converted_customers / r.quoted_customers) / 10 : null,
+    quote_win_pct: r.quotes ? Math.round(1000 * r.won_quotes / r.quotes) / 10 : null,
+    avg_sale: r.won_quotes ? Math.round(r.revenue / r.won_quotes) : null });
+  const all = build(() => 'all')[0] || fin({ period: 'all', leads: 0, requests: 0, quotes: 0, quoted_customers: 0, converted_customers: 0, won_quotes: 0, revenue: 0, collected: 0, lost: 0, lost_value: 0, lost_by_reason: {} });
+    const lost_quotes = live.filter((s) => s.status === 'lost').map((s) => ({ quote_id: s.id, customer_id: s.customer_id, total: Math.round(stPrice(s) * 100) / 100,
+    quoted_on: stDay(s.created_at), lost_on: s.lost_at ? stDay(s.lost_at) : null, reason: s.lost_reason || 'unknown', competitor: s.lost_competitor || null, note: s.lost_note || null }));
+  return { totals: all, months: build((d) => d.slice(0, 7)), weeks: build(stWeek), lost_quotes };
+}
+export async function statsView(db, nowMs) {
+  const [subs, custs, pays] = await Promise.all([
+    cqAll(db, 'SELECT * FROM submissions'),
+    cqAll(db, 'SELECT id, name, created_at FROM customers'), cqAll(db, 'SELECT amount, paid_at FROM payments')]);
+  const st = computeStats(subs, custs, pays); const t = st.totals;
+  const nm = new Map(custs.map((c) => [c.id, c.name])); for (const l of st.lost_quotes) l.customer = nm.get(l.customer_id) || null;
+  const why = Object.entries(t.lost_by_reason || {}).sort((a, b) => b[1] - a[1]).map(([k, v]) => v + ' ' + k).join(', ');
+  return { view: 'stats', generated_at: new Date(nowMs).toISOString(), timezone: 'America/Denver', week_starts: 'Monday', ...st,
+    summary: `${t.converted_customers} of ${t.quoted_customers} quoted customers bought (${t.customer_conversion_pct}%). ${t.won_quotes} sales, ${cqMoney(t.revenue)} booked, ${cqMoney(t.collected)} collected, average sale ${cqMoney(t.avg_sale || 0)}. ${t.lost} lost${why ? ' (' + why + ')' : ''}.` };
 }

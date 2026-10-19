@@ -162,6 +162,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
 
 <script src="admin-nav.js"></script>
 <script src="admin-activity.js"></script>
+<script src="admin-lost.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_admin_token');
@@ -503,11 +504,16 @@ function renderCustomers(list, searching) {
       select.addEventListener('change', function () {
         dot.className = 'status-dot status-' + select.value;
         if (c.latest_submission_id) {
-          authFetch('/admin/submissions/status', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: c.latest_submission_id, status: select.value })
-          }).catch(function () {});
+          var send = function (extra) {
+            var b = { id: c.latest_submission_id, status: select.value };
+            if (extra) { b.lost_reason = extra.lost_reason; b.lost_note = extra.lost_note; b.lost_competitor = extra.lost_competitor; }
+            authFetch('/admin/submissions/status', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(b)
+            }).catch(function () {});
+          };
+          if (select.value === 'lost' && window.askLostReason) window.askLostReason(null, send); else send(null);
         }
       });
       statusWrap.appendChild(dot);

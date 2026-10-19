@@ -744,7 +744,7 @@ async function handleGetCustomer(request, env, origin, id) {
   try { await ensureChosenColumn(env); } catch (e) {}
   const { results: submissions } = await env.DB.prepare(
     "SELECT id, details, status, created_at, price_adjustment, adjustment_note, adjustments, effective_price, chosen_at" +
-    ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + " FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
+    ((await hasConcreteScopeColumn(env)) ? ", concrete_scope" : "") + ((await hasLostColumns(env)) ? ", lost_reason, lost_note, lost_competitor, lost_at" : "") + " FROM submissions WHERE customer_id = ? ORDER BY created_at DESC"
   )
     .bind(id)
     .all();
@@ -3264,11 +3264,62 @@ async function handleUpdateSubmissionStatus(request, env, origin) {
        serve anything that is not currently won, so an un-won job goes dark
        without burning a link that may already be in an inbox. */
     await ensureTrackToken(env, id);
+  } else if (status === "lost") {
+    await ensureLostColumns(env);
+    const lr = parseLostReason(body);
+    if (lr.error) return json({ error: lr.error }, 400, origin);
+    await env.DB.prepare(
+      "UPDATE submissions SET status = ?, won_at = NULL, lost_at = COALESCE(lost_at, ?), lost_reason = COALESCE(?, lost_reason), lost_note = COALESCE(?, lost_note), lost_competitor = COALESCE(?, lost_competitor) WHERE id = ?"
+    ).bind(status, new Date().toISOString(), lr.reason, lr.note, lr.competitor, id).run();
   } else {
     await env.DB.prepare("UPDATE submissions SET status = ?, won_at = NULL WHERE id = ?")
       .bind(status, id)
       .run();
+    // Moving out of lost clears the lost stamp so stats don't count it; reason/note kept as history.
+    if (await hasLostColumns(env)) await env.DB.prepare("UPDATE submissions SET lost_at = NULL WHERE id = ?").bind(id).run();
   }
+  return json({ ok: true }, 200, origin);
+}
+
+/* ---- lost reasons ---- */
+const LOST_REASONS = ["money", "competitor", "timing", "scope", "other"];
+const lostReady = new WeakSet();
+async function ensureLostColumns(env) {
+  if (lostReady.has(env.DB)) return;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  const have = new Set((results || []).map((r) => r.name));
+  for (const c of ["lost_reason", "lost_note", "lost_competitor", "lost_at"])
+    if (!have.has(c)) await env.DB.prepare("ALTER TABLE submissions ADD COLUMN " + c + " TEXT").run();
+  lostReady.add(env.DB);
+}
+async function hasLostColumns(env) {
+  if (lostReady.has(env.DB)) return true;
+  const { results } = await env.DB.prepare("PRAGMA table_info(submissions)").all();
+  const ok = (results || []).some((r) => r.name === "lost_reason");
+  if (ok) lostReady.add(env.DB);
+  return ok;
+}
+function parseLostReason(body) {
+  const raw = body && body.lost_reason != null && body.lost_reason !== "" ? String(body.lost_reason).toLowerCase().trim() : null;
+  if (raw && !LOST_REASONS.includes(raw)) return { error: "lost_reason must be one of " + LOST_REASONS.join(", ") };
+  const clip = (v, n) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, n));
+  return { reason: raw, note: clip(body && body.lost_note, 1000), competitor: clip(body && body.lost_competitor, 120) };
+}
+// POST /admin/submissions/lost-reason {id, lost_reason, lost_note?, lost_competitor?}
+// Sets/edits the reason on a quote that is ALREADY lost (backfill); never changes status or lost_at.
+async function handleSetLostReason(request, env, origin) {
+  const body = await request.json().catch(() => ({}));
+  const id = Number(body.id);
+  if (!id) return json({ error: "id required" }, 400, origin);
+  const lr = parseLostReason(body);
+  if (lr.error) return json({ error: lr.error }, 400, origin);
+  if (!lr.reason) return json({ error: "lost_reason required" }, 400, origin);
+  await ensureLostColumns(env);
+  const row = await env.DB.prepare("SELECT status FROM submissions WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "Not found" }, 404, origin);
+  if (row.status !== "lost") return json({ error: "Quote is not marked lost" }, 409, origin);
+  await env.DB.prepare("UPDATE submissions SET lost_reason = ?, lost_note = ?, lost_competitor = ? WHERE id = ?")
+    .bind(lr.reason, lr.note, lr.competitor, id).run();
   return json({ ok: true }, 200, origin);
 }
 
@@ -6306,6 +6357,10 @@ export default {
       if (path === "/admin/submissions/status" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleUpdateSubmissionStatus(request, env, origin);
+      }
+      if (path === "/admin/submissions/lost-reason" && request.method === "POST") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        return await handleSetLostReason(request, env, origin);
       }
       if (path === "/admin/submissions/cleanup-superseded" && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

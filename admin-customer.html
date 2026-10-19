@@ -491,6 +491,7 @@ select:focus{border-color:var(--sp-blue)}
 <script src="crm-paint.js"></script>
 <script src="admin-voice.js"></script>
 <script src="admin-activity.js"></script>
+<script src="admin-lost.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_admin_token');
@@ -3105,11 +3106,16 @@ function renderOrders(submissions, installs) {
       });
       select.addEventListener('change', function () {
         dot.className = 'status-dot status-' + select.value;
-        authFetch('/admin/submissions/status', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: s.id, status: select.value })
-        }).catch(function () {});
+        var send = function (extra) {
+          var b = { id: s.id, status: select.value };
+          if (extra) { b.lost_reason = extra.lost_reason; b.lost_note = extra.lost_note; b.lost_competitor = extra.lost_competitor; }
+          authFetch('/admin/submissions/status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(b)
+          }).then(function (r) { if (r && r.ok && select.value === 'lost') loadCustomer(); }).catch(function () {});
+        };
+        if (select.value === 'lost' && window.askLostReason) window.askLostReason(s, send); else send(null);
       });
       var statusWrap = document.createElement('span');
       statusWrap.style.display = 'inline-flex';
@@ -3117,6 +3123,22 @@ function renderOrders(submissions, installs) {
       statusWrap.appendChild(dot);
       statusWrap.appendChild(select);
       actions.appendChild(statusWrap);
+      if (s.status === 'lost' && window.lostReasonText) {
+        var lr = document.createElement('span');
+        lr.className = 'lost-reason-tag';
+        lr.style.cssText = "font-family:'DM Mono',monospace;font-size:11px;padding:3px 8px;border-radius:5px;border:1px solid var(--line);margin-left:8px;cursor:pointer;color:" + (s.lost_reason ? 'var(--text)' : 'var(--dim)');
+        lr.title = 'Click to set or edit why this was lost';
+        lr.textContent = 'Lost: ' + window.lostReasonText(s) + ' ✎';
+        lr.addEventListener('click', function () {
+          window.askLostReason(s, function (v) {
+            if (!v) return;
+            authFetch('/admin/submissions/lost-reason', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: s.id, lost_reason: v.lost_reason, lost_note: v.lost_note, lost_competitor: v.lost_competitor }) })
+              .then(function (r) { if (r && r.ok) loadCustomer(); });
+          });
+        });
+        actions.appendChild(lr);
+      }
     }
 
     /* Gated on a WORKING url, not on details.permalink. Orders predating the
