@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "b666bb8-dirty";
-const WORKER_BUILT_AT = "2026-10-19T19:45:32.444Z";
+const WORKER_BUILD = "69861ef-dirty";
+const WORKER_BUILT_AT = "2026-10-19T19:59:30.256Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -14544,7 +14544,8 @@ function briefingJson(data, status, extra) {
   });
 }
 async function handleBriefing(request, env, path) {
-  if (request.method !== "GET") return briefingJson({ error: "Method not allowed" }, 405, { Allow: "GET" });
+  const isWrite = path === "/api/briefing/schedule";
+  if (request.method !== (isWrite ? "POST" : "GET")) return briefingJson({ error: "Method not allowed" }, 405, { Allow: isWrite ? "POST" : "GET" });
   const secret = env.BRIEFING_API_KEY;
   if (!secret) return briefingJson({ error: "Briefing is not configured" }, 503);
   const m = /^Bearer\s+(.+)$/i.exec(request.headers.get("Authorization") || "");
@@ -14576,6 +14577,54 @@ async function handleBriefing(request, env, path) {
       const r = await runQuery(env.DB, parseQueryParams(url.searchParams), { nowMs });
       if (r.status) { const { status, ...rest } = r; return briefingJson({ ...rest, ...NO_SIDE_EFFECTS }, status); }
       return ok(r);
+    }
+    /* JARVIS: the install invites for one customer, exactly as the CRM's
+       schedule builds them (same calendar_url). Read-only. */
+    if (path === "/api/briefing/install-invites") {
+      const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+      if (!q) return briefingJson({ error: "q required", ...NO_SIDE_EFFECTS }, 400);
+      const today = new Date(nowMs).toISOString().slice(0, 10);
+      const r = await handleSchedule(new Request("https://x/admin/schedule?from=" + today), env, null);
+      const all = (await r.json()).installs || [];
+      const toks = q.split(/\s+/).filter(Boolean);
+      const rows = all.filter((i) => !i.done_at && toks.every((t) => String(i.customer_name || "").toLowerCase().includes(t)));
+      return ok({ q, installs: rows.map((i) => ({ id: i.id, submission_id: i.submission_id, customer: i.customer_name,
+        item: i.item, install_date: i.install_date, days: i.days, address: i.address, calendar_url: i.calendar_url })) });
+    }
+    /* JARVIS: plan / re-plan a won order's build from one anchor date.
+       Without confirm:true it is a preview and writes nothing. With it, the
+       same handlePlanBuild the CRM uses does the write (replace must be true
+       when bookings exist). The caller is expected to have read the change
+       back and heard a yes. */
+    if (isWrite) {
+      const body = await request.json().catch(() => ({}));
+      let sid = Number(body.submission_id);
+      if (!Number.isInteger(sid) || sid <= 0) {
+        const q = String(body.q || "").trim().toLowerCase();
+        if (!q) return briefingJson({ error: "q or submission_id required" }, 400);
+        const toks = q.split(/\s+/).filter(Boolean);
+        const { results } = await env.DB.prepare("SELECT s.id, c.name FROM submissions s JOIN customers c ON c.id = s.customer_id WHERE s.status = 'won' ORDER BY s.created_at DESC").all();
+        const hits = (results || []).filter((x) => toks.every((t) => String(x.name || "").toLowerCase().includes(t)));
+        if (!hits.length) return briefingJson({ error: "No won order for " + body.q }, 404);
+        if (new Set(hits.map((h) => h.name)).size > 1) return briefingJson({ error: "More than one customer matches", matches: hits.map((h) => h.name) }, 409);
+        sid = hits[0].id;
+      }
+      /* NO CONFIRMED WRITE WITHOUT A FRESH BACKUP. The box's d1-backup.py
+         records each finished export in backup_log; a write is refused
+         unless one landed in the last BACKUP_FRESH_MIN minutes (default 30). */
+      if (body.confirm) {
+        let last = null;
+        try { const b = await env.DB.prepare("SELECT MAX(at) AS at FROM backup_log").first(); last = b && b.at; } catch (e) {}
+        const freshMin = Number(env.BACKUP_FRESH_MIN) || 30;
+        if (!last || nowMs - Date.parse(last) > freshMin * 60000) {
+          return briefingJson({ error: "backup_required", last_backup_at: last, fresh_minutes: freshMin, side_effects: "none" }, 428);
+        }
+      }
+      const inner = new Request("https://x/admin/submissions/" + sid + "/plan", { method: "POST", body: JSON.stringify({
+        anchor_date: body.anchor_date, install_days: body.install_days, confirm: !!body.confirm, replace: !!body.replace, note: body.note }) });
+      const r = await handlePlanBuild(inner, env, null, sid);
+      const out = await r.json();
+      return briefingJson({ submission_id: sid, ...out, side_effects: body.confirm && out.ok ? "installs_written" : "none" }, r.status);
     }
     if (path === "/api/briefing/follow-ups") {
       const b = buildBriefing(await loadRows(env.DB, { nowMs, days: 1 }), { nowMs, sections: ["follow_ups"] });
