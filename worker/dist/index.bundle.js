@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "668a6d5-dirty";
-const WORKER_BUILT_AT = "2026-10-19T20:08:34.385Z";
+const WORKER_BUILD = "03b2dac-dirty";
+const WORKER_BUILT_AT = "2026-10-19T20:18:45.949Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -8334,9 +8334,11 @@ function cdFinish(base, source, config, ref) {
  *   payments   payments logged in the last `days` (default 30)
  *   schedule   installs from today to today+`days` (default 14), not done
  *   revenue    payments, won quotes and open invoices over `days` (default 30)
+ *   installs   install history: completed stages (done_at set) by month and by week over
+ *              `days` (default 365), bucketed by install_date; won orders only; read-only
  */
 
-const QUERY_VIEWS = ['customers', 'customer', 'leads', 'quotes', 'invoices', 'payments', 'schedule', 'revenue', 'stats'];
+const QUERY_VIEWS = ['customers', 'customer', 'leads', 'quotes', 'invoices', 'payments', 'schedule', 'revenue', 'stats', 'installs'];
 const CQ_TZ = 'America/Denver';
 
 function cqStr(v) { return String(v == null ? '' : v).trim(); }
@@ -8468,6 +8470,22 @@ async function runQuery(db, p, { nowMs }) {
     return { ...base, title: 'PAYMENTS (LAST ' + days + ' DAYS)', columns: cqCols([['date', 'Date'], ['customer', 'Customer'], ['amount', 'Amount'], ['method', 'Method']]),
       rows: list.slice(0, p.limit).map((x) => ({ date: cqStr(x.paid_at).slice(0, 10), customer: x.customer_name, amount: cqMoney(x.amount), method: x.method })),
       summary: list.length ? cqMoney(sum) + ' collected across ' + list.length + (list.length === 1 ? ' payment' : ' payments') + '.' : 'No payments logged in the last ' + days + ' days.' };
+  }
+
+  if (p.view === 'installs') {
+    const days = cqInt(p.days, 365, 730);
+    const from = cqDay(nowMs - days * 86400000);
+    const list = await cqAll(db, "SELECT i.install_date, i.item, i.done_at FROM installs i JOIN submissions s ON s.id = i.submission_id WHERE s.status = 'won' AND i.install_date >= ? AND i.install_date <= ? ORDER BY i.install_date", from, today);
+    const wk = (d) => { const t = new Date(d + 'T00:00:00Z'); return new Date(t.getTime() - ((t.getUTCDay() + 6) % 7) * 86400000).toISOString().slice(0, 10); };
+    const months = {}, weeks = {};
+    const bump = (o, k, x) => { const b = o[k] || (o[k] = { period: k, completed: 0, sheds: 0, missed: 0 });
+      if (x.done_at) { b.completed++; if (x.item === 'shed') b.sheds++; } else b.missed++; };
+    for (const x of list) { const d = cqStr(x.install_date).slice(0, 10); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue; bump(months, d.slice(0, 7), x); bump(weeks, wk(d), x); }
+    const done = list.filter((x) => x.done_at);
+    return { ...base, title: 'INSTALL HISTORY (LAST ' + days + ' DAYS)', timezone: CQ_TZ, week_starts: 'Monday', columns: cqCols([['period', 'Month'], ['completed', 'Stages done'], ['sheds', 'Sheds installed'], ['missed', 'Past, not marked done']]),
+      rows: Object.values(months), months: Object.values(months), weeks: Object.values(weeks),
+      totals: { completed: done.length, sheds: done.filter((x) => x.item === 'shed').length, missed: list.length - done.length },
+      summary: done.length ? done.length + (done.length === 1 ? ' install stage' : ' install stages') + ' completed in the last ' + days + ' days, ' + done.filter((x) => x.item === 'shed').length + ' of them shed installs.' : 'No completed installs in the last ' + days + ' days.' };
   }
 
   if (p.view === 'schedule') {
