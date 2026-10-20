@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "7a5927b-dirty";
-const WORKER_BUILT_AT = "2026-10-19T20:24:08.480Z";
+const WORKER_BUILD = "c9e3116-dirty";
+const WORKER_BUILT_AT = "2026-10-20T17:56:24.039Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -1443,6 +1443,8 @@ function computePricing(cfgIn, opts){
   resetConfig();
   setConfig(cfgIn);
   opts = opts || {};
+  /* New supplier-order door/window labels: only when the caller asks (new quotes). */
+  var SUP_ON = !!opts.supplierLabels;
   var cfg = {
     marginTarget: (clampMarginTarget(opts.marginTarget) != null)
                     ? clampMarginTarget(opts.marginTarget) : DEFAULTS.marginTarget,
@@ -1534,7 +1536,7 @@ function computePricing(cfgIn, opts){
     doorsData.forEach(function(dd){
       var up = sellDoorUpcharge(dd);
       if(up>0){ doorUpcharge += up;
-                doorUpLines.push({label:doorDisplayName(dd) + doorColorLabel(dd), up:up}); }
+                doorUpLines.push({label:(SUP_ON && supplierDoorLabel(dd) || doorDisplayName(dd)) + doorColorLabel(dd), up:up}); }
     });
   }
   var customerPrice = basePrice + doorUpcharge;
@@ -1676,8 +1678,9 @@ function computePricing(cfgIn, opts){
       var priced = sellWindowPriced(wd);
       if(p>0){
         windowSell += p;
-        windowSellLines.push({label:windowDisplayName(wd.type), price:p, est:!priced});
-        if(!priced) unpriced.push((wd.type?windowDisplayName(wd.type):'Untyped window')+' — no workbook price, estimated by area');
+        var wlab = (SUP_ON && wd.type && supplierWindowLabel(wd.type, wd.w, wd.h)) || windowDisplayName(wd.type);
+        windowSellLines.push({label:wlab, price:p, est:!priced});
+        if(!priced) unpriced.push((wd.type?wlab:'Untyped window')+' — no workbook price, estimated by area');
       }
       /* The bar ledge is its own line, right after the window it hangs on.
          Folded into the window's price it would be invisible: a customer
@@ -1923,6 +1926,7 @@ function computePricing(cfgIn, opts){
       baseSource: baseSource, baseProxy: baseProxy,
       unpriced: unpriced,
       doorUpcharge: doorUpcharge, doorUpLines: doorUpLines,
+      supplierLabels: SUP_ON || undefined,
       dormerSell: dormerSell, dormerSellLines: dormerSellLines,
       porchSell: porchSell, porchSellName: porchSellName,
       porchDeckSell: porchDeckSell, porchDeckSellName: porchDeckSellName,
@@ -4444,6 +4448,68 @@ function loftSpec(config) {
       (along === other ? '' : along < other ? ' (short side)' : ' (long side)');
   }
   return out;
+}
+
+/* ── SUPPLIER-ORDER LABELS (doors & windows) ──
+   Every size in INCHES, Width x Height, plus only the attributes the catalog
+   actually KNOWS: operation, frame colour/material, door style. Glass (pane
+   count / Low-E), grids, rough opening and handing are NOT captured for any
+   current product, so they are left off rather than invented.
+   Display only: no price or SELL key is derived from these strings. Gated by
+   redline.supplierLabels so quotes priced before this keep their old lines
+   (adjustments are keyed by line label — see overrideMap/compedMap). */
+function inWH(w, h) { return w + '" W x ' + h + '" H'; }
+function nominal(i) { return Math.floor(i / 12) + '/' + (Math.round(i) % 12); }
+function supplierWindowLabel(type, w, h) {
+  const k = String(type || '').trim();
+  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
+  if (m) {
+    const color = m[1], mat = m[2];
+    let W = Number(w) || 0, H = Number(h) || 0;
+    if (!W || !H) {
+      W = Number(m[3]); H = Number(m[4]);
+      /* "3x10"/"5x10" transoms are FEET x inches: the designer places them at 36x10 / 60x10. */
+      if (mat === 'Transom' && H === 10 && (W === 3 || W === 5)) W = W * 12;
+    }
+    const lc = color.toLowerCase();
+    if (mat === 'Vinyl' || mat === 'Aluminum') {
+      const op = (W <= 12 && H <= 12) ? 'Fixed' : 'Slider (XO)';
+      return 'Window ' + inWH(W, H) + ' \u00b7 ' + op + ' \u00b7 ' + color + ' ' + mat.toLowerCase() + ' frame';
+    }
+    if (mat === 'Transom') return 'Transom Window ' + inWH(W, H) + ' \u00b7 Fixed \u00b7 ' + color + ' frame';
+    return mat + ' Window ' + inWH(W, H) + ' \u00b7 ' + color + ' frame';
+  }
+  const t = /^Transom\s+(\d+)\s*x\s*(\d+)$/.exec(k);
+  if (t) return 'Transom Window ' + inWH(Number(w) || Number(t[1]), Number(h) || Number(t[2])) + ' \u00b7 Fixed';
+  return null; // unknown key: caller keeps its existing label
+}
+const SUP_RES = {
+  res6: ['Door', 36, '6 Panel', 'White'], reshalf: ['Door', 36, 'Half Lite', 'White'], resfull: ['Door', 36, 'Full Lite', 'White'],
+  res6B: ['Door', 36, '6 Panel', 'Black'], reshalfB: ['Door', 36, 'Half Lite', 'Black'], resfullB: ['Door', 36, 'Full Lite', 'Black'],
+  resDouble: ['Double Door', 72, '6 Panel \u00b7 Steel, primed', 'White'],
+  resDoubleFull: ['Double Door', 72, 'Full Lite', 'White'], resDoubleFullB: ['Double Door', 72, 'Full Lite', 'Black']
+};
+const SUP_TRIM = { basic: 'Standard', craftsman: 'Craftsman', xtrim: 'X-Trim', arch: 'Arch Trim', panel4: '4 Panel' };
+function supplierDoorLabel(dd) {
+  if (!dd) return null;
+  const st = dd.style || 'basic';
+  const w = Number(dd.w) || 60;
+  const size = (W, H) => inWH(W, H) + ' (' + nominal(W) + ' ' + nominal(H) + ')';
+  if (SUP_RES[st]) {
+    const r = SUP_RES[st];
+    /* Residential prehung: nominal 80" slab (the 3D draws the 82.5" unit). */
+    return 'Residential Prehung ' + r[0] + ' ' + size(r[1], 80) + ' \u00b7 ' + r[2] + ' \u00b7 ' + r[3];
+  }
+  /* Sliding glass: the catalog names it "6' (60x80)" while the designer draws
+     it 70" wide — size left as the product name until that is confirmed. */
+  if (st === 'slideglass' || st === 'slideglassB') return null;
+  const h = Number(dd.h) || (st === 'rollup' ? 84 : 76);
+  if (st === 'rollup') return 'Roll-Up Garage Door ' + size(w, h);
+  if (st === 'cedar') return 'Cedar Double Door ' + size(w, h);
+  if (st === 'cedarSingle') return 'Cedar Single Door ' + size(w, h);
+  if (st === 'fairytale') return 'Fairytale Entry Door ' + size(w, h);
+  if (SUP_TRIM[st]) return (w <= 46 ? 'Single' : 'Double') + ' Door ' + size(w, h) + ' \u00b7 ' + SUP_TRIM[st] + ' \u00b7 Shop-built';
+  return null;
 }
 
 // ---- end inlined quotelines.js ----
@@ -11653,7 +11719,10 @@ async function handleUpdateDesign(request, env, origin, id) {
   let result;
   /* A redone estimate keeps the promo treatment the customer was quoted. */
   const legacyPromo = await promoGrandfathered(env, row.customer_id);
-  const qOpts = Object.assign({}, marginTarget != null ? { marginTarget } : {}, legacyPromo ? { legacyPromo: true } : {});
+  const qOpts = Object.assign({}, marginTarget != null ? { marginTarget } : {}, legacyPromo ? { legacyPromo: true } : {},
+    /* Supplier-order labels only for a quote that already carries them: an
+       older quote keeps the labels its adjustments are keyed to. */
+    (details.redline && details.redline.supplierLabels) ? { supplierLabels: true } : {});
   try {
     ({ result } = await computeQuoteResult(body.config, Object.keys(qOpts).length ? qOpts : undefined, env));
   } catch (e) {
@@ -12052,7 +12121,7 @@ async function handleShedSubmit(request, env, origin) {
     try {
       const { result } = await computeQuoteResult(
         body.config,
-        marginTarget != null ? { marginTarget: marginTarget } : undefined,
+        Object.assign(marginTarget != null ? { marginTarget: marginTarget } : {}, { supplierLabels: true }),
         env
       );
       quotedPrice = result.customer;
@@ -12108,7 +12177,7 @@ async function handleShedSubmit(request, env, origin) {
   if (body.details === undefined && body.config && redline && redline.discountsAtSheet
       && (await promoGrandfathered(env, customerId))) {
     try {
-      const o = Object.assign({}, marginTarget != null ? { marginTarget } : {}, { legacyPromo: true });
+      const o = Object.assign({}, marginTarget != null ? { marginTarget } : {}, { legacyPromo: true, supplierLabels: true });
       const { result } = await computeQuoteResult(body.config, o, env);
       detailsPayload.quotedPrice = result.customer;
       detailsPayload.redline = result.redline;
@@ -12975,7 +13044,7 @@ async function handleShedQuote(request, env, origin) {
 
   let cfg, result;
   try {
-    ({ cfg, result } = await computeQuoteResult(body.config, overrides, env));
+    ({ cfg, result } = await computeQuoteResult(body.config, Object.assign({}, overrides || {}, { supplierLabels: true }), env));
   } catch (e) {
     return json({ error: "Could not price this build" }, 400, origin);
   }

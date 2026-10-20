@@ -85,7 +85,7 @@ const labels=JSON.stringify(rl.redline||{});
    quote; the price checks above prove the old key still resolves, which is the
    half of the split that would fail silently (a missed key prices at zero). */
 check("the quote line says Roll-Up Garage Door, and the colour",
-      /8'\s*Roll-Up\s*Garage\s*Door\s*·\s*Black/.test(labels), labels.slice(0,220));
+      /Roll-Up Garage Door 96\\" W x 84\\" H \(8\/0 7\/0\)\s*·\s*Black/.test(labels), labels.slice(0,220));
 check("the raw table key is NOT what the customer is shown",
       !/8'\s*Roll\s*Up\s*·/.test(labels), labels.slice(0,220));
 

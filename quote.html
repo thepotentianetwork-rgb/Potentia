@@ -583,7 +583,12 @@ function buildRoof(config, redline) {
     + '</div>';
 }
 
-function buildSpecs(config) {
+function buildSpecs(config, redline) {
+  /* Supplier-order wording (inches, W x H) only for a quote priced with it —
+     a quote already sent reads exactly as it did. */
+  var sup = SUPPLIER_LABELS;
+  var wLabel = sup ? function (wd) { return (wd.type && supplierWindowLabel(wd.type, wd.w, wd.h)) || wd.type || 'Window'; }
+                   : function (wd) { return wd.type || 'Window'; };
   var doors = Array.isArray(config.doors) ? config.doors : [];
   var windows = Array.isArray(config.windows) ? config.windows : [];
   if (!doors.length && !windows.length) return '';
@@ -601,7 +606,7 @@ function buildSpecs(config) {
   }
   if (windows.length) {
     html += '<div class="sub-label" style="margin-top:' + (doors.length ? '18px' : '0') + '">Windows</div>'
-      + rows(windows, function (wd) { return wd.type || 'Window'; });
+      + rows(windows, wLabel);
   }
   html += '</div>';
   return html;
@@ -619,9 +624,13 @@ var ADJUSTMENTS = [];
 var COMPED = {};        // item name -> amount, for the lines being given away
 var COMP_TOTAL = 0;
 
+/* Supplier-order door/window wording (inches, W x H) — only for a quote whose
+   saved redline was priced with it. A quote already sent reads as it did. */
+var SUPPLIER_LABELS = false;
 function render(submission, customer) {
   var details = {};
   try { details = JSON.parse(submission.details) || {}; } catch (e) {}
+  SUPPLIER_LABELS = !!(details.redline && details.redline.supplierLabels && typeof supplierWindowLabel === 'function');
   var config = (details.config && typeof details.config === 'object') ? details.config : {};
 
   // adjustment_list is normalised by the worker, so an older single-adjustment
@@ -717,7 +726,7 @@ function render(submission, customer) {
 
     + buildRoof(config, details.redline)
 
-    + buildSpecs(config)
+    + buildSpecs(config, details.redline)
 
     + '<div class="doc-section" id="renders-section"></div>'
     + '<div class="doc-section" id="floorplan-section"></div>'
@@ -824,6 +833,7 @@ function formatFtIn(totalIn) {
 // ---- Door / window naming (mirrors designer.html's sellDoorName; ported
 // because this page never runs alongside the designer, only its saved data) ----
 function doorLabel(dd) {
+  if (SUPPLIER_LABELS) { var sd = supplierDoorLabel(dd); if (sd) return sd; }
   var w = Number(dd.w) || 60, st = dd.style || 'basic';
   if (st === 'rollup') { var gl = w <= 76 ? "6'" : w <= 90 ? "7'" : "8'"; return gl + ' Roll Up Door'; }
   if (st === 'cedar') { var cl = w <= 64 ? "5'" : w <= 78 ? "6'" : w <= 90 ? "7'" : "8'"; return cl + ' Cedar Double Door'; }
@@ -839,6 +849,7 @@ function doorLabel(dd) {
   return wl + ' ' + kind + ' Door' + suf;
 }
 function windowLabel(wd) {
+  if (SUPPLIER_LABELS && wd.type) { var sw = supplierWindowLabel(wd.type, wd.w, wd.h); if (sw) return sw; }
   if (wd.type) return String(wd.type).replace(/^(White|Black|Brown)\s+/, '') + ' Window';
   var wi = Number(wd.w) || 24, hi = Number(wd.h) || 30;
   return wi + 'x' + hi + ' Window';

@@ -3105,7 +3105,10 @@ async function handleUpdateDesign(request, env, origin, id) {
   let result;
   /* A redone estimate keeps the promo treatment the customer was quoted. */
   const legacyPromo = await promoGrandfathered(env, row.customer_id);
-  const qOpts = Object.assign({}, marginTarget != null ? { marginTarget } : {}, legacyPromo ? { legacyPromo: true } : {});
+  const qOpts = Object.assign({}, marginTarget != null ? { marginTarget } : {}, legacyPromo ? { legacyPromo: true } : {},
+    /* Supplier-order labels only for a quote that already carries them: an
+       older quote keeps the labels its adjustments are keyed to. */
+    (details.redline && details.redline.supplierLabels) ? { supplierLabels: true } : {});
   try {
     ({ result } = await computeQuoteResult(body.config, Object.keys(qOpts).length ? qOpts : undefined, env));
   } catch (e) {
@@ -3504,7 +3507,7 @@ async function handleShedSubmit(request, env, origin) {
     try {
       const { result } = await computeQuoteResult(
         body.config,
-        marginTarget != null ? { marginTarget: marginTarget } : undefined,
+        Object.assign(marginTarget != null ? { marginTarget: marginTarget } : {}, { supplierLabels: true }),
         env
       );
       quotedPrice = result.customer;
@@ -3560,7 +3563,7 @@ async function handleShedSubmit(request, env, origin) {
   if (body.details === undefined && body.config && redline && redline.discountsAtSheet
       && (await promoGrandfathered(env, customerId))) {
     try {
-      const o = Object.assign({}, marginTarget != null ? { marginTarget } : {}, { legacyPromo: true });
+      const o = Object.assign({}, marginTarget != null ? { marginTarget } : {}, { legacyPromo: true, supplierLabels: true });
       const { result } = await computeQuoteResult(body.config, o, env);
       detailsPayload.quotedPrice = result.customer;
       detailsPayload.redline = result.redline;
@@ -4427,7 +4430,7 @@ async function handleShedQuote(request, env, origin) {
 
   let cfg, result;
   try {
-    ({ cfg, result } = await computeQuoteResult(body.config, overrides, env));
+    ({ cfg, result } = await computeQuoteResult(body.config, Object.assign({}, overrides || {}, { supplierLabels: true }), env));
   } catch (e) {
     return json({ error: "Could not price this build" }, 400, origin);
   }

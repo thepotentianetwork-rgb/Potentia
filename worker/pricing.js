@@ -12,6 +12,7 @@
    that this port didn't change a single price. */
 
 
+import { supplierWindowLabel, supplierDoorLabel } from "./quotelines.js";
 /* ═══════════════════════════════════════════════════════════════════════
    ★★★  EDIT YOUR COSTS HERE  ★★★
    Every dollar figure the engine uses lives in this one block. These are
@@ -1438,6 +1439,8 @@ export function computePricing(cfgIn, opts){
   resetConfig();
   setConfig(cfgIn);
   opts = opts || {};
+  /* New supplier-order door/window labels: only when the caller asks (new quotes). */
+  var SUP_ON = !!opts.supplierLabels;
   var cfg = {
     marginTarget: (clampMarginTarget(opts.marginTarget) != null)
                     ? clampMarginTarget(opts.marginTarget) : DEFAULTS.marginTarget,
@@ -1529,7 +1532,7 @@ export function computePricing(cfgIn, opts){
     doorsData.forEach(function(dd){
       var up = sellDoorUpcharge(dd);
       if(up>0){ doorUpcharge += up;
-                doorUpLines.push({label:doorDisplayName(dd) + doorColorLabel(dd), up:up}); }
+                doorUpLines.push({label:(SUP_ON && supplierDoorLabel(dd) || doorDisplayName(dd)) + doorColorLabel(dd), up:up}); }
     });
   }
   var customerPrice = basePrice + doorUpcharge;
@@ -1671,8 +1674,9 @@ export function computePricing(cfgIn, opts){
       var priced = sellWindowPriced(wd);
       if(p>0){
         windowSell += p;
-        windowSellLines.push({label:windowDisplayName(wd.type), price:p, est:!priced});
-        if(!priced) unpriced.push((wd.type?windowDisplayName(wd.type):'Untyped window')+' — no workbook price, estimated by area');
+        var wlab = (SUP_ON && wd.type && supplierWindowLabel(wd.type, wd.w, wd.h)) || windowDisplayName(wd.type);
+        windowSellLines.push({label:wlab, price:p, est:!priced});
+        if(!priced) unpriced.push((wd.type?wlab:'Untyped window')+' — no workbook price, estimated by area');
       }
       /* The bar ledge is its own line, right after the window it hangs on.
          Folded into the window's price it would be invisible: a customer
@@ -1918,6 +1922,7 @@ export function computePricing(cfgIn, opts){
       baseSource: baseSource, baseProxy: baseProxy,
       unpriced: unpriced,
       doorUpcharge: doorUpcharge, doorUpLines: doorUpLines,
+      supplierLabels: SUP_ON || undefined,
       dormerSell: dormerSell, dormerSellLines: dormerSellLines,
       porchSell: porchSell, porchSellName: porchSellName,
       porchDeckSell: porchDeckSell, porchDeckSellName: porchDeckSellName,

@@ -897,3 +897,65 @@ export function loftSpec(config) {
   }
   return out;
 }
+
+/* ── SUPPLIER-ORDER LABELS (doors & windows) ──
+   Every size in INCHES, Width x Height, plus only the attributes the catalog
+   actually KNOWS: operation, frame colour/material, door style. Glass (pane
+   count / Low-E), grids, rough opening and handing are NOT captured for any
+   current product, so they are left off rather than invented.
+   Display only: no price or SELL key is derived from these strings. Gated by
+   redline.supplierLabels so quotes priced before this keep their old lines
+   (adjustments are keyed by line label — see overrideMap/compedMap). */
+function inWH(w, h) { return w + '" W x ' + h + '" H'; }
+function nominal(i) { return Math.floor(i / 12) + '/' + (Math.round(i) % 12); }
+export function supplierWindowLabel(type, w, h) {
+  const k = String(type || '').trim();
+  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
+  if (m) {
+    const color = m[1], mat = m[2];
+    let W = Number(w) || 0, H = Number(h) || 0;
+    if (!W || !H) {
+      W = Number(m[3]); H = Number(m[4]);
+      /* "3x10"/"5x10" transoms are FEET x inches: the designer places them at 36x10 / 60x10. */
+      if (mat === 'Transom' && H === 10 && (W === 3 || W === 5)) W = W * 12;
+    }
+    const lc = color.toLowerCase();
+    if (mat === 'Vinyl' || mat === 'Aluminum') {
+      const op = (W <= 12 && H <= 12) ? 'Fixed' : 'Slider (XO)';
+      return 'Window ' + inWH(W, H) + ' \u00b7 ' + op + ' \u00b7 ' + color + ' ' + mat.toLowerCase() + ' frame';
+    }
+    if (mat === 'Transom') return 'Transom Window ' + inWH(W, H) + ' \u00b7 Fixed \u00b7 ' + color + ' frame';
+    return mat + ' Window ' + inWH(W, H) + ' \u00b7 ' + color + ' frame';
+  }
+  const t = /^Transom\s+(\d+)\s*x\s*(\d+)$/.exec(k);
+  if (t) return 'Transom Window ' + inWH(Number(w) || Number(t[1]), Number(h) || Number(t[2])) + ' \u00b7 Fixed';
+  return null; // unknown key: caller keeps its existing label
+}
+const SUP_RES = {
+  res6: ['Door', 36, '6 Panel', 'White'], reshalf: ['Door', 36, 'Half Lite', 'White'], resfull: ['Door', 36, 'Full Lite', 'White'],
+  res6B: ['Door', 36, '6 Panel', 'Black'], reshalfB: ['Door', 36, 'Half Lite', 'Black'], resfullB: ['Door', 36, 'Full Lite', 'Black'],
+  resDouble: ['Double Door', 72, '6 Panel \u00b7 Steel, primed', 'White'],
+  resDoubleFull: ['Double Door', 72, 'Full Lite', 'White'], resDoubleFullB: ['Double Door', 72, 'Full Lite', 'Black']
+};
+const SUP_TRIM = { basic: 'Standard', craftsman: 'Craftsman', xtrim: 'X-Trim', arch: 'Arch Trim', panel4: '4 Panel' };
+export function supplierDoorLabel(dd) {
+  if (!dd) return null;
+  const st = dd.style || 'basic';
+  const w = Number(dd.w) || 60;
+  const size = (W, H) => inWH(W, H) + ' (' + nominal(W) + ' ' + nominal(H) + ')';
+  if (SUP_RES[st]) {
+    const r = SUP_RES[st];
+    /* Residential prehung: nominal 80" slab (the 3D draws the 82.5" unit). */
+    return 'Residential Prehung ' + r[0] + ' ' + size(r[1], 80) + ' \u00b7 ' + r[2] + ' \u00b7 ' + r[3];
+  }
+  /* Sliding glass: the catalog names it "6' (60x80)" while the designer draws
+     it 70" wide — size left as the product name until that is confirmed. */
+  if (st === 'slideglass' || st === 'slideglassB') return null;
+  const h = Number(dd.h) || (st === 'rollup' ? 84 : 76);
+  if (st === 'rollup') return 'Roll-Up Garage Door ' + size(w, h);
+  if (st === 'cedar') return 'Cedar Double Door ' + size(w, h);
+  if (st === 'cedarSingle') return 'Cedar Single Door ' + size(w, h);
+  if (st === 'fairytale') return 'Fairytale Entry Door ' + size(w, h);
+  if (SUP_TRIM[st]) return (w <= 46 ? 'Single' : 'Double') + ' Door ' + size(w, h) + ' \u00b7 ' + SUP_TRIM[st] + ' \u00b7 Shop-built';
+  return null;
+}
