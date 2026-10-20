@@ -1232,10 +1232,17 @@ export const WINDOW_CATALOG = [
   {grp:"White Vinyl",    key:"White Vinyl 24x30",   w:24,h:30},
   {grp:"White Vinyl",    key:"White Vinyl 36x24",   w:36,h:24},
   {grp:"White Vinyl",    key:"White Vinyl 36x36",   w:36,h:36},
+  /* PRICE TBD (owner, 20 Oct 2026): 72x48 double-pane slider and 24x80 fixed
+     double-pane sidelight. Deliberately NOT in SELL.windows — see
+     WINDOW_PRICE_TBD below: they quote as "Price TBD" and add nothing. */
+  {grp:"White Vinyl",    key:"White Vinyl 72x48",   w:72,h:48, tbd:true},
+  {grp:"White Vinyl",    key:"White Sidelight 24x80", w:24,h:80, tbd:true},
   {grp:"Black Vinyl",    key:"Black Vinyl 18x24",   w:18,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 24x36",   w:24,h:36},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x24",   w:36,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x36",   w:36,h:36},
+  {grp:"Black Vinyl",    key:"Black Vinyl 72x48",   w:72,h:48, tbd:true},
+  {grp:"Black Vinyl",    key:"Black Sidelight 24x80", w:24,h:80, tbd:true},
   {grp:"White Aluminum", key:"White Aluminum 12x12", w:12,h:12},
   {grp:"White Aluminum", key:"White Aluminum 18x27", w:18,h:27},
   {grp:"White Aluminum", key:"White Aluminum 24x36", w:24,h:36},
@@ -1340,6 +1347,17 @@ export function sellWindowPrice(wd){
 // 36"×10" and 60"×10" horizontal bands; these are tall narrow lites, still
 // unpriced since nobody's supplied a number for them). Without this check
 // they'd fall through the area buckets and quote as white vinyl.
+/* PRICE TBD windows: no price exists yet, and none may be guessed. Without
+   this they would fall into sellWindowPrice's area buckets and quote as a
+   $310 white vinyl. They are listed on the quote as "Price TBD" (redline
+   .tbdLines) and add $0 to nothing — not to windowSell, not to cost, not to
+   any total. Remove a key from here once SELL.windows has a real price. */
+export const WINDOW_PRICE_TBD = ["White Vinyl 72x48", "Black Vinyl 72x48",
+  "White Sidelight 24x80", "Black Sidelight 24x80"];
+export const PRICE_TBD_NOTE = 'Price TBD \u2014 final price confirmed before deposit';
+export function windowPriceTBD(wd){
+  return !!(wd && wd.type && WINDOW_PRICE_TBD.indexOf(wd.type)!==-1 && SELL.windows[wd.type]==null);
+}
 export function sellWindowPriced(wd){
   return !!(wd && wd.type && SELL.windows[wd.type]!=null);
 }
@@ -1486,6 +1504,7 @@ export function computePricing(cfgIn, opts){
   }
   if(typeof windowsData!=='undefined'){
     windowsData.forEach(function(wd){
+      if(windowPriceTBD(wd)) return;   // no cost known either; never estimated
       var sku=windowSkuFor(wd); winCost+=sku.cost;
       winLines.push({label:sku.name, qty:1, unit:sku.cost, total:sku.cost});
     });
@@ -1667,9 +1686,15 @@ export function computePricing(cfgIn, opts){
   customerPrice += heightSell;
 
   // ── WINDOWS (customer): each placed window at its catalog price ──
-  var windowSell = 0, windowSellLines = [];
+  var windowSell = 0, windowSellLines = [], tbdLines = [];
   if(typeof windowsData!=='undefined'){
     windowsData.forEach(function(wd){
+      if(windowPriceTBD(wd)){
+        var tlab = (SUP_ON && supplierWindowLabel(wd.type, wd.w, wd.h)) || windowDisplayName(wd.type);
+        tbdLines.push({label:tlab, tbd:true, note:PRICE_TBD_NOTE});
+        unpriced.push(tlab+' \u2014 price TBD, excluded from total');
+        return;
+      }
       var p = sellWindowPrice(wd);
       var priced = sellWindowPriced(wd);
       if(p>0){
@@ -1932,6 +1957,7 @@ export function computePricing(cfgIn, opts){
       finishRecovered: finishRecovered,
       heightSell: heightSell, heightSellName: heightSellName,
       windowSell: windowSell, windowSellLines: windowSellLines,
+      tbdLines: tbdLines.length ? tbdLines : undefined,
       intSell: intSell, intSellName: intSellName,
       floorSell: floorSell, floorSellName: floorSellName,
       elecSell: elecSell, elecSellName: elecSellName, elecIncludes: elecIncludes,

@@ -503,6 +503,13 @@ function buildBreakdown(bd) {
       + '<span class="br-amt">' + money2(c.amt) + '</span></div>';
     regularSub += c.amt;
   });
+  /* PRICE TBD items: shown, never priced, never in the subtotal. Only quotes
+     whose saved redline carries tbdLines get these rows. */
+  (bd.tbdLines || []).forEach(function (t) {
+    rowsHtml += '<div class="br-row br-tbd"><span class="br-label">' + esc(t.label) + '</span>'
+      + '<span class="br-amt">Price TBD</span></div>'
+      + '<div class="br-row br-inc br-est">Not included in the total. ' + esc(String(t.note || '').replace(/^Price TBD\s*\u2014\s*/, '').replace(/^./, function (c) { return c.toUpperCase(); }) || 'Final price confirmed before deposit') + '.</div>';
+  });
   rowsHtml += '<div class="br-row br-sum"><span class="br-label">Subtotal' + (discounts.length ? ' at regular prices' : '') + ' (before tax)</span><span class="br-amt">' + money2(regularSub) + '</span></div>';
   if (discounts.length) {
     rowsHtml += '<div class="br-row br-dischead"><span class="br-label">Discounts</span><span class="br-amt"></span></div>';
