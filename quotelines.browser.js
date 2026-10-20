@@ -639,6 +639,11 @@ function quoteLinesCore(redline, adjustments) {
     /* Display only — see DISCOUNTS, LISTED LAST above. */
     regularSubtotal: regularSubtotal,
     freeRows: freeRows,
+    /* PRICE TBD items (see WINDOW_PRICE_TBD in pricing.js): listed, never
+       priced, never in any phase, subtotal, tax or deposit. Absent on every
+       quote priced before them, so those render exactly as they did. */
+    tbdLines: (redline.tbdLines || []).filter(function (l) { return l && l.label; })
+      .map(function (l) { return { label: String(l.label), note: l.note || 'Price TBD \u2014 final price confirmed before deposit' }; }),
     charges: charges,
     discounts: discounts,
     discountTotal: discounts.reduce(function (t, d) { return t + d.amt; }, 0)
@@ -917,7 +922,7 @@ function inWH(w, h) { return w + '" W x ' + h + '" H'; }
 function nominal(i) { return Math.floor(i / 12) + '/' + (Math.round(i) % 12); }
 function supplierWindowLabel(type, w, h) {
   const k = String(type || '').trim();
-  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
+  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Sidelight|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
   if (m) {
     const color = m[1], mat = m[2];
     let W = Number(w) || 0, H = Number(h) || 0;
@@ -927,6 +932,12 @@ function supplierWindowLabel(type, w, h) {
       if (mat === 'Transom' && H === 10 && (W === 3 || W === 5)) W = W * 12;
     }
     const lc = color.toLowerCase();
+    /* 72x48 slider and 24x80 sidelight (owner, 20 Oct 2026): vinyl,
+       double-pane, price TBD. Only these new keys say "Double-pane" — the
+       older vinyl lines are left exactly as they read. */
+    const fr2 = color === 'Black' ? 'Black ext / White int vinyl' : 'White vinyl';
+    if (mat === 'Sidelight') return 'Sidelight Window ' + inWH(W, H) + ' \u00b7 Fixed \u00b7 Double-pane \u00b7 ' + fr2 + ' frame';
+    if (mat === 'Vinyl' && W === 72 && H === 48) return 'Window ' + inWH(W, H) + ' \u00b7 Slider (XO) \u00b7 Double-pane \u00b7 ' + fr2 + ' frame';
     if (mat === 'Vinyl' || mat === 'Aluminum') {
       const op = (W <= 12 && H <= 12) ? 'Fixed' : 'Slider (XO)';
       /* Black vinyl is black exterior / white interior (owner, 20 Oct 2026). */
