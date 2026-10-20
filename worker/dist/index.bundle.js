@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "588120d-dirty";
-const WORKER_BUILT_AT = "2026-10-20T18:10:23.720Z";
+const WORKER_BUILD = "050f427-dirty";
+const WORKER_BUILT_AT = "2026-10-20T19:14:41.448Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -1236,10 +1236,17 @@ const WINDOW_CATALOG = [
   {grp:"White Vinyl",    key:"White Vinyl 24x30",   w:24,h:30},
   {grp:"White Vinyl",    key:"White Vinyl 36x24",   w:36,h:24},
   {grp:"White Vinyl",    key:"White Vinyl 36x36",   w:36,h:36},
+  /* PRICE TBD (owner, 20 Oct 2026): 72x48 double-pane slider and 24x80 fixed
+     double-pane sidelight. Deliberately NOT in SELL.windows — see
+     WINDOW_PRICE_TBD below: they quote as "Price TBD" and add nothing. */
+  {grp:"White Vinyl",    key:"White Vinyl 72x48",   w:72,h:48, tbd:true},
+  {grp:"White Vinyl",    key:"White Sidelight 24x80", w:24,h:80, tbd:true},
   {grp:"Black Vinyl",    key:"Black Vinyl 18x24",   w:18,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 24x36",   w:24,h:36},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x24",   w:36,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x36",   w:36,h:36},
+  {grp:"Black Vinyl",    key:"Black Vinyl 72x48",   w:72,h:48, tbd:true},
+  {grp:"Black Vinyl",    key:"Black Sidelight 24x80", w:24,h:80, tbd:true},
   {grp:"White Aluminum", key:"White Aluminum 12x12", w:12,h:12},
   {grp:"White Aluminum", key:"White Aluminum 18x27", w:18,h:27},
   {grp:"White Aluminum", key:"White Aluminum 24x36", w:24,h:36},
@@ -1344,6 +1351,17 @@ function sellWindowPrice(wd){
 // 36"×10" and 60"×10" horizontal bands; these are tall narrow lites, still
 // unpriced since nobody's supplied a number for them). Without this check
 // they'd fall through the area buckets and quote as white vinyl.
+/* PRICE TBD windows: no price exists yet, and none may be guessed. Without
+   this they would fall into sellWindowPrice's area buckets and quote as a
+   $310 white vinyl. They are listed on the quote as "Price TBD" (redline
+   .tbdLines) and add $0 to nothing — not to windowSell, not to cost, not to
+   any total. Remove a key from here once SELL.windows has a real price. */
+const WINDOW_PRICE_TBD = ["White Vinyl 72x48", "Black Vinyl 72x48",
+  "White Sidelight 24x80", "Black Sidelight 24x80"];
+const PRICE_TBD_NOTE = 'Price TBD \u2014 final price confirmed before deposit';
+function windowPriceTBD(wd){
+  return !!(wd && wd.type && WINDOW_PRICE_TBD.indexOf(wd.type)!==-1 && SELL.windows[wd.type]==null);
+}
 function sellWindowPriced(wd){
   return !!(wd && wd.type && SELL.windows[wd.type]!=null);
 }
@@ -1490,6 +1508,7 @@ function computePricing(cfgIn, opts){
   }
   if(typeof windowsData!=='undefined'){
     windowsData.forEach(function(wd){
+      if(windowPriceTBD(wd)) return;   // no cost known either; never estimated
       var sku=windowSkuFor(wd); winCost+=sku.cost;
       winLines.push({label:sku.name, qty:1, unit:sku.cost, total:sku.cost});
     });
@@ -1671,9 +1690,15 @@ function computePricing(cfgIn, opts){
   customerPrice += heightSell;
 
   // ── WINDOWS (customer): each placed window at its catalog price ──
-  var windowSell = 0, windowSellLines = [];
+  var windowSell = 0, windowSellLines = [], tbdLines = [];
   if(typeof windowsData!=='undefined'){
     windowsData.forEach(function(wd){
+      if(windowPriceTBD(wd)){
+        var tlab = (SUP_ON && supplierWindowLabel(wd.type, wd.w, wd.h)) || windowDisplayName(wd.type);
+        tbdLines.push({label:tlab, tbd:true, note:PRICE_TBD_NOTE});
+        unpriced.push(tlab+' \u2014 price TBD, excluded from total');
+        return;
+      }
       var p = sellWindowPrice(wd);
       var priced = sellWindowPriced(wd);
       if(p>0){
@@ -1936,6 +1961,7 @@ function computePricing(cfgIn, opts){
       finishRecovered: finishRecovered,
       heightSell: heightSell, heightSellName: heightSellName,
       windowSell: windowSell, windowSellLines: windowSellLines,
+      tbdLines: tbdLines.length ? tbdLines : undefined,
       intSell: intSell, intSellName: intSellName,
       floorSell: floorSell, floorSellName: floorSellName,
       elecSell: elecSell, elecSellName: elecSellName, elecIncludes: elecIncludes,
@@ -4184,6 +4210,11 @@ function quoteLinesCore(redline, adjustments) {
     /* Display only — see DISCOUNTS, LISTED LAST above. */
     regularSubtotal: regularSubtotal,
     freeRows: freeRows,
+    /* PRICE TBD items (see WINDOW_PRICE_TBD in pricing.js): listed, never
+       priced, never in any phase, subtotal, tax or deposit. Absent on every
+       quote priced before them, so those render exactly as they did. */
+    tbdLines: (redline.tbdLines || []).filter(function (l) { return l && l.label; })
+      .map(function (l) { return { label: String(l.label), note: l.note || 'Price TBD \u2014 final price confirmed before deposit' }; }),
     charges: charges,
     discounts: discounts,
     discountTotal: discounts.reduce(function (t, d) { return t + d.amt; }, 0)
@@ -4462,7 +4493,7 @@ function inWH(w, h) { return w + '" W x ' + h + '" H'; }
 function nominal(i) { return Math.floor(i / 12) + '/' + (Math.round(i) % 12); }
 function supplierWindowLabel(type, w, h) {
   const k = String(type || '').trim();
-  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
+  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Sidelight|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
   if (m) {
     const color = m[1], mat = m[2];
     let W = Number(w) || 0, H = Number(h) || 0;
@@ -4472,6 +4503,12 @@ function supplierWindowLabel(type, w, h) {
       if (mat === 'Transom' && H === 10 && (W === 3 || W === 5)) W = W * 12;
     }
     const lc = color.toLowerCase();
+    /* 72x48 slider and 24x80 sidelight (owner, 20 Oct 2026): vinyl,
+       double-pane, price TBD. Only these new keys say "Double-pane" — the
+       older vinyl lines are left exactly as they read. */
+    const fr2 = color === 'Black' ? 'Black ext / White int vinyl' : 'White vinyl';
+    if (mat === 'Sidelight') return 'Sidelight Window ' + inWH(W, H) + ' \u00b7 Fixed \u00b7 Double-pane \u00b7 ' + fr2 + ' frame';
+    if (mat === 'Vinyl' && W === 72 && H === 48) return 'Window ' + inWH(W, H) + ' \u00b7 Slider (XO) \u00b7 Double-pane \u00b7 ' + fr2 + ' frame';
     if (mat === 'Vinyl' || mat === 'Aluminum') {
       const op = (W <= 12 && H <= 12) ? 'Fixed' : 'Slider (XO)';
       /* Black vinyl is black exterior / white interior (owner, 20 Oct 2026). */
