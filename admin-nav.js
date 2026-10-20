@@ -38,7 +38,9 @@
     '.nav-item.current{color:var(--sp-blue)}',
     '.nav-item.current::after{content:"●";font-size:7px;color:var(--sp-blue)}',
     ".act-badge{display:inline-block;font-family:'DM Mono',monospace;font-size:9px;line-height:1;color:var(--black);background:var(--sp-orange);border-radius:20px;padding:3px 6px}",
-    '@media (max-width:760px){.nav-menu{min-width:170px}}'
+    '@media (max-width:760px){.nav-menu{min-width:170px}}',
+    /* iPad: 40px+ tap targets on the menu button and items. Tablet-only. */
+    '@media (min-width:761px) and (max-width:1199px){.nav-btn{min-height:40px}.nav-item{min-height:46px;box-sizing:border-box}}'
   ].join('');
 
   function injectStyles() {

@@ -68,6 +68,13 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 
 .empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim);padding:40px 0;line-height:1.8}
 
+/* iPad (Oct 2026): tags are different widths (NEW DESIGN vs PAID), so every
+   row's text started at a different x. Fixed tag column + 40px tap targets.
+   Tablet-only. */
+@media (min-width:761px) and (max-width:1199px){
+  .ev-tag{min-width:104px;text-align:center;box-sizing:border-box}
+  .act,.filter-btn,.mark-read{min-height:40px;display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box}
+}
 @media (max-width:760px){
   header{padding:16px 20px}
   .h-actions{gap:10px}

@@ -303,6 +303,23 @@ select:focus{border-color:var(--sp-blue)}
 .inv-other summary{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--dim);cursor:pointer;margin-bottom:8px}
 .payment-total strong{color:var(--bright);font-size:15px;font-family:'Cormorant Garamond',serif;letter-spacing:normal;text-transform:none}
 
+/* iPad (Oct 2026): the estimate's action row wrapped into a ragged second
+   line of 24-30px buttons, and the scope Save / Use standard buttons rendered
+   as unstyled browser buttons. Even 40px targets and one consistent style.
+   Tablet-only so phone and desktop are untouched. */
+@media (min-width:761px) and (max-width:1199px){
+  header{padding:18px 28px}
+  main{padding:40px 28px 90px}
+  .order-actions{gap:8px}
+  .order-actions > *{min-height:40px;box-sizing:border-box}
+  .order-actions .sep-btn{margin-left:0}
+  .order-actions .order-link,.order-actions .sep-btn,.order-actions button,.order-actions a{display:inline-flex;align-items:center;justify-content:center}
+  .sep-btn{padding:9px 12px}
+  .concrete-scope button{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);background:none;border:1px solid rgba(43,181,232,0.5);padding:9px 14px;min-height:40px;margin:8px 8px 0 0;cursor:pointer}
+  .concrete-scope button.ghost{color:var(--silver);border-color:var(--dim)}
+  main select,main input[type=date],main input[type=text],main input[type=number],main input:not([type]){min-height:40px;box-sizing:border-box}
+  main button{min-height:36px}
+}
 @media (max-width:760px){
   header{padding:16px 20px}
   .h-actions{gap:8px}

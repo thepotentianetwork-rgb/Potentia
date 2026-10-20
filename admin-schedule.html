@@ -68,6 +68,17 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 .cal-more{font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
 .picked-head{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--dim);margin:28px 0 10px}
 
+/* iPad (Oct 2026): day cells sized to their content, so any day with jobs
+   ballooned (Tue/Wed 3x wider than the rest) and the chips sat in one long
+   row. Fix the seven columns equal and stack the chips. Tablet-only. */
+@media (min-width:761px) and (max-width:1199px){
+  main{padding:40px 28px 90px}
+  .cal-head,.cal-grid{grid-template-columns:repeat(7,minmax(0,1fr))}
+  .cal-day{min-width:0;min-height:104px}
+  .cal-dots{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .cal-chip{display:block;max-width:100%;font-size:10px;padding:4px 6px}
+  .range-btn,.monthbar button{min-height:40px;min-width:40px;box-sizing:border-box}
+}
 @media (max-width:760px){
   .month-name{font-size:17px;min-width:135px}
   .cal-grid{gap:3px}
