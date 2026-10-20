@@ -11,7 +11,7 @@ test('3x10 / 5x10 transoms read as 36" / 60" wide (matches the 3D w/h)', () => {
   assert.equal(supplierWindowLabel('Transom 87x10'), 'Transom Window 87" W x 10" H · Fixed');
 });
 test('regular windows are sliders, small squares fixed', () => {
-  assert.equal(supplierWindowLabel('Black Vinyl 36x24', 36, 24), 'Window 36" W x 24" H · Slider (XO) · Black vinyl frame');
+  assert.equal(supplierWindowLabel('Black Vinyl 36x24', 36, 24), 'Window 36" W x 24" H · Slider (XO) · Black ext / White int vinyl frame');
   assert.equal(supplierWindowLabel('White Aluminum 12x12', 12, 12), 'Window 12" W x 12" H · Fixed · White aluminum frame');
 });
 test('every catalog window gets a label whose size is its 3D w x h', () => {
@@ -23,7 +23,9 @@ test('every catalog window gets a label whose size is its 3D w x h', () => {
 test('doors: inches + nominal', () => {
   assert.equal(supplierDoorLabel({ style: 'res6', w: 36, h: 82.5 }), 'Residential Prehung Door 36" W x 80" H (3/0 6/8) · 6 Panel · White');
   assert.equal(supplierDoorLabel({ style: 'craftsman', w: 72, h: 76 }), 'Double Door 72" W x 76" H (6/0 6/4) · Craftsman · Shop-built');
-  assert.equal(supplierDoorLabel({ style: 'slideglass', w: 70, h: 80 }), null);
+  assert.equal(supplierDoorLabel({ style: 'slideglass', w: 70, h: 80 }), 'Sliding Glass Patio Door 60" W x 80" H (5/0 6/8) · White vinyl');
+  assert.equal(supplierDoorLabel({ style: 'slideglassB', w: 70, h: 80 }), 'Sliding Glass Patio Door 60" W x 80" H (5/0 6/8) · Black ext / White int vinyl');
+  assert.equal(supplierWindowLabel('Black Vinyl 24x36', 24, 36), 'Window 24" W x 36" H · Slider (XO) · Black ext / White int vinyl frame');
 });
 const cfg = { style: 'gable', w: 12, l: 16, h: 8,
   doors: [{ wall: 'front', pos: 0.5, style: 'resfullB', w: 36, h: 82.5 }],

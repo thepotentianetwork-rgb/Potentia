@@ -922,7 +922,9 @@ export function supplierWindowLabel(type, w, h) {
     const lc = color.toLowerCase();
     if (mat === 'Vinyl' || mat === 'Aluminum') {
       const op = (W <= 12 && H <= 12) ? 'Fixed' : 'Slider (XO)';
-      return 'Window ' + inWH(W, H) + ' \u00b7 ' + op + ' \u00b7 ' + color + ' ' + mat.toLowerCase() + ' frame';
+      /* Black vinyl is black exterior / white interior (owner, 20 Oct 2026). */
+      const fr = (mat === 'Vinyl' && color === 'Black') ? 'Black ext / White int vinyl' : color + ' ' + mat.toLowerCase();
+      return 'Window ' + inWH(W, H) + ' \u00b7 ' + op + ' \u00b7 ' + fr + ' frame';
     }
     if (mat === 'Transom') return 'Transom Window ' + inWH(W, H) + ' \u00b7 Fixed \u00b7 ' + color + ' frame';
     return mat + ' Window ' + inWH(W, H) + ' \u00b7 ' + color + ' frame';
@@ -948,9 +950,11 @@ export function supplierDoorLabel(dd) {
     /* Residential prehung: nominal 80" slab (the 3D draws the 82.5" unit). */
     return 'Residential Prehung ' + r[0] + ' ' + size(r[1], 80) + ' \u00b7 ' + r[2] + ' \u00b7 ' + r[3];
   }
-  /* Sliding glass: the catalog names it "6' (60x80)" while the designer draws
-     it 70" wide — size left as the product name until that is confirmed. */
-  if (st === 'slideglass' || st === 'slideglassB') return null;
+  /* Sliding glass: a 60" x 80" Home Depot unit (owner, 20 Oct 2026). Fixed
+     size on the label: the 3D's 70" width also keys the option price tile and
+     the porch-fit check, so it is not changed here. */
+  if (st === 'slideglass') return 'Sliding Glass Patio Door ' + size(60, 80) + ' \u00b7 White vinyl';
+  if (st === 'slideglassB') return 'Sliding Glass Patio Door ' + size(60, 80) + ' \u00b7 Black ext / White int vinyl';
   const h = Number(dd.h) || (st === 'rollup' ? 84 : 76);
   if (st === 'rollup') return 'Roll-Up Garage Door ' + size(w, h);
   if (st === 'cedar') return 'Cedar Double Door ' + size(w, h);
