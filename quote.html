@@ -1158,6 +1158,15 @@ function buildFloorPlan(config, frontWall) {
   /* inset: true lists only the openings that sit INSIDE a partial porch
      (they are on the stepped-in wall); false lists everything else, plus the
      porch's own gap in this outer wall as a 'porch' item. */
+  /* A window on a partial porch's short return wall ({ret:'start'|'end'},
+     pos 0 at the stepped-in wall .. 1 at the porch edge), as the designer
+     places it. null when it has no ret or that return does not exist. */
+  function retOf(o) {
+    if (!o || o._code[0] !== 'W' || (o.ret !== 'start' && o.ret !== 'end') || !partialPorch || o.wall !== porchWall) return null;
+    if (o.ret === 'start' && !(pg.off > 0.001)) return null;
+    if (o.ret === 'end' && !(pg.off + pg.len < pg.span - 0.001)) return null;
+    return o.ret;
+  }
   function wallOpenings(wall, inset) {
     var lenFt = wallLenFt(wall, room);
     var items = [];
@@ -1165,6 +1174,7 @@ function buildFloorPlan(config, frontWall) {
     var pgap = (partialPorch && wall === porchWall) ? gap : null;
     doors.concat(windows).forEach(function (o) {
       if (o.wall !== wall) return;
+      if (retOf(o)) return;                 // drawn on its porch return wall below
       var widthFt = (Number(o.w) || (o._code[0] === 'D' ? 36 : 24)) / 12;
       var centerFt = openingLocalFt(wall, o.pos, widthFt, room);
       var inPorch = !!(pgap && centerFt > pgap[0] && centerFt < pgap[1]);
@@ -1302,11 +1312,31 @@ function buildFloorPlan(config, frontWall) {
       dimText(o.code, c.x + (inward.x - mid.x), c.y + (inward.y - mid.y) + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
     });
     var returns = [];
-    if (pg.off > 0.001) returns.push(pg.loc === 'side' ? [{ x: R.x0, z: R.z0 }, { x: R.x1, z: R.z0 }] : [{ x: R.x0, z: R.z0 }, { x: R.x0, z: R.z1 }]);
-    if (pg.off + pg.len < pg.span - 0.001) returns.push(pg.loc === 'side' ? [{ x: R.x0, z: R.z1 }, { x: R.x1, z: R.z1 }] : [{ x: R.x1, z: R.z0 }, { x: R.x1, z: R.z1 }]);
+    if (pg.off > 0.001) returns.push(pg.loc === 'side' ? [{ x: R.x0, z: R.z0 }, { x: R.x1, z: R.z0 }, 'start'] : [{ x: R.x0, z: R.z0 }, { x: R.x0, z: R.z1 }, 'start']);
+    if (pg.off + pg.len < pg.span - 0.001) returns.push(pg.loc === 'side' ? [{ x: R.x0, z: R.z1 }, { x: R.x1, z: R.z1 }, 'end'] : [{ x: R.x1, z: R.z0 }, { x: R.x1, z: R.z1 }, 'end']);
     returns.forEach(function (rw) {
-      var a = project(rw[0].x, rw[0].z), b = project(rw[1].x, rw[1].z);
-      line(a.x, a.y, b.x, b.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
+      // rw[0] is the stepped-in wall end, rw[1] the porch edge (pos 0 -> 1).
+      function rPt(sFt) { var t = sFt / pg.depth; return project(rw[0].x + (rw[1].x - rw[0].x) * t, rw[0].z + (rw[1].z - rw[0].z) * t); }
+      var its = windows.filter(function (o) { return retOf(o) === rw[2]; }).map(function (o) {
+        var wf = (Number(o.w) || 24) / 12, lo = wf / 2 + 0.2, hi = pg.depth - wf / 2 - 0.2;
+        var c = hi < lo ? pg.depth / 2 : Math.max(lo, Math.min(hi, (Number(o.pos) || 0) * pg.depth));
+        return { code: o._code, start: c - wf / 2, end: c + wf / 2 };
+      }).sort(function (a, b) { return a.start - b.start; });
+      var cur = 0;
+      its.forEach(function (o) {
+        var a = rPt(cur), b = rPt(Math.max(cur, o.start));
+        line(a.x, a.y, b.x, b.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
+        var oa = rPt(o.start), ob = rPt(o.end);
+        line(oa.x, oa.y, ob.x, ob.y, { stroke: '#f6941f', w: 1.5 });
+        cur = Math.max(cur, o.end);
+        // label on the porch side of the return
+        var c = rPt((o.start + o.end) / 2), dir = rw[2] === 'start' ? 1 : -1;
+        var off = pg.loc === 'side' ? project(rw[0].x, rw[0].z + dir * 0.9) : project(rw[0].x + dir * 0.9, rw[0].z);
+        var base = project(rw[0].x, rw[0].z);
+        dimText(o.code, c.x + (off.x - base.x), c.y + (off.y - base.y) + 3, { size: 9, fill: '#2cc0fd', cls: 'fp-label' });
+      });
+      var ea = rPt(cur), eb = rPt(pg.depth);
+      line(ea.x, ea.y, eb.x, eb.y, { stroke: '#5a6070', w: 3, cls: 'fp-wall' });
     });
   }
 
