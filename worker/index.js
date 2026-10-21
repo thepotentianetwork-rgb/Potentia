@@ -419,15 +419,45 @@ async function handleAdminLogin(request, env, origin) {
 }
 
 // ---- customers: find-or-create by email/phone match ----
-async function findOrCreateCustomer(env, { name, email, phone, address, city, state, zip }) {
+// Digits only, with a leading US "1" dropped from 11-digit numbers.
+function phoneDigits(phone) {
+  let d = String(phone || "").replace(/\D/g, "");
+  if (d.length === 11 && d[0] === "1") d = d.slice(1);
+  return d;
+}
+const FAKE_PHONES = new Set(["5555555555", "1234567890"]);
+function phoneIsMatchable(phone) {
+  const d = phoneDigits(phone);
+  if (d.length < 10) return false;
+  if (/^(\d)\1+$/.test(d)) return false;
+  return !FAKE_PHONES.has(d);
+}
+async function findOrCreateCustomer(env, { name, email, phone, address, city, state, zip }, out) {
   const now = new Date().toISOString();
   let existing = null;
   if (email) {
     existing = await env.DB.prepare("SELECT id FROM customers WHERE email = ? LIMIT 1").bind(email).first();
   }
-  if (!existing && phone) {
-    existing = await env.DB.prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1").bind(phone).first();
+  let matchedBy = existing ? "email" : null;
+  /* PHONE MATCH GUARD (21 Oct 2026). Phone alone merged Jack Lo's quotes into
+     Dan's record because both typed the placeholder 000-000-0000. A phone now
+     only matches when it is a plausible real number, and never across two
+     different emails: only when the existing customer has no email, or the
+     submitter gave none (consult) / the same one. */
+  if (!existing && phoneIsMatchable(phone)) {
+    const digits = phoneDigits(phone);
+    const { results } = await env.DB.prepare(
+      "SELECT id, email, phone FROM customers WHERE phone IS NOT NULL AND phone != '' ORDER BY id"
+    ).all();
+    const want = String(email || "").trim().toLowerCase();
+    const hit = (results || []).find((c) => {
+      if (phoneDigits(c.phone) !== digits) return false;
+      const have = String(c.email || "").trim().toLowerCase();
+      return !have || !want || have === want;
+    });
+    if (hit) { existing = { id: hit.id }; matchedBy = "phone"; }
   }
+  if (out) out.matchedBy = matchedBy;
   if (existing) {
     /* FILL BLANKS ONLY (Nando, 13 Oct 2026). Both callers are PUBLIC and
        unauthenticated (/shed/submit, /shed/consult), and the match is on an
@@ -3542,6 +3572,7 @@ async function handleShedSubmit(request, env, origin) {
         };
   let details = JSON.stringify(detailsPayload).slice(0, 20000);
 
+  const match = {};
   const customerId = await findOrCreateCustomer(env, {
     name,
     email,
@@ -3550,7 +3581,7 @@ async function handleShedSubmit(request, env, origin) {
     city: contact.city,
     state: contact.state,
     zip: contact.zip
-  });
+  }, match);
 
   // A customer working through design iterations can submit several times
   // in a row. Only the newest untouched submission should ever count as a
@@ -3583,9 +3614,14 @@ async function handleShedSubmit(request, env, origin) {
     }
   }
 
-  await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
-    .bind(customerId)
-    .run();
+  /* Only a confirmed same-person resubmit (matched on email) supersedes their
+     older "new" quotes. A phone-only match or a brand new customer never
+     hides anyone's live quote. */
+  if (match.matchedBy === "email") {
+    await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
+      .bind(customerId)
+      .run();
+  }
 
   await env.DB.prepare("INSERT INTO submissions (customer_id, name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?,?)")
     .bind(customerId, name, email, phone, details, "new", new Date().toISOString())
