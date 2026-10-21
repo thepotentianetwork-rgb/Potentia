@@ -677,6 +677,13 @@ export let SELL = {
   windows: {
     "White Vinyl 18x24": 130, "White Vinyl 24x30": 185, "White Vinyl 36x24": 190, "White Vinyl 36x36": 310,
     "Black Vinyl 18x24": 290, "Black Vinyl 24x36": 395, "Black Vinyl 36x24": 395, "Black Vinyl 36x36": 445,
+    /* 72x48 XO slider + 24x80 fixed sidelight (owner, 21 Oct 2026): Home Depot
+       retail cost x 1.50, nearest $5. Black 72x48: Ply Gem Select 72x48SELSL
+       black $448 -> 670. White 72x48: Milgard V150 6110B-6040T $358 -> 535.
+       24x80 sidelight: HD's only 24x80 fixed unit is TEZA PW652480B (aluminum)
+       $1,406.25 -> 2110; no white 24x80 fixed found, same cost used. */
+    "Black Vinyl 72x48": 670, "White Vinyl 72x48": 535,
+    "Black Sidelight 24x80": 2110, "White Sidelight 24x80": 2110,
     "White Aluminum 12x12": 80, "White Aluminum 18x27": 110, "White Aluminum 24x36": 155,
     "Brown Aluminum 12x12": 80, "Brown Aluminum 18x27": 110, "Brown Aluminum 24x36": 155,
     "Black Aluminum 12x12": 80, "Black Aluminum 18x27": 180, "Black Aluminum 24x36": 280,
@@ -1235,14 +1242,14 @@ export const WINDOW_CATALOG = [
   /* PRICE TBD (owner, 20 Oct 2026): 72x48 double-pane slider and 24x80 fixed
      double-pane sidelight. Deliberately NOT in SELL.windows — see
      WINDOW_PRICE_TBD below: they quote as "Price TBD" and add nothing. */
-  {grp:"White Vinyl",    key:"White Vinyl 72x48",   w:72,h:48, tbd:true},
-  {grp:"White Vinyl",    key:"White Sidelight 24x80", w:24,h:80, tbd:true},
+  {grp:"White Vinyl",    key:"White Vinyl 72x48",   w:72,h:48},
+  {grp:"White Vinyl",    key:"White Sidelight 24x80", w:24,h:80},
   {grp:"Black Vinyl",    key:"Black Vinyl 18x24",   w:18,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 24x36",   w:24,h:36},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x24",   w:36,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x36",   w:36,h:36},
-  {grp:"Black Vinyl",    key:"Black Vinyl 72x48",   w:72,h:48, tbd:true},
-  {grp:"Black Vinyl",    key:"Black Sidelight 24x80", w:24,h:80, tbd:true},
+  {grp:"Black Vinyl",    key:"Black Vinyl 72x48",   w:72,h:48},
+  {grp:"Black Vinyl",    key:"Black Sidelight 24x80", w:24,h:80},
   {grp:"White Aluminum", key:"White Aluminum 12x12", w:12,h:12},
   {grp:"White Aluminum", key:"White Aluminum 18x27", w:18,h:27},
   {grp:"White Aluminum", key:"White Aluminum 24x36", w:24,h:36},
