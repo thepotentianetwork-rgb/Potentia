@@ -2155,3 +2155,17 @@ export function concreteScopeFor(own) {
   const t = SELL && SELL.concreteScope && SELL.concreteScope.text;
   return typeof t === 'string' ? t : CONCRETE_SCOPE_DEFAULT;
 }
+
+/* PORCH ADDS TO THE SHED (designer porchAdds:1). On those designs w x l is
+   the overall FOOTPRINT (what is built and priced) and shedW x shedL is the
+   enclosed shed the customer picked; the full-length porch is added beyond
+   it. Size labels show "12x16 + 4' front porch". Returns null for every other
+   design — those keep their w x l label exactly as before. */
+export function porchAddsSize(c) {
+  if (!c || typeof c !== "object") return null;
+  if (!(c.porchAdds === 1 || c.porchAdds === true)) return null;
+  const sw = Number(c.shedW), sl = Number(c.shedL), d = Number(c.porchDepth);
+  const loc = c.porchLoc === "front" || c.porchLoc === "side" ? c.porchLoc : null;
+  if (!(sw > 0 && sl > 0 && d > 0 && loc)) return null;
+  return { w: sw, l: sl, depth: d, loc: loc, porch: d + "' " + loc + " porch" };
+}

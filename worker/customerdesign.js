@@ -10,7 +10,7 @@
  * field that is missing is simply left out. No prices.
  */
 import { buildSpecLines } from "./buildspec.js";
-import { SHEET_LABEL } from "./pricing.js";
+import { SHEET_LABEL, porchAddsSize } from "./pricing.js";
 
 const CD_STYLE_SHEET = { gable: "aframe", barn: "barn", leanto: "leanto", hip: "poolhouse", "3peak": "3peak", "4peak": "4peak" };
 const CD_WALL = { front: "front", back: "back", left: "left side", right: "right side" };
@@ -74,7 +74,9 @@ export function describeDesign(config) {
   const style = cdStr(c.style);
   const styleLabel = SHEET_LABEL[CD_STYLE_SHEET[style]] || (style ? style : "");
   const lines = [];
-  const size = c.w && c.l ? c.w + "' wide x " + c.l + "' deep" : "";
+  const pa = porchAddsSize(c);
+  const size = pa ? pa.w + "' wide x " + pa.l + "' deep + " + pa.porch + " (" + c.w + "' x " + c.l + "' overall)"
+    : c.w && c.l ? c.w + "' wide x " + c.l + "' deep" : "";
   if (size) lines.push("Size: " + size + (c.h ? ", " + c.h + "' walls" : "") + (c.pitch ? ", " + c.pitch + "/12 roof pitch" : ""));
   if (styleLabel) lines.push("Style: " + styleLabel);
   const names = c.colorNames || {}, paint = c.paint || {};

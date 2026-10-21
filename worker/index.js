@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor, porchAddsSize } from "./pricing.js";
 import { applyColorEdit, detailsWithColors } from "./colors.js";
 import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.js";
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
@@ -708,7 +708,8 @@ function invoiceSubs(inv) {
 /* "10x20 Gable / A-Frame" — how a build is named on a combined invoice. */
 function buildName(config) {
   if (!config) return "";
-  return [config.w && config.l ? config.w + "x" + config.l : null,
+  const pa = porchAddsSize(config);
+  return [pa ? pa.w + "x" + pa.l + " + " + pa.porch : config.w && config.l ? config.w + "x" + config.l : null,
           config.style ? shedStyleName(config.style) : null].filter(Boolean).join(" ");
 }
 /* covers ride on the FIRST stored line of a phase invoice (lines is JSON). */
@@ -1035,7 +1036,9 @@ async function ensureInvoicesTable(env) {
 function configSummary(config) {
   if (!config) return "";
   const parts = [];
-  if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
+  const pa = porchAddsSize(config);
+  if (pa) parts.push(pa.w + "x" + pa.l + " ft + " + pa.porch);
+  else if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
   if (config.style) parts.push(shedStyleName(config.style));
   if (config.siding) parts.push(config.siding);
   return parts.join(" \u00b7 ");

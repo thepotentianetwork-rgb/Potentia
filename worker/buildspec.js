@@ -16,7 +16,7 @@
  * would be a second thing to keep in step, and they would drift the first time
  * a product was renamed.
  */
-import { doorDisplayName, doorColorLabel, windowDisplayName, sidingDisplayName } from "./pricing.js";
+import { doorDisplayName, doorColorLabel, windowDisplayName, sidingDisplayName, porchAddsSize } from "./pricing.js";
 
 const SPEC_WALL = { front: "front", back: "back", left: "left", right: "right" };
 
@@ -54,7 +54,9 @@ function specGrouped(items, label) {
 /* The specShell, as one line: "12x20 ft · gable · 9ft walls · 6/12 pitch". */
 function specShell(c) {
   const bits = [];
-  if (c.w && c.l) bits.push(c.w + "x" + c.l + " ft");
+  const pa = porchAddsSize(c);
+  if (pa) bits.push(pa.w + "x" + pa.l + " ft + " + pa.porch);
+  else if (c.w && c.l) bits.push(c.w + "x" + c.l + " ft");
   if (c.style) bits.push(sv(c.style));
   if (c.h) bits.push(c.h + "ft walls");
   if (c.pitch) bits.push(c.pitch + "/12 pitch");

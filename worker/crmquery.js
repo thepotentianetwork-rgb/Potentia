@@ -1,3 +1,4 @@
+import { porchAddsSize } from "./pricing.js";
 /* GET /api/briefing/query?view=<view>&q=&days=&status=&limit=
  * "Jarvis, pull up ..." : one read-only lookup over the ShedPro CRM, shaped
  * for a screen: { view, title, columns, rows, cards?, summary }.
@@ -42,7 +43,9 @@ function cqTotal(s) {
 function cqDesign(details) {
   const c = (cqJson(details) || {}).config || {};
   const bits = [];
-  if (c.w && c.l) bits.push(c.w + 'x' + c.l);
+  const pa = porchAddsSize(c);
+  if (pa) bits.push(pa.w + 'x' + pa.l + ' + ' + pa.porch);
+  else if (c.w && c.l) bits.push(c.w + 'x' + c.l);
   if (c.style) bits.push(String(c.style));
   return bits.join(' ');
 }

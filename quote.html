@@ -267,9 +267,20 @@ function firstName(full) {
 
 /* "12x20 ft barn" — enough for the subject line to mean something in an inbox
    six weeks later. */
+/* Same as worker/pricing.js porchAddsSize: a porchAdds design is labelled
+   by its enclosed shed plus the porch; every other design is unchanged. */
+function porchAddsSize(c) {
+  if (!c || typeof c !== 'object') return null;
+  if (!(c.porchAdds === 1 || c.porchAdds === true)) return null;
+  var sw = Number(c.shedW), sl = Number(c.shedL), d = Number(c.porchDepth);
+  var where = (c.porchLoc === 'front' || c.porchLoc === 'side') ? c.porchLoc : null;
+  if (!(sw > 0 && sl > 0 && d > 0 && where)) return null;
+  return { w: sw, l: sl, depth: d, loc: where, porch: d + "' " + where + ' porch' };
+}
 function buildPhrase(config) {
   var c = config || {};
-  var size = (c.w && c.l) ? (c.w + 'x' + c.l + ' ft') : '';
+  var pa = porchAddsSize(c);
+  var size = pa ? (pa.w + 'x' + pa.l + ' ft + ' + pa.porch) : (c.w && c.l) ? (c.w + 'x' + c.l + ' ft') : '';
   var style = shedStyleName(c.style);
   return [size, style].filter(Boolean).join(' ');
 }
@@ -662,7 +673,9 @@ function render(submission, customer) {
   // depth being covered porch and the rest enclosed room (verified against
   // the designer's own enclosure()/wallFrame(), which build the room at
   // W/L minus the porch depth and hang the porch off the freed-up strip).
-  if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
+  var _pa = porchAddsSize(config);
+  if (_pa) fields += field('Size', _pa.w + '’ x ' + _pa.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : '') + ' + ' + _pa.depth + '’ ' + _pa.loc + ' porch (' + config.w + '’ x ' + config.l + '’ overall)');
+  else if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
   if (config.style) fields += field('Style', shedStyleName(config.style));
   /* Footprint is what was bought; the room is what gets framed. With a porch
      they differ, so show both — and the porch's own size. */

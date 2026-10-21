@@ -866,12 +866,22 @@ function plainBtn(label) {
   return btn;
 }
 
+function porchAddsSize(c) {
+  if (!c || typeof c !== 'object') return null;
+  if (!(c.porchAdds === 1 || c.porchAdds === true)) return null;
+  var sw = Number(c.shedW), sl = Number(c.shedL), d = Number(c.porchDepth);
+  var where = (c.porchLoc === 'front' || c.porchLoc === 'side') ? c.porchLoc : null;
+  if (!(sw > 0 && sl > 0 && d > 0 && where)) return null;
+  return { w: sw, l: sl, depth: d, loc: where, porch: d + "' " + where + ' porch' };
+}
 function summarizeConfig(config) {
   if (!config) return '';
   var parts = [];
   // The porch is carved out of the shed's own w x l, not added past it —
   // see the matching comment on the Size field in quote.html.
-  if (config.w && config.l) parts.push(config.w + 'x' + config.l + ' ft');
+  var _pa = porchAddsSize(config);
+  if (_pa) parts.push(_pa.w + 'x' + _pa.l + ' ft + ' + _pa.porch);
+  else if (config.w && config.l) parts.push(config.w + 'x' + config.l + ' ft');
   if (config.style) parts.push(/^(gable|a-?frame)$/i.test(config.style) ? 'Gable / A-Frame' : config.style);
   if (config.siding) parts.push(config.siding);
   // Roof, short: pitch and covering, the way the quote's Roof section words it.
