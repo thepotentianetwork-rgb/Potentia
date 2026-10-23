@@ -107,7 +107,7 @@ export let COST = {
 let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     SIDING='vertical', W=8, L=12, H=8,
     PORCH_LOC='none', SIDE_PORCH=0, PORCH_TIER='standard', PORCH_DECK='pt',
-    PORCH_LEN=0, PORCH_OFF=0,
+    PORCH_LEN=0, PORCH_OFF=0, AWNING=false,
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
     LOFT='none', LOFT_SIDE='ends', ELEC='none', INT_FINISH='none', FLOOR='none',
@@ -159,7 +159,19 @@ export function setConfig(cfg){
   ventsData   = Array.isArray(cfg.vents)   ? cfg.vents   : [];
   shelvesData = Array.isArray(cfg.shelves) ? cfg.shelves : [];
   SPRINKLERS  = sprinklerFeet(cfg.sprinklers);
+  /* AWNING (designer awning:1, 23 Oct 2026): the awning is built OUTSIDE the
+     enclosed shed and does not count toward its sq ft, so the shed is priced
+     at its enclosed shedW x shedL and the awning bills on its own line. Only
+     configs carrying awning:1 — every quote saved before keeps its price
+     (porchAdds-only configs still price off the w x l footprint). */
+  var _aw = (cfg.awning===1||cfg.awning===true) && (cfg.porchAdds===1||cfg.porchAdds===true);
+  var _sw = +cfg.shedW, _sl = +cfg.shedL;
+  if(_aw && STYLE==='gable' && (PORCH_LOC==='front'||PORCH_LOC==='side') && SIDE_PORCH>0 &&
+     _sw>0 && _sl>0 && !porchIsPartialFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L)){
+    AWNING=true; W=_sw; L=_sl; PORCH_LEN=0; PORCH_OFF=0;
+  }
 }
+export function awningActive(){ return AWNING; }
 /* Every field back to its designer.html default (see the top-level `var`
    declarations there). Call this before setConfig() on each request so a
    field the client omitted reads as "not selected", not as whatever the
@@ -169,7 +181,7 @@ export function resetConfig(){
   STYLE='gable'; PITCH=6; ROOFTYPE='shingle'; OVTYPE='gable'; OVH=4;
   SIDING='vertical'; W=8; L=12; H=8;
   PORCH_LOC='none'; SIDE_PORCH=0; PORCH_TIER='standard'; PORCH_DECK='pt';
-  PORCH_LEN=0; PORCH_OFF=0;
+  PORCH_LEN=0; PORCH_OFF=0; AWNING=false;
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
   LOFT='none'; LOFT_SIDE='ends'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
@@ -245,6 +257,7 @@ export function porchIsPartialFor(loc, depth, len, w, l){
 function porchOn(){ return STYLE==='gable' && PORCH_LOC!=='none' && SIDE_PORCH>0; }
 function porchPartial(){ return porchOn() && porchIsPartialFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L); }
 function porchEatFt(){
+  if(AWNING) return {w:0,l:0};          // an awning sits outside the shed
   if(STYLE!=='gable') return {w:0,l:0};
   if(PORCH_LOC==='none') return {w:0,l:0};
   if(!(SIDE_PORCH>0)) return {w:0,l:0};
@@ -1605,6 +1618,10 @@ export function computePricing(cfgIn, opts){
        separate means a porch's base price stays comparable across quotes. */
     var dk = porchDeckLineFor(porchLoc, porchDepth, porchDeck, _span);
     if(dk){ porchDeckSell = dk.price; porchDeckSellName = dk.name; }
+    if(AWNING){
+      porchSellName = porchSellName.replace(/ Porch/, ' Awning');
+      porchDeckSellName = porchDeckSellName.replace(/ Porch /, ' Awning ');
+    }
   }
   customerPrice += porchSell + porchDeckSell;
 
@@ -2200,5 +2217,5 @@ export function porchAddsSize(c) {
   const sw = Number(c.shedW), sl = Number(c.shedL), d = Number(c.porchDepth);
   const loc = c.porchLoc === "front" || c.porchLoc === "side" ? c.porchLoc : null;
   if (!(sw > 0 && sl > 0 && d > 0 && loc)) return null;
-  return { w: sw, l: sl, depth: d, loc: loc, porch: d + "' " + loc + " porch" };
+  return { w: sw, l: sl, depth: d, loc: loc, kind: "awning", porch: d + "' " + loc + " awning" };
 }

@@ -872,7 +872,7 @@ function porchAddsSize(c) {
   var sw = Number(c.shedW), sl = Number(c.shedL), d = Number(c.porchDepth);
   var where = (c.porchLoc === 'front' || c.porchLoc === 'side') ? c.porchLoc : null;
   if (!(sw > 0 && sl > 0 && d > 0 && where)) return null;
-  return { w: sw, l: sl, depth: d, loc: where, porch: d + "' " + where + ' porch' };
+  return { w: sw, l: sl, depth: d, loc: where, kind: 'awning', porch: d + "' " + where + ' awning' };
 }
 function summarizeConfig(config) {
   if (!config) return '';

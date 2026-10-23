@@ -275,7 +275,7 @@ function porchAddsSize(c) {
   var sw = Number(c.shedW), sl = Number(c.shedL), d = Number(c.porchDepth);
   var where = (c.porchLoc === 'front' || c.porchLoc === 'side') ? c.porchLoc : null;
   if (!(sw > 0 && sl > 0 && d > 0 && where)) return null;
-  return { w: sw, l: sl, depth: d, loc: where, porch: d + "' " + where + ' porch' };
+  return { w: sw, l: sl, depth: d, loc: where, kind: 'awning', porch: d + "' " + where + ' awning' };
 }
 function buildPhrase(config) {
   var c = config || {};
@@ -650,6 +650,14 @@ function render(submission, customer) {
   try { details = JSON.parse(submission.details) || {}; } catch (e) {}
   SUPPLIER_LABELS = !!(details.redline && details.redline.supplierLabels && typeof supplierWindowLabel === 'function');
   var config = (details.config && typeof details.config === 'object') ? details.config : {};
+  /* A porchAdds design's porch is an awning. Quotes priced before 23 Oct
+     stored the line as "4' Side Porch (80 sqft)"; show it as an awning.
+     Display only, and only when no adjustment could be keyed to the old name. */
+  if (porchAddsSize(config) && details.redline && !(submission.adjustments && submission.adjustments !== '[]')) {
+    ['porchSellName', 'porchDeckSellName'].forEach(function (k) {
+      if (typeof details.redline[k] === 'string') details.redline[k] = details.redline[k].replace(/ Porch\b/, ' Awning');
+    });
+  }
 
   // adjustment_list is normalised by the worker, so an older single-adjustment
   // row and a newer list-based one arrive in the same shape here.
@@ -681,16 +689,21 @@ function render(submission, customer) {
   // the designer's own enclosure()/wallFrame(), which build the room at
   // W/L minus the porch depth and hang the porch off the freed-up strip).
   var _pa = porchAddsSize(config);
-  if (_pa) fields += field('Size', _pa.w + '’ x ' + _pa.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : '') + ' + ' + _pa.depth + '’ ' + _pa.loc + ' porch (' + config.w + '’ x ' + config.l + '’ overall)');
+  if (_pa) fields += field('Size', _pa.w + '’ x ' + _pa.l + '’ + ' + _pa.depth + '’ ' + _pa.loc + ' awning' + (config.h ? ' · ' + config.h + '’ walls' : '') + ' (' + config.w + '’ x ' + config.l + '’ overall)');
   else if (config.w && config.l) fields += field('Size', config.w + '’ x ' + config.l + '’' + (config.h ? ' x ' + config.h + '’ wall' : ''));
-  if (config.style) fields += field('Style', shedStyleName(config.style));
+  /* AWNING vs PORCH (23 Oct 2026): a porchAdds design's porch is an AWNING —
+     added outside the enclosed shed, not counted in its sq ft. Any other
+     porch sits inside the stated size and counts toward it. */
+  var _hasPorchStyle = (config.porchLoc === 'front' || config.porchLoc === 'side') && Number(config.porchDepth) > 0 && /^(gable|a-?frame)$/i.test(String(config.style || ''));
+  if (config.style) fields += field('Style', shedStyleName(config.style) + (_hasPorchStyle ? (_pa ? ' + Awning' : ' + Porch') : ''));
   /* Footprint is what was bought; the room is what gets framed. With a porch
      they differ, so show both — and the porch's own size. */
   var _pg = porchGeom(config);
   if (_pg) {
     fields += field('Enclosed', _pg.enclosedSqft + ' sq ft');
-    fields += field('Porch', _pg.depth + '’ x ' + _pg.len + '’ ' + (_pg.loc === 'front' ? 'front' : 'side') +
-      (_pg.partial ? ' (' + _pg.where + ')' : '') + ' · ' + (_pg.depth * _pg.len) + ' sq ft');
+    fields += field(_pa ? 'Awning' : 'Porch', _pg.depth + '’ x ' + _pg.len + '’ ' + (_pg.loc === 'front' ? 'front' : 'side') +
+      (_pg.partial ? ' (' + _pg.where + ')' : '') + ' · ' + (_pg.depth * _pg.len) + ' sq ft' +
+      (_pa ? ' · not counted in the shed’s sq ft' : ' · counts toward the shed’s sq ft'));
   }
   if (config.siding) fields += field('Siding', config.siding);
   if (Array.isArray(config.doors)) fields += field('Doors', config.doors.length);
@@ -1066,7 +1079,8 @@ function buildFloorPlan(config, frontWall) {
     // Porch" spanning a side wall) is exactly the kind of thing a permit
     // reviewer would flag as not matching the drawing.
     var displayedWall = (WALL_ROTATIONS[frontWall] || WALL_ROTATIONS.front)[porchWall];
-    var porchKind = displayedWall === 'front' ? 'Front Porch' : displayedWall === 'back' ? 'Back Porch' : 'Side Porch';
+    var _pkw = porchAddsSize(config) ? 'Awning' : 'Porch';
+    var porchKind = (displayedWall === 'front' ? 'Front ' : displayedWall === 'back' ? 'Back ' : 'Side ') + _pkw;
     var porchName = porchDepth + "' " + (partialPorch ? '× ' + pg.len + "' " : '') + porchKind +
       (config.porchTier && config.porchTier !== 'standard' ? ' — ' + config.porchTier : '');
     legendItems.push({ code: 'C1', desc: porchName });

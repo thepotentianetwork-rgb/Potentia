@@ -78,7 +78,8 @@ export function describeDesign(config) {
   const size = pa ? pa.w + "' wide x " + pa.l + "' deep + " + pa.porch + " (" + c.w + "' x " + c.l + "' overall)"
     : c.w && c.l ? c.w + "' wide x " + c.l + "' deep" : "";
   if (size) lines.push("Size: " + size + (c.h ? ", " + c.h + "' walls" : "") + (c.pitch ? ", " + c.pitch + "/12 roof pitch" : ""));
-  if (styleLabel) lines.push("Style: " + styleLabel);
+  const _porchStyle = (c.porchLoc === "front" || c.porchLoc === "side") && Number(c.porchDepth) > 0 && style === "gable";
+  if (styleLabel) lines.push("Style: " + styleLabel + (_porchStyle ? (pa ? " + Awning" : " + Porch") : ""));
   const names = c.colorNames || {}, paint = c.paint || {};
   const sid = cdColorLine("Siding color", names.siding, paint.siding, c.sidingColor); if (sid) lines.push(sid);
   const trim = cdColorLine("Trim color", names.trim, paint.trim, c.trimColor); if (trim) lines.push(trim);

@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "588120d-dirty";
-const WORKER_BUILT_AT = "2026-10-20T18:10:23.720Z";
+const WORKER_BUILD = "1e34a69-dirty";
+const WORKER_BUILT_AT = "2026-10-23T16:22:52.015Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -111,7 +111,7 @@ let COST = {
 let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     SIDING='vertical', W=8, L=12, H=8,
     PORCH_LOC='none', SIDE_PORCH=0, PORCH_TIER='standard', PORCH_DECK='pt',
-    PORCH_LEN=0, PORCH_OFF=0,
+    PORCH_LEN=0, PORCH_OFF=0, AWNING=false,
     DORMER_L=0, DORMER_R=0,
     FOUNDATION='blocks', FOUNDATION_FINISH='plain',
     LOFT='none', LOFT_SIDE='ends', ELEC='none', INT_FINISH='none', FLOOR='none',
@@ -163,7 +163,19 @@ function setConfig(cfg){
   ventsData   = Array.isArray(cfg.vents)   ? cfg.vents   : [];
   shelvesData = Array.isArray(cfg.shelves) ? cfg.shelves : [];
   SPRINKLERS  = sprinklerFeet(cfg.sprinklers);
+  /* AWNING (designer awning:1, 23 Oct 2026): the awning is built OUTSIDE the
+     enclosed shed and does not count toward its sq ft, so the shed is priced
+     at its enclosed shedW x shedL and the awning bills on its own line. Only
+     configs carrying awning:1 — every quote saved before keeps its price
+     (porchAdds-only configs still price off the w x l footprint). */
+  var _aw = (cfg.awning===1||cfg.awning===true) && (cfg.porchAdds===1||cfg.porchAdds===true);
+  var _sw = +cfg.shedW, _sl = +cfg.shedL;
+  if(_aw && STYLE==='gable' && (PORCH_LOC==='front'||PORCH_LOC==='side') && SIDE_PORCH>0 &&
+     _sw>0 && _sl>0 && !porchIsPartialFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L)){
+    AWNING=true; W=_sw; L=_sl; PORCH_LEN=0; PORCH_OFF=0;
+  }
 }
+function awningActive(){ return AWNING; }
 /* Every field back to its designer.html default (see the top-level `var`
    declarations there). Call this before setConfig() on each request so a
    field the client omitted reads as "not selected", not as whatever the
@@ -173,7 +185,7 @@ function resetConfig(){
   STYLE='gable'; PITCH=6; ROOFTYPE='shingle'; OVTYPE='gable'; OVH=4;
   SIDING='vertical'; W=8; L=12; H=8;
   PORCH_LOC='none'; SIDE_PORCH=0; PORCH_TIER='standard'; PORCH_DECK='pt';
-  PORCH_LEN=0; PORCH_OFF=0;
+  PORCH_LEN=0; PORCH_OFF=0; AWNING=false;
   DORMER_L=0; DORMER_R=0;
   FOUNDATION='blocks'; FOUNDATION_FINISH='plain';
   LOFT='none'; LOFT_SIDE='ends'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
@@ -249,6 +261,7 @@ function porchIsPartialFor(loc, depth, len, w, l){
 function porchOn(){ return STYLE==='gable' && PORCH_LOC!=='none' && SIDE_PORCH>0; }
 function porchPartial(){ return porchOn() && porchIsPartialFor(PORCH_LOC, SIDE_PORCH, PORCH_LEN, W, L); }
 function porchEatFt(){
+  if(AWNING) return {w:0,l:0};          // an awning sits outside the shed
   if(STYLE!=='gable') return {w:0,l:0};
   if(PORCH_LOC==='none') return {w:0,l:0};
   if(!(SIDE_PORCH>0)) return {w:0,l:0};
@@ -681,6 +694,13 @@ let SELL = {
   windows: {
     "White Vinyl 18x24": 130, "White Vinyl 24x30": 185, "White Vinyl 36x24": 190, "White Vinyl 36x36": 310,
     "Black Vinyl 18x24": 290, "Black Vinyl 24x36": 395, "Black Vinyl 36x24": 395, "Black Vinyl 36x36": 445,
+    /* 72x48 XO slider + 24x80 fixed sidelight (owner, 21 Oct 2026): Home Depot
+       retail cost x 1.50, nearest $5. Black 72x48: Ply Gem Select 72x48SELSL
+       black $448 -> 670. White 72x48: Milgard V150 6110B-6040T $358 -> 535.
+       24x80 sidelight: HD's only 24x80 fixed unit is TEZA PW652480B (aluminum)
+       $1,406.25 -> 2110; no white 24x80 fixed found, same cost used. */
+    "Black Vinyl 72x48": 670, "White Vinyl 72x48": 535,
+    "Black Sidelight 24x80": 2110, "White Sidelight 24x80": 2110,
     "White Aluminum 12x12": 80, "White Aluminum 18x27": 110, "White Aluminum 24x36": 155,
     "Brown Aluminum 12x12": 80, "Brown Aluminum 18x27": 110, "Brown Aluminum 24x36": 155,
     "Black Aluminum 12x12": 80, "Black Aluminum 18x27": 180, "Black Aluminum 24x36": 280,
@@ -1236,10 +1256,17 @@ const WINDOW_CATALOG = [
   {grp:"White Vinyl",    key:"White Vinyl 24x30",   w:24,h:30},
   {grp:"White Vinyl",    key:"White Vinyl 36x24",   w:36,h:24},
   {grp:"White Vinyl",    key:"White Vinyl 36x36",   w:36,h:36},
+  /* PRICE TBD (owner, 20 Oct 2026): 72x48 double-pane slider and 24x80 fixed
+     double-pane sidelight. Deliberately NOT in SELL.windows — see
+     WINDOW_PRICE_TBD below: they quote as "Price TBD" and add nothing. */
+  {grp:"White Vinyl",    key:"White Vinyl 72x48",   w:72,h:48},
+  {grp:"White Vinyl",    key:"White Sidelight 24x80", w:24,h:80},
   {grp:"Black Vinyl",    key:"Black Vinyl 18x24",   w:18,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 24x36",   w:24,h:36},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x24",   w:36,h:24},
   {grp:"Black Vinyl",    key:"Black Vinyl 36x36",   w:36,h:36},
+  {grp:"Black Vinyl",    key:"Black Vinyl 72x48",   w:72,h:48},
+  {grp:"Black Vinyl",    key:"Black Sidelight 24x80", w:24,h:80},
   {grp:"White Aluminum", key:"White Aluminum 12x12", w:12,h:12},
   {grp:"White Aluminum", key:"White Aluminum 18x27", w:18,h:27},
   {grp:"White Aluminum", key:"White Aluminum 24x36", w:24,h:36},
@@ -1344,6 +1371,17 @@ function sellWindowPrice(wd){
 // 36"×10" and 60"×10" horizontal bands; these are tall narrow lites, still
 // unpriced since nobody's supplied a number for them). Without this check
 // they'd fall through the area buckets and quote as white vinyl.
+/* PRICE TBD windows: no price exists yet, and none may be guessed. Without
+   this they would fall into sellWindowPrice's area buckets and quote as a
+   $310 white vinyl. They are listed on the quote as "Price TBD" (redline
+   .tbdLines) and add $0 to nothing — not to windowSell, not to cost, not to
+   any total. Remove a key from here once SELL.windows has a real price. */
+const WINDOW_PRICE_TBD = ["White Vinyl 72x48", "Black Vinyl 72x48",
+  "White Sidelight 24x80", "Black Sidelight 24x80"];
+const PRICE_TBD_NOTE = 'Price TBD \u2014 final price confirmed before deposit';
+function windowPriceTBD(wd){
+  return !!(wd && wd.type && WINDOW_PRICE_TBD.indexOf(wd.type)!==-1 && SELL.windows[wd.type]==null);
+}
 function sellWindowPriced(wd){
   return !!(wd && wd.type && SELL.windows[wd.type]!=null);
 }
@@ -1490,6 +1528,7 @@ function computePricing(cfgIn, opts){
   }
   if(typeof windowsData!=='undefined'){
     windowsData.forEach(function(wd){
+      if(windowPriceTBD(wd)) return;   // no cost known either; never estimated
       var sku=windowSkuFor(wd); winCost+=sku.cost;
       winLines.push({label:sku.name, qty:1, unit:sku.cost, total:sku.cost});
     });
@@ -1583,6 +1622,10 @@ function computePricing(cfgIn, opts){
        separate means a porch's base price stays comparable across quotes. */
     var dk = porchDeckLineFor(porchLoc, porchDepth, porchDeck, _span);
     if(dk){ porchDeckSell = dk.price; porchDeckSellName = dk.name; }
+    if(AWNING){
+      porchSellName = porchSellName.replace(/ Porch/, ' Awning');
+      porchDeckSellName = porchDeckSellName.replace(/ Porch /, ' Awning ');
+    }
   }
   customerPrice += porchSell + porchDeckSell;
 
@@ -1671,9 +1714,15 @@ function computePricing(cfgIn, opts){
   customerPrice += heightSell;
 
   // ── WINDOWS (customer): each placed window at its catalog price ──
-  var windowSell = 0, windowSellLines = [];
+  var windowSell = 0, windowSellLines = [], tbdLines = [];
   if(typeof windowsData!=='undefined'){
     windowsData.forEach(function(wd){
+      if(windowPriceTBD(wd)){
+        var tlab = (SUP_ON && supplierWindowLabel(wd.type, wd.w, wd.h)) || windowDisplayName(wd.type);
+        tbdLines.push({label:tlab, tbd:true, note:PRICE_TBD_NOTE});
+        unpriced.push(tlab+' \u2014 price TBD, excluded from total');
+        return;
+      }
       var p = sellWindowPrice(wd);
       var priced = sellWindowPriced(wd);
       if(p>0){
@@ -1936,6 +1985,7 @@ function computePricing(cfgIn, opts){
       finishRecovered: finishRecovered,
       heightSell: heightSell, heightSellName: heightSellName,
       windowSell: windowSell, windowSellLines: windowSellLines,
+      tbdLines: tbdLines.length ? tbdLines : undefined,
       intSell: intSell, intSellName: intSellName,
       floorSell: floorSell, floorSellName: floorSellName,
       elecSell: elecSell, elecSellName: elecSellName, elecIncludes: elecIncludes,
@@ -2158,6 +2208,20 @@ function concreteScopeFor(own) {
   if (own != null) return String(own);
   const t = SELL && SELL.concreteScope && SELL.concreteScope.text;
   return typeof t === 'string' ? t : CONCRETE_SCOPE_DEFAULT;
+}
+
+/* PORCH ADDS TO THE SHED (designer porchAdds:1). On those designs w x l is
+   the overall FOOTPRINT (what is built and priced) and shedW x shedL is the
+   enclosed shed the customer picked; the full-length porch is added beyond
+   it. Size labels show "12x16 + 4' front porch". Returns null for every other
+   design — those keep their w x l label exactly as before. */
+function porchAddsSize(c) {
+  if (!c || typeof c !== "object") return null;
+  if (!(c.porchAdds === 1 || c.porchAdds === true)) return null;
+  const sw = Number(c.shedW), sl = Number(c.shedL), d = Number(c.porchDepth);
+  const loc = c.porchLoc === "front" || c.porchLoc === "side" ? c.porchLoc : null;
+  if (!(sw > 0 && sl > 0 && d > 0 && loc)) return null;
+  return { w: sw, l: sl, depth: d, loc: loc, kind: "awning", porch: d + "' " + loc + " awning" };
 }
 
 // ---- end inlined pricing.js ----
@@ -4184,6 +4248,11 @@ function quoteLinesCore(redline, adjustments) {
     /* Display only — see DISCOUNTS, LISTED LAST above. */
     regularSubtotal: regularSubtotal,
     freeRows: freeRows,
+    /* PRICE TBD items (see WINDOW_PRICE_TBD in pricing.js): listed, never
+       priced, never in any phase, subtotal, tax or deposit. Absent on every
+       quote priced before them, so those render exactly as they did. */
+    tbdLines: (redline.tbdLines || []).filter(function (l) { return l && l.label; })
+      .map(function (l) { return { label: String(l.label), note: l.note || 'Price TBD \u2014 final price confirmed before deposit' }; }),
     charges: charges,
     discounts: discounts,
     discountTotal: discounts.reduce(function (t, d) { return t + d.amt; }, 0)
@@ -4462,7 +4531,7 @@ function inWH(w, h) { return w + '" W x ' + h + '" H'; }
 function nominal(i) { return Math.floor(i / 12) + '/' + (Math.round(i) % 12); }
 function supplierWindowLabel(type, w, h) {
   const k = String(type || '').trim();
-  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
+  const m = /^(White|Black|Brown)\s+(Vinyl|Aluminum|Transom|Sidelight|Bi-Fold Bar|Lift-Up Bar)\s+(\d+)\s*x\s*(\d+)$/.exec(k);
   if (m) {
     const color = m[1], mat = m[2];
     let W = Number(w) || 0, H = Number(h) || 0;
@@ -4472,6 +4541,12 @@ function supplierWindowLabel(type, w, h) {
       if (mat === 'Transom' && H === 10 && (W === 3 || W === 5)) W = W * 12;
     }
     const lc = color.toLowerCase();
+    /* 72x48 slider and 24x80 sidelight (owner, 20 Oct 2026): vinyl,
+       double-pane, price TBD. Only these new keys say "Double-pane" — the
+       older vinyl lines are left exactly as they read. */
+    const fr2 = color === 'Black' ? 'Black ext / White int vinyl' : 'White vinyl';
+    if (mat === 'Sidelight') return 'Sidelight Window ' + inWH(W, H) + ' \u00b7 Fixed \u00b7 Double-pane \u00b7 ' + fr2 + ' frame';
+    if (mat === 'Vinyl' && W === 72 && H === 48) return 'Window ' + inWH(W, H) + ' \u00b7 Slider (XO) \u00b7 Double-pane \u00b7 ' + fr2 + ' frame';
     if (mat === 'Vinyl' || mat === 'Aluminum') {
       const op = (W <= 12 && H <= 12) ? 'Fixed' : 'Slider (XO)';
       /* Black vinyl is black exterior / white interior (owner, 20 Oct 2026). */
@@ -6674,7 +6749,9 @@ function specGrouped(items, label) {
 /* The specShell, as one line: "12x20 ft · gable · 9ft walls · 6/12 pitch". */
 function specShell(c) {
   const bits = [];
-  if (c.w && c.l) bits.push(c.w + "x" + c.l + " ft");
+  const pa = porchAddsSize(c);
+  if (pa) bits.push(pa.w + "x" + pa.l + " ft + " + pa.porch);
+  else if (c.w && c.l) bits.push(c.w + "x" + c.l + " ft");
   if (c.style) bits.push(sv(c.style));
   if (c.h) bits.push(c.h + "ft walls");
   if (c.pitch) bits.push(c.pitch + "/12 pitch");
@@ -6716,7 +6793,7 @@ function specPorchLine(c) {
   if (deck) bits.push(deck);
   const tier = sv(c.porchTier);
   if (tier && tier !== "standard") bits.push(tier);
-  return "Porch: " + bits.join(" · ");
+  return (porchAddsSize(c) ? "Awning: " : "Porch: ") + bits.join(" · ");
 }
 
 function specEnclosedLine(c) {
@@ -6729,7 +6806,7 @@ function specEnclosedLine(c) {
   const porch = depth * len;
   const room = w * l - porch;
   const shape = len < span ? "" : (loc === "front" ? " (" + w + "x" + (l - depth) + ")" : " (" + (w - depth) + "x" + l + ")");
-  return "Enclosed: " + room + " sq ft" + shape + " · Porch: " + depth + "x" + len + " ft (" + porch + " sq ft)";
+  return "Enclosed: " + room + " sq ft" + shape + " · " + (porchAddsSize(c) ? "Awning (not counted)" : "Porch") + ": " + depth + "x" + len + " ft (" + porch + " sq ft)";
 }
 
 /* Interior, floor and electrical on one line — they are three short answers
@@ -8296,9 +8373,12 @@ function describeDesign(config) {
   const style = cdStr(c.style);
   const styleLabel = SHEET_LABEL[CD_STYLE_SHEET[style]] || (style ? style : "");
   const lines = [];
-  const size = c.w && c.l ? c.w + "' wide x " + c.l + "' deep" : "";
+  const pa = porchAddsSize(c);
+  const size = pa ? pa.w + "' wide x " + pa.l + "' deep + " + pa.porch + " (" + c.w + "' x " + c.l + "' overall)"
+    : c.w && c.l ? c.w + "' wide x " + c.l + "' deep" : "";
   if (size) lines.push("Size: " + size + (c.h ? ", " + c.h + "' walls" : "") + (c.pitch ? ", " + c.pitch + "/12 roof pitch" : ""));
-  if (styleLabel) lines.push("Style: " + styleLabel);
+  const _porchStyle = (c.porchLoc === "front" || c.porchLoc === "side") && Number(c.porchDepth) > 0 && style === "gable";
+  if (styleLabel) lines.push("Style: " + styleLabel + (_porchStyle ? (pa ? " + Awning" : " + Porch") : ""));
   const names = c.colorNames || {}, paint = c.paint || {};
   const sid = cdColorLine("Siding color", names.siding, paint.siding, c.sidingColor); if (sid) lines.push(sid);
   const trim = cdColorLine("Trim color", names.trim, paint.trim, c.trimColor); if (trim) lines.push(trim);
@@ -8429,7 +8509,9 @@ function cqTotal(s) {
 function cqDesign(details) {
   const c = (cqJson(details) || {}).config || {};
   const bits = [];
-  if (c.w && c.l) bits.push(c.w + 'x' + c.l);
+  const pa = porchAddsSize(c);
+  if (pa) bits.push(pa.w + 'x' + pa.l + ' + ' + pa.porch);
+  else if (c.w && c.l) bits.push(c.w + 'x' + c.l);
   if (c.style) bits.push(String(c.style));
   return bits.join(' ');
 }
@@ -9037,15 +9119,45 @@ async function handleAdminLogin(request, env, origin) {
 }
 
 // ---- customers: find-or-create by email/phone match ----
-async function findOrCreateCustomer(env, { name, email, phone, address, city, state, zip }) {
+// Digits only, with a leading US "1" dropped from 11-digit numbers.
+function phoneDigits(phone) {
+  let d = String(phone || "").replace(/\D/g, "");
+  if (d.length === 11 && d[0] === "1") d = d.slice(1);
+  return d;
+}
+const FAKE_PHONES = new Set(["5555555555", "1234567890"]);
+function phoneIsMatchable(phone) {
+  const d = phoneDigits(phone);
+  if (d.length < 10) return false;
+  if (/^(\d)\1+$/.test(d)) return false;
+  return !FAKE_PHONES.has(d);
+}
+async function findOrCreateCustomer(env, { name, email, phone, address, city, state, zip }, out) {
   const now = new Date().toISOString();
   let existing = null;
   if (email) {
     existing = await env.DB.prepare("SELECT id FROM customers WHERE email = ? LIMIT 1").bind(email).first();
   }
-  if (!existing && phone) {
-    existing = await env.DB.prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1").bind(phone).first();
+  let matchedBy = existing ? "email" : null;
+  /* PHONE MATCH GUARD (21 Oct 2026). Phone alone merged Jack Lo's quotes into
+     Dan's record because both typed the placeholder 000-000-0000. A phone now
+     only matches when it is a plausible real number, and never across two
+     different emails: only when the existing customer has no email, or the
+     submitter gave none (consult) / the same one. */
+  if (!existing && phoneIsMatchable(phone)) {
+    const digits = phoneDigits(phone);
+    const { results } = await env.DB.prepare(
+      "SELECT id, email, phone FROM customers WHERE phone IS NOT NULL AND phone != '' ORDER BY id"
+    ).all();
+    const want = String(email || "").trim().toLowerCase();
+    const hit = (results || []).find((c) => {
+      if (phoneDigits(c.phone) !== digits) return false;
+      const have = String(c.email || "").trim().toLowerCase();
+      return !have || !want || have === want;
+    });
+    if (hit) { existing = { id: hit.id }; matchedBy = "phone"; }
   }
+  if (out) out.matchedBy = matchedBy;
   if (existing) {
     /* FILL BLANKS ONLY (Nando, 13 Oct 2026). Both callers are PUBLIC and
        unauthenticated (/shed/submit, /shed/consult), and the match is on an
@@ -9296,7 +9408,8 @@ function invoiceSubs(inv) {
 /* "10x20 Gable / A-Frame" — how a build is named on a combined invoice. */
 function buildName(config) {
   if (!config) return "";
-  return [config.w && config.l ? config.w + "x" + config.l : null,
+  const pa = porchAddsSize(config);
+  return [pa ? pa.w + "x" + pa.l + " + " + pa.porch : config.w && config.l ? config.w + "x" + config.l : null,
           config.style ? shedStyleName(config.style) : null].filter(Boolean).join(" ");
 }
 /* covers ride on the FIRST stored line of a phase invoice (lines is JSON). */
@@ -9623,7 +9736,9 @@ async function ensureInvoicesTable(env) {
 function configSummary(config) {
   if (!config) return "";
   const parts = [];
-  if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
+  const pa = porchAddsSize(config);
+  if (pa) parts.push(pa.w + "x" + pa.l + " ft + " + pa.porch);
+  else if (config.w && config.l) parts.push(config.w + "x" + config.l + " ft");
   if (config.style) parts.push(shedStyleName(config.style));
   if (config.siding) parts.push(config.siding);
   return parts.join(" \u00b7 ");
@@ -12160,6 +12275,7 @@ async function handleShedSubmit(request, env, origin) {
         };
   let details = JSON.stringify(detailsPayload).slice(0, 20000);
 
+  const match = {};
   const customerId = await findOrCreateCustomer(env, {
     name,
     email,
@@ -12168,7 +12284,7 @@ async function handleShedSubmit(request, env, origin) {
     city: contact.city,
     state: contact.state,
     zip: contact.zip
-  });
+  }, match);
 
   // A customer working through design iterations can submit several times
   // in a row. Only the newest untouched submission should ever count as a
@@ -12201,9 +12317,14 @@ async function handleShedSubmit(request, env, origin) {
     }
   }
 
-  await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
-    .bind(customerId)
-    .run();
+  /* Only a confirmed same-person resubmit (matched on email) supersedes their
+     older "new" quotes. A phone-only match or a brand new customer never
+     hides anyone's live quote. */
+  if (match.matchedBy === "email") {
+    await env.DB.prepare("UPDATE submissions SET status = 'superseded' WHERE customer_id = ? AND status = 'new'")
+      .bind(customerId)
+      .run();
+  }
 
   await env.DB.prepare("INSERT INTO submissions (customer_id, name, email, phone, details, status, created_at) VALUES (?,?,?,?,?,?,?)")
     .bind(customerId, name, email, phone, details, "new", new Date().toISOString())

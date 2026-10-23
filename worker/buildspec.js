@@ -98,7 +98,7 @@ function specPorchLine(c) {
   if (deck) bits.push(deck);
   const tier = sv(c.porchTier);
   if (tier && tier !== "standard") bits.push(tier);
-  return "Porch: " + bits.join(" · ");
+  return (porchAddsSize(c) ? "Awning: " : "Porch: ") + bits.join(" · ");
 }
 
 function specEnclosedLine(c) {
@@ -111,7 +111,7 @@ function specEnclosedLine(c) {
   const porch = depth * len;
   const room = w * l - porch;
   const shape = len < span ? "" : (loc === "front" ? " (" + w + "x" + (l - depth) + ")" : " (" + (w - depth) + "x" + l + ")");
-  return "Enclosed: " + room + " sq ft" + shape + " · Porch: " + depth + "x" + len + " ft (" + porch + " sq ft)";
+  return "Enclosed: " + room + " sq ft" + shape + " · " + (porchAddsSize(c) ? "Awning (not counted)" : "Porch") + ": " + depth + "x" + len + " ft (" + porch + " sq ft)";
 }
 
 /* Interior, floor and electrical on one line — they are three short answers
