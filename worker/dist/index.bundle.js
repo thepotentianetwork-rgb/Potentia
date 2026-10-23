@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "0d76c8f-dirty";
-const WORKER_BUILT_AT = "2026-10-23T21:11:17.196Z";
+const WORKER_BUILD = "06741ef";
+const WORKER_BUILT_AT = "2026-10-23T22:02:29.725Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -3977,7 +3977,10 @@ function quoteLinesCore(redline, adjustments) {
      line beside it: the row is just the coat, under its own name. */
   const coatOnly = hasFinish && !(num(redline.foundSell) > 0) && !redline.foundName;
   if (hasFinish) foundLabel = coatOnly ? redline.finishSellName : 'Concrete Foundation';
-  const foundRow = add(foundLabel, num(redline.foundSell) + (hasFinish ? num(redline.finishSell) : 0) - compedIn(nameList(redline, 'foundation')));
+  /* Folded into the Shed phase (Nando, 23 Oct 2026): no pad to pour, so the
+     coat is a Shed sub-line with no phase or deposit of its own. */
+  const coatAmt = coatOnly ? num(redline.finishSell) - compedIn(nameList(redline, 'foundation')) : 0;
+  const foundRow = coatOnly ? null : add(foundLabel, num(redline.foundSell) + (hasFinish ? num(redline.finishSell) : 0) - compedIn(nameList(redline, 'foundation')));
   if (foundRow) foundRow.kind = 'foundation';
   if (foundRow && hasFinish && !coatOnly) {
     const padOvr = OVR[redline.foundName];
@@ -4007,18 +4010,18 @@ function quoteLinesCore(redline, adjustments) {
     foundRow.listAmt = foundRow.amt + padPromo;
     foundRow.promo = { label: promoDisc[0].label, amt: padPromo };
   }
-  discountsFor(foundRow, nameList(redline, 'foundation'), foundLabel, 'foundation', promoDisc);
+  if (!coatOnly) discountsFor(foundRow, nameList(redline, 'foundation'), foundLabel, 'foundation', promoDisc);
   let travelTotal = 0;
   const travelLines = [];
   ADJUSTMENTS.forEach(function (a) {
     const t = travelAmount(a);
     if (t > 0) { travelTotal += t; travelLines.push({ label: travelLabel(a), amt: t }); }
   });
-  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + shedStyleName(redline.baseSheetLabel) + ')' : ''), shedTotal + travelTotal);
+  const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + shedStyleName(redline.baseSheetLabel) + ')' : ''), shedTotal + travelTotal + coatAmt);
   if (shedRow) shedRow.kind = 'shed';
   const intRow = add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
   if (intRow) intRow.kind = 'interior';
-  discountsFor(shedRow, nameList(redline, 'shed'), 'Shed', 'shed');
+  discountsFor(shedRow, nameList(redline, 'shed').concat(coatOnly ? nameList(redline, 'foundation') : []), 'Shed', 'shed');
   discountsFor(intRow, nameList(redline, 'interior'), redline.intSellName || 'Interior Finishing', 'interior');
 
   /* Electrical and flooring are still billed and deposited as part of the Shed
@@ -4074,6 +4077,7 @@ function quoteLinesCore(redline, adjustments) {
   shedItemsFrom(redline.shelfSellLines, 'label', 'price');
   shedItemsFrom(redline.addonLines, 'name', 'amt');
 
+  if (coatOnly) shedItem(redline.finishSellName, redline.finishSell);
   shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical', redline.elecIncludes);
   shedSubLine(redline.floorSell, redline.floorSellName || 'Flooring');
   travelLines.forEach(function (t) { shedSubLine(t.amt, t.label); });
