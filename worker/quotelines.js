@@ -345,10 +345,13 @@ function quoteLinesCore(redline, adjustments) {
      read exactly as before. */
   const hasFinish = !!(redline.finishSellName && num(redline.finishSell) > 0);
   const padLabel = foundLabel;
-  if (hasFinish) foundLabel = 'Concrete Foundation';
+  /* A coat over the customer's own slab (foundation 'existing') has no pad
+     line beside it: the row is just the coat, under its own name. */
+  const coatOnly = hasFinish && !(num(redline.foundSell) > 0) && !redline.foundName;
+  if (hasFinish) foundLabel = coatOnly ? redline.finishSellName : 'Concrete Foundation';
   const foundRow = add(foundLabel, num(redline.foundSell) + (hasFinish ? num(redline.finishSell) : 0) - compedIn(nameList(redline, 'foundation')));
   if (foundRow) foundRow.kind = 'foundation';
-  if (foundRow && hasFinish) {
+  if (foundRow && hasFinish && !coatOnly) {
     const padOvr = OVR[redline.foundName];
     const padNet = num(redline.foundSell) - (COMPED[redline.foundName] || 0) - (padOvr ? padOvr.delta : 0);
     const finNet = num(redline.finishSell) - (COMPED[redline.finishSellName] || 0) - (OVR[redline.finishSellName] ? OVR[redline.finishSellName].delta : 0);
@@ -364,7 +367,7 @@ function quoteLinesCore(redline, adjustments) {
      as its own line. A comped pad has no row, so nothing to show. */
   /* Concrete is an estimate (site conditions); the quote says so beside it. */
   const foundOvr = OVR[redline.foundName];
-  if (foundRow && /^Concrete/i.test(foundLabel) && !foundOvr) foundRow.estimate = true;
+  if (foundRow && /^Concrete/i.test(foundLabel) && !foundOvr && !coatOnly) foundRow.estimate = true;
   /* Overridden: the staff figure is the price, so the promo arithmetic no
      longer describes it. Raised: the row is just its new price. Lowered: the
      cut is a discount line (compsIn) with the staff's reason. */

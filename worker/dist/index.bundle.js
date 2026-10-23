@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "618a7f2";
-const WORKER_BUILT_AT = "2026-10-23T16:44:55.311Z";
+const WORKER_BUILD = "0d76c8f-dirty";
+const WORKER_BUILT_AT = "2026-10-23T21:11:17.196Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -383,6 +383,11 @@ function concretePromoAmount(padList){
   return Math.max(0, Math.min(a, +padList||0));
 }
 const CONCRETE_STAIN_NAME = "Concrete Floor Stain (2 coats, customer\u2019s choice of color)";
+/* The same coat sold over a slab the customer already has (Nando, 23 Oct
+   2026): Behr concrete floor paint, same SELL.foundationFinish.coated price.
+   Its own name so the quote says what it is; the pad line keeps its name so
+   comps/overrides typed against it on older quotes still match. */
+const EXISTING_COAT_NAME = "Behr Concrete Floor Paint (2 coats, customer\u2019s choice of color)";
 function foundationFinishPrice(kind, sqft){
   if(kind==='broom'){
     var t=SELL.broomTiers;
@@ -1936,6 +1941,13 @@ function computePricing(cfgIn, opts){
         if(FOUNDATION_FINISH==='broom') foundName+=' + Broom Finish ('+_sq+' sqft)';
         else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
       }
+    }
+  } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='existing'){
+    /* Existing slab: no pad to sell, but the floor can still be coated.
+       Only 'coated' applies (broom finish is something done to wet concrete). */
+    if(typeof FOUNDATION_FINISH!=='undefined' && FOUNDATION_FINISH==='coated'){
+      var _efc = foundationFinishPrice('coated', 0);
+      if(_efc>0){ finishSell = _efc; finishSellName = EXISTING_COAT_NAME; }
     }
   } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='gravel'){
     var _gsq=(typeof padSqft==='function')?padSqft():(Wf*Df);
@@ -3961,10 +3973,13 @@ function quoteLinesCore(redline, adjustments) {
      read exactly as before. */
   const hasFinish = !!(redline.finishSellName && num(redline.finishSell) > 0);
   const padLabel = foundLabel;
-  if (hasFinish) foundLabel = 'Concrete Foundation';
+  /* A coat over the customer's own slab (foundation 'existing') has no pad
+     line beside it: the row is just the coat, under its own name. */
+  const coatOnly = hasFinish && !(num(redline.foundSell) > 0) && !redline.foundName;
+  if (hasFinish) foundLabel = coatOnly ? redline.finishSellName : 'Concrete Foundation';
   const foundRow = add(foundLabel, num(redline.foundSell) + (hasFinish ? num(redline.finishSell) : 0) - compedIn(nameList(redline, 'foundation')));
   if (foundRow) foundRow.kind = 'foundation';
-  if (foundRow && hasFinish) {
+  if (foundRow && hasFinish && !coatOnly) {
     const padOvr = OVR[redline.foundName];
     const padNet = num(redline.foundSell) - (COMPED[redline.foundName] || 0) - (padOvr ? padOvr.delta : 0);
     const finNet = num(redline.finishSell) - (COMPED[redline.finishSellName] || 0) - (OVR[redline.finishSellName] ? OVR[redline.finishSellName].delta : 0);
@@ -3980,7 +3995,7 @@ function quoteLinesCore(redline, adjustments) {
      as its own line. A comped pad has no row, so nothing to show. */
   /* Concrete is an estimate (site conditions); the quote says so beside it. */
   const foundOvr = OVR[redline.foundName];
-  if (foundRow && /^Concrete/i.test(foundLabel) && !foundOvr) foundRow.estimate = true;
+  if (foundRow && /^Concrete/i.test(foundLabel) && !foundOvr && !coatOnly) foundRow.estimate = true;
   /* Overridden: the staff figure is the price, so the promo arithmetic no
      longer describes it. Raised: the row is just its new price. Lowered: the
      cut is a discount line (compsIn) with the staff's reason. */
@@ -6761,7 +6776,9 @@ function specShell(c) {
 function specFoundationLine(c) {
   const base = SPEC_FOUNDATION[sv(c.foundation)] || "";
   if (!base) return "";
-  const fin = SPEC_FOUND_FINISH[sv(c.foundationFinish)] || "";
+  let fin = SPEC_FOUND_FINISH[sv(c.foundationFinish)] || "";
+  /* Over an existing slab the only finish is the Behr floor paint (2 coats). */
+  if (sv(c.foundation) === "existing") fin = sv(c.foundationFinish) === "coated" ? "Behr floor paint, 2 coats" : "";
   return "Foundation: " + base + (fin ? " (" + fin + ")" : "");
 }
 

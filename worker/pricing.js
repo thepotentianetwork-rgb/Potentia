@@ -379,6 +379,11 @@ export function concretePromoAmount(padList){
   return Math.max(0, Math.min(a, +padList||0));
 }
 export const CONCRETE_STAIN_NAME = "Concrete Floor Stain (2 coats, customer\u2019s choice of color)";
+/* The same coat sold over a slab the customer already has (Nando, 23 Oct
+   2026): Behr concrete floor paint, same SELL.foundationFinish.coated price.
+   Its own name so the quote says what it is; the pad line keeps its name so
+   comps/overrides typed against it on older quotes still match. */
+export const EXISTING_COAT_NAME = "Behr Concrete Floor Paint (2 coats, customer\u2019s choice of color)";
 export function foundationFinishPrice(kind, sqft){
   if(kind==='broom'){
     var t=SELL.broomTiers;
@@ -1932,6 +1937,13 @@ export function computePricing(cfgIn, opts){
         if(FOUNDATION_FINISH==='broom') foundName+=' + Broom Finish ('+_sq+' sqft)';
         else if(FOUNDATION_FINISH==='coated') foundName+=' + Stained Coating';
       }
+    }
+  } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='existing'){
+    /* Existing slab: no pad to sell, but the floor can still be coated.
+       Only 'coated' applies (broom finish is something done to wet concrete). */
+    if(typeof FOUNDATION_FINISH!=='undefined' && FOUNDATION_FINISH==='coated'){
+      var _efc = foundationFinishPrice('coated', 0);
+      if(_efc>0){ finishSell = _efc; finishSellName = EXISTING_COAT_NAME; }
     }
   } else if(typeof FOUNDATION!=='undefined' && FOUNDATION==='gravel'){
     var _gsq=(typeof padSqft==='function')?padSqft():(Wf*Df);

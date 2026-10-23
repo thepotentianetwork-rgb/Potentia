@@ -66,7 +66,9 @@ function specShell(c) {
 function specFoundationLine(c) {
   const base = SPEC_FOUNDATION[sv(c.foundation)] || "";
   if (!base) return "";
-  const fin = SPEC_FOUND_FINISH[sv(c.foundationFinish)] || "";
+  let fin = SPEC_FOUND_FINISH[sv(c.foundationFinish)] || "";
+  /* Over an existing slab the only finish is the Behr floor paint (2 coats). */
+  if (sv(c.foundation) === "existing") fin = sv(c.foundationFinish) === "coated" ? "Behr floor paint, 2 coats" : "";
   return "Foundation: " + base + (fin ? " (" + fin + ")" : "");
 }
 
