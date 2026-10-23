@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "1e34a69-dirty";
-const WORKER_BUILT_AT = "2026-10-23T16:22:52.015Z";
+const WORKER_BUILD = "2ffbc44-dirty";
+const WORKER_BUILT_AT = "2026-10-23T16:31:19.051Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -12859,7 +12859,13 @@ function validateShedConfig(raw) {
     shelves: capArray(raw.shelves, 30),
     /* Sprinkler relocation: feet each head moves, one entry per head (20
        max). Absent on every design saved before this, which is no heads. */
-    sprinklers: sprinklerFeet(raw.sprinklers)
+    sprinklers: sprinklerFeet(raw.sprinklers),
+    /* AWNING (23 Oct 2026): awning:1 + porchAdds:1 with the enclosed
+       shedW x shedL prices the shed at its enclosed size plus the awning
+       line (pricing.js setConfig). Absent on every earlier design, which
+       therefore prices exactly as before. */
+    ...((raw.awning === 1 || raw.awning === true) && (raw.porchAdds === 1 || raw.porchAdds === true)
+      ? { awning: 1, porchAdds: 1, shedW: clampNum(raw.shedW, 0, 40, 0), shedL: clampNum(raw.shedL, 0, 40, 0) } : {})
   };
 }
 

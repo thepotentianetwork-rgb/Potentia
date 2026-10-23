@@ -25,3 +25,10 @@ test('awning on a partial porch is ignored (a partial porch is a porch)', () => 
   const p = { ...base, awning:1, porchLen:8 };
   assert.equal(computePricing(p).customer, computePricing({ ...p, awning:undefined }).customer);
 });
+import worker from './index.js';
+test('/shed/quote passes awning:1 through validation', async () => {
+  const env = { DB: { prepare(){ const o={ bind(){return o;}, first: async()=>null, all: async()=>({results:[]}), run: async()=>({}) }; return o; } } };
+  const q = async cfg => (await (await worker.fetch(new Request('https://local/shed/quote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({config:cfg})}), env)).json()).total;
+  const a = await q({ ...base, awning:1 }), p = await q(base);
+  assert.ok(a < p, `awning ${a} should price under footprint ${p}`);
+});
