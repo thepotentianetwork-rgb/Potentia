@@ -25,13 +25,16 @@ test('existing slab ignores broom (wet-concrete only)', () => {
   assert.equal(broom.customer, plain.customer);
 });
 
-test('quote row is the coat alone, marked up 3% on a card quote, not an estimate', () => {
-  const rl = Object.assign(computePricing(Object.assign({}, BASE, { foundationFinish: 'coated' })).redline, { cardUplift: 0.03, discountsAtSheet: true });
-  const f = quoteLines(rl, []).rows.find((r) => r.kind === 'foundation');
-  assert.ok(f.label.endsWith(EXISTING_COAT_NAME), f.label);
-  near(f.amt, 309);
-  assert.ok(!f.estimate);
-  assert.ok(!f.subLines);
+test('coat folds into the Shed phase: no phase of its own, +309 on a card quote, a Shed sub-line', () => {
+  const mk = (ff) => Object.assign(computePricing(Object.assign({}, BASE, { foundationFinish: ff })).redline, { cardUplift: 0.03, discountsAtSheet: true });
+  const q = quoteLines(mk('coated'), []), q0 = quoteLines(mk('plain'), []);
+  assert.ok(!q.rows.find((r) => r.kind === 'foundation'));
+  assert.equal(q.rows.length, q0.rows.length);
+  const s = q.rows.find((r) => r.kind === 'shed'), s0 = q0.rows.find((r) => r.kind === 'shed');
+  near(s.amt - s0.amt, 309);
+  const sub = s.subLines.find((l) => l.label === EXISTING_COAT_NAME);
+  assert.ok(sub, JSON.stringify(s.subLines));
+  near(q.subtotal - q0.subtotal, 309);
 });
 
 test('poured pad still uses the original stain line', () => {
