@@ -182,6 +182,11 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   footer{padding:32px 20px;flex-direction:column;text-align:center}
   .footer-links{justify-content:center}
 }
+.tease{margin:72px 0 56px}.tease-title{font-weight:300;font-size:clamp(22px,3vw,32px);margin:10px 0 28px}
+.tease-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.tease-grid figure{margin:0;border:1px solid var(--dim);overflow:hidden}
+.tease-grid img{display:block;width:100%;aspect-ratio:16/10;object-fit:cover;object-position:top}
+.tease-grid figcaption{padding:12px 16px;font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:#8a909e}
+@media(max-width:768px){.tease-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -194,12 +199,9 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <div class="nav-links">
     <a href="index.html">Home</a>
     <a href="portfolio.html" class="active">Portfolio</a>
-    <a href="pricing.html">Pricing</a>
-    <a href="sample.html">Platform</a>
-    <a href="contact.html">Contact</a>
     <a href="https://portal.potentianetwork.com/login" target="_blank" rel="noopener">Client Login</a>
   </div>
-  <a href="contact.html" class="nav-cta">Get Started</a>
+  <a href="tel:+14352910979" class="nav-cta">Get Started</a>
   <button class="nav-ham" id="navHam" aria-label="Menu">
     <span></span><span></span><span></span>
   </button>
@@ -208,11 +210,8 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
 <div class="mob-overlay" id="mobOverlay">
   <a href="index.html">Home</a>
   <a href="portfolio.html" class="active">Portfolio</a>
-  <a href="pricing.html">Pricing</a>
-  <a href="sample.html">Platform</a>
-  <a href="contact.html">Contact</a>
   <a href="https://portal.potentianetwork.com/login" target="_blank" rel="noopener">Client Login</a>
-  <a href="contact.html" class="mob-cta-btn">Get Started</a>
+  <a href="tel:+14352910979" class="mob-cta-btn">Get Started</a>
 </div>
 
 <div class="page-top">
@@ -271,15 +270,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
         <p class="grid-url">alvaradoscc.com ↗</p>
       </div>
     </div>
-    <div class="grid-item" onclick="window.location='sample.html'">
-      <div class="sample-card">
-        <p class="sc-tag">Custom CRM &amp; Platform</p>
-        <h3>The system behind the site</h3>
-        <p>Leads in one place, a live map of where the work is, data worth acting on, and the sales software your team runs on. Built for the client, and never shown around.</p>
-        <p class="sc-go">See the platform →</p>
-      </div>
-    </div>
-    <div class="grid-item" onclick="window.location='contact.html'">
+    <div class="grid-item" onclick="window.location='tel:+14352910979'">
       <div class="yours"><p>Next project</p><p>Yours?</p></div>
       <div class="grid-overlay">
         <p class="grid-tag">Your Industry</p>
@@ -289,6 +280,15 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     </div>
   </div>
 
+
+  <div class="tease reveal">
+    <p class="deep-tag">Beyond websites</p>
+    <h3 class="tease-title">We also build CRMs and sales platforms.</h3>
+    <div class="tease-grid">
+      <figure><img src="img/tease-crm.jpg" alt="Sample custom CRM" loading="lazy"><figcaption>Custom CRM</figcaption></figure>
+      <figure><img src="img/tease-sales.jpg" alt="Sample sales platform with 3D configurator" loading="lazy"><figcaption>Sales platform</figcaption></figure>
+    </div>
+  </div>
   <div class="deep reveal">
     <p class="deep-tag">Behind ShedPro</p>
     <div class="deep-body">
@@ -373,7 +373,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <h2 class="cta-title reveal">Ready to be<br><em>next?</em></h2>
   <p class="cta-sub reveal">Tell us about your project — we'll get back within 24 hours.</p>
   <div class="cta-btns reveal">
-    <a href="contact.html" class="btn-solid">Start a Project</a>
+    <a href="tel:+14352910979" class="btn-solid">Start a Project</a>
     <a href="index.html" class="btn-outline">Home</a>
   </div>
 </div>
@@ -382,8 +382,6 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
   <div class="footer-links">
     <a href="index.html">Home</a>
-    <a href="pricing.html">Pricing</a>
-    <a href="contact.html">Contact</a>
   </div>
   <p class="footer-copy">© 2026 Potentia Studio</p>
 </footer>
