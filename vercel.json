@@ -8,5 +8,22 @@
       "source": "/businessform",
       "destination": "/businessform.html"
     }
+  ],
+  "redirects": [
+    {
+      "source": "/pricing(.html)?",
+      "destination": "/portfolio.html",
+      "permanent": false
+    },
+    {
+      "source": "/sample(.html)?",
+      "destination": "/portfolio.html",
+      "permanent": false
+    },
+    {
+      "source": "/contact(.html)?",
+      "destination": "/",
+      "permanent": false
+    }
   ]
 }
