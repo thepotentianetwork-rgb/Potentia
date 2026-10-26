@@ -149,6 +149,12 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
   .footer-links{justify-content:center}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+.gs-menu{position:relative}.gs-menu summary{list-style:none;cursor:pointer}.gs-menu summary::-webkit-details-marker{display:none}
+.gs-pop{position:absolute;right:0;top:calc(100% + 8px);background:#0b0c10;border:1px solid #2a2d38;display:flex;flex-direction:column;min-width:200px;z-index:200}
+.gs-pop a{padding:12px 16px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:#c8cdd6;text-decoration:none;white-space:nowrap}.gs-pop a:hover{background:#16181f}
+.nav-phone{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.12em;color:#8a909e;text-decoration:none;margin-right:16px}
+@media(max-width:768px){.gs-menu,.nav-phone{display:none}}
+.nav-right{display:flex;align-items:center;gap:12px}.gs-menu .nav-cta{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.15em;color:#040407;background:#c8cdd6;padding:10px 22px;text-transform:uppercase}
 </style>
 </head>
 <body>
@@ -158,12 +164,10 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
   <div class="nav-links">
     <a href="index.html">Home</a>
     <a href="portfolio.html">Portfolio</a>
-    <a href="pricing.html">Pricing</a>
-    <a href="sample.html">Platform</a>
-    <a href="contact.html">Contact</a>
     <a href="https://portal.potentianetwork.com/login" target="_blank" rel="noopener">Client Login</a>
   </div>
   <div class="nav-right">
+    <a href="tel:+14352910979" class="nav-phone">(435) 291-0979</a><details class="gs-menu"><summary class="nav-cta">Get started</summary><div class="gs-pop"><a href="tel:+14352910979">Call (435) 291-0979</a><a href="sms:+14352910979">Text us</a></div></details>
     <div class="lang-toggle">
       <button class="lang-btn active" id="btnEN" onclick="setLang('en')">EN</button>
       <button class="lang-btn" id="btnES" onclick="setLang('es')">ES</button>
@@ -175,10 +179,9 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
 <div class="mob-overlay" id="mobOverlay">
   <a href="index.html">Home</a>
   <a href="portfolio.html">Portfolio</a>
-  <a href="pricing.html">Pricing</a>
-  <a href="sample.html">Platform</a>
-  <a href="contact.html">Contact</a>
   <a href="https://portal.potentianetwork.com/login" target="_blank" rel="noopener">Client Login</a>
+  <a href="tel:+14352910979">Call (435) 291-0979</a>
+  <a href="sms:+14352910979">Text us</a>
 </div>
 
 <div class="page" id="formPage">
@@ -606,10 +609,10 @@ footer{border-top:1px solid var(--dim);padding:40px 48px;display:flex;justify-co
 <footer>
   <a href="index.html" class="footer-logo"><img src="Potentia_Logo.png" alt="Potentia">POTENTIA</a>
   <div class="footer-links">
+    <a href="tel:+14352910979">(435) 291-0979</a>
+    <a href="sms:+14352910979">Text us</a>
     <a href="index.html">Home</a>
     <a href="portfolio.html">Portfolio</a>
-    <a href="pricing.html">Pricing</a>
-    <a href="contact.html">Contact</a>
   </div>
   <p class="footer-copy">&copy; 2026 Potentia Network</p>
 </footer>

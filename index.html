@@ -155,6 +155,11 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
 .reveal.on{opacity:1;transform:translateY(0)}
 .delay-1{transition-delay:0.12s}
 .delay-2{transition-delay:0.24s}
+.gs-menu{position:relative}.gs-menu summary{list-style:none;cursor:pointer}.gs-menu summary::-webkit-details-marker{display:none}
+.gs-pop{position:absolute;right:0;top:calc(100% + 8px);background:#0b0c10;border:1px solid #2a2d38;display:flex;flex-direction:column;min-width:200px;z-index:200}
+.gs-pop a{padding:12px 16px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:#c8cdd6;text-decoration:none;white-space:nowrap}.gs-pop a:hover{background:#16181f}
+.nav-phone{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.12em;color:#8a909e;text-decoration:none;margin-right:16px}
+@media(max-width:768px){.gs-menu,.nav-phone{display:none}}
 </style>
 </head>
 <body>
@@ -165,7 +170,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     <span class="promo-dot">✦</span>
     Limited Availability
   </p>
-  <a href="tel:+14352910979" class="promo-link">Get in Touch</a>
+  <a href="tel:+14352910979" class="promo-link">Get started</a>
   <button class="promo-close" onclick="closeBanner()" aria-label="Close">×</button>
 </div>
 
@@ -184,8 +189,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       <button class="lang-btn active" id="btn-en" onclick="setLang('en')">EN</button>
       <button class="lang-btn" id="btn-es" onclick="setLang('es')">ES</button>
     </div>
-    <a href="tel:+14352910979" class="nav-cta">Call (435) 291-0979</a>
-  <a href="sms:+14352910979" class="nav-cta" style="margin-left:10px">Text us</a>
+    <a href="tel:+14352910979" class="nav-phone">(435) 291-0979</a><details class="gs-menu"><summary class="nav-cta">Get started</summary><div class="gs-pop"><a href="tel:+14352910979">Call (435) 291-0979</a><a href="sms:+14352910979">Text us</a></div></details>
   </div>
   <button class="nav-ham" id="navHam" aria-label="Menu">
     <span></span><span></span><span></span>
@@ -211,7 +215,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     <p class="hero-sub">We specialize in websites and the backend systems behind them — custom CRMs, sales platforms, and the data to see what is working. Built to grow your business, not just to look good.</p>
     <div class="hero-btns">
       <a href="portfolio.html" class="btn-solid">See Our Work</a>
-      <a href="tel:+14352910979" class="btn-outline">Get Started</a>
+      <a href="tel:+14352910979" class="btn-outline">Get started</a>
     </div>
   </div>
 </section>
@@ -287,7 +291,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
     <div class="ladder-body reveal delay-1">
       <p>You do not have to buy all of it at once, and you should not. Start with the site. Add the CRM when chasing leads by text stops working. Add the platform when the quoting, the scheduling or the inventory becomes the bottleneck.</p>
       <p><strong>Same team, same codebase, nothing thrown away.</strong> Each piece is built knowing the next one is coming, so growing into it costs you a conversation — not a rebuild.</p>
-      <a href="tel:+14352910979" class="btn-solid">Start the conversation</a>
+      <a href="tel:+14352910979" class="btn-solid">Get started</a>
     </div>
   </div>
 </section>
