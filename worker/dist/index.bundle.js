@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "1db38a9-dirty";
-const WORKER_BUILT_AT = "2026-10-27T19:07:57.229Z";
+const WORKER_BUILD = "eaa3311-dirty";
+const WORKER_BUILT_AT = "2026-10-27T19:13:50.708Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -8795,9 +8795,20 @@ const ALLOWED_ORIGINS = [
   "https://potentianetwork.com",
   "https://www.potentianetwork.com",
   "https://shedpro-utah.com",
-  "https://www.shedpro-utah.com",
-  "http://localhost:8080"
+  "https://www.shedpro-utah.com"
 ];
+/* Local dev origins are only honoured when the Worker is started with
+   ALLOW_LOCALHOST="1" (a .dev.vars / wrangler dev setting, never a prod var).
+   EXTRA_ALLOWED_ORIGINS (comma-separated, exact https origins) lets a new
+   tenant's domain be added without a code change. Set per request in fetch(). */
+const DEV_ORIGINS = ["http://localhost:8080"];
+let activeOrigins = ALLOWED_ORIGINS;
+function configureOrigins(env) {
+  const extra = String((env && env.EXTRA_ALLOWED_ORIGINS) || "")
+    .split(",").map((o) => o.trim()).filter((o) => /^https:\/\/[a-z0-9.-]+$/i.test(o));
+  activeOrigins = ALLOWED_ORIGINS.concat(extra,
+    env && env.ALLOW_LOCALHOST === "1" ? DEV_ORIGINS : []);
+}
 
 const SYSTEM_PROMPT = `You are the AI assistant embedded on the Potentia Studio website. Potentia builds two things: custom, hand-built websites — no templates, no bloated platforms, 72-hour turnaround, free domain for the first year — and the software a business runs on once the work arrives: fully custom CRMs and tailored sales platforms with data tracking. The website is where a client starts, not the whole offer; Potentia is looking for clients who want to grow with them over years, adding each piece when they need it rather than buying everything at once.
 
@@ -8965,7 +8976,7 @@ function looksAutomated(body) {
 }
 
 function corsHeaders(origin) {
-  const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allow = activeOrigins.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allow,
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -13307,7 +13318,7 @@ async function handleShedQuote(request, env, origin) {
 // the ENTIRE config into the URL itself — every dimension, door, window,
 // color, addon — which is why that link was enormous. This stores the
 // config server-side under a short random code instead, so the link is just
-// .../designer.html?d=<8 hex chars>. Works for ANY design, not only ones
+// .../designer.html?d=<32 hex chars; legacy 8>. Works for ANY design, not only ones
 // that have gone through /shed/submit — staff can hand a customer a link
 // before they've filled out contact info at all.
 // Lazily creates the table on first use — same reasoning as
@@ -13331,7 +13342,13 @@ async function ensureSavedDesignsTable(env) {
 // guessable code would let anyone page through other people's designs by
 // incrementing it.
 function randomDesignCode() {
-  return crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  // 128 bits (32 hex). Old 8-hex codes already sent out still resolve.
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+function isDesignCode(code) {
+  return /^[0-9a-f]{8}$|^[0-9a-f]{32}$/.test(code);
 }
 
 async function handleSaveDesign(request, env, origin) {
@@ -13347,7 +13364,7 @@ async function handleSaveDesign(request, env, origin) {
 
   await ensureSavedDesignsTable(env);
 
-  // Collisions are astronomically unlikely at 8 hex chars (32 bits) but cost
+  // Collisions are impossible in practice at 32 hex chars (128 bits) but cost
   // nothing to guard — retry a few times with a fresh code rather than
   // failing the save outright.
   let code = null;
@@ -14977,6 +14994,7 @@ async function handleBriefing(request, env, path) {
 
 export default {
   async fetch(request, env) {
+    configureOrigins(env);
     const origin = request.headers.get("Origin") || "";
     const url = new URL(request.url);
     const path = url.pathname;
@@ -15019,6 +15037,9 @@ export default {
       }
 
       if (path === "/admin/login" && request.method === "POST") {
+        // Brute-force lockout: 10 attempts per IP per 15 minutes.
+        const rl = await rateLimit(request, env, "login-admin", 10, 900);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleAdminLogin(request, env, origin);
       }
       // Server-side revoke. Always 200 so logout never strands the page.
@@ -15311,6 +15332,9 @@ export default {
         return json({ error: "CRM database not connected" }, 503, origin);
       }
       if (path === "/crm/login" && request.method === "POST") {
+        // Brute-force lockout: 10 attempts per IP per 15 minutes.
+        const rl = await rateLimit(request, env, "login-crm", 10, 900);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleCrmLogin(request, env, origin);
       }
       // Revokes the CRM session and, if sent, the lead-generator unlock too.
@@ -15345,6 +15369,8 @@ export default {
       }
 
       if (path === "/crm/lead" && request.method === "POST") {
+        const rl = await rateLimit(request, env, "crmlead", 10, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleCrmLead(request, env, origin);
       }
       /* Manual trigger for testing. Admin-gated and capped the same as the
@@ -15432,7 +15458,8 @@ export default {
           return json({ ok: true, changed, segments: await listSegments(env),
                         trades: tradeLabels() }, 200, origin);
         } catch (e) {
-          return json({ error: String(e.message || e) }, 400, origin);
+          console.error("segments", e && e.stack ? e.stack : e);
+          return json({ error: "Could not update that segment" }, 400, origin);
         }
       }
       if (path === "/crm/leads/recheck" && request.method === "POST") {
@@ -15508,6 +15535,8 @@ export default {
         }, 200, origin);
       }
       if (path === "/crm/leads/unlock" && request.method === "POST") {
+        const rl = await rateLimit(request, env, "login-leads", 10, 900);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const secret = leadsPassword(env);
         if (!secret || !sessionSecret(env, "leads")) {
@@ -15674,7 +15703,10 @@ export default {
       }
       if (path.startsWith("/shed/design/") && request.method === "GET") {
         const code = path.slice("/shed/design/".length);
-        if (!code) return json({ error: "Invalid code" }, 400, origin);
+        if (!isDesignCode(code)) return json({ error: "Not found" }, 404, origin);
+        // Caps anyone trying to walk the old 8-hex code space.
+        const rl = await rateLimit(request, env, "designget", 120, 3600);
+        if (!rl.ok) return tooMany(rl.retryAfter, origin);
         return await handleGetDesign(request, env, origin, code);
       }
 
