@@ -137,6 +137,8 @@ function authFetch(path, options) {
 }
 
 document.getElementById('logout-btn').addEventListener('click', function () {
+  /* Revoke server-side too; keepalive so the redirect doesn't cancel it. */
+  try { var t = localStorage.getItem('potentia_admin_token'); if (t) fetch(API_BASE + '/admin/logout', { method: 'POST', keepalive: true, headers: { 'Authorization': 'Bearer ' + t } }).catch(function () {}); } catch (e) {}
   localStorage.removeItem('potentia_admin_token');
   window.location.href = 'admin-login.html';
 });

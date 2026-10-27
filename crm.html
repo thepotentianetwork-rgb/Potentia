@@ -218,6 +218,7 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
     </div>
   </div>
   <div class="h-actions">
+    <a href="/dropzone/crm" class="back-link" target="_blank" rel="noopener">📸 Request a change</a>
     <a href="crm-data.html" class="back-link">Data →</a>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
@@ -353,6 +354,13 @@ if (!token) window.location.href = 'crm-login.html';
   var b = document.getElementById('logout-btn');
   if (!b) return;
   b.addEventListener('click', function () {
+    /* Revoke both sessions server-side; keepalive survives the redirect. */
+    try {
+      var t = localStorage.getItem('potentia_crm_token');
+      var u = localStorage.getItem('potentia_leads_unlock');
+      var h = {}; if (t) h['Authorization'] = 'Bearer ' + t; if (u) h['X-Leads-Unlock'] = u;
+      if (t || u) fetch(API_BASE + '/crm/logout', { method: 'POST', keepalive: true, headers: h }).catch(function () {});
+    } catch (e) {}
     try {
       localStorage.removeItem('potentia_crm_token');
       localStorage.removeItem('potentia_leads_unlock');

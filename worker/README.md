@@ -1315,3 +1315,16 @@ for each request.
 4. Get a refresh token for info@shedpro-utah.com with `access_type=offline&prompt=consent&scope=https://www.googleapis.com/auth/gmail.readonly`, for example via the OAuth 2.0 Playground with "Use your own OAuth credentials" ticked.
 5. Add the secrets above to the Worker (Settings → Variables and Secrets, type Secret), then set `BRIEFING_EMAIL_ENABLED` = `true`.
 6. Check it: `curl -H "Authorization: Bearer $KEY" https://<worker>/api/briefing/emails` should show `"status":"ok"`.
+
+## Sessions (security hardening, Oct 26 2026)
+
+- Secrets per area: `ADMIN_SESSION_SECRET` (shed admin), `CRM_SESSION_SECRET` (CRM),
+  `LEADS_SESSION_SECRET` (lead-generator unlock). An unset CRM/LEADS secret falls back
+  to `ADMIN_SESSION_SECRET` for backwards compatibility — **production should set all
+  three to distinct random values** (`openssl rand -base64 48`).
+- Every session is a row in `sessions` (admin → `DB`, crm/leads → `CRM_DB`); auth requires
+  the row to exist, match the area, be unrevoked and unexpired. Table is created lazily;
+  `migrations/0004_sessions.sql` creates it explicitly.
+- Lifetime: `SESSION_TTL_MS` = 4 hours.
+- `POST /admin/logout` and `POST /crm/logout` (also revokes `X-Leads-Unlock`) revoke server-side.
+- Uncaught errors return `{ "error": "Server error" }`; detail goes to `console.error` only.

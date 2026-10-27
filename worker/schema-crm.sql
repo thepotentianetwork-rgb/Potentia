@@ -102,3 +102,13 @@ CREATE TABLE IF NOT EXISTS client_intake (
   payload TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+
+-- Revocable sessions (see migrations/0004_sessions.sql)
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  area TEXT NOT NULL,            -- 'admin' | 'crm' | 'leads'
+  issued_at INTEGER NOT NULL,    -- epoch ms
+  expires_at INTEGER NOT NULL,   -- epoch ms
+  revoked_at INTEGER             -- epoch ms, NULL while live
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);

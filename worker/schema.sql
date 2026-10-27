@@ -139,3 +139,13 @@ CREATE TABLE IF NOT EXISTS calls (
 -- produces, written once at save time so nothing downstream re-derives it.
 -- The two older columns are still read for rows written before the list
 -- existed; nothing writes them any more.
+
+-- Revocable sessions (see migrations/0004_sessions.sql)
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  area TEXT NOT NULL,            -- 'admin' | 'crm' | 'leads'
+  issued_at INTEGER NOT NULL,    -- epoch ms
+  expires_at INTEGER NOT NULL,   -- epoch ms
+  revoked_at INTEGER             -- epoch ms, NULL while live
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);

@@ -95,7 +95,12 @@ Important: Potentia does not publish prices publicly — every quote is custom. 
 
 Be warm, concise, and confident — a few sentences at most. You are a live example of what Potentia builds (the AI Chat Assistant add-on), so when it's natural you can mention that this chat is itself a sample of it. Don't be pushy. If asked something unrelated to Potentia or web design, answer briefly and steer back.`;
 
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+/* Session lifetime for admin, CRM and lead-generator sessions. 4 hours
+   (was 12): long enough for a working block, short enough that a token left
+   on a shared machine or leaked from localStorage dies the same afternoon.
+   Every session is ALSO a row in the `sessions` table, so it can be revoked
+   (logout) before this runs out. */
+const SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 /* Who is on the phones. Overridden by CRM_CALLERS so the roster changes in
    Cloudflare rather than in a deploy. A fixed list rather than a free-text
@@ -283,7 +288,7 @@ function base64UrlToStr(str) {
   return decodeURIComponent(escape(atob(str)));
 }
 
-// ---- session tokens: HMAC-signed, stateless, no DB lookup needed ----
+// ---- session tokens: HMAC-signed, then checked against the sessions table ----
 async function signToken(secret, payload) {
   const dataStr = JSON.stringify(payload);
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
@@ -311,17 +316,89 @@ function bearerToken(request) {
   const auth = request.headers.get("Authorization") || "";
   return auth.startsWith("Bearer ") ? auth.slice(7) : "";
 }
-// Shed-partner admin session. Scoped: a Potentia CRM token is signed with the
-// same secret, so the payload check is what keeps the two apart — logging into
-// the CRM must never hand you the shed dashboard, and vice versa.
+/* ---- per-area session secrets + server-side revocable sessions ----
+   Each area signs with its own secret: ADMIN_SESSION_SECRET (shed admin),
+   CRM_SESSION_SECRET (Potentia CRM), LEADS_SESSION_SECRET (lead-generator
+   unlock). A new secret that is unset falls back to ADMIN_SESSION_SECRET so an
+   existing deploy keeps working — production should set all three, distinct.
+   The payload flag (admin/crm/leads) is still checked as a second guard. */
+const SESSION_AREAS = { admin: "ADMIN_SESSION_SECRET", crm: "CRM_SESSION_SECRET", leads: "LEADS_SESSION_SECRET" };
+function sessionSecret(env, area) {
+  return env[SESSION_AREAS[area]] || env.ADMIN_SESSION_SECRET || null;
+}
+// Admin sessions live in the shed DB; CRM + leads sessions in the CRM DB.
+function sessionDb(env, area) {
+  return area === "admin" ? env.DB : (env.CRM_DB || env.DB);
+}
+const ensuredSessionDbs = new WeakSet();
+async function ensureSessionsTable(db) {
+  if (ensuredSessionDbs.has(db)) return;
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS sessions (
+       id TEXT PRIMARY KEY,
+       area TEXT NOT NULL,
+       issued_at INTEGER NOT NULL,
+       expires_at INTEGER NOT NULL,
+       revoked_at INTEGER
+     )`
+  ).run();
+  ensuredSessionDbs.add(db);
+}
+function newSessionId() {
+  const b = new Uint8Array(24);
+  crypto.getRandomValues(b);
+  return bufToBase64Url(b.buffer);
+}
+// Creates the server-side row and returns the signed token, or null when the
+// area is not configured (no secret / no DB) — callers answer 5xx then.
+async function issueSession(env, area) {
+  const secret = sessionSecret(env, area);
+  const db = sessionDb(env, area);
+  if (!secret || !db) return null;
+  await ensureSessionsTable(db);
+  const now = Date.now();
+  const sid = newSessionId();
+  const exp = now + SESSION_TTL_MS;
+  await db.prepare("INSERT INTO sessions (id, area, issued_at, expires_at, revoked_at) VALUES (?,?,?,?,NULL)")
+    .bind(sid, area, now, exp).run();
+  /* Opportunistic cleanup of long-dead rows; never blocks a login. */
+  try {
+    await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now - 7 * 24 * 60 * 60 * 1000).run();
+  } catch (e) {}
+  return signToken(secret, { [area]: true, sid, exp });
+}
+// Signature + flag + sessions row (exists, same area, not revoked, not expired).
+async function verifySession(env, area, token) {
+  const secret = sessionSecret(env, area);
+  const db = sessionDb(env, area);
+  if (!secret || !db || !token) return null;
+  const payload = await verifyToken(secret, token);
+  if (!payload || payload[area] !== true || typeof payload.sid !== "string" || !payload.exp) return null;
+  try {
+    await ensureSessionsTable(db);
+    const row = await db.prepare("SELECT area, expires_at, revoked_at FROM sessions WHERE id = ? LIMIT 1")
+      .bind(payload.sid).first();
+    if (!row || row.area !== area || row.revoked_at != null || Date.now() > Number(row.expires_at)) return null;
+  } catch (e) {
+    console.error("session lookup failed", e);
+    return null; // fail closed
+  }
+  return payload;
+}
+async function revokeSession(env, area, token) {
+  const payload = await verifySession(env, area, token);
+  if (!payload) return false;
+  await sessionDb(env, area).prepare("UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
+    .bind(Date.now(), payload.sid).run();
+  return true;
+}
+// Shed-partner admin session.
 async function requireAuth(request, env) {
-  const payload = await verifyToken(env.ADMIN_SESSION_SECRET, bearerToken(request));
-  return payload && payload.admin === true ? payload : null;
+  return verifySession(env, "admin", bearerToken(request));
 }
 // Potentia's own client CRM session — see the CRM section further down.
 async function requireCrmAuth(request, env) {
-  const payload = await verifyToken(env.ADMIN_SESSION_SECRET, bearerToken(request));
-  return payload && payload.crm === true ? payload : null;
+  return verifySession(env, "crm", bearerToken(request));
 }
 
 /* A second gate in front of the lead generator. Everyone working the phones
@@ -339,8 +416,8 @@ async function leadsGate(request, env) {
      bounce a signed-in caller to a login they have already done. */
   if (!(await requireCrmAuth(request, env))) return { status: 401, error: "Unauthorized" };
   const raw = request.headers.get("X-Leads-Unlock") || "";
-  const payload = await verifyToken(env.ADMIN_SESSION_SECRET, raw);
-  if (!payload || payload.leads !== true) return { status: 403, error: "Locked" };
+  const payload = await verifySession(env, "leads", raw);
+  if (!payload) return { status: 403, error: "Locked" };
   return null;
 }
 
@@ -408,13 +485,14 @@ async function handleAdminLogin(request, env, origin) {
     return json({ error: "Invalid JSON" }, 400, origin);
   }
   const password = typeof body.password === "string" ? body.password : "";
-  if (!env.ADMIN_PASSWORD || !env.ADMIN_SESSION_SECRET) {
+  if (!env.ADMIN_PASSWORD || !sessionSecret(env, "admin")) {
     return json({ error: "Server not configured" }, 500, origin);
   }
   if (!timingSafeEqual(password, env.ADMIN_PASSWORD)) {
     return json({ error: "Invalid credentials" }, 401, origin);
   }
-  const token = await signToken(env.ADMIN_SESSION_SECRET, { admin: true, exp: Date.now() + SESSION_TTL_MS });
+  const token = await issueSession(env, "admin");
+  if (!token) return json({ error: "Server not configured" }, 500, origin);
   return json({ token }, 200, origin);
 }
 
@@ -5328,13 +5406,14 @@ async function handleCrmLogin(request, env, origin) {
     return json({ error: "Invalid JSON" }, 400, origin);
   }
   const password = typeof body.password === "string" ? body.password : "";
-  if (!env.CRM_PASSWORD || !env.ADMIN_SESSION_SECRET) {
+  if (!env.CRM_PASSWORD || !sessionSecret(env, "crm")) {
     return json({ error: "CRM password not configured" }, 503, origin);
   }
   if (!timingSafeEqual(password, env.CRM_PASSWORD)) {
     return json({ error: "Invalid credentials" }, 401, origin);
   }
-  const token = await signToken(env.ADMIN_SESSION_SECRET, { crm: true, exp: Date.now() + SESSION_TTL_MS });
+  const token = await issueSession(env, "crm");
+  if (!token) return json({ error: "CRM password not configured" }, 503, origin);
   return json({ token }, 200, origin);
 }
 
@@ -6221,6 +6300,11 @@ export default {
       if (path === "/admin/login" && request.method === "POST") {
         return await handleAdminLogin(request, env, origin);
       }
+      // Server-side revoke. Always 200 so logout never strands the page.
+      if (path === "/admin/logout" && request.method === "POST") {
+        const revoked = await revokeSession(env, "admin", bearerToken(request));
+        return json({ ok: true, revoked }, 200, origin);
+      }
 
       if (path === "/admin/customers" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
@@ -6508,6 +6592,12 @@ export default {
       if (path === "/crm/login" && request.method === "POST") {
         return await handleCrmLogin(request, env, origin);
       }
+      // Revokes the CRM session and, if sent, the lead-generator unlock too.
+      if (path === "/crm/logout" && request.method === "POST") {
+        const revoked = await revokeSession(env, "crm", bearerToken(request));
+        const unlockRevoked = await revokeSession(env, "leads", request.headers.get("X-Leads-Unlock") || "");
+        return json({ ok: true, revoked, unlockRevoked }, 200, origin);
+      }
       if (path.startsWith("/crm/clients/") && path.endsWith("/intake") && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const cid = Number(path.slice("/crm/clients/".length, -"/intake".length));
@@ -6699,7 +6789,7 @@ export default {
       if (path === "/crm/leads/unlock" && request.method === "POST") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const secret = leadsPassword(env);
-        if (!secret || !env.ADMIN_SESSION_SECRET) {
+        if (!secret || !sessionSecret(env, "leads")) {
           return json({ error: "No lead generator password is set. Add LEADS_PASSWORD as a secret on the Worker." }, 503, origin);
         }
         const body = await request.json().catch(() => ({}));
@@ -6707,8 +6797,8 @@ export default {
         if (!timingSafeEqual(given, secret)) {
           return json({ error: "Wrong password" }, 401, origin);
         }
-        const unlock = await signToken(env.ADMIN_SESSION_SECRET,
-          { leads: true, exp: Date.now() + SESSION_TTL_MS });
+        const unlock = await issueSession(env, "leads");
+        if (!unlock) return json({ error: "Server not configured" }, 503, origin);
         return json({ ok: true, unlock }, 200, origin);
       }
       if (path === "/crm/callers" && request.method === "GET") {
@@ -6883,7 +6973,9 @@ export default {
 
       return json({ error: "Not found" }, 404, origin);
     } catch (e) {
-      return json({ error: "Server error", detail: String(e) }, 500, origin);
+      // Detail stays in the Worker logs; clients get a generic message.
+      console.error("Unhandled error", request.method, path, e && e.stack ? e.stack : e);
+      return json({ error: "Server error" }, 500, origin);
     }
   },
 

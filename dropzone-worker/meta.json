@@ -1,0 +1,1 @@
+{"main_module":"worker.js","compatibility_date":"2026-08-04","keep_bindings":["secret_text","plain_text"],"bindings":[{"type":"d1","name":"DB","id":"5b0313ab-20c9-46f5-b1dd-342b21b6beb4"},{"type":"r2_bucket","name":"SHOTS","bucket_name":"potentia-dropzone"}]}

@@ -1,6 +1,30 @@
 {
   "rewrites": [
     {
+      "source": "/dropzone/api/:path*",
+      "destination": "https://potentia-dropzone.thepotentianetwork.workers.dev/dropzone/api/:path*"
+    },
+    {
+      "source": "/dropzone/uploads/:path*",
+      "destination": "https://potentia-dropzone.thepotentianetwork.workers.dev/dropzone/uploads/:path*"
+    },
+    {
+      "source": "/dropzone",
+      "destination": "/dropzone/submit.html"
+    },
+    {
+      "source": "/dropzone/crm",
+      "destination": "/dropzone/submit.html"
+    },
+    {
+      "source": "/dropzone/website",
+      "destination": "/dropzone/submit.html"
+    },
+    {
+      "source": "/dropzone/review",
+      "destination": "/dropzone/review.html"
+    },
+    {
       "source": "/contractorform",
       "destination": "/contractorform.html"
     },

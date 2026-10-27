@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Change request queue — Potentia Network</title><link rel="stylesheet" href="/dropzone/style.css"></head><body><div class="wrap wide">
+<div class="brand">Potentia Network · Drop Zone · Owner</div><h1>Change request queue</h1><p class="sub">Approving only marks a request for later action. It never edits, deploys or changes the live CRM or any website.</p>
+<form id="lg" class="card"><label>Review password</label><input type="password" id="pw"><p><button>Open queue</button></p><div id="le"></div></form>
+<div id="q" hidden><div class="tabs"><a href="#" data-s="" class="on">All</a><a href="#" data-s="crm">CRM</a><a href="#" data-s="website">Website</a></div><div id="list"></div></div></div>
+<script>
+let PW=sessionStorage.pw||'',S='';const esc=s=>String(s??'').replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+async function api(u,o={}){const r=await fetch(u,{...o,headers:{'x-review-password':PW}});if(r.status==401)throw Error('Wrong password');return r.json()}
+async function load(){const d=await api('/dropzone/api/feedback'+(S?'?source='+S:''));lg.hidden=true;q.hidden=false;
+ list.innerHTML=d.length?'':'<div class="card meta">No requests yet.</div>';
+ for(const x of d)list.insertAdjacentHTML('beforeend',`<div class="card item" id="i${x.id}"><div>${(x.screenshots||[]).length?x.screenshots.map(n=>`<a href="/dropzone/uploads/${esc(n)}" target="_blank"><img src="/dropzone/uploads/${esc(n)}" style="margin-bottom:6px"></a>`).join('')+(x.screenshots.length>1?`<div class="meta">${x.screenshots.length} images</div>`:''):'<div class="meta">No screenshot</div>'}</div><div>
+ <span class="pill src">${x.source=='website'?'Website':'CRM'}</span><span class="pill ${x.status}">${x.status}</span>
+ <div><b>${esc(x.businessName||'(no business name)')}</b></div><div class="note">${esc(x.note)}</div><div class="meta">${x.site?esc(x.site)+' · ':''}${esc(x.name||'Anonymous')}${x.email?' · <a style="color:var(--blue)" href="mailto:'+esc(x.email)+'">'+esc(x.email)+'</a>':''} · ${new Date(x.createdAt).toLocaleString()}</div>
+ <p><button onclick="act('${x.id}','approve')">Approve</button> <button class="rej" onclick="act('${x.id}','reject')">Reject</button></p><div class="r"></div></div></div>`)}
+async function act(id,a){const j=await api(`/dropzone/api/feedback/${id}/${a}`,{method:'POST'});await load();const r=document.querySelector('#i'+CSS.escape(id)+' .r');if(r)r.innerHTML='<div class="msg ok">'+esc(j.message)+'</div>'}
+lg.onsubmit=async e=>{e.preventDefault();PW=pw.value;try{await load();sessionStorage.pw=PW}catch(x){le.innerHTML='<div class="msg err">'+esc(x.message)+'</div>'}};
+document.querySelectorAll('.tabs a').forEach(a=>a.onclick=e=>{e.preventDefault();document.querySelectorAll('.tabs a').forEach(b=>b.classList.remove('on'));a.classList.add('on');S=a.dataset.s;load()});
+if(PW)load().catch(()=>{});
+</script></body></html>
