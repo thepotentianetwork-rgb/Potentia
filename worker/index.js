@@ -22,7 +22,8 @@ import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConf
 import { applyColorEdit, detailsWithColors } from "./colors.js";
 import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.js";
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
-import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS } from "./leadpipeline.js";
+import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS, seedIntlSources, listIntlSegments, setIntlSourcesEnabled, intlCityList } from "./leadpipeline.js";
+import { crawlSite } from "./intlcrawl.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
@@ -6671,6 +6672,11 @@ export default {
            so a changed rating or review cut-off is applied to everything
            already seen rather than only to what turns up next. */
         const rescreen = url.searchParams.get("rescreen") === "1";
+        /* ?profile=intl runs the international pipeline (Places in MX + site
+           crawl for public role emails). ?plan=1 (intl only) makes no paid
+           call at all. No profile = domestic, exactly as before. */
+        const profile = url.searchParams.get("profile") === "intl" ? "intl" : null;
+        const plan = url.searchParams.get("plan") === "1";
 
         /* Streamed, not awaited. A real run researches five businesses one
            after another and routinely takes several minutes; Cloudflare cuts
@@ -6696,9 +6702,14 @@ export default {
         // Worker alive, and awaiting it here would defeat the streaming.
         (async () => {
           try {
-            const out = await runLeadPipeline(env, {
-              trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit
-            });
+            const out = profile === "intl"
+              ? await runLeadPipeline(env, {
+                  profile: "intl", trigger: "manual_intl", limit, dryRun, plan, reseed,
+                  onProgress: emit, deps: { crawlSite }
+                })
+              : await runLeadPipeline(env, {
+                  trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit
+                });
             await emit({ event: "done", result: out });
           } catch (e) {
             await emit({ event: "error", error: String(e).slice(0, 300) });
@@ -6720,6 +6731,10 @@ export default {
         const gate = await leadsGate(request, env);
         if (gate) return json({ error: gate.error }, gate.status, origin);
         await ensureLeadPipelineTables(env);
+        if (url.searchParams.get("profile") === "intl") {
+          await seedIntlSources(env, false);
+          return json({ profile: "intl", segments: await listIntlSegments(env), cities: intlCityList() }, 200, origin);
+        }
         // Seed on first read so the toggles are never an empty list.
         await seedLeadSources(env, false);
         /* trades maps every search term the grid can produce to the name the
@@ -6739,6 +6754,23 @@ export default {
         } catch (e) {
           console.error("segments", e && e.stack ? e.stack : e);
           return json({ error: "Could not update that segment" }, 400, origin);
+        }
+      }
+      /* Intl grid toggles: { segment, enabled, city? }. Domestic rows are
+         never touched by this endpoint. */
+      if (path === "/crm/leads/sources" && request.method === "POST") {
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
+        await ensureLeadPipelineTables(env);
+        await seedIntlSources(env, false);
+        const body = await request.json().catch(() => ({}));
+        try {
+          const changed = await setIntlSourcesEnabled(env, String(body.segment || ""), !!body.enabled,
+                                                      body.city ? String(body.city) : null);
+          return json({ ok: true, changed, profile: "intl", segments: await listIntlSegments(env),
+                        cities: intlCityList() }, 200, origin);
+        } catch (e) {
+          return json({ error: String(e.message || e).slice(0, 200) }, 400, origin);
         }
       }
       if (path === "/crm/leads/recheck" && request.method === "POST") {

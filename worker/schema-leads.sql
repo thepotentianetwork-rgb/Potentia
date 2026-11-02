@@ -16,8 +16,10 @@
 --
 -- That leaves a permanent marker that costs nothing, keeps us from paying to
 -- re-source the same dead end every run, and holds no Places content at all.
--- A lead that makes it to the CRM carries contact details taken from the
--- business's own site (the enrichment step's source_urls), not from Places.
+-- KNOWN GAP: domestic leads still copy Places name/phone/website/address onto
+-- `clients` so they can be called (pending decision, audit 2026-11-02 Q8).
+-- Intl leads (profile='intl') take phone/email from the business's own site
+-- and do not store the Places street address. See migrations/0005.
 
 -- The search grid. Rows here are the whole configuration: no query or city is
 -- hardcoded in the Worker. offer_hint tells the scorer which of the three
@@ -32,7 +34,10 @@ CREATE TABLE IF NOT EXISTS lead_sources (
   offer_hint INTEGER,             -- 1 | 2 | 3
   enabled INTEGER NOT NULL DEFAULT 1,
   last_run_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  profile TEXT NOT NULL DEFAULT 'domestic', -- 'domestic' | 'intl' (added 0005)
+  country TEXT NOT NULL DEFAULT 'US',
+  region TEXT, tier INTEGER, language TEXT
 );
 
 -- Working state for one business, from sourced to judged.
