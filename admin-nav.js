@@ -1,6 +1,6 @@
 /* THE ADMIN NAV, DEFINED ONCE.
  *
- * Six pages had six hand-written header bars, and they had already drifted:
+ * Seven pages had hand-written header bars, and they had already drifted:
  * Activity was missing its link to Data, Pricing only appeared on two of
  * them, and the same page called itself "Customers" in one header and "All
  * Customers" in another. Every page added made that worse, and the row was
@@ -18,6 +18,7 @@
 
   var PAGES = [
     { href: 'admin-dashboard.html', label: 'Dashboard' },
+    { href: 'admin-sales.html',    label: 'Sales' },
     { href: 'admin.html',          label: 'Customers' },
     { href: 'admin-schedule.html', label: 'Schedule' },
     { href: 'admin-activity.html', label: 'Activity', badge: true },
