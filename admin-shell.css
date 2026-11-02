@@ -1,0 +1,4 @@
+/* Admin shell (Phase 1 stub) — baseline: admin-dashboard dark aesthetic. Preview branch only. */
+:root{--bg:#121315;--panel:#1b1d20;--line:#2a2d31;--text:#e6e7e9;--muted:#9a9ea4;--silver:#c9ccd1;--accent:#4a8cff;
+--font:'DM Mono',ui-monospace,monospace;--r:10px;--s1:4px;--s2:8px;--s3:16px;--s4:24px;}
+body.admin-shell{background:var(--bg);color:var(--text);font-family:var(--font);margin:0}
