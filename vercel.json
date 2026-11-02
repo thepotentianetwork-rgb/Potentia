@@ -35,6 +35,11 @@
   ],
   "redirects": [
     {
+      "source": "/admin-sales(.html)?",
+      "destination": "/admin-dashboard.html",
+      "permanent": false
+    },
+    {
       "source": "/pricing(.html)?",
       "destination": "/portfolio.html",
       "permanent": false

@@ -18,7 +18,6 @@
 
   var PAGES = [
     { href: 'admin-dashboard.html', label: 'Dashboard' },
-    { href: 'admin-sales.html',    label: 'Sales' },
     { href: 'admin-website.html',  label: 'Website' },
     { href: 'admin.html',          label: 'Customers' },
     { href: 'admin-schedule.html', label: 'Schedule' },
