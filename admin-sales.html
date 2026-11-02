@@ -4,15 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title>Sales Overview · ShedPro (Preview)</title>
+<title>Sales Overview · ShedPro</title>
 <link rel="icon" href="shedpro-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <!--
-  SALES COMMAND CENTER — PHASE 2 DESIGN PREVIEW
-  Not linked from admin-nav.js. Read-only: it calls the existing GET /admin/dashboard
-  and GET /admin/analytics with the existing admin token. It writes nothing.
-  ?sample=1 renders a clearly-marked SAMPLE fixture (for design review/screenshots only).
+  SALES COMMAND CENTER — live Sales Overview.
+  Read-only: GET /admin/dashboard + /admin/analytics with the admin token. Writes nothing.
+  ?sample=1 renders a clearly-marked SAMPLE fixture (design review only).
 -->
 <style>
 :root{--bg:#0B0D12;--side:#11151C;--card:#171C25;--bd:#29313D;--ac:#38BDF8;--ok:#34D399;--warn:#F59E0B;--neg:#F87171;--tx:#F8FAFC;--mut:#94A3B8;--sw:232px}
@@ -23,19 +22,27 @@ a{color:inherit;text-decoration:none}
 /* sidebar */
 .side{width:var(--sw);background:var(--side);border-right:1px solid var(--bd);min-height:100vh;position:sticky;top:0;align-self:flex-start;height:100vh;padding:18px 12px;display:flex;flex-direction:column;transition:width .2s;overflow:hidden;flex-shrink:0}
 body.collapsed{--sw:68px}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px;font-weight:700;white-space:nowrap}
-.brand img{width:28px;height:28px;border-radius:6px}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px;white-space:nowrap}
+.brand>img{width:36px;height:36px;object-fit:contain;border-radius:8px;flex-shrink:0}
+.brand-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+.brand-title{font-weight:700;font-size:14px;letter-spacing:-.01em}
+.brand-powered{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:500;color:var(--mut);letter-spacing:.02em}
+.brand-powered img{width:12px;height:12px;object-fit:contain;border-radius:2px;opacity:.9}
 .sec{font-size:11px;font-weight:600;color:#5b6678;letter-spacing:.08em;margin:14px 10px 6px;white-space:nowrap}
 .nav a{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:8px;color:var(--mut);white-space:nowrap;font-weight:500}
 .nav a:hover{background:#1a202b;color:var(--tx)}
 .nav a.on{background:rgba(56,189,248,.12);color:var(--ac)}
 .nav .ic{width:20px;text-align:center;flex-shrink:0}
-body.collapsed .lbl,body.collapsed .sec,body.collapsed .brand span{display:none}
+body.collapsed .lbl,body.collapsed .sec,body.collapsed .brand-text{display:none}
 .collapse{margin-top:auto;background:none;border:1px solid var(--bd);color:var(--mut);border-radius:8px;padding:8px;cursor:pointer}
 /* main */
 main{flex:1;min-width:0;padding:28px 32px 60px}
 .banner{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.4);color:#fcd34d;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:20px}
 .banner.sample{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.45);color:#fecaca}
+.page-brand{display:flex;align-items:center;gap:14px}
+.page-logo{width:44px;height:44px;object-fit:contain;border-radius:10px;flex-shrink:0}
+.powered{display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;font-weight:500;color:var(--mut)}
+.powered img{width:14px;height:14px;object-fit:contain;border-radius:3px}
 header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:24px}
 h1{font-size:28px;font-weight:700;letter-spacing:-.02em}
 .sub{color:var(--mut);margin-top:4px}
@@ -92,7 +99,13 @@ select,.btn{background:var(--card);color:var(--tx);border:1px solid var(--bd);bo
 </head>
 <body>
 <aside class="side">
-  <div class="brand"><img src="shedpro-logo.png" alt=""><span>ShedPro Sales</span></div>
+  <div class="brand">
+    <img src="shedpro-logo.png" alt="ShedPro">
+    <div class="brand-text">
+      <span class="brand-title">ShedPro Sales</span>
+      <span class="brand-powered"><img src="Potentia_Logo.png" alt="">Powered by Potentia</span>
+    </div>
+  </div>
   <nav class="nav">
     <div class="sec">SELL</div>
     <a class="on" href="admin-sales.html"><span class="ic">◧</span><span class="lbl">Overview</span></a>
@@ -111,11 +124,15 @@ select,.btn{background:var(--card);color:var(--tx);border:1px solid var(--bd);bo
 </aside>
 
 <main>
-  <div id="banner" class="banner">Design preview — Phase 2. Read-only. Not linked from the CRM nav.</div>
+  <div id="banner" class="banner" hidden></div>
   <header>
-    <div>
-      <h1>Sales Overview</h1>
-      <div class="sub" id="sub">Utah time · loading…</div>
+    <div class="page-brand">
+      <img class="page-logo" src="shedpro-logo.png" alt="ShedPro">
+      <div>
+        <h1>Sales Overview</h1>
+        <div class="sub" id="sub">Utah time · loading…</div>
+        <div class="powered"><img src="Potentia_Logo.png" alt="">Powered by Potentia</div>
+      </div>
     </div>
     <div class="ctrl">
       <select id="range">
