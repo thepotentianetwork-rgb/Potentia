@@ -16,7 +16,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-export const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+export const CHROME = process.env.CHROME_BIN || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
 async function cdp(ws, id, method, params) {
   ws.send(JSON.stringify({ id, method, params: params || {} }));

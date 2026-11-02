@@ -166,7 +166,11 @@ const FILES = {
   '/admin-nav.js': { type: 'text/javascript',
                      body: readFileSync(path.join(here, '..', 'admin-nav.js'), 'utf8') },
   '/admin-voice.js': { type: 'text/javascript',
-                       body: readFileSync(path.join(here, '..', 'admin-voice.js'), 'utf8') }
+                       body: readFileSync(path.join(here, '..', 'admin-voice.js'), 'utf8') },
+  '/admin-shell.js': { type: 'text/javascript',
+                       body: readFileSync(path.join(here, '..', 'admin-shell.js'), 'utf8') },
+  '/admin-shell.css': { type: 'text/css',
+                        body: readFileSync(path.join(here, '..', 'admin-shell.css'), 'utf8') }
 };
 
 async function api(req, res) {

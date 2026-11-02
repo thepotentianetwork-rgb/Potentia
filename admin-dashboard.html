@@ -7,166 +7,162 @@
 <meta name="robots" content="noindex, nofollow">
 <link rel="icon" href="shedpro-logo.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin-shell.css">
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
-  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
-  --sp-green:#3ddc97;
-}
-body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh}
+.sec-label{font-family:var(--mono);font-size:9.5px;letter-spacing:.34em;color:var(--silver);opacity:.75;text-transform:uppercase;margin-bottom:6px}
 
-header{border-bottom:1px solid var(--dim);border-image:linear-gradient(90deg,var(--sp-blue),var(--sp-orange)) 1;padding:20px 40px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
-.h-brand{display:flex;align-items:center;gap:14px}
-.h-brand img{width:34px;height:34px;object-fit:contain}
-.h-brand-text{display:flex;flex-direction:column;gap:2px}
-.h-title{font-family:'Syncopate',sans-serif;font-size:12px;letter-spacing:0.2em;color:var(--bright)}
-.h-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--silver);text-transform:uppercase}
-.h-actions{display:flex;gap:20px;align-items:center}
-.h-date{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
-.logout{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);background:none;border:1px solid var(--dim);padding:8px 14px;cursor:pointer;text-transform:uppercase}
-.logout:hover{border-color:var(--sp-orange);color:var(--sp-orange)}
+/* ── hero ─────────────────────────────────────────────────────────────── */
+.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;flex-wrap:wrap;margin-bottom:22px}
+h2{font-family:var(--serif);font-size:44px;font-weight:300;color:var(--bright);line-height:1.02;letter-spacing:-.01em}
+.lede{font-family:var(--serif);font-size:18px;color:var(--silver);margin-top:4px;font-weight:300}
+.pulse{display:flex;gap:0;border:1px solid var(--dim);background:var(--deep)}
+.pulse span{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--silver);padding:10px 14px;border-left:1px solid var(--dim);white-space:nowrap}
+.pulse span:first-child{border-left:none}
+.pulse b{color:var(--bright);font-weight:500;margin-right:6px}
+.pulse .warm b{color:var(--sp-orange)}
 
-main{padding:36px 40px 90px;max-width:1500px;margin:0 auto}
-.sec-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.4em;color:var(--dim);text-transform:uppercase;margin-bottom:8px}
-h2{font-family:'Cormorant Garamond',serif;font-size:46px;font-weight:300;color:var(--bright);line-height:1.05;letter-spacing:-0.01em}
-.lede{font-family:'Cormorant Garamond',serif;font-size:19px;color:var(--silver);margin-top:6px;margin-bottom:30px;font-weight:300}
-
-/* ── the four figures ─────────────────────────────────────────────────── */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px}
-.kpi{border:1px solid var(--dim);background:var(--deep);padding:20px 22px;display:flex;flex-direction:column;gap:10px;text-decoration:none;color:inherit}
-a.kpi:hover{border-color:var(--sp-blue)}
-.kl{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.22em;color:var(--silver);text-transform:uppercase;line-height:1.5}
+/* ── KPI ribbon: one instrument, four readings ───────────────────────── */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--dim);background:linear-gradient(180deg,var(--panel-2),var(--deep));margin-bottom:var(--gap)}
+.kpi{position:relative;padding:18px 22px 16px;display:flex;flex-direction:column;gap:12px;text-decoration:none;color:inherit;border-left:1px solid var(--dim);min-width:0;transition:background .15s}
+.kpi:first-child{border-left:none}
+.kpi::before{content:"";position:absolute;left:0;right:0;top:-1px;height:2px;background:var(--sp-blue);opacity:.55}
+.kpi.warm::before{background:var(--sp-orange)}
+.kpi.good::before{background:var(--sp-green)}
+a.kpi:hover{background:rgba(44,192,253,.05)}
+.kl{font-family:var(--mono);font-size:9.5px;letter-spacing:.22em;color:var(--silver);text-transform:uppercase}
 .krow{display:flex;align-items:flex-end;justify-content:space-between;gap:14px}
-.kv{font-family:'Cormorant Garamond',serif;font-size:44px;font-weight:300;color:var(--bright);line-height:1}
-.kn{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
-/* The sparkline: one bar per day of the month, drawn from flex children so it
-   needs no canvas and no library. */
-.spark{display:flex;align-items:flex-end;gap:2px;height:34px;flex:0 0 auto}
-.spark i{display:block;width:4px;min-height:2px;background:var(--sp-blue);opacity:0.5}
+.kv{font-family:var(--mono);font-size:34px;font-weight:300;color:var(--bright);line-height:1;letter-spacing:-.02em}
+.kn{font-family:var(--mono);font-size:11px;color:var(--silver);margin-top:6px}
+.kpi.good .kv{color:var(--sp-green)}
+.spark{display:flex;align-items:flex-end;gap:2px;height:30px;flex:0 0 auto}
+.spark i{display:block;width:3px;min-height:2px;background:var(--sp-blue);opacity:.35}
 .spark i.has{opacity:1}
 .kpi.warm .spark i{background:var(--sp-orange)}
 .kpi.good .spark i{background:var(--sp-green)}
-.kpi.good .kv{color:var(--sp-green)}
 
-/* ── panels ───────────────────────────────────────────────────────────── */
-.panel{border:1px solid var(--dim);background:var(--deep);padding:22px 24px;margin-bottom:22px}
-.phead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap}
-.ptitle{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:300;color:var(--bright);line-height:1.1}
-.pmore{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;color:var(--sp-blue);text-decoration:none;text-transform:uppercase;white-space:nowrap}
+/* ── layout ───────────────────────────────────────────────────────────── */
+.grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);gap:var(--gap);align-items:start}
+.stack{display:flex;flex-direction:column;gap:var(--gap);min-width:0}
+.cols{display:flex;flex-direction:column;gap:var(--gap);min-width:0}
+.panel{border:1px solid var(--dim);background:var(--deep);padding:18px 20px;min-width:0}
+.phead{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--hair)}
+.ptitle{font-family:var(--serif);font-size:23px;font-weight:300;color:var(--bright);line-height:1.1}
+.ptitle[data-count]::after{content:attr(data-count);font-family:var(--mono);font-size:11px;color:var(--silver);margin-left:10px;vertical-align:middle}
+.pmore{font-family:var(--mono);font-size:9.5px;letter-spacing:.15em;color:var(--sp-blue);text-decoration:none;text-transform:uppercase;white-space:nowrap}
 .pmore:hover{color:var(--bright)}
 
-/* ── the week ─────────────────────────────────────────────────────────── */
-.week{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:14px}
-.day{border:1px solid var(--dim);display:flex;flex-direction:column;text-decoration:none;color:inherit;background:var(--black)}
-.day:hover{border-color:var(--sp-blue)}
-.day.is-done{opacity:0.6}
-.day-top{display:flex;align-items:stretch;gap:0;border-bottom:1px solid var(--dim)}
-.day-when{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.12em;color:var(--silver);text-transform:uppercase;padding:11px 12px;line-height:1.7;flex:1}
-.day-when b{display:block;color:var(--bright);font-weight:400}
-.day-shot{width:92px;flex:0 0 92px;object-fit:cover;display:block;background:#0d0d16;border-left:1px solid var(--dim)}
-.day-body{padding:12px;display:flex;flex-direction:column;gap:3px;flex:1}
-.day-name{font-family:'Cormorant Garamond',serif;font-size:19px;color:var(--bright);font-weight:300;line-height:1.25}
-.day-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);line-height:1.7}
-.day-tag{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;padding:7px 11px;text-align:center;font-weight:700;color:var(--black)}
+/* ── installs: a timeline, not a card wall ───────────────────────────── */
+.week{display:flex;flex-direction:column}
+.day{display:grid;grid-template-columns:96px minmax(0,1fr) auto auto;align-items:center;gap:16px;padding:10px 0;border-bottom:1px solid var(--hair);text-decoration:none;color:inherit}
+.day:last-child{border-bottom:none}
+.day:hover .day-name{color:var(--sp-blue)}
+.day.is-done{opacity:.55}
+.day-top{display:contents}
+.day-when{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--silver);text-transform:uppercase;line-height:1.6;grid-column:1;grid-row:1}
+.day-when b{display:block;color:var(--bright);font-weight:500}
+.day-shot{grid-column:3;grid-row:1;width:72px;height:46px;object-fit:cover;display:block;background:#0d0d16;border:1px solid var(--dim)}
+.day-body{grid-column:2;grid-row:1;display:flex;flex-direction:column;gap:2px;min-width:0}
+.day-name{font-family:var(--serif);font-size:19px;color:var(--bright);font-weight:300;line-height:1.2;transition:color .15s}
+.day-sub{font-family:var(--mono);font-size:10px;color:var(--silver);line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.day-tag{grid-column:4;grid-row:1;font-family:var(--mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;padding:6px 10px;text-align:center;font-weight:500;color:var(--black);min-width:92px}
 .tag-prep,.tag-pour,.tag-gravel,.tag-concrete{background:var(--sp-orange)}
-.tag-materials{background:#b98cf2}
+.tag-materials{background:var(--sp-violet)}
 .tag-shop{background:var(--sp-blue)}
 .tag-shed{background:var(--sp-green)}
-.tag-done{background:none;color:var(--sp-green);border-top:1px solid var(--sp-green)}
+.tag-done{background:none;color:var(--sp-green);border:1px solid var(--sp-green)}
 
-/* ── the three lists ──────────────────────────────────────────────────── */
-.cols{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;align-items:start}
-.row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(42,45,56,0.65)}
+/* ── rows ─────────────────────────────────────────────────────────────── */
+.row{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--hair)}
 .row:last-child{border-bottom:none}
-.row-bar{width:3px;align-self:stretch;min-height:34px;background:var(--sp-blue);flex:0 0 3px}
+.row-bar{width:2px;align-self:stretch;min-height:30px;background:var(--sp-blue);flex:0 0 2px}
 .row-bar.warm{background:var(--sp-orange)}
 .row-bar.good{background:var(--sp-green)}
-.row-shot{width:46px;height:36px;flex:0 0 46px;object-fit:cover;background:#0d0d16;border:1px solid var(--dim)}
+.row-shot{width:44px;height:34px;flex:0 0 44px;object-fit:cover;background:#0d0d16;border:1px solid var(--dim)}
 .row-main{flex:1;min-width:0}
-.row-name{font-family:'Cormorant Garamond',serif;font-size:18px;color:var(--bright);font-weight:300;line-height:1.3;text-decoration:none;display:block}
+.row-name{font-family:var(--serif);font-size:17px;color:var(--bright);font-weight:300;line-height:1.3;text-decoration:none;display:block}
 a.row-name:hover{color:var(--sp-blue)}
-.row-sub{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row-when{font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);white-space:nowrap}
+.row-sub{font-family:var(--mono);font-size:10px;color:var(--silver);line-height:1.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row-when{font-family:var(--mono);font-size:10px;color:var(--silver);white-space:nowrap}
 .row-when.late{color:var(--sp-orange)}
-.row-act{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border:1px solid rgba(44,192,253,0.45);padding:7px 10px;white-space:nowrap}
-.row-act:hover{background:rgba(44,192,253,0.12)}
+.row-act{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--sp-blue);text-decoration:none;border:1px solid rgba(44,192,253,.4);padding:6px 10px;white-space:nowrap}
+.row-act:hover{background:rgba(44,192,253,.12)}
 .row-act.off{color:var(--dim);border-color:var(--dim);pointer-events:none}
-.chip{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;border:1px solid var(--dim);color:var(--silver);padding:4px 7px;white-space:nowrap}
-.chip.warm{color:var(--sp-orange);border-color:rgba(246,148,31,0.5)}
+.chip{font-family:var(--mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--dim);color:var(--silver);padding:4px 7px;white-space:nowrap}
+.chip.warm{color:var(--sp-orange);border-color:rgba(246,148,31,.5)}
 
-.empty{font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);padding:26px 0;line-height:1.9}
-.state{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver);padding:70px 0;line-height:2}
+/* ── quick links ──────────────────────────────────────────────────────── */
+.quick{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--dim);border:1px solid var(--dim)}
+.quick a{background:var(--deep);padding:13px 14px;text-decoration:none;display:flex;flex-direction:column;gap:3px}
+.quick a:hover{background:var(--panel-2)}
+.quick b{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--bright);font-weight:400}
+.quick span{font-family:var(--mono);font-size:9.5px;color:var(--silver)}
+
+.empty{font-family:var(--mono);font-size:11px;color:var(--silver);opacity:.6;padding:18px 0;line-height:1.9}
+.state{font-family:var(--mono);font-size:12px;color:var(--silver);padding:70px 0;line-height:2}
 
 @media (max-width:1200px){
-  .kpis{grid-template-columns:repeat(2,1fr)}
-  .cols{grid-template-columns:1fr}
+  .grid{grid-template-columns:minmax(0,1fr)}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .kpi:nth-child(3){border-left:none}
+  .kpi:nth-child(n+3){border-top:1px solid var(--dim)}
 }
 @media (max-width:760px){
-  header{padding:16px 20px}
-  .h-date{display:none}
-  main{padding:26px 16px 80px}
-  h2{font-size:34px}
-  .lede{font-size:17px;margin-bottom:22px}
-  .kpis{gap:12px}
-  .kpi{padding:15px 16px}
-  .kv{font-size:34px}
-  .spark{height:26px}
-  .spark i{width:3px}
-  .panel{padding:17px 16px}
-  .ptitle{font-size:22px}
-  /* ONE COLUMN, BUT COMPACT. Stacked at their desktop height, five jobs push
-     Follow Ups — the panel with something to DO on it — most of a screen
-     further down than the list of jobs that are already booked and handled.
-     The day goes on one line with its date, and the padding comes in. */
-  .week{grid-template-columns:1fr;gap:10px}
-  .day-when{display:flex;gap:9px;align-items:baseline;padding:8px 12px}
-  .day-when b{display:inline}
-  .day-shot{width:74px;flex:0 0 74px}
-  .day-body{padding:9px 12px;gap:2px}
-  .day-name{font-size:18px}
-  .day-tag{padding:6px 11px}
-  /* ALIGNMENT PASS (13 Oct 2026, phones only). The one-column .cols grid let
-     its track grow to the widest nowrap row (a name + "28 days late" + CALL),
-     so Follow Ups, Ready to Schedule and Payments Due ran ~120px past the
-     screen while the panels above them fitted. Bound the track and let a row
-     wrap its date/button under the name instead of pushing the page wide. */
-  .cols{grid-template-columns:minmax(0,1fr);gap:0}
-  .cols>*{min-width:0}
-  .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .kpi{min-width:0}
+  h2{font-size:32px}
+  .lede{font-size:16px}
+  .pulse{width:100%;flex-wrap:wrap}
+  .pulse span{flex:1 1 45%;border-left:none;border-top:1px solid var(--dim)}
+  .kpi{padding:14px 14px}
+  .kv{font-size:26px}
   .krow{flex-wrap:wrap;gap:8px}
+  .spark{height:24px}
+  .cols{grid-template-columns:minmax(0,1fr)}
+  .panel{padding:15px 14px}
+  .day{grid-template-columns:minmax(0,1fr) auto;gap:6px 10px}
+  .day-when{grid-column:1;grid-row:1;display:flex;gap:9px;align-items:baseline}
+  .day-when b{display:inline}
+  .day-shot{grid-column:2;grid-row:1/3;width:64px;height:44px}
+  .day-body{grid-column:1;grid-row:2}
+  .day-tag{grid-column:1/3;grid-row:3}
   .row{flex-wrap:wrap;row-gap:6px}
   .row-main{flex:1 1 150px}
   .row-act{min-height:40px;display:inline-flex;align-items:center}
+  .quick{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 </style>
 </head>
-<body>
+<body class="admin-shell">
 
-<header>
-  <div class="h-brand">
+<header class="shell">
+  <a class="h-brand" href="admin-dashboard.html">
     <img src="shedpro-logo.png" alt="ShedPro">
-    <div class="h-brand-text">
-      <span class="h-title">SHEDPRO ADMIN</span>
-      <span class="h-sub">Built &amp; managed by Potentia</span>
-    </div>
-  </div>
+    <span class="h-brand-text">
+      <span class="h-title">SHEDPRO</span>
+      <span class="h-sub">Command &middot; by Potentia</span>
+    </span>
+  </a>
+  <nav class="shell-tabs" aria-label="Admin"></nav>
   <div class="h-actions">
     <span class="h-date" id="h-date"></span>
     <button class="logout" id="logout-btn">Log Out</button>
   </div>
 </header>
 
-<main>
-  <p class="sec-label">ShedPro Partner</p>
-  <h2 id="greeting">Dashboard</h2>
-  <p class="lede">Jobs on site, leads to call, and what&rsquo;s next.</p>
+<main class="shell-main">
+  <div class="hero">
+    <div>
+      <p class="sec-label">ShedPro Partner</p>
+      <h2 id="greeting">Dashboard</h2>
+      <p class="lede">Jobs on site, leads to call, and what&rsquo;s next.</p>
+    </div>
+    <div class="pulse" id="pulse"></div>
+  </div>
   <div id="content"><div class="state" id="state">Loading&hellip;</div></div>
 </main>
 
 <script src="admin-nav.js"></script>
+<script src="admin-shell.js"></script>
 <script src="admin-voice.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
@@ -319,22 +315,6 @@ function dayCard(w, today) {
 
 /* ── the three lists ────────────────────────────────────────────────────── */
 
-function panel(title, eyebrow, moreHref, moreLabel) {
-  var box = el('div', 'panel');
-  var head = el('div', 'phead');
-  var left = el('div');
-  left.appendChild(el('p', 'sec-label', eyebrow));
-  left.appendChild(el('div', 'ptitle', title));
-  head.appendChild(left);
-  if (moreHref) {
-    var more = el('a', 'pmore', moreLabel + ' →');
-    more.href = moreHref;
-    head.appendChild(more);
-  }
-  box.appendChild(head);
-  return box;
-}
-
 function fillOrEmpty(box, rows, emptyText) {
   if (!rows.length) { box.appendChild(el('div', 'empty', emptyText)); return box; }
   rows.forEach(function (r) { box.appendChild(r); });
@@ -411,9 +391,54 @@ function payRow(p) {
 
 /* ── putting it together ────────────────────────────────────────────────── */
 
+function panel(title, eyebrow, moreHref, moreLabel, count) {
+  var box = el('div', 'panel');
+  var head = el('div', 'phead');
+  var left = el('div');
+  left.appendChild(el('p', 'sec-label', eyebrow));
+  var t = el('div', 'ptitle', title);
+  if (count != null) t.setAttribute('data-count', String(count));
+  left.appendChild(t);
+  head.appendChild(left);
+  if (moreHref) {
+    var more = el('a', 'pmore', moreLabel + ' →');
+    more.href = moreHref;
+    head.appendChild(more);
+  }
+  box.appendChild(head);
+  return box;
+}
+
+function pulse(d) {
+  var box = document.getElementById('pulse');
+  if (!box) return;
+  box.textContent = '';
+  var k = d.kpis || {};
+  var open = (d.week || []).filter(function (w) { return !w.done; }).length;
+  var calls = (d.followUps || []).length;
+  var urgent = (d.followUps || []).filter(function (f) { return f.urgent; }).length;
+  [[open, 'on site this week'], [calls, 'to call', urgent > 0], [usd((k.unpaid || {}).amount), 'outstanding']]
+    .forEach(function (p) {
+      var s = el('span', p[2] ? 'warm' : '');
+      s.appendChild(el('b', '', String(p[0])));
+      s.appendChild(document.createTextNode(p[1]));
+      box.appendChild(s);
+    });
+}
+
+var QUICK = [
+  ['admin.html', 'Customers', 'Leads & orders'],
+  ['admin-schedule.html', 'Schedule', 'Install calendar'],
+  ['admin-activity.html', 'Activity', 'Invoices & events'],
+  ['admin-data.html', 'Data', 'Won / lost trends'],
+  ['admin-website.html', 'Website', 'Traffic & leads'],
+  ['admin-pricing.html', 'Pricing', 'Price book']
+];
+
 function render(d) {
   var wrap = document.getElementById('content');
   wrap.textContent = '';
+  pulse(d);
 
   var k = d.kpis || {};
   var kpis = el('div', 'kpis');
@@ -429,38 +454,48 @@ function render(d) {
     note: usd((k.unpaid || {}).amount), href: 'admin-activity.html' }));
   wrap.appendChild(kpis);
 
-  var week = panel('Upcoming Installs', 'This week', 'admin-schedule.html', 'View full schedule');
+  var grid = el('div', 'grid');
+  var left = el('div', 'stack');
+  var right = el('div', 'stack');
+
+  var week = panel('Upcoming Installs', 'This week', 'admin-schedule.html', 'Full schedule', (d.week || []).length);
   var strip = el('div', 'week');
   (d.week || []).forEach(function (w) { strip.appendChild(dayCard(w, d.today)); });
   week.appendChild((d.week || []).length ? strip
     : el('div', 'empty', 'Nothing booked in the next seven days.'));
-  wrap.appendChild(week);
+  left.appendChild(week);
 
+  var qp = panel('Go to', 'Quick links');
+  var q = el('div', 'quick');
+  QUICK.forEach(function (x) {
+    var a = el('a'); a.href = x[0];
+    a.appendChild(el('b', '', x[1])); a.appendChild(el('span', '', x[2]));
+    q.appendChild(a);
+  });
+  qp.appendChild(q);
+  left.appendChild(qp);
+
+  /* The action queue: everything with a button on it, in one column. */
   var cols = el('div', 'cols');
-
-  var follow = panel('Follow Ups', 'Needs attention', 'admin.html', 'View all');
-  fillOrEmpty(follow, (d.followUps || []).map(followRow),
-    'Nobody is waiting on a call. Good.');
+  var follow = panel('Follow Ups', 'Needs attention', 'admin.html', 'View all', (d.followUps || []).length);
+  fillOrEmpty(follow, (d.followUps || []).map(followRow), 'Nobody is waiting on a call. Good.');
   cols.appendChild(follow);
-
-  var ready = panel('Ready to Schedule', 'Sold, no date yet', 'admin-schedule.html', 'View all');
-  fillOrEmpty(ready, (d.ready || []).map(readyRow),
-    'Every sold job has a date on it.');
+  var ready = panel('Ready to Schedule', 'Sold, no date yet', 'admin-schedule.html', 'View all', (d.ready || []).length);
+  fillOrEmpty(ready, (d.ready || []).map(readyRow), 'Every sold job has a date on it.');
   cols.appendChild(ready);
-
-  var pay = panel('Payments Due', 'Unpaid invoices', 'admin-activity.html', 'View all');
-  fillOrEmpty(pay, (d.payments || []).map(payRow),
-    'Nothing outstanding.');
+  var pay = panel('Payments Due', 'Unpaid invoices', 'admin-activity.html', 'View all', (d.payments || []).length);
+  fillOrEmpty(pay, (d.payments || []).map(payRow), 'Nothing outstanding.');
   cols.appendChild(pay);
+  right = cols;
 
-  wrap.appendChild(cols);
+  grid.appendChild(left);
+  grid.appendChild(right);
+  wrap.appendChild(grid);
 }
 
 function load() {
   var now = new Date();
   document.getElementById('greeting').textContent = greetingFor(now);
-  document.getElementById('h-date').textContent =
-    now.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 
   authFetch('/admin/dashboard?today=' + encodeURIComponent(todayISO())).then(function (res) {
     if (!res.ok) throw new Error('load failed');
@@ -475,7 +510,7 @@ function load() {
 
 load();
 
-AdminNav.render(document.querySelector('.h-actions'));
+AdminShell.mount();
 </script>
 </body>
 </html>

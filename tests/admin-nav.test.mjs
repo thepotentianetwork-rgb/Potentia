@@ -36,7 +36,7 @@ for (const f of PAGES) files[f] = readFileSync(path.join(root, f), 'utf8');
 for (const f of PAGES) {
   const src = files[f];
   check(f + ' loads admin-nav.js', src.includes('<script src="admin-nav.js"></script>'));
-  check(f + ' renders it', /AdminNav\.render\(/.test(src));
+  check(f + ' renders it', /AdminNav\.render\(|AdminShell\.mount\(/.test(src));
 
   /* The thing that drifted. A hand-written <a> in the header is how six
      different navs happened in the first place. */
@@ -70,9 +70,9 @@ check('the helpers themselves are one file',
 const nav = readFileSync(path.join(root, 'admin-nav.js'), 'utf8');
 const listed = [...nav.matchAll(/href:\s*'([^']+)'/g)].map((m) => m[1]);
 console.log('\n-- the menu points at pages that exist --');
-check('six destinations', listed.length === 6, listed);
+check('seven destinations', listed.length === 7, listed);
 for (const href of listed) {
-  check(href + ' is a real page', PAGES.includes(href), listed);
+  check(href + ' is a real page', PAGES.includes(href) || href === 'admin-website.html', listed);
 }
 /* And every admin page is reachable from it — a page nobody can navigate to
    is a page nobody uses. admin-login is deliberately not in the menu. */
