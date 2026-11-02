@@ -272,6 +272,23 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
       of your call list.
       <button class="lp-reseed" id="lp-recheck" type="button">Recheck websites</button>
     </p>
+
+    <!-- International profile (Mexico). Separate grid, separate rules; the
+         domestic toggles and buttons above never touch it. -->
+    <p class="lp-cat-label" style="margin-top:36px">International &mdash; Mexico</p>
+    <div class="lp-cats" id="lp-intl-cats"><span class="lp-cat-loading">Loading&hellip;</span></div>
+    <div class="lp-row">
+      <button class="lp-btn" id="lp-intl-plan">Plan &mdash; show searches (free)</button>
+      <button class="lp-btn lp-dry" id="lp-intl-dry">Dry run &mdash; search &amp; crawl, add nothing</button>
+      <button class="lp-btn lp-live" id="lp-intl-live">Real run &mdash; add intl leads</button>
+    </div>
+    <p class="lp-note">
+      International leads need a real website: the pipeline searches Google in Mexico (English and
+      Spanish), skips anyone without a site, then reads up to six pages of each site (home, contact,
+      about, reservations) for public business emails like info@ or reservaciones@. Personal
+      addresses are never kept and nothing is guessed. No email is ever sent from here.
+    </p>
+    <div class="lp-out" id="lp-intl-out" hidden></div>
     </div>
   </section>
 
@@ -467,6 +484,7 @@ function authFetch(path, options) {
     unlockMsg.textContent = '';
     lockBtn.innerHTML = '\uD83D\uDD13 Lock';
     loadCats();
+    loadIntl();
   }
   function setLocked() {
     unlockToken = null;
@@ -681,6 +699,78 @@ function authFetch(path, options) {
       catsMessage('Could not reach the server (' + (e && e.message ? e.message : 'network error') + ').');
     });
   }
+
+  /* ── International (profile=intl) ── its own chips, buttons and output.
+     Function declarations so setUnlocked() can call loadIntl() early. */
+  function intlEls() {
+    return { cats: document.getElementById('lp-intl-cats'), out: document.getElementById('lp-intl-out'),
+             plan: document.getElementById('lp-intl-plan'), dry: document.getElementById('lp-intl-dry'),
+             live: document.getElementById('lp-intl-live') };
+  }
+  function paintIntl(list) {
+    var el = intlEls(); if (!el.cats) return;
+    el.cats.innerHTML = '';
+    var anyOn = (list || []).some(function (s) { return s.enabled; });
+    el.dry.disabled = el.live.disabled = el.plan.disabled = !anyOn;
+    (list || []).forEach(function (seg) {
+      var b = document.createElement('button');
+      b.className = 'lp-cat' + (seg.enabled ? ' on' : ''); b.type = 'button';
+      b.appendChild(document.createTextNode(seg.label));
+      var c = document.createElement('span'); c.className = 'lp-n';
+      c.textContent = seg.enabled ? (seg.cities || []).join(', ') : 'off';
+      b.appendChild(c);
+      b.addEventListener('click', function () {
+        b.disabled = true;
+        leadFetch('/crm/leads/sources', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ segment: seg.key, enabled: !seg.enabled }) })
+          .then(function (r) { if (r.ok && r.data) paintIntl(r.data.segments); else b.disabled = false; })
+          .catch(function () { b.disabled = false; });
+      });
+      el.cats.appendChild(b);
+    });
+  }
+  function loadIntl() {
+    var el = intlEls(); if (!el.cats) return;
+    leadFetch('/crm/leads/segments?profile=intl').then(function (r) {
+      if (r.ok && r.data && r.data.segments) paintIntl(r.data.segments);
+      else el.cats.textContent = readable((r.data && r.data.error) || ('The server answered ' + r.status + '.'));
+    }).catch(function () { el.cats.textContent = 'Could not reach the server.'; });
+  }
+  function runIntl(mode) {
+    var el = intlEls();
+    el.plan.disabled = el.dry.disabled = el.live.disabled = true;
+    el.out.hidden = false; el.out.innerHTML = mode === 'plan' ? 'Planning&hellip;' : 'Starting&hellip; leave this page open.';
+    var log = [];
+    function note(h) { log.push(h); el.out.innerHTML = log.join('<br>'); }
+    var q = mode === 'plan' ? '&plan=1' : mode === 'dry' ? '&dry=1' : '';
+    streamPost('/crm/leads/run-now?profile=intl' + q, function (d) {
+      if (d.event === 'plan') {
+        note('Next run would make ' + n(d.searches.length) + ' Google searches (~$' + esc(d.est_cost_usd) + '):');
+        d.searches.forEach(function (s) { note('&nbsp;&nbsp;&middot; ' + esc(s.query) + ' <span class="lp-n">[' + esc(s.language) + ']</span>'); });
+        note(n(d.queued) + ' businesses already queued for crawling.' + (d.has_places_key ? '' : ' <span class="lp-err">No Places API key set.</span>'));
+      } else if (d.event === 'sourcing') { note('Searching: ' + (d.searches || []).map(esc).join(' &middot; '));
+      } else if (d.event === 'sourced') { note('Found ' + n(d.sourced) + ', ' + n(d.deduped) + ' already known, ' + n(d.screened) + ' screened out.');
+      } else if (d.event === 'batch') { note('Crawling ' + n(d.total) + ' websites&hellip;');
+      } else if (d.event === 'judged') {
+        note((d.kept ? '&#10003; ' : '&#10007; ') + '<b>' + esc(d.name) + '</b> &mdash; ' + esc(d.reason) +
+             (d.emails && d.emails.length ? ' <span class="lp-n">' + d.emails.map(function (e) { return esc(e.email) + (e.type === 'role' ? '' : ' (review)'); }).join(', ') + '</span>' : ''));
+      } else if (d.event === 'done') {
+        var x = d.result || {};
+        if (!x.plan) note((x.dry_run ? 'Dry run done: ' + n((x.preview || []).length) + ' would be added' : 'Done: ' + n(x.pushed) + ' added') +
+             ', ' + n(x.emails_found) + ' emails found, spent ~$' + Number(x.est_cost_usd || 0).toFixed(3) + '.');
+        (x.errors || []).forEach(function (e) { note('<span class="lp-err">' + esc(readable(e)) + '</span>'); });
+      } else if (d.event === 'error') { note('<span class="lp-err">' + esc(readable(d.error)) + '</span>'); }
+    }).catch(function (e) { note('<span class="lp-err">' + esc(e.message || e) + '</span>'); })
+      .then(function () { loadIntl(); });
+  }
+  (function () {
+    var el = intlEls(); if (!el.plan) return;
+    el.plan.addEventListener('click', function () { runIntl('plan'); });
+    el.dry.addEventListener('click', function () { runIntl('dry'); });
+    el.live.addEventListener('click', function () {
+      if (confirm('Search Google in Mexico and add qualifying businesses as leads? (~$0.07 per run)')) runIntl('live');
+    });
+  })();
 
   function run(isDry) {
     dry.disabled = true; live.disabled = true;
