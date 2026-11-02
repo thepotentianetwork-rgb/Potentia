@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "c9aa7ed";
-const WORKER_BUILT_AT = "2026-10-29T16:46:11.601Z";
+const WORKER_BUILD = "501dd00";
+const WORKER_BUILT_AT = "2026-11-02T23:27:31.873Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -2242,17 +2242,31 @@ function porchAddsSize(c) {
 /* ══════════════════════════════════════════════════════════════════════════
    LEAD ENRICHMENT PIPELINE
 
-   Sources local businesses from Google Places, researches each one with Grok,
-   scores it against Potentia's three offers with Claude, and inserts the good
-   ones into the CRM's `clients` table as leads.
+   Sources local businesses from Google Places, judges each one's website with
+   free checks (Places fields, then Google PageSpeed), and inserts the ones
+   that qualify into the CRM's `clients` table as leads. (The Grok research
+   and Claude scoring stages described in older notes were removed.)
+
+   Two PROFILES share this file and the `lead_sources` grid:
+   - 'domestic' (default) — US trades/detailers/dealers with no or weak sites.
+     Its behaviour is pinned by leadpipeline.test.mjs and must not change.
+   - 'intl' — established tourism businesses abroad (first slice: Cabo San
+     Lucas yacht charters). Inverted qualifying rules (website required, no
+     review ceiling), and contacts come from crawling the business's own
+     site (intlcrawl.js) into `lead_emails`. See runIntlPipeline().
 
    Three rules shape most of the code below.
 
    1. PLACES CONTENT IS BORROWED, NOT KEPT. Google's terms let us store
       `place_id` indefinitely and essentially nothing else. So Places fields
       live in lead_candidates only while a candidate is being judged, and the
-      row is stripped the moment it is. A qualified lead's durable contact
-      details come from the business's own site (enrichment source_urls).
+      row is stripped the moment it is.
+      KNOWN GAP (domestic): pushLeadToCrm still copies the Places name, phone,
+      website and address onto the `clients` row so a caller can ring the
+      lead. That is a deliberate, documented exception pending Nando's call
+      (audit 2026-11-02, question 8) and is left unchanged here. The intl
+      profile does better: phone/email come from the business's own website
+      where it publishes them, and the full Places address is not stored.
 
    2. THE PIPELINE NEVER OVERWRITES. It only ever INSERTs into `clients`. If a
       business is already there — however it got there, however stale it looks
@@ -2343,6 +2357,38 @@ async function ensureLeadPipelineTables(env) {
     await db.prepare("ALTER TABLE lead_candidates ADD COLUMN trade TEXT").run();
   }
 
+  /* Profiles (2026-11-02). Existing rows are all domestic, which is exactly
+     what the defaults say, so adding the columns changes nothing for them.
+     `region` is the generic name for what `state` holds; `state` stays for
+     compatibility and is still what the domestic query string uses. */
+  const srcCols = (await db.prepare("PRAGMA table_info(lead_sources)").all()).results || [];
+  const srcNames = srcCols.map((r) => r.name);
+  for (const [name, decl] of [["profile", "TEXT NOT NULL DEFAULT 'domestic'"],
+                              ["country", "TEXT NOT NULL DEFAULT 'US'"],
+                              ["region", "TEXT"],
+                              ["tier", "INTEGER"],
+                              ["language", "TEXT"]]) {
+    if (srcNames.indexOf(name) === -1) {
+      await db.prepare(`ALTER TABLE lead_sources ADD COLUMN ${name} ${decl}`).run();
+    }
+  }
+
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS lead_emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      email TEXT NOT NULL,
+      source_url TEXT,
+      discovered_at TEXT NOT NULL,
+      type TEXT,                       -- role | freemail_role | freemail
+      verification_status TEXT NOT NULL DEFAULT 'unverified',
+      eligibility TEXT NOT NULL DEFAULT 'pending_verification', -- pending_verification | review | eligible | ineligible
+      last_contacted_at TEXT,
+      opted_out INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (client_id, email))`
+  ).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_emails_email ON lead_emails(email)").run();
+
   // Same for `screened` — free screening used to be lumped in with `rejected`.
   const runCols = await db.prepare("PRAGMA table_info(enrichment_runs)").all();
   if ((runCols.results || []).map((r) => r.name).indexOf("screened") === -1) {
@@ -2365,7 +2411,10 @@ async function ensureLeadPipelineTables(env) {
     ["lead_mobile_ready", "INTEGER"],
     ["lead_check", "TEXT"],
     ["lead_trade", "TEXT"],
-    ["created_by_pipeline", "INTEGER NOT NULL DEFAULT 0"]
+    ["created_by_pipeline", "INTEGER NOT NULL DEFAULT 0"],
+    // International profile. NULL on every domestic row.
+    ["country", "TEXT"],
+    ["city", "TEXT"]
   ];
   for (const [name, decl] of wanted) {
     if (cols.indexOf(name) === -1) {
@@ -2439,7 +2488,12 @@ const PLACES_FIELDS = [
   "places.businessStatus"
 ].join(",");
 
-async function placesTextSearch(env, query, signal) {
+/* opts (intl only): { regionCode: 'mx', languageCode: 'es' }. Called with no
+   opts the request body is byte-identical to what domestic always sent. */
+async function placesTextSearch(env, query, signal, opts) {
+  const req = { textQuery: query, maxResultCount: 20 };
+  if (opts && opts.regionCode) req.regionCode = opts.regionCode;
+  if (opts && opts.languageCode) req.languageCode = opts.languageCode;
   const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
     method: "POST",
     headers: {
@@ -2447,7 +2501,7 @@ async function placesTextSearch(env, query, signal) {
       "X-Goog-Api-Key": apiKey(env.GOOGLE_PLACES_API_KEY),
       "X-Goog-FieldMask": PLACES_FIELDS
     },
-    body: JSON.stringify({ textQuery: query, maxResultCount: 20 }),
+    body: JSON.stringify(req),
     signal: signal || AbortSignal.timeout(30000)
   });
   if (!res.ok) {
@@ -2745,10 +2799,13 @@ function coprimeStride(want, n) {
    back to whatever this file ships. That is why it is opt-in. */
 async function seedLeadSources(env, force) {
   const db = env.CRM_DB;
-  const n = await db.prepare("SELECT COUNT(*) AS c FROM lead_sources").first();
+  /* Domestic rows only. An intl grid in the same table must neither stop the
+     domestic grid seeding nor be wiped by a domestic ?reseed=1. */
+  const n = await db.prepare(
+    "SELECT COUNT(*) AS c FROM lead_sources WHERE COALESCE(profile, 'domestic') = 'domestic'").first();
   if (n && Number(n.c) > 0) {
     if (!force) return 0;
-    await db.prepare("DELETE FROM lead_sources").run();
+    await db.prepare("DELETE FROM lead_sources WHERE COALESCE(profile, 'domestic') = 'domestic'").run();
   }
   const now = new Date().toISOString();
   const rows = defaultSources();
@@ -2779,7 +2836,7 @@ async function sourceCandidates(env, counts, opts) {
   /* Oldest-run-first so the grid rotates evenly instead of hammering whatever
      sorts first. NULL last_run_at sorts first, so new rows go before old. */
   const srcs = await db.prepare(
-    `SELECT * FROM lead_sources WHERE enabled = 1
+    `SELECT * FROM lead_sources WHERE enabled = 1 AND COALESCE(profile, 'domestic') = 'domestic'
      ORDER BY last_run_at IS NOT NULL, last_run_at ASC LIMIT ?`
   ).bind(batch).all();
 
@@ -3156,6 +3213,7 @@ function offerName(n) {
   if (n === 1) return "$99 Website";
   if (n === 2) return "Credibility Website";
   if (n === 3) return "Dealership CRM";
+  if (n === 4) return "International Website";
   return "Unknown";
 }
 
@@ -3220,7 +3278,7 @@ async function listSegments(env) {
     `SELECT segment,
             SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS on_count,
             COUNT(*) AS total
-       FROM lead_sources GROUP BY segment`
+       FROM lead_sources WHERE COALESCE(profile, 'domestic') = 'domestic' GROUP BY segment`
   ).all();
   const bySeg = {};
   for (const r of rows.results || []) bySeg[r.segment] = r;
@@ -3240,7 +3298,8 @@ async function listSegments(env) {
 async function setSegmentEnabled(env, segment, enabled) {
   if (LEAD_SEGMENTS.indexOf(segment) === -1) throw new Error("unknown category: " + segment);
   const res = await env.CRM_DB.prepare(
-    `UPDATE lead_sources SET enabled = ? WHERE segment = ? AND state <> ?`
+    `UPDATE lead_sources SET enabled = ? WHERE segment = ? AND state <> ?
+        AND COALESCE(profile, 'domestic') = 'domestic'`
   ).bind(enabled ? 1 : 0, segment, HOME_STATE).run();
   return (res && res.meta && res.meta.changes) || 0;
 }
@@ -3284,6 +3343,7 @@ async function recheckLeads(env, opts) {
         AND (c.owner IS NULL OR c.owner = '')
         AND c.website_url IS NOT NULL AND c.website_url != ''
         AND c.lead_speed IS NULL
+        AND substr(COALESCE(c.lead_segment, ''), 1, 5) <> 'intl_'
         AND NOT EXISTS (SELECT 1 FROM client_calls cl WHERE cl.client_id = c.id)
       ORDER BY c.id ASC LIMIT ?`
   ).bind(limit).all();
@@ -3382,6 +3442,8 @@ async function spentToday(env) {
    for looking at what the grid actually returns before spending on it. */
 async function runLeadPipeline(env, opts) {
   const o = opts || {};
+  // The intl profile has its own run; everything below is domestic, unchanged.
+  if (o.profile === "intl") return runIntlPipeline(env, o);
   const perRun = Math.max(1, Math.min(25, Number(o.limit) || LEAD_DEFAULTS.perRun));
   const cap = Number(env.LEADS_DAILY_USD_CAP || LEAD_DEFAULTS.dailyUsdCap);
   const db = env.CRM_DB;
@@ -3400,7 +3462,7 @@ async function runLeadPipeline(env, opts) {
      turned down is status 'rejected' and keeps its verdict. */
   if (o.rescreen) {
     const gone = await db.prepare(
-      "DELETE FROM lead_candidates WHERE status = 'screened'"
+      "DELETE FROM lead_candidates WHERE status = 'screened' AND substr(segment, 1, 5) <> 'intl_'"
     ).run();
     counts.rescreened = (gone && gone.meta && gone.meta.changes) || 0;
   }
@@ -3477,7 +3539,7 @@ async function runLeadPipeline(env, opts) {
          leads said another. Candidates from a category that is off are not
          discarded, just parked until it is on again. */
       const live = await db.prepare(
-        "SELECT DISTINCT segment FROM lead_sources WHERE enabled = 1"
+        "SELECT DISTINCT segment FROM lead_sources WHERE enabled = 1 AND COALESCE(profile, 'domestic') = 'domestic'"
       ).all();
       const liveSegments = (live.results || []).map((r) => r.segment);
 
@@ -3622,6 +3684,447 @@ async function failCandidate(env, cand, msg, counts, account) {
 
 
 function safeParse(s) { try { return JSON.parse(s); } catch (e) { return null; } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   INTERNATIONAL PROFILE (profile = 'intl')
+
+   Same grid table, same candidate table, same cost log — different rules.
+   Domestic hunts small US trades with no or weak websites; intl hunts
+   established tourism businesses abroad whose WEBSITE is the asset (it is
+   where the contact email lives and what Potentia would improve). So:
+   - website REQUIRED (a Facebook-only listing is rejected, not a lead);
+   - NO review ceiling (a 900-review charter company is the target);
+   - contacts are crawled from the business's own site into lead_emails.
+
+   Everything is seeded DISABLED except the first slice: Cabo San Lucas ×
+   yacht/boat charter. Switch more on with POST /crm/leads/sources.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const INTL_DEFAULTS = {
+  perRun: 5,          // crawls up to ~7 fetches each; keeps a run well under Worker subrequest limits
+  maxPerRun: 10,
+  sourceBatch: 2,
+  dailyUsdCap: 2.0,   // LEADS_INTL_DAILY_USD_CAP; intl spend also counts toward the domestic cap
+  minReviews: 5,
+  trigger: "manual_intl"
+};
+
+/* Each query carries its language so Places is asked in the language the
+   business would list itself in. `on` is only the shipped default. */
+const INTL_SEGMENTS = [
+  { key: "intl_yacht_charter", label: "Yacht & boat charters", on: true, queries: [
+      ["yacht charter", "en"], ["boat charter", "en"], ["fishing charter", "en"],
+      ["sunset cruise", "en"], ["renta de yates", "es"], ["renta de barcos", "es"],
+      ["pesca deportiva", "es"] ] },
+  { key: "intl_tours", label: "Tours & excursions", on: false, queries: [
+      ["tour operator", "en"], ["excursions", "en"], ["tours", "es"], ["excursiones", "es"] ] },
+  { key: "intl_dental", label: "Dental clinics (medical tourism)", on: false, queries: [
+      ["dental clinic", "en"], ["dentist", "en"], ["clínica dental", "es"], ["dentista", "es"] ] },
+  { key: "intl_medical", label: "Medical & cosmetic clinics", on: false, queries: [
+      ["plastic surgery clinic", "en"], ["medical spa", "en"], ["cirugía plástica", "es"] ] },
+  { key: "intl_real_estate", label: "Real estate agencies", on: false, queries: [
+      ["real estate agency", "en"], ["inmobiliaria", "es"], ["bienes raíces", "es"] ] },
+  { key: "intl_property_mgmt", label: "Vacation rental & property management", on: false, queries: [
+      ["vacation rental management", "en"], ["property management", "en"], ["administración de propiedades", "es"] ] },
+  { key: "intl_boutique_hotel", label: "Boutique hotels", on: false, queries: [
+      ["boutique hotel", "en"], ["hotel boutique", "es"] ] },
+  { key: "intl_restaurant", label: "Restaurants", on: false, queries: [
+      ["fine dining restaurant", "en"], ["restaurante", "es"] ] },
+  { key: "intl_spa", label: "Spas & wellness", on: false, queries: [
+      ["day spa", "en"], ["spa", "es"], ["wellness retreat", "en"] ] },
+  { key: "intl_wedding", label: "Wedding planners & venues", on: false, queries: [
+      ["wedding planner", "en"], ["destination wedding venue", "en"], ["organizador de bodas", "es"] ] },
+  { key: "intl_dive", label: "Dive & surf schools", on: false, queries: [
+      ["scuba diving", "en"], ["surf school", "en"], ["buceo", "es"], ["escuela de surf", "es"] ] },
+  { key: "intl_transport", label: "Airport transfers & transport", on: false, queries: [
+      ["airport transportation", "en"], ["private transfers", "en"], ["transporte aeropuerto", "es"] ] },
+  { key: "intl_golf", label: "Golf", on: false, queries: [
+      ["golf course", "en"], ["campo de golf", "es"] ] },
+  { key: "intl_adventure", label: "Adventure (ATV, ziplines)", on: false, queries: [
+      ["atv tours", "en"], ["zipline", "en"], ["tirolesa", "es"], ["cuatrimotos", "es"] ] },
+  { key: "intl_legal", label: "Lawyers & notaries (foreign buyers)", on: false, queries: [
+      ["real estate lawyer", "en"], ["abogado inmobiliario", "es"], ["notaría", "es"] ] }
+];
+const INTL_SEGMENT_KEYS = INTL_SEGMENTS.map((s) => s.key);
+
+/* [city, region (state), country ISO, tier, on]. Tier 1 = tourism hubs with
+   the most US visitors. Only Cabo San Lucas ships on. */
+const INTL_CITIES = [
+  ["Cabo San Lucas", "Baja California Sur", "MX", 1, 1],
+  ["San José del Cabo", "Baja California Sur", "MX", 1, 0],
+  ["Puerto Vallarta", "Jalisco", "MX", 1, 0],
+  ["Cancún", "Quintana Roo", "MX", 1, 0],
+  ["Playa del Carmen", "Quintana Roo", "MX", 1, 0],
+  ["Tulum", "Quintana Roo", "MX", 1, 0],
+  ["Nuevo Vallarta", "Nayarit", "MX", 1, 0],
+  ["Mazatlán", "Sinaloa", "MX", 2, 0],
+  ["La Paz", "Baja California Sur", "MX", 2, 0],
+  ["Cozumel", "Quintana Roo", "MX", 2, 0],
+  ["San Miguel de Allende", "Guanajuato", "MX", 2, 0],
+  ["Tijuana", "Baja California", "MX", 2, 0],
+  ["Ensenada", "Baja California", "MX", 2, 0],
+  ["Mérida", "Yucatán", "MX", 2, 0],
+  ["Mexico City", "Ciudad de México", "MX", 2, 0]
+];
+
+function intlDefaultSources() {
+  const out = [];
+  for (const seg of INTL_SEGMENTS) {
+    for (const [q, lang] of seg.queries) {
+      for (const [city, region, country, tier, on] of INTL_CITIES) {
+        out.push({ profile: "intl", query_template: q, language: lang, city, region,
+                   state: region, country, tier, segment: seg.key, offer_hint: 4,
+                   enabled: seg.on && on ? 1 : 0 });
+      }
+    }
+  }
+  return out;
+}
+
+/* Inserts any intl row the table does not have yet (so new cities/industries
+   added in code appear without a reseed, and existing toggles/last_run_at are
+   kept). force=true replaces the intl grid ONLY — domestic rows are untouched. */
+async function seedIntlSources(env, force) {
+  const db = env.CRM_DB;
+  if (force) await db.prepare("DELETE FROM lead_sources WHERE profile = 'intl'").run();
+  const have = await db.prepare(
+    "SELECT segment, query_template, city FROM lead_sources WHERE profile = 'intl'").all();
+  const key = (r) => r.segment + "|" + r.query_template + "|" + r.city;
+  const seen = new Set((have.results || []).map(key));
+  const rows = intlDefaultSources().filter((r) => !seen.has(key(r)));
+  const now = new Date().toISOString();
+  const insert = db.prepare(
+    `INSERT INTO lead_sources (query_template, city, state, segment, offer_hint, enabled, created_at,
+                               profile, country, region, tier, language)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'intl', ?, ?, ?, ?)`);
+  for (let i = 0; i < rows.length; i += 100) {
+    await db.batch(rows.slice(i, i + 100).map((r) =>
+      insert.bind(r.query_template, r.city, r.state, r.segment, r.offer_hint, r.enabled, now,
+                  r.country, r.region, r.tier, r.language)));
+  }
+  return rows.length;
+}
+
+async function listIntlSegments(env) {
+  const rows = await env.CRM_DB.prepare(
+    `SELECT segment, city, SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END) AS on_count, COUNT(*) AS total
+       FROM lead_sources WHERE profile = 'intl' GROUP BY segment, city`).all();
+  const bySeg = {};
+  for (const r of rows.results || []) {
+    const b = bySeg[r.segment] || (bySeg[r.segment] = { on: 0, total: 0, cities: [] });
+    b.on += Number(r.on_count || 0); b.total += Number(r.total || 0);
+    if (Number(r.on_count) > 0) b.cities.push(r.city);
+  }
+  return INTL_SEGMENTS.map((s) => {
+    const b = bySeg[s.key] || { on: 0, total: 0, cities: [] };
+    return { key: s.key, label: s.label, profile: "intl", searches: b.on, total: b.total,
+             enabled: b.on > 0, cities: b.cities.sort() };
+  });
+}
+
+function intlCityList() {
+  return INTL_CITIES.map(([city, region, country, tier, on]) => ({ city, region, country, tier, default_on: !!on }));
+}
+
+/* Toggle intl rows. segment required; city optional (omit = every city that
+   ships on, i.e. the same scope the category chip means). Never touches a
+   domestic row. */
+async function setIntlSourcesEnabled(env, segment, enabled, city) {
+  if (INTL_SEGMENT_KEYS.indexOf(segment) === -1) throw new Error("unknown intl category: " + segment);
+  let res;
+  if (city) {
+    if (!INTL_CITIES.some((c) => c[0] === city)) throw new Error("unknown intl city: " + city);
+    res = await env.CRM_DB.prepare(
+      "UPDATE lead_sources SET enabled = ? WHERE profile = 'intl' AND segment = ? AND city = ?"
+    ).bind(enabled ? 1 : 0, segment, city).run();
+  } else {
+    const live = INTL_CITIES.filter((c) => c[4]).map((c) => c[0]);
+    if (!enabled) {
+      res = await env.CRM_DB.prepare(
+        "UPDATE lead_sources SET enabled = 0 WHERE profile = 'intl' AND segment = ?").bind(segment).run();
+    } else {
+      res = await env.CRM_DB.prepare(
+        `UPDATE lead_sources SET enabled = 1 WHERE profile = 'intl' AND segment = ?
+           AND city IN (${live.map(() => "?").join(",")})`).bind(segment, ...live).run();
+    }
+  }
+  return (res && res.meta && res.meta.changes) || 0;
+}
+
+/* Free-field screen for intl. Separate from placesReject on purpose: no
+   review ceiling, and a website is mandatory. */
+function intlReject(p, minRating) {
+  if (!p.website) return "no website — an intl lead's value is its site";
+  const fake = notARealWebsite(p.website);
+  if (fake) return "only a " + fake + " page, no site of its own";
+  const rc = p.review_count;
+  if (rc == null || rc < INTL_DEFAULTS.minReviews) {
+    return "only " + (rc == null ? "no" : rc) + " reviews — no evidence of real trading";
+  }
+  const floor = minRating == null ? LEAD_DEFAULTS.minRating : Number(minRating);
+  const r = p.rating == null ? null : Number(p.rating);
+  if (r != null && isFinite(r) && isFinite(floor) && r < floor) {
+    return r + " stars from " + rc + " reviews — below the " + floor + " cut-off";
+  }
+  return null;
+}
+
+/* Established is GOOD here: more reviews = more US visitors = more budget. */
+function intlPromise(p) {
+  const rc = Number(p.review_count || 0);
+  let s = rc >= 200 ? 50 : rc >= 50 ? 40 : rc >= 15 ? 25 : 10;
+  const r = Number(p.rating || 0);
+  if (r >= 4.7) s += 25; else if (r >= 4.4) s += 15; else if (r >= 4.0) s += 5;
+  if (/^https:\/\//i.test(String(p.website || ""))) s += 10;
+  s += Math.min(15, Math.round(Number(p.photo_count || 0) / 2));
+  return Math.max(0, Math.min(100, s));
+}
+
+/* Verdict from a crawl. A site that will not load is rejected (nothing to
+   crawl for contacts); every reachable site is a lead, ranked by whether we
+   found a usable public role address. */
+function intlVerdict(places, crawl) {
+  const reviews = places.review_count == null ? "" : ", " + places.review_count + " Google reviews";
+  if (!crawl || !crawl.ok) {
+    return { qualified: false, score: 10, checked: "crawl",
+             reason: "Website did not load (" + ((crawl && crawl.error) || "unknown") + ")" + reviews + "." };
+  }
+  const role = crawl.emails.filter((e) => e.type === "role");
+  const review = crawl.emails.filter((e) => e.type !== "role");
+  let score = 50 + Math.round(intlPromise(places) / 5);
+  if (role.length) score += 20; else if (review.length) score += 8;
+  if (crawl.whatsapp.length) score += 3;
+  const bits = [];
+  bits.push(role.length ? role.length + " public role email" + (role.length > 1 ? "s" : "") + " (" + role.map((e) => e.email).join(", ") + ")"
+                        : review.length ? "free-mail address on site needs review (" + review[0].email + ")"
+                        : "no public email on site");
+  if (crawl.whatsapp.length) bits.push("WhatsApp on site");
+  bits.push(crawl.pages.length + " page" + (crawl.pages.length > 1 ? "s" : "") + " crawled");
+  return { qualified: true, score: Math.min(100, score), checked: "crawl",
+           reason: bits.join("; ") + reviews + "." };
+}
+
+/* INSERT ONLY, like pushLeadToCrm. Durable contacts come from the site:
+   the first own-domain role email, a tel:/WhatsApp number the site
+   publishes (Places phone only as a fallback so the lead can be dialled and
+   deduped), and the city/country from the grid row — the Places street
+   address is not stored. */
+async function pushIntlLeadToCrm(env, cand, places, verdict, crawl, src) {
+  const now = new Date().toISOString();
+  const role = (crawl.emails || []).find((e) => e.type === "role");
+  const phone = (crawl.phones && crawl.phones[0]) ||
+                (crawl.whatsapp && crawl.whatsapp[0] ? "+" + crawl.whatsapp[0] : null) ||
+                places.phone || null;
+  const home = (crawl.pages && crawl.pages[0] && crawl.pages[0].url) || places.website || null;
+  const city = (src && src.city) || null;
+  const country = (src && src.country) || "MX";
+  const res = await env.CRM_DB.prepare(
+    `INSERT INTO clients
+       (business_name, email, phone, website_url, status, source, service,
+        place_id, lead_score, lead_segment, lead_offer, lead_reason,
+        lead_address, lead_area, lead_check, lead_trade, country, city,
+        created_by_pipeline, do_not_contact, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'lead', 'pipeline_intl', ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, 1, 0, ?, ?)`
+  ).bind(places.name || "", role ? role.email : null, phone, home, offerName(4),
+         cand.place_id, verdict.score, cand.segment, 4, verdict.reason || "",
+         city ? city + ", " + country : country, verdict.checked, cand.trade || null,
+         country, city, now, now).run();
+  const id = (res && res.meta && res.meta.last_row_id) || null;
+  if (id) await saveLeadEmails(env, id, crawl.emails || []);
+  return id;
+}
+
+async function saveLeadEmails(env, clientId, emails) {
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const e of emails) {
+    const r = await env.CRM_DB.prepare(
+      `INSERT OR IGNORE INTO lead_emails (client_id, email, source_url, discovered_at, type,
+         verification_status, eligibility, opted_out)
+       VALUES (?, ?, ?, ?, ?, 'unverified', ?, 0)`
+    ).bind(clientId, e.email, e.source_url || null, now, e.type || null,
+           e.eligibility || "pending_verification").run();
+    n += (r && r.meta && r.meta.changes) || 0;
+  }
+  return n;
+}
+
+async function intlSpentToday(env) {
+  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const row = await env.CRM_DB.prepare(
+    "SELECT COALESCE(SUM(est_cost_usd), 0) AS c FROM enrichment_runs WHERE started_at >= ? AND trigger = ?"
+  ).bind(since, INTL_DEFAULTS.trigger).first();
+  return Number((row && row.c) || 0);
+}
+
+function intlQuery(s) { return `${s.query_template} ${s.city}, ${s.region || s.state}`; }
+
+/* The intl run.
+   opts.plan   — FREE. No network at all: lists the Places searches the next
+                 run would make and what is already queued.
+   opts.dryRun — Places search (≈$0.035 × sourceBatch) + screen, then CRAWLS
+                 (free) up to `limit` queued candidates and reports what it
+                 would push and which emails it found. Writes nothing to
+                 clients or lead_emails; candidates stay queued.
+   otherwise   — the same, and qualifying sites are INSERTed into clients
+                 with their emails in lead_emails.
+   opts.deps.crawlSite is the crawler (index.js passes intlcrawl.crawlSite;
+   tests pass a stub). opts.deps.placesTextSearch can stub Places. */
+async function runIntlPipeline(env, opts) {
+  const o = opts || {};
+  const db = env.CRM_DB;
+  const deps = o.deps || {};
+  const perRun = Math.max(1, Math.min(INTL_DEFAULTS.maxPerRun, Number(o.limit) || INTL_DEFAULTS.perRun));
+  const batchN = o.sourceBatch || INTL_DEFAULTS.sourceBatch;
+  const capAll = Number(env.LEADS_DAILY_USD_CAP || LEAD_DEFAULTS.dailyUsdCap);
+  const capIntl = Number(env.LEADS_INTL_DAILY_USD_CAP || INTL_DEFAULTS.dailyUsdCap);
+  const minRating = env.LEADS_MIN_RATING == null || env.LEADS_MIN_RATING === ""
+    ? LEAD_DEFAULTS.minRating : Number(env.LEADS_MIN_RATING);
+  const emit = async (evt) => { if (o.onProgress) { try { await o.onProgress(evt); } catch (e) {} } };
+
+  await ensureLeadPipelineTables(env);
+  await seedIntlSources(env, !!o.reseed);
+
+  const srcs = ((await db.prepare(
+    `SELECT * FROM lead_sources WHERE enabled = 1 AND profile = 'intl'
+      ORDER BY last_run_at IS NOT NULL, last_run_at ASC, id ASC LIMIT ?`).bind(batchN).all()).results) || [];
+  const liveSegs = ((await db.prepare(
+    "SELECT DISTINCT segment FROM lead_sources WHERE enabled = 1 AND profile = 'intl'").all()).results || [])
+    .map((r) => r.segment);
+
+  if (o.plan) {
+    const queued = liveSegs.length ? await db.prepare(
+      `SELECT COUNT(*) AS c FROM lead_candidates WHERE status IN ('new','enriched')
+         AND segment IN (${liveSegs.map(() => "?").join(",")})`).bind(...liveSegs).first() : { c: 0 };
+    const out = { profile: "intl", plan: true, searches: srcs.map((s) => ({
+                    id: s.id, query: intlQuery(s), language: s.language, segment: s.segment, city: s.city })),
+                  est_cost_usd: Number((srcs.length * LEAD_COST.placesSearchUsd).toFixed(4)),
+                  queued: Number((queued && queued.c) || 0), live_segments: liveSegs,
+                  has_places_key: !!apiKey(env.GOOGLE_PLACES_API_KEY) };
+    await emit({ event: "plan", ...out });
+    return out;
+  }
+
+  const counts = { sourced: 0, deduped: 0, enriched: 0, scored: 0, pushed: 0, screened: 0,
+                   rejected: 0, failed: 0, est_cost_usd: 0, emails_found: 0, emails_saved: 0,
+                   errors: [], preview: [] };
+  const started = new Date().toISOString();
+  const run = await db.prepare("INSERT INTO enrichment_runs (trigger, started_at) VALUES (?, ?)")
+    .bind(INTL_DEFAULTS.trigger, started).run();
+  const runId = (run && run.meta && run.meta.last_row_id) || null;
+  const spentAll = await spentToday(env), spentIntl = await intlSpentToday(env);
+  // Checked against the NEXT search's cost too, so intl never goes over its cap.
+  const overBudget = () => {
+    const next = counts.est_cost_usd + LEAD_COST.placesSearchUsd;
+    return spentAll + next > capAll + 1e-9 || spentIntl + next > capIntl + 1e-9;
+  };
+  const search = deps.placesTextSearch || placesTextSearch;
+  const crawl = deps.crawlSite;
+
+  try {
+    // ── source ──
+    await emit({ event: "sourcing", profile: "intl", searches: srcs.map(intlQuery) });
+    const srcById = {};
+    for (const s of srcs) {
+      srcById[s.id] = s;
+      if (overBudget()) { counts.errors.push("daily cost ceiling reached before sourcing"); break; }
+      const q = intlQuery(s);
+      let found;
+      try {
+        found = await search(env, q, undefined, { regionCode: String(s.country || "MX").toLowerCase(),
+                                                   languageCode: s.language || "es" });
+        counts.est_cost_usd += LEAD_COST.placesSearchUsd;
+      } catch (e) { counts.errors.push("source[" + q + "]: " + String(e).slice(0, 200)); continue; }
+      await db.prepare("UPDATE lead_sources SET last_run_at = ? WHERE id = ?").bind(started, s.id).run();
+      for (const p of found) {
+        if (!p.place_id) continue;
+        if (p.status && p.status !== "OPERATIONAL") { counts.deduped++; continue; }
+        counts.sourced++;
+        if (await findExisting(env, p)) { counts.deduped++; continue; }
+        const veto = intlReject(p, minRating);
+        const now = new Date().toISOString();
+        if (veto) {
+          await db.prepare(
+            `INSERT INTO lead_candidates (place_id, segment, trade, offer_hint, source_id, status, promise, score, reason, created_at, updated_at)
+             VALUES (?, ?, ?, 4, ?, 'screened', 0, 0, ?, ?, ?)`
+          ).bind(p.place_id, s.segment, s.query_template, s.id, veto.slice(0, 300), now, now).run();
+          counts.screened++;
+          await emit({ event: "screened", name: p.name, reason: veto });
+          continue;
+        }
+        await db.prepare(
+          `INSERT INTO lead_candidates (place_id, segment, trade, offer_hint, source_id, status, promise, places_json, places_fetched_at, created_at, updated_at)
+           VALUES (?, ?, ?, 4, ?, 'new', ?, ?, ?, ?, ?)`
+        ).bind(p.place_id, s.segment, s.query_template, s.id, intlPromise(p), JSON.stringify(p), now, now, now).run();
+      }
+    }
+    await emit({ event: "sourced", sourced: counts.sourced, deduped: counts.deduped, screened: counts.screened });
+
+    // ── crawl + judge ──
+    const queue = liveSegs.length ? ((await db.prepare(
+      `SELECT * FROM lead_candidates WHERE status IN ('new','enriched') AND attempts < ?
+         AND segment IN (${liveSegs.map(() => "?").join(",")})
+       ORDER BY COALESCE(promise, -1) DESC, id ASC LIMIT ?`
+    ).bind(LEAD_DEFAULTS.maxAttempts, ...liveSegs, perRun).all()).results || []) : [];
+    await emit({ event: "batch", total: queue.length });
+    if (queue.length && typeof crawl !== "function") throw new Error("no crawler wired (deps.crawlSite)");
+
+    let pos = 0;
+    for (const cand of queue) {
+      pos++;
+      const places = safeParse(cand.places_json);
+      if (!places) { await failCandidate(env, cand, "no places_json", counts); continue; }
+      let src = srcById[cand.source_id];
+      if (!src && cand.source_id) src = await db.prepare("SELECT * FROM lead_sources WHERE id = ?").bind(cand.source_id).first();
+      await emit({ event: "checking", position: pos, total: queue.length, name: places.name, website: places.website });
+      let c;
+      try { c = await crawl(places.website); }
+      catch (e) { await failCandidate(env, cand, "crawl: " + String(e).slice(0, 200), counts); continue; }
+      /* A homepage that timed out or refused the connection may well load
+         next time: retry (up to maxAttempts) instead of tombstoning it. A
+         site that answered with an error status is judged below. */
+      if (!c.ok && !c.home_status) {
+        await failCandidate(env, cand, "crawl: " + (c.error || "no response"), counts);
+        await emit({ event: "candidate_failed", position: pos, total: queue.length, name: places.name });
+        continue;
+      }
+      counts.enriched++;
+      counts.emails_found += (c.emails || []).length;
+      const v = intlVerdict(places, c);
+      counts.scored++;
+      const item = { name: places.name, website: places.website, city: src && src.city,
+                     kept: v.qualified, score: v.score, reason: v.reason,
+                     emails: (c.emails || []).map((e) => ({ email: e.email, type: e.type, source_url: e.source_url })),
+                     phones: c.phones, whatsapp: c.whatsapp };
+      if (o.dryRun) {
+        counts.preview.push(item);
+      } else if (v.qualified) {
+        const id = await pushIntlLeadToCrm(env, cand, places, v, c, src);
+        counts.emails_saved += id ? ((await db.prepare("SELECT COUNT(*) AS c FROM lead_emails WHERE client_id = ?").bind(id).first()) || {}).c || 0 : 0;
+        await stripCandidate(env, cand.id, "pushed", v.score, v.reason, id);
+        counts.pushed++;
+        item.client_id = id;
+      } else {
+        await stripCandidate(env, cand.id, "rejected", v.score, v.reason, null);
+        counts.rejected++;
+      }
+      await emit({ event: "judged", position: pos, total: queue.length, ...item });
+    }
+  } catch (e) {
+    counts.errors.push("run: " + String(e).slice(0, 300));
+  }
+
+  if (runId) {
+    await db.prepare(
+      `UPDATE enrichment_runs SET finished_at = ?, sourced = ?, deduped = ?, enriched = ?, scored = ?,
+              pushed = ?, screened = ?, rejected = ?, failed = ?, est_cost_usd = ?, error = ? WHERE id = ?`
+    ).bind(new Date().toISOString(), counts.sourced, counts.deduped, counts.enriched, counts.scored,
+           counts.pushed, counts.screened, counts.rejected, counts.failed,
+           Number(counts.est_cost_usd.toFixed(4)),
+           counts.errors.length ? counts.errors.join(" | ").slice(0, 900) : null, runId).run();
+  }
+  return { run_id: runId, profile: "intl", dry_run: !!o.dryRun, ...counts };
+}
 
 // ---- end inlined leadpipeline.js ----
 
@@ -8743,6 +9246,350 @@ async function statsView(db, nowMs) {
 }
 
 // ---- end inlined crmquery.js ----
+
+// ---- inlined from worker/intlcrawl.js by build-bundle.mjs — do not edit below by hand ----
+/* ══════════════════════════════════════════════════════════════════════════
+   INTERNATIONAL LEADS — SITE CRAWL + PUBLIC ROLE-EMAIL EXTRACTION
+
+   For an international lead the business's own website IS the value: it is
+   where the durable contact details come from (not Google Places), and it is
+   what Potentia would be pitching to improve.
+
+   Rules, all enforced here:
+   - Same-domain only. Homepage plus links whose URL or text looks like a
+     contact / about / reservations / booking page (EN + ES), at most
+     INTL_CRAWL.maxPages pages in total.
+   - robots.txt is fetched once and honoured (User-agent * and our own UA).
+   - Every fetch has a timeout and a byte ceiling.
+   - Emails come only from mailto: links and visible text on the pages we
+     fetched. Nothing is ever guessed or constructed.
+   - Only ROLE addresses (info@, reservaciones@, ...) on the site's own or a
+     related domain are kept as outreach candidates. A personal-looking
+     address (juan.perez@) is excluded and only counted. A free-mail role-ish
+     address shown on the site (cabocharters@gmail.com) is kept but flagged
+     for review, since many small Mexican operators run on Gmail.
+
+   NO IMPORTS: the bundler (build-bundle.mjs) inlines this file as-is.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const INTL_CRAWL = {
+  maxPages: 6,
+  timeoutMs: 10000,
+  maxBytes: 600000,
+  userAgent: "PotentiaLeadBot/1.0 (+https://potentianetwork.com)"
+};
+
+/* Local parts that name a function, not a person. Matched on the whole local
+   part, or the local part with a trailing digit/separator suffix stripped
+   (info1@, ventas.cabo@). */
+const ROLE_LOCALPARTS = [
+  "info", "contact", "contacto", "contactus", "reservations", "reservation",
+  "reservaciones", "reservacion", "reservas", "booking", "bookings", "book",
+  "sales", "ventas", "marketing", "hello", "hola", "office", "oficina",
+  "charters", "charter", "admin", "support", "service", "servicio",
+  "concierge", "inquiries", "enquiries", "team", "mail"
+];
+
+const FREEMAIL = ["gmail.com", "hotmail.com", "outlook.com", "yahoo.com", "yahoo.com.mx",
+  "hotmail.com.mx", "live.com", "live.com.mx", "icloud.com", "prodigy.net.mx", "aol.com", "msn.com"];
+
+/* Paths/anchor text that are worth following. */
+const FOLLOW_RE = /(contact|contacto|about|nosotros|acerca|quienes|reserv|book|booking|charter|tours?-?info)/i;
+
+/* Asset-ish "emails" that regexes love: logo@2x.png, sprite@3x.webp. */
+const ASSET_RE = /\.(png|jpe?g|gif|webp|svg|css|js|ico|mp4|woff2?)$/i;
+
+const SECOND_LEVEL = ["com.mx", "org.mx", "net.mx", "gob.mx", "edu.mx", "co.uk", "com.au", "com.br"];
+
+/* example.co.uk -> example.co.uk, www.shop.example.com.mx -> example.com.mx */
+function baseDomain(hostOrUrl) {
+  let h = String(hostOrUrl || "").trim().toLowerCase();
+  if (!h) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//.test(h)) { try { h = new URL(h).hostname; } catch (e) { return null; } }
+  h = h.replace(/^www\./, "").replace(/\.$/, "");
+  const parts = h.split(".").filter(Boolean);
+  if (parts.length < 2) return h || null;
+  const last2 = parts.slice(-2).join(".");
+  if (SECOND_LEVEL.indexOf(last2) !== -1 && parts.length >= 3) return parts.slice(-3).join(".");
+  return last2;
+}
+
+/* "cabo-yachts.com" and "caboyachts.mx" are the same business. Compare the
+   brand label with punctuation removed. */
+function brandLabel(domain) {
+  const b = baseDomain(domain);
+  if (!b) return "";
+  return b.split(".")[0].replace(/[^a-z0-9]/g, "");
+}
+
+function relatedDomain(emailDomain, siteUrl) {
+  const a = baseDomain(emailDomain), b = baseDomain(siteUrl);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const la = brandLabel(a), lb = brandLabel(b);
+  return la.length >= 4 && la === lb;
+}
+
+function isRoleLocal(local) {
+  const l = String(local || "").toLowerCase();
+  if (ROLE_LOCALPARTS.indexOf(l) !== -1) return true;
+  const stem = l.replace(/[._+-]?\d+$/, "").split(/[._+-]/)[0];
+  return ROLE_LOCALPARTS.indexOf(stem) !== -1;
+}
+
+/* Classify one address against the site it was found on.
+   Returns { type, eligibility } or null when it should not be stored. */
+function classifyEmail(email, siteUrl) {
+  const m = /^([^@\s]+)@([^@\s]+)$/.exec(String(email || "").toLowerCase());
+  if (!m) return null;
+  const [, local, domain] = m;
+  const role = isRoleLocal(local);
+  if (FREEMAIL.indexOf(domain) !== -1) {
+    // Shown on the business's own site, but not provably theirs.
+    return { type: role ? "freemail_role" : "freemail", eligibility: "review" };
+  }
+  if (!relatedDomain(domain, siteUrl)) return null;           // someone else's address
+  if (!role) return { type: "personal", eligibility: "excluded" };
+  return { type: "role", eligibility: "pending_verification" };
+}
+
+/* Cloudflare "email protection" hides addresses as a hex blob XOR'd with its
+   first byte. Decoding it is reading what the page shows a visitor. */
+function decodeCfEmail(hex) {
+  const s = String(hex || "");
+  if (!/^[0-9a-f]+$/i.test(s) || s.length < 4) return null;
+  const key = parseInt(s.slice(0, 2), 16);
+  let out = "";
+  for (let i = 2; i < s.length; i += 2) out += String.fromCharCode(parseInt(s.slice(i, i + 2), 16) ^ key);
+  return out;
+}
+
+function htmlDecode(s) {
+  return String(s)
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&nbsp;/g, " ");
+}
+
+const EMAIL_RE = /[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24}/gi;
+
+/* Every address a visitor could see or click on this page. */
+function extractEmails(html) {
+  const found = new Set();
+  const src = String(html || "");
+  const add = (e) => {
+    if (!e) return;
+    const v = e.trim().toLowerCase().replace(/^mailto:/, "").split("?")[0];
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,24}$/.test(v)) return;
+    if (ASSET_RE.test(v)) return;
+    found.add(v);
+  };
+  let m;
+  const mailto = /href\s*=\s*["']\s*mailto:([^"'?\s]+)/gi;
+  while ((m = mailto.exec(src))) add(htmlDecode(decodeURIComponent(m[1])));
+  const cf = /data-cfemail\s*=\s*["']([0-9a-f]+)["']/gi;
+  while ((m = cf.exec(src))) add(decodeCfEmail(m[1]));
+  const cfHref = /\/cdn-cgi\/l\/email-protection#([0-9a-f]+)/gi;
+  while ((m = cfHref.exec(src))) add(decodeCfEmail(m[1]));
+  // Visible text: drop scripts/styles/tags first so JS blobs don't leak in.
+  const text = htmlDecode(src
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " "))
+    .replace(/\s*\[\s*(at|arroba)\s*\]\s*/gi, "@").replace(/\s*\(\s*(at|arroba)\s*\)\s*/gi, "@");
+  for (const e of text.match(EMAIL_RE) || []) add(e);
+  return Array.from(found);
+}
+
+/* tel: links only — the number the business itself publishes. */
+function extractPhones(html) {
+  const out = new Set(), seen = new Set();
+  const re = /href\s*=\s*["']\s*tel:([^"']+)["']/gi;
+  let m;
+  while ((m = re.exec(String(html || "")))) {
+    const v = decodeURIComponent(m[1]).replace(/[^\d+]/g, "");
+    const digits = v.replace(/\D/g, "");
+    if (digits.length < 10) continue;
+    // One entry per number however it is written (+1 800…, 1800…, 011 52…).
+    const key = digits.slice(-10);
+    if (!seen.has(key)) { seen.add(key); out.add(v); }
+  }
+  return Array.from(out);
+}
+
+/* WhatsApp click-to-chat (wa.me / api.whatsapp.com) — common for MX operators. */
+function extractWhatsApp(html) {
+  const out = new Set();
+  const re = /(?:wa\.me\/|api\.whatsapp\.com\/send\?phone=)(\+?\d{10,15})/gi;
+  let m;
+  while ((m = re.exec(String(html || "")))) out.add(m[1].replace(/^\+/, ""));
+  return Array.from(out);
+}
+
+/* Same-site links worth following, best first. */
+function candidateLinks(html, pageUrl) {
+  let base;
+  try { base = new URL(pageUrl); } catch (e) { return []; }
+  const site = baseDomain(base.hostname);
+  const out = [];
+  const seen = new Set();
+  const re = /<a\b[^>]*href\s*=\s*["']([^"'#]+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(String(html || "")))) {
+    const href = m[1].trim();
+    if (/^(mailto|tel|javascript|whatsapp|sms):/i.test(href)) continue;
+    let u;
+    try { u = new URL(href, base); } catch (e) { continue; }
+    if (!/^https?:$/.test(u.protocol)) continue;
+    if (baseDomain(u.hostname) !== site) continue;
+    if (ASSET_RE.test(u.pathname) || /\.pdf$/i.test(u.pathname)) continue;
+    const label = m[2].replace(/<[^>]+>/g, " ");
+    if (!FOLLOW_RE.test(u.pathname) && !FOLLOW_RE.test(label)) continue;
+    u.hash = "";
+    const key = u.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // contact pages first: they are where the address usually is.
+    const pri = /contact|contacto/i.test(u.pathname + " " + label) ? 0 : 1;
+    out.push({ url: key, pri });
+  }
+  out.sort((a, b) => a.pri - b.pri);
+  return out.map((x) => x.url);
+}
+
+/* Minimal robots.txt: groups for "*" and our UA; Disallow prefixes; an Allow
+   that is longer than the matching Disallow wins (Google's rule). */
+function parseRobots(text, ua) {
+  const want = String(ua || "").toLowerCase().split("/")[0];
+  const groups = [];
+  let cur = null, lastWasAgent = false;
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const i = line.indexOf(":");
+    if (i === -1) continue;
+    const k = line.slice(0, i).trim().toLowerCase(), v = line.slice(i + 1).trim();
+    if (k === "user-agent") {
+      if (!lastWasAgent || !cur) { cur = { agents: [], rules: [] }; groups.push(cur); }
+      cur.agents.push(v.toLowerCase());
+      lastWasAgent = true;
+    } else {
+      lastWasAgent = false;
+      if (!cur) continue;
+      if (k === "disallow" || k === "allow") cur.rules.push({ allow: k === "allow", path: v });
+    }
+  }
+  const mine = groups.filter((g) => g.agents.some((a) => a !== "*" && want && want.indexOf(a) === 0));
+  const use = mine.length ? mine : groups.filter((g) => g.agents.indexOf("*") !== -1);
+  const rules = [].concat(...use.map((g) => g.rules)).filter((r) => r.path !== "" || r.allow);
+  return function allowed(pathname) {
+    let best = null;
+    for (const r of rules) {
+      if (!r.path) continue;
+      const p = r.path.replace(/\*$/, "");
+      if (r.path.endsWith("$") ? pathname === p.slice(0, -1) : pathname.indexOf(p) === 0) {
+        if (!best || p.length > best.len || (p.length === best.len && r.allow)) best = { len: p.length, allow: r.allow };
+      }
+    }
+    return best ? best.allow : true;
+  };
+}
+
+async function fetchText(fetchImpl, url, timeoutMs, maxBytes, ua) {
+  const res = await fetchImpl(url, {
+    headers: { "User-Agent": ua, "Accept": "text/html,application/xhtml+xml,text/plain;q=0.8",
+               "Accept-Language": "en,es;q=0.8" },
+    redirect: "follow",
+    signal: AbortSignal.timeout(timeoutMs)
+  });
+  const ctype = (res.headers && res.headers.get && res.headers.get("content-type")) || "";
+  let text = await res.text();
+  if (text.length > maxBytes) text = text.slice(0, maxBytes);
+  return { ok: res.ok, status: res.status, url: res.url || url, ctype, text };
+}
+
+/* Crawl one site. Never throws: a site that will not load is a result.
+   Returns {
+     ok, home_status, pages: [{url,status}], emails: [{email,source_url,type,eligibility}],
+     excluded: n (personal / off-domain addresses seen), phones: [...], whatsapp: [...],
+     robots_blocked: n, error
+   } */
+async function crawlSite(siteUrl, opts) {
+  const o = Object.assign({}, INTL_CRAWL, opts || {});
+  const fetchImpl = o.fetchImpl || fetch;
+  const result = { ok: false, home_status: null, pages: [], emails: [], excluded: 0,
+                   phones: [], whatsapp: [], robots_blocked: 0, error: null };
+  let home;
+  try {
+    let s = String(siteUrl || "").trim();
+    if (!/^https?:\/\//i.test(s)) s = "https://" + s;
+    home = new URL(s);
+  } catch (e) { result.error = "bad url"; return result; }
+
+  let allowed = () => true;
+  try {
+    const r = await fetchText(fetchImpl, home.origin + "/robots.txt", o.timeoutMs, 100000, o.userAgent);
+    if (r.ok && !/html/i.test(r.ctype)) allowed = parseRobots(r.text, o.userAgent);
+  } catch (e) { /* no robots.txt reachable: default allow */ }
+
+  const siteRefs = [home.toString()];
+  const queue = [home.toString()];
+  const visited = new Set();
+  const emailMap = new Map();
+  const phones = new Set(), wa = new Set();
+  let excluded = new Set();
+
+  while (queue.length && result.pages.length < o.maxPages) {
+    const url = queue.shift();
+    if (visited.has(url)) continue;
+    visited.add(url);
+    let path;
+    try { path = new URL(url).pathname || "/"; } catch (e) { continue; }
+    if (!allowed(path)) { result.robots_blocked++; continue; }
+    let page;
+    try {
+      page = await fetchText(fetchImpl, url, o.timeoutMs, o.maxBytes, o.userAgent);
+    } catch (e) {
+      result.pages.push({ url, status: 0 });
+      if (result.pages.length === 1) result.error = String((e && e.message) || e).slice(0, 160);
+      continue;
+    }
+    result.pages.push({ url, status: page.status });
+    if (result.pages.length === 1) {
+      /* A redirect to another domain (brand.com -> brandsportfishing.com) is
+         still the business's site: judge email domains against where we
+         actually landed as well as where we started. */
+      try { if (page.url) siteRefs.push(new URL(page.url).toString()); } catch (e) {}
+      result.home_status = page.status;
+      result.ok = page.ok;
+      if (!page.ok) { result.error = "homepage " + page.status; break; }
+    }
+    if (!page.ok || (page.ctype && !/html|text/i.test(page.ctype))) continue;
+
+    for (const e of extractEmails(page.text)) {
+      let c = null;
+      for (const ref of siteRefs) { c = classifyEmail(e, ref); if (c && c.eligibility !== "excluded") break; }
+      if (!c || c.eligibility === "excluded") { excluded.add(e); continue; }
+      if (!emailMap.has(e)) emailMap.set(e, { email: e, source_url: page.url || url, type: c.type, eligibility: c.eligibility });
+    }
+    for (const p of extractPhones(page.text)) phones.add(p);
+    for (const w of extractWhatsApp(page.text)) wa.add(w);
+
+    if (result.pages.length === 1) {
+      for (const l of candidateLinks(page.text, page.url || url)) if (!visited.has(l)) queue.push(l);
+    }
+  }
+  // Own-domain role addresses first, then free-mail ones awaiting review.
+  result.emails = Array.from(emailMap.values()).sort((a, b) =>
+    (a.type === "role" ? 0 : 1) - (b.type === "role" ? 0 : 1));
+  result.excluded = excluded.size;
+  result.phones = Array.from(phones);
+  result.whatsapp = Array.from(wa);
+  return result;
+}
+
+// ---- end inlined intlcrawl.js ----
 
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
@@ -15392,6 +16239,11 @@ export default {
            so a changed rating or review cut-off is applied to everything
            already seen rather than only to what turns up next. */
         const rescreen = url.searchParams.get("rescreen") === "1";
+        /* ?profile=intl runs the international pipeline (Places in MX + site
+           crawl for public role emails). ?plan=1 (intl only) makes no paid
+           call at all. No profile = domestic, exactly as before. */
+        const profile = url.searchParams.get("profile") === "intl" ? "intl" : null;
+        const plan = url.searchParams.get("plan") === "1";
 
         /* Streamed, not awaited. A real run researches five businesses one
            after another and routinely takes several minutes; Cloudflare cuts
@@ -15417,9 +16269,14 @@ export default {
         // Worker alive, and awaiting it here would defeat the streaming.
         (async () => {
           try {
-            const out = await runLeadPipeline(env, {
-              trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit
-            });
+            const out = profile === "intl"
+              ? await runLeadPipeline(env, {
+                  profile: "intl", trigger: "manual_intl", limit, dryRun, plan, reseed,
+                  onProgress: emit, deps: { crawlSite }
+                })
+              : await runLeadPipeline(env, {
+                  trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit
+                });
             await emit({ event: "done", result: out });
           } catch (e) {
             await emit({ event: "error", error: String(e).slice(0, 300) });
@@ -15441,6 +16298,10 @@ export default {
         const gate = await leadsGate(request, env);
         if (gate) return json({ error: gate.error }, gate.status, origin);
         await ensureLeadPipelineTables(env);
+        if (url.searchParams.get("profile") === "intl") {
+          await seedIntlSources(env, false);
+          return json({ profile: "intl", segments: await listIntlSegments(env), cities: intlCityList() }, 200, origin);
+        }
         // Seed on first read so the toggles are never an empty list.
         await seedLeadSources(env, false);
         /* trades maps every search term the grid can produce to the name the
@@ -15460,6 +16321,23 @@ export default {
         } catch (e) {
           console.error("segments", e && e.stack ? e.stack : e);
           return json({ error: "Could not update that segment" }, 400, origin);
+        }
+      }
+      /* Intl grid toggles: { segment, enabled, city? }. Domestic rows are
+         never touched by this endpoint. */
+      if (path === "/crm/leads/sources" && request.method === "POST") {
+        const gate = await leadsGate(request, env);
+        if (gate) return json({ error: gate.error }, gate.status, origin);
+        await ensureLeadPipelineTables(env);
+        await seedIntlSources(env, false);
+        const body = await request.json().catch(() => ({}));
+        try {
+          const changed = await setIntlSourcesEnabled(env, String(body.segment || ""), !!body.enabled,
+                                                      body.city ? String(body.city) : null);
+          return json({ ok: true, changed, profile: "intl", segments: await listIntlSegments(env),
+                        cities: intlCityList() }, 200, origin);
+        } catch (e) {
+          return json({ error: String(e.message || e).slice(0, 200) }, 400, origin);
         }
       }
       if (path === "/crm/leads/recheck" && request.method === "POST") {
