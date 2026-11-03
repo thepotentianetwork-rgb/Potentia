@@ -148,6 +148,23 @@ export async function ensureLeadPipelineTables(env) {
   ).run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_emails_email ON lead_emails(email)").run();
 
+  /* Phase 2 (2026-11-03, migrations/0006_lead_evidence.sql): every US-
+     relevance signal and audit finding, with the page it came from. */
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS lead_evidence (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,              -- usd_price | us_phone | ... | audit_https | audit_viewport | ...
+      category TEXT NOT NULL,          -- us | audit
+      status TEXT NOT NULL,            -- us: confirmed | needs_review; audit: confirmed_issue | opportunity_needs_review | ok | untested
+      confirmed INTEGER NOT NULL DEFAULT 0,
+      url TEXT,
+      snippet TEXT,
+      created_at TEXT NOT NULL)`
+  ).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_evidence_client ON lead_evidence(client_id, category)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_evidence_kind ON lead_evidence(kind, status)").run();
+
   // Same for `screened` — free screening used to be lumped in with `rejected`.
   const runCols = await db.prepare("PRAGMA table_info(enrichment_runs)").all();
   if ((runCols.results || []).map((r) => r.name).indexOf("screened") === -1) {
@@ -173,7 +190,14 @@ export async function ensureLeadPipelineTables(env) {
     ["created_by_pipeline", "INTEGER NOT NULL DEFAULT 0"],
     // International profile. NULL on every domestic row.
     ["country", "TEXT"],
-    ["city", "TEXT"]
+    ["city", "TEXT"],
+    // Intl Phase 2 (0006). NULL on every domestic row.
+    ["lead_us_score", "INTEGER"],          // 0-100, capped unless >=2 confirmed non-language signals
+    ["lead_us_signals", "INTEGER"],        // confirmed non-language US signals
+    ["lead_opportunity_score", "INTEGER"], // 0-100, rule-based
+    ["lead_suggested_service", "TEXT"],    // website_rebuild | bilingual_site | booking_ux | speed_tuneup | analytics_tracking | growth_retainer
+    ["lead_tier", "TEXT"],                 // A | B | C
+    ["lead_talking_points", "TEXT"]        // JSON array; confirmed evidence only
   ];
   for (const [name, decl] of wanted) {
     if (cols.indexOf(name) === -1) {
@@ -1708,6 +1732,28 @@ export async function saveLeadEmails(env, clientId, emails) {
   return n;
 }
 
+/* Phase 2: evidence rows + the summary columns on clients. */
+export async function saveLeadEvidence(env, clientId, analysis) {
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const e of (analysis && analysis.evidence) || []) {
+    await env.CRM_DB.prepare(
+      `INSERT INTO lead_evidence (client_id, kind, category, status, confirmed, url, snippet, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(clientId, e.kind, e.category, e.status, e.confirmed ? 1 : 0, e.url || null,
+           String(e.snippet || "").slice(0, 300), now).run();
+    n++;
+  }
+  const us = analysis.us || {}, op = analysis.opportunity || {};
+  await env.CRM_DB.prepare(
+    `UPDATE clients SET lead_us_score = ?, lead_us_signals = ?, lead_opportunity_score = ?,
+            lead_suggested_service = ?, lead_tier = ?, lead_talking_points = ? WHERE id = ?`
+  ).bind(us.score == null ? null : us.score, us.non_language_confirmed == null ? null : us.non_language_confirmed,
+         op.score == null ? null : op.score, op.service || null, op.tier || null,
+         JSON.stringify(op.talking_points || []), clientId).run();
+  return n;
+}
+
 export async function intlSpentToday(env) {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const row = await env.CRM_DB.prepare(
@@ -1855,10 +1901,34 @@ export async function runIntlPipeline(env, opts) {
                      kept: v.qualified, score: v.score, reason: v.reason,
                      emails: (c.emails || []).map((e) => ({ email: e.email, type: e.type, source_url: e.source_url })),
                      phones: c.phones, whatsapp: c.whatsapp };
+      /* Phase 2: US relevance + audit + opportunity, on qualifying sites only.
+         Free (PageSpeed + a few HEADs). A failure here never loses the lead. */
+      let analysis = null;
+      if (v.qualified && typeof deps.analyzeLead === "function") {
+        let ps = null;
+        if (o.pagespeed !== false) {
+          try { ps = await (deps.pageSpeed || pageSpeed)(env, (c.docs && c.docs[0] && c.docs[0].url) || places.website); }
+          catch (e) { ps = null; counts.errors.push("pagespeed[" + places.name + "]: " + String(e).slice(0, 120)); }
+        }
+        try { analysis = await deps.analyzeLead(c, { segment: cand.segment, pagespeed: ps }); }
+        catch (e) { counts.errors.push("analyze[" + places.name + "]: " + String(e).slice(0, 160)); }
+        if (analysis) {
+          counts.analyzed = (counts.analyzed || 0) + 1;
+          item.us_score = analysis.us.score;
+          item.us_gate = analysis.us.gate;
+          item.us_signals = analysis.us.non_language_confirmed;
+          item.opportunity_score = analysis.opportunity.score;
+          item.suggested_service = analysis.opportunity.service;
+          item.tier = analysis.opportunity.tier;
+          item.talking_points = analysis.opportunity.talking_points;
+          if (o.dryRun) item.evidence = analysis.evidence;
+        }
+      }
       if (o.dryRun) {
         counts.preview.push(item);
       } else if (v.qualified) {
         const id = await pushIntlLeadToCrm(env, cand, places, v, c, src);
+        if (id && analysis) counts.evidence_saved = (counts.evidence_saved || 0) + await saveLeadEvidence(env, id, analysis);
         counts.emails_saved += id ? ((await db.prepare("SELECT COUNT(*) AS c FROM lead_emails WHERE client_id = ?").bind(id).first()) || {}).c || 0 : 0;
         await stripCandidate(env, cand.id, "pushed", v.score, v.reason, id);
         counts.pushed++;

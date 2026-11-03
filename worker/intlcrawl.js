@@ -263,7 +263,9 @@ async function fetchText(fetchImpl, url, timeoutMs, maxBytes, ua) {
    Returns {
      ok, home_status, pages: [{url,status}], emails: [{email,source_url,type,eligibility}],
      excluded: n (personal / off-domain addresses seen), phones: [...], whatsapp: [...],
-     robots_blocked: n, error
+     robots_blocked: n, error,
+     docs: [{url, status, html}]   — only with opts.keepHtml (Phase 2 audit;
+                                     html capped at opts.keepHtmlBytes)
    } */
 export async function crawlSite(siteUrl, opts) {
   const o = Object.assign({}, INTL_CRAWL, opts || {});
@@ -316,6 +318,11 @@ export async function crawlSite(siteUrl, opts) {
       if (!page.ok) { result.error = "homepage " + page.status; break; }
     }
     if (!page.ok || (page.ctype && !/html|text/i.test(page.ctype))) continue;
+    if (o.keepHtml) {
+      if (!result.docs) result.docs = [];
+      result.docs.push({ url: page.url || url, status: page.status,
+                         html: String(page.text || "").slice(0, o.keepHtmlBytes || 200000) });
+    }
 
     for (const e of extractEmails(page.text)) {
       let c = null;

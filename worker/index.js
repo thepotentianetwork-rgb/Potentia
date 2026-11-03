@@ -24,6 +24,7 @@ import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.j
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS, seedIntlSources, listIntlSegments, setIntlSourcesEnabled, intlCityList } from "./leadpipeline.js";
 import { crawlSite } from "./intlcrawl.js";
+import { analyzeIntlLead } from "./intlaudit.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
@@ -6720,7 +6721,8 @@ export default {
             const out = profile === "intl"
               ? await runLeadPipeline(env, {
                   profile: "intl", trigger: "manual_intl", limit, dryRun, plan, reseed,
-                  onProgress: emit, deps: { crawlSite }
+                  onProgress: emit,
+                  deps: { crawlSite: (u) => crawlSite(u, { keepHtml: true }), analyzeLead: analyzeIntlLead }
                 })
               : await runLeadPipeline(env, {
                   trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit

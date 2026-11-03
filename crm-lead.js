@@ -105,6 +105,35 @@
       line('Speed', row);
     }
 
+    /* International leads (Phase 2): US relevance, opportunity, and the
+       talking points — each point cites a confirmed finding and its page. */
+    if (c.lead_us_score != null) {
+      var us = Number(c.lead_us_score);
+      var usRow = document.createElement('span');
+      usRow.appendChild(text(us + '/100 US', 'speed-pill ' + (us >= 60 ? 'speed-ok' : us > 25 ? 'speed-mid' : 'speed-bad')));
+      if (c.lead_us_signals != null) usRow.appendChild(text('  ' + c.lead_us_signals + ' confirmed US signal' + (Number(c.lead_us_signals) === 1 ? '' : 's')));
+      line('US fit', usRow);
+    }
+    if (c.lead_opportunity_score != null || c.lead_suggested_service) {
+      var svc = { website_rebuild: 'Website rebuild', bilingual_site: 'Bilingual EN/ES site', booking_ux: 'Booking UX',
+                  speed_tuneup: 'Speed tune-up', analytics_tracking: 'Analytics & tracking', growth_retainer: 'Growth retainer' };
+      var opp = [];
+      if (c.lead_tier) opp.push('Tier ' + c.lead_tier);
+      if (c.lead_opportunity_score != null) opp.push(c.lead_opportunity_score + '/100');
+      if (c.lead_suggested_service) opp.push(svc[c.lead_suggested_service] || c.lead_suggested_service);
+      line('Opportunity', text(opp.join('  \u00b7  ')));
+    }
+    if (c.lead_talking_points) {
+      var pts = [];
+      try { pts = JSON.parse(c.lead_talking_points) || []; } catch (e) { pts = []; }
+      if (pts.length) {
+        var ul = document.createElement('ul');
+        ul.className = 'ld-points';
+        pts.forEach(function (t) { var li = document.createElement('li'); li.textContent = String(t); ul.appendChild(li); });
+        line('Talking points', ul, true);
+      }
+    }
+
     // The town is already under the name; this is the street address.
     if (c.lead_address) line('Address', text(c.lead_address));
     if (c.lead_segment || c.lead_trade) {
