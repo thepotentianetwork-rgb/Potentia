@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShedPro — Your documents</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+  /* Savings green. Deliberately not the brand blue or orange: money coming OFF
+     the price should not look like every other line on the document. */
+  --sp-green:#3ddc97;--sp-green-deep:#15803d;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;padding:40px 20px}
+
+.toolbar{max-width:800px;margin:0 auto 20px;display:flex;justify-content:space-between}
+.back-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-decoration:none;text-transform:uppercase}
+.back-link:hover{color:var(--bright)}
+.print-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--black);background:var(--sp-blue);border:none;padding:10px 20px;text-transform:uppercase;cursor:pointer;font-weight:700}
+.print-btn:hover{background:#5ad0ff}
+
+.doc{max-width:800px;margin:0 auto;background:var(--deep);border:1px solid var(--dim);padding:48px}
+.doc::before{content:'';display:block;height:2px;background:linear-gradient(90deg,var(--sp-blue),var(--sp-orange));margin:-48px -48px 40px}
+
+.doc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;flex-wrap:wrap;gap:20px}
+.doc-brand{display:flex;align-items:center;gap:16px}
+.doc-brand img{width:56px;height:56px;object-fit:contain}
+.doc-brand-name{font-family:'Syncopate',sans-serif;font-size:16px;letter-spacing:0.15em;color:var(--bright)}
+.doc-brand-contact{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);margin-top:6px;line-height:1.6}
+.doc-meta{text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--silver);line-height:1.8}
+.doc-meta strong{color:var(--bright)}
+
+.doc-section{margin-bottom:32px}
+.doc-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--dim);text-transform:uppercase;margin-bottom:14px;border-bottom:1px solid var(--dim);padding-bottom:8px}
+
+.doc-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px 32px}
+.doc-field .fl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:4px}
+.doc-field .fv{font-size:17px;color:var(--chrome);font-weight:300}
+
+.price-box{background:rgba(44,192,253,0.06);border:1px solid var(--sp-blue-deep);padding:24px 28px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.price-label{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;color:var(--silver);text-transform:uppercase}
+.price-value{font-size:40px;color:var(--bright);font-weight:300}
+/* Each side of the box stacks, so the struck-through original sits under the
+   label and the saving under the figure it came off. Both are optional: with no
+   adjustment the box renders exactly as it always did. */
+.price-side{display:flex;flex-direction:column;gap:6px}
+.price-side-right{align-items:flex-end;text-align:right}
+/* Struck through ONLY when the price came down. A strikethrough reads as "the
+   higher price you are not paying", so putting one through the BEFORE figure of
+   a price that went UP strikes the cheaper number - it looks like a mistake on
+   the document and invites exactly the question you least want. */
+.price-was{font-family:'DM Mono',monospace;font-size:12px;color:var(--silver)}
+.price-was.is-saving{text-decoration:line-through}
+.price-save{font-family:'DM Mono',monospace;font-size:13px;letter-spacing:0.08em;color:var(--sp-green);font-weight:400;text-transform:uppercase}
+.price-box-deal{border-color:var(--sp-green);background:rgba(61,220,151,0.06)}
+.price-cash{margin-top:10px;border-color:var(--sp-green);background:rgba(61,220,151,0.06)}
+.br-cashdisc{color:var(--sp-green)}
+.price-cashline{display:block;font-size:13px;color:var(--sp-green);margin-top:4px}
+
+.br-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--dim);font-size:15px}
+.br-row:last-child{border-bottom:none}
+/* The subtotal closes the itemised phases; tax is not one of them. Without
+   this they were all identical rows and the line a customer reads as "the
+   price" sat indistinguishable from the line that adds tax to it. */
+/* What a package contains — one item per line under its own charge. It was a
+   single dot-separated run-on, which is not an itemised list: it wrapped into
+   a grey block that read as a footnote and, on a narrow screen, as one long
+   line trailing off. Rows, tight together, with no border between them so
+   they read as one block belonging to the line above. */
+.br-row.br-inc{border-bottom:none;padding:2px 0 2px 34px;font-size:13px;color:var(--silver);display:block}
+.br-row.br-inc:first-of-type{padding-top:6px}
+.br-row.br-inc:last-of-type{padding-bottom:10px}
+.br-row.br-sum{border-top:2px solid var(--chrome);margin-top:4px;padding-top:11px}
+.br-row.br-sum .br-label{color:var(--bright);font-weight:600}
+.br-row.br-sum .br-amt{font-size:15px}
+.br-row.br-tax .br-label{color:var(--chrome)}
+/* A discount is the one line on this page the customer should catch first. */
+.br-row.br-save .br-label,.br-row.br-save .br-amt{color:var(--sp-green);font-weight:600}
+/* A promo on a phase (the concrete pad): list price struck through beside
+   what is actually charged, and the promo on its own line underneath. */
+.br-was{text-decoration:line-through;color:var(--silver);font-weight:400;margin-right:8px;font-size:13px}
+.br-row.br-promo{padding-left:20px;font-size:13px;border-bottom-style:dashed}
+.br-row.br-save .br-amt{font-size:18px}
+.br-row.br-save{background:rgba(61,220,151,0.07);margin:0 -12px;padding-left:12px;padding-right:12px}
+/* The Discounts section: a heading, then one line each, right above tax. */
+.br-row.br-dischead{border-bottom:none;padding-top:14px}
+.br-row.br-dischead .br-label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;color:var(--sp-green);text-transform:uppercase}
+.br-row.br-disc{border-bottom-style:dashed}
+.br-row.br-total .br-label,.br-row.br-total .br-amt{color:var(--bright);font-weight:600}
+.br-sub-note{font-size:11px;color:var(--chrome);opacity:.8;padding:0 0 8px;line-height:1.5}
+.br-label{color:var(--chrome)}
+.br-amt{color:var(--bright);font-family:'DM Mono',monospace;font-size:13px}
+.spec-val{color:var(--chrome);font-family:'Cormorant Garamond',serif;font-size:15px}
+
+.sub-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:6px}
+.br-note{font-family:'Cormorant Garamond',serif;font-size:13px;color:var(--silver);margin-top:10px;line-height:1.5}
+
+.design-link{display:inline-block;margin-top:14px;font-family:'DM Mono',monospace;font-size:12px;color:var(--sp-blue);text-decoration:none}
+.design-link:hover{color:var(--bright)}
+
+.doc-footer{margin-top:40px;padding-top:24px;border-top:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:11px;color:var(--dim);line-height:1.8}
+
+.empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
+
+.render-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.render-cell{border:1px solid var(--dim);overflow:hidden}
+.render-cell img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#000}
+.render-caption{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--silver);text-transform:uppercase;text-align:center;padding:6px 0}
+
+.floorplan-wrap{text-align:center}
+.floorplan-legend{display:flex;justify-content:center;gap:24px;margin-top:14px;font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);text-transform:uppercase}
+.legend-swatch{display:inline-block;width:14px;height:4px;margin-right:6px;vertical-align:middle}
+.symbol-legend{max-width:420px;margin:18px auto 0;border:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:11px}
+.symbol-legend-head{background:var(--dim);color:var(--bright);letter-spacing:0.15em;text-transform:uppercase;font-size:9px;padding:6px 10px}
+.symbol-legend-row{display:flex;padding:5px 10px;border-top:1px solid var(--dim);gap:10px}
+.symbol-legend-code{color:var(--sp-blue);font-weight:700;min-width:22px}
+.symbol-legend-desc{color:var(--chrome);text-align:left;flex:1}
+.fp-dim-bg{fill:var(--deep)}
+
+/* Phone. The price box is a two-column layout that wraps to two rows, and a
+   right-aligned column stranded on its own row reads as a stray number rather
+   than the closing figure - so below this width everything left-aligns into one
+   stacked block. */
+@media(max-width:560px){
+  .doc{padding:28px 18px}
+  .doc::before{margin:-28px -18px 28px}
+  .price-box{flex-direction:column;align-items:stretch;padding:20px}
+  .price-side-right{align-items:flex-start;text-align:left}
+  .price-value{font-size:34px}
+  .br-row.br-save{margin:0 -8px;padding-left:8px;padding-right:8px}
+}
+
+@media print{
+  .br-scope{color:#333 !important}
+  body{background:#fff;color:#111;padding:0}
+  .toolbar{display:none}
+  .doc{border:none;background:#fff;max-width:100%}
+  .doc-brand-name,.price-value,.doc-field .fv,.doc-meta strong,.br-amt,.spec-val{color:#111}
+  .doc-brand-contact,.doc-meta,.doc-label,.doc-field .fl,.doc-footer,.render-caption,.floorplan-legend,.br-label,.sub-label,.br-note{color:#333}
+  .price-box{background:#f5f9fc;border-color:#bcdcf0}
+  .price-box-deal{background:#f2fbf6;border-color:#15803d}
+  .br-row.br-save{background:#f2fbf6}
+  .br-row.br-save .br-label,.br-row.br-save .br-amt,.price-save{color:var(--sp-green-deep)}
+  .price-was{color:#666}
+  .br-row{border-color:#ddd}
+  .br-row.br-sum{border-top-color:#111}
+  .br-row.br-sum .br-label{color:#111}
+  /* .br-row.br-tax .br-label is (0,3,0) and outranks the bare .br-label above,
+     so without this the Sales Tax label keeps its on-screen --chrome and prints
+     at #c8cdd6 on white - effectively invisible on a printed quote. */
+  .br-row.br-tax .br-label{color:#333}
+  .render-cell{border-color:#ccc}
+  .render-grid{break-inside:avoid}
+  .symbol-legend{border-color:#ccc}
+  .symbol-legend-head{background:#eee;color:#111}
+  .symbol-legend-row{border-color:#ddd}
+  .symbol-legend-desc{color:#333}
+  .fp-dim-text,.fp-label{fill:#333 !important}
+  .fp-wall{stroke:#111 !important}
+  .fp-dim-bg{fill:#fff !important}
+}
+</style>
+<style>
+.toolbar{flex-wrap:wrap;gap:10px}
+.w-item{padding:14px 0;border-bottom:1px solid var(--dim)}
+.w-item:last-child{border-bottom:none}
+.w-term{font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:.08em;color:var(--sp-blue);margin:4px 0 6px}
+.w-cat{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.2em;color:var(--silver);text-transform:uppercase}
+.w-detail{font-size:16px;color:var(--chrome);line-height:1.5}
+.lede{font-size:18px;color:var(--chrome);line-height:1.5}
+.spec-list{list-style:none}.spec-list li{padding:3px 0;font-size:15px}
+@media print{.w-term{color:#1c8fc2}.w-detail,.lede,.spec-list li,.w-cat{color:#222}.w-item{border-color:#ddd;break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <a href="portal-customer.html" class="back-link">← Back to your portal</a>
+  <button class="print-btn" onclick="window.print()">Download / Save as PDF</button>
+</div>
+<div class="doc" id="doc"><p class="empty">Loading…</p></div>
+<script>
+var API_BASE="https://potentia-assistant.thepotentianetwork.workers.dev";
+var TOKEN=localStorage.getItem('potentia_portal_token');
+if(!TOKEN)location.href='portal-customer-login.html';
+var P=new URLSearchParams(location.search),KIND=P.get('doc')==='warranties'?'warranties':'agreement';
+var SHEDPRO_PHONE='435-277-0764',SHEDPRO_EMAIL='shedprollc.utah@gmail.com';
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function money(n){return '$'+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+function row(l,a,c){return '<div class="br-row'+(c?' '+c:'')+'"><span class="br-label">'+l+'</span><span class="br-amt">'+a+'</span></div>';}
+function header(o,title){var d=new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'});
+ return '<div class="doc-header"><div class="doc-brand"><img src="shedpro-logo.png" alt="ShedPro"><div><div class="doc-brand-name">SHEDPRO</div><div class="doc-brand-contact">'+esc(o.shop_phone||SHEDPRO_PHONE)+'<br>'+esc(o.shop_email||SHEDPRO_EMAIL)+'</div></div></div>'+
+ '<div class="doc-meta"><strong>'+title+'</strong><br>Order #'+esc(o.order_id)+'<br>'+d+'</div></div>';}
+function warrantiesHtml(o){return (o.warranties||[]).map(function(w){return '<div class="w-item"><div class="w-cat">'+esc(w.item)+'</div><div class="w-term">'+esc(w.term)+'</div>'+(w.detail?'<div class="w-detail">'+esc(w.detail)+'</div>':'')+'</div>';}).join('')+(o.warranty_note?'<p class="br-note">'+esc(o.warranty_note)+'</p>':'');}
+function agreement(o){var h=header(o,'Order Agreement');
+ h+='<div class="doc-section"><div class="doc-label">Prepared for</div><div class="doc-grid"><div class="doc-field"><div class="fl">Customer</div><div class="fv">'+esc(o.first_name||'')+'</div></div><div class="doc-field"><div class="fl">Order</div><div class="fv">#'+esc(o.order_id)+'</div></div></div></div>';
+ if(o.summary)h+='<div class="doc-section"><div class="doc-label">Your build</div><p class="lede">'+esc(o.summary)+'</p>'+((o.spec||[]).length?'<ul class="spec-list" style="margin-top:10px">'+o.spec.map(function(s){return '<li class="spec-val">'+esc(typeof s==='string'?s:(s.label||'')+(s.value?': '+s.value:''))+'</li>';}).join('')+'</ul>':'')+'</div>';
+ h+='<div class="doc-section"><div class="doc-label">Price breakdown</div>';
+ (o.items||[]).forEach(function(i){h+=row(esc(i.label),money(i.amount));(i.lines||[]).forEach(function(l){h+='<div class="br-row br-inc">'+esc(l.label)+'</div>';});});
+ if(o.pricing){if(o.pricing.discount)h+=row('Discount','−'+money(o.pricing.discount),'br-save');h+=row('Subtotal',money(o.pricing.subtotal),'br-sum')+row('Sales tax',money(o.pricing.tax),'br-tax');}
+ if((o.included||[]).length)h+='<p class="br-note">Included at no charge: '+o.included.map(esc).join(', ')+'</p>';
+ h+='</div>';
+ var tot=o.pricing?o.pricing.total:o.total;
+ if(tot!=null)h+='<div class="doc-section"><div class="price-box"><div class="price-side"><span class="price-label">Order total</span></div><div class="price-side price-side-right"><span class="price-value">'+money(tot)+'</span></div></div></div>';
+ if(o.design_url)h+='<div class="doc-section"><a class="design-link" target="_blank" rel="noopener" href="'+esc(o.design_url)+'">View your 3D design →</a></div>';
+ h+='<div class="doc-section"><div class="doc-label">Your warranties</div>'+warrantiesHtml(o)+'</div>';
+ h+='<div class="doc-footer">This agreement reflects your ShedPro order #'+esc(o.order_id)+' as quoted. Any change must be agreed in writing. Final amounts due are shown on each invoice.<br>ShedPro LLC · '+esc(o.shop_phone||SHEDPRO_PHONE)+' · '+esc(o.shop_email||SHEDPRO_EMAIL)+'</div>';
+ return h;}
+function warranties(o){return header(o,'Warranty Coverage')+'<div class="doc-section"><div class="doc-label">Our warranty coverage</div><p class="lede" style="margin-bottom:8px">Every ShedPro LLC build is protected by multiple layers of warranty coverage — from the materials we use to the work we do.</p>'+warrantiesHtml(o)+'</div><div class="doc-footer">Warranty for ShedPro order #'+esc(o.order_id)+(o.first_name?' · '+esc(o.first_name):'')+'<br>To make a warranty claim, contact ShedPro LLC · '+esc(o.shop_phone||SHEDPRO_PHONE)+' · '+esc(o.shop_email||SHEDPRO_EMAIL)+'</div>';}
+fetch(API_BASE+'/portal/customer/order',{headers:{'Authorization':'Bearer '+TOKEN}}).then(function(r){if(r.status===401){localStorage.removeItem('potentia_portal_token');location.href='portal-customer-login.html';throw 0;}return r.json().then(function(d){return{ok:r.ok,d:d};});}).then(function(r){
+ var el=document.getElementById('doc');if(!r.ok){el.innerHTML='<p class="empty">'+esc(r.d.error||'Not available yet.')+'</p>';return;}
+ document.title='ShedPro '+(KIND==='warranties'?'Warranty':'Agreement')+' — Order #'+r.d.order_id;
+ el.innerHTML=KIND==='warranties'?warranties(r.d):agreement(r.d);
+ if(P.get('print')==='1')setTimeout(function(){window.print();},600);
+}).catch(function(){});
+</script>
+</body>
+</html>
