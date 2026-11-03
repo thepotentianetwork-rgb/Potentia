@@ -113,7 +113,7 @@ let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     LOFT='none', LOFT_SIDE='ends', ELEC='none', INT_FINISH='none', FLOOR='none',
     ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
       skylight:false, stairs:false, statLadder:false, atticLadder:false,
-      weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false, insulation:false, sprayFoam:false,
+      weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false, insulation:false, sprayFoam:false, grids:false,
       doorAwning:false, fbColor:'brown', shutterColor:'brown',
       shedRemoval:false, concreteRemoval:false },
     doorsData=[], windowsData=[], ventsData=[], shelvesData=[],
@@ -187,7 +187,7 @@ export function resetConfig(){
   LOFT='none'; LOFT_SIDE='ends'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
   ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
     skylight:false, stairs:false, statLadder:false, atticLadder:false,
-    weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false, insulation:false, sprayFoam:false,
+    weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false, insulation:false, sprayFoam:false, grids:false,
     doorAwning:false, fbColor:'brown', shutterColor:'brown',
     shedRemoval:false, concreteRemoval:false };
   doorsData=[]; windowsData=[]; ventsData=[]; shelvesData=[];
@@ -578,6 +578,17 @@ export let SELL = {
     "3peak":        {},  // 3 Peak — one cross gable, +X side wall
     "4peak":        {}   // 4 Peak — cross gable on both side walls
   },
+
+  /* ── GRIDS ADD-ON (Nando, 2 Nov 2026) ──
+     Muntin/grille grids at 12in on centre on EVERY door and window, billed at
+     pct% of each opening's own price. A shop-built shed door's SELL.doors
+     figure is an upcharge over the included 5' Double (which is $0), so for
+     those the door's price is shopDoorBase + its upcharge — otherwise grids
+     on the standard door would be free. shopDoorBase ~= the included 5'
+     Double's shop material (~$98) at the 42% target margin. Roll-ups get no
+     grids and no charge; Price-TBD and no-grid windows (72x48 slider, 24x80
+     sidelight) are skipped too. Admin -> Pricing can override (group 'grids'). */
+  grids: { pct: 30, shopDoorBase: 170 },
 
   // ── DOORS (upcharge over the included 5' Double) ──
   doors: {
@@ -1414,6 +1425,31 @@ export function sellWindowPriced(wd){
   return !!(wd && wd.type && SELL.windows[wd.type]!=null);
 }
 
+/* GRIDS: which openings get them and what each one's price is (the 30% is
+   taken off this). Shared by computePricing (quote line) and the designer's
+   option price so the Upgrades row and the CRM/PDF read the same figure. */
+var GRID_SHOP_STYLES = { basic:1, craftsman:1, xtrim:1, arch:1, panel4:1 };
+export function gridDoorBasis(dd){
+  if(!dd || dd.style==='rollup') return 0;
+  var up = sellDoorUpcharge(dd);
+  var g = SELL.grids || {};
+  if(GRID_SHOP_STYLES[dd.style||'basic']) up += (+g.shopDoorBase||0);
+  return up;
+}
+var GRID_NO_GRID_WINDOWS = /(72x48|Sidelight 24x80)$/;
+export function gridWindowBasis(wd){
+  if(!wd || windowPriceTBD(wd)) return 0;
+  if(GRID_NO_GRID_WINDOWS.test(String(wd.type||''))) return 0;
+  return sellWindowPrice(wd);
+}
+export function gridsSellFor(doors, windows){
+  var pct = (SELL.grids && +SELL.grids.pct>=0) ? +SELL.grids.pct : 30;
+  var amt=0, nd=0, nw=0;
+  (Array.isArray(doors)?doors:[]).forEach(function(dd){ var b=gridDoorBasis(dd); if(b>0){ amt+=b*pct/100; nd++; } });
+  (Array.isArray(windows)?windows:[]).forEach(function(wd){ var b=gridWindowBasis(wd); if(b>0){ amt+=b*pct/100; nw++; } });
+  return { amt: Math.round(amt), doors: nd, windows: nw, pct: pct };
+}
+
 /* ── THE BAR WINDOWS ──
    Premium serving windows: one folds to the side, one lifts overhead, both
    open onto a counter. Recognised through the CATALOG, not by a regex on the
@@ -1936,6 +1972,14 @@ export function computePricing(cfgIn, opts){
     _sq(ADDONS.radiantBarrier,'Radiant Roof Barrier');
     _sq(ADDONS.houseWrap,'House Wrap');
     _sq(ADDONS.hurricaneTies,'Hurricane Ties');
+    /* Grids on every door + window, 30% of each one's own price. */
+    if(ADDONS.grids){
+      var _gr=gridsSellFor(doorsData, windowsData);
+      if(_gr.amt>0){
+        var _gp=[]; if(_gr.doors) _gp.push(_gr.doors+' door'+(_gr.doors===1?'':'s')); if(_gr.windows) _gp.push(_gr.windows+' window'+(_gr.windows===1?'':'s'));
+        addonSell+=_gr.amt; addonLines.push({name:'Grids 12" \u2014 '+_gp.join(', '), amt:_gr.amt});
+      }
+    }
     /* Standalone insulation: only on a bare interior. With a finish selected
        it is already inside the finish price (interiorPrice), so no double
        charge. Billed on the enclosed room, not the porch. */
@@ -2161,7 +2205,7 @@ export function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel','cardFee','cashDiscount','concreteScope'];
+  'concretePromo','sprinkler','travel','cardFee','cashDiscount','concreteScope','grids'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".

@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, insulationSell, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor, porchAddsSize } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, insulationSell, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, gridsSellFor, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor, porchAddsSize } from "./pricing.js";
 import { applyColorEdit, detailsWithColors } from "./colors.js";
 import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.js";
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
@@ -3163,7 +3163,7 @@ const ADDON_LINE_KEYS = [
   [/^Shed Removal$/i, "shedRemoval"], [/^Concrete Removal$/i, "concreteRemoval"],
   [/^Sprinkler Relocation\b/i, "sprinklers"], [/^Floor Weather Guard$/i, "weatherGuard"],
   [/^Radiant Roof Barrier$/i, "radiantBarrier"], [/^House Wrap$/i, "houseWrap"], [/^Hurricane Ties$/i, "hurricaneTies"],
-  [/^Insulation$/i, "insulation"], [/^Spray Foam Insulation$/i, "sprayFoam"]
+  [/^Insulation$/i, "insulation"], [/^Spray Foam Insulation$/i, "sprayFoam"], [/^Grids\b/i, "grids"]
 ];
 function addonKeyForLine(name) {
   const n = String(name || "").trim();
@@ -4397,6 +4397,8 @@ function computeOptionPrices(cfg) {
   // Ridge vent: $/linear ft of the main ridge (the shed's length), 12 Oct 2026.
   { const rate = (SELL.options.perLinFt || {})["Roof Ridge Vent"];
     addons.ridgeVent = Math.ceil(Number(cfg.l) || 0) * (rate != null ? rate : 15); }
+  // Grids: 30% of each door's and window's own price, for THIS design's openings.
+  addons.grids = gridsSellFor(cfg.doors, cfg.windows).amt;
   addons.cupola = {
     black: SELL.options.flat['Cupola 16" Black Roof'] || 0,
     copper: SELL.options.flat['Cupola 16" Copper Roof'] || 0
