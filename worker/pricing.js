@@ -290,7 +290,7 @@ function padSqft(){ return Math.round(enclosedSqft()); }
      kind: 'drywall' (mud only) | 'painted' (mud + paint) | anything else -> 0
    Painted pays the tier outright. Drywall-and-mud takes unpaintedPct off and
    snaps to roundTo, because 15% off these tiers lands on half dollars. */
-export function interiorPrice(kind, wf, df, noIns){
+export function interiorPrice(kind, wf, df, noIns, wallHft){
   if(kind!=='drywall' && kind!=='painted') return 0;
   var iv=SELL.interior; if(!iv) return 0;
   var floor=(wf||0)*(df||0);
@@ -299,19 +299,21 @@ export function interiorPrice(kind, wf, df, noIns){
           : iv.under;
   /* A finished interior is always insulated (Nando, 2 Nov 2026): the
      insulation + vapor barrier is folded into the finish price, billed on the
-     same enclosed floor area, so the button and the quote carry it and the
-     standalone Insulation add-on is never charged on top. */
-  var ins=noIns ? 0 : Math.round(insulationSell(floor));
+     same enclosed-room shell (walls + roof at real height/pitch), so the button
+     and the quote carry it and the standalone Insulation add-on is never
+     charged on top. */
+  var ins=noIns ? 0 : Math.round(insulationSell(wf, df, wallHft));
   if(kind==='painted') return tier+ins;
   var raw=tier*(1-(iv.unpaintedPct||0)/100);
   var step=iv.roundTo>0 ? iv.roundTo : 1;
   return Math.round(raw/step)*step+ins;
 }
-/* INSULATION w/ 6-mil vapor barrier, by enclosed floor sqft. Rate is the
-   Marissa Mills 12x16 quote: $2,135 cash / 192 sqft (~$11.12/sqft). */
-export function insulationSell(floorSqft){
-  var o=SELL.options.perSqft['Insulation']; if(!o) return 0;
-  return o.rate*(floorSqft||0);
+/* INSULATION w/ 6-mil vapor barrier, billed on the enclosed room's SHELL
+   (walls at real height + roof at real pitch), same basis as spray foam.
+   Audit 2 Nov 2026 (Nando approved): $3.30/sqft shell, replacing
+   $2,135/192 floor sqft — still ~= $2,135 on the Mills 12x16x8. */
+export function insulationSell(W, D, wallHft){
+  return sellPerSqft('Insulation', W||0, D||0, wallHft);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -808,13 +810,19 @@ export let SELL = {
       "Radiant Roof Barrier":{rate:1.05, basis:"roof"},   // inside roof area
       "House Wrap":         {rate:3.10,  basis:"wall"},
       "Hurricane Ties":     {rate:1.00,  basis:"floor"},
-      // Insulation + 6-mil vapor barrier. 2135/192 = Mills 12x16 quote exactly.
-      "Insulation":         {rate:2135/192, basis:"floor"},
+      /* Insulation + 6-mil vapor barrier, per sqft of shell (walls + roof).
+         Was 2135/192 floor (Mills 12x16 quote); 2 Nov 2026 -> $3.30 shell so
+         taller walls / steeper roofs are paid for. 12x16x8 ~= $2,135. */
+      "Insulation":         {rate:3.30, basis:"shell"},
       /* Closed-cell spray foam, contracted out. Contract ~ $3.00/sqft for 2in
          closed-cell (Hansen Insulation UT, Oct 2026) over walls + roof deck
          ~= 3.45x floor area on a 12x16 8ft gable -> ~$10.50/floor sqft.
-         Sold at ~50% margin: 10.50 / 0.5 = $21/floor sqft. */
-      "Spray Foam Insulation":{rate:21.00, basis:"floor"}
+         Sold at ~50% margin: 3.00 / 0.5 = $6.00 per sqft of SPRAYED SURFACE.
+         Audit 2 Nov 2026: was $21/floor sqft, which only matched a 12x16x8
+         (663 sqft shell / 192 floor = 3.45x). Billed on walls + roof deck of
+         the enclosed room so 9'/10' walls and steeper pitch are paid for;
+         12x16x8 @6/12 = 663 sqft -> $3,976 (old $4,032). */
+      "Spray Foam Insulation":{rate:6.00, basis:"shell"}
     }
   }
 };
@@ -929,6 +937,7 @@ export function sellPerSqft(name, W, D, wallHft, customArea){
   if(o.basis==='wall') a=wallAreaFt(W,D,wallHft);
   else if(o.basis==='floor') a=floorAreaFt(W,D);
   else if(o.basis==='roof') a=roofAreaFt(W,D);
+  else if(o.basis==='shell') a=wallAreaFt(W,D,wallHft)+roofAreaFt(W,D);
   else a=(customArea||0);   // loft / soffit — customer specifies the sqft
   return o.rate*a;
 }
@@ -1779,9 +1788,9 @@ export function computePricing(cfgIn, opts){
     var _encW = Wf - _eat.w, _encD = Df - _eat.l;
     var _floor = _encW * _encD;
     // A partial porch takes a notch, not a strip: bill the real room area.
-    if(porchPartial()){ _floor = enclosedSqft(); _encW = _floor; _encD = 1; }
+    if(porchPartial()){ _floor = enclosedSqft(); _encD = _encW>0 ? _floor/_encW : 0; }
     var _noIns = !!(ADDONS && ADDONS.sprayFoam);
-    intSell = interiorPrice(intId, _encW, _encD, _noIns);
+    intSell = interiorPrice(intId, _encW, _encD, _noIns, Hf);
     intSellName = (intId==='drywall' ? 'Drywall & Mud' : 'Drywall, Mud & Paint')
                 + (_noIns ? '' : ' + Insulation') + ' (' + _floor + ' sqft)';
   }
@@ -1934,11 +1943,11 @@ export function computePricing(cfgIn, opts){
        with it on, neither the standalone batt line nor the batt folded into
        the finish is charged (see intSell). */
     if(ADDONS.sprayFoam){
-      var _sf=Math.round(sellPerSqft('Spray Foam Insulation',1,enclosedSqft()));
+      var _sf=Math.round((function(){ var _a=enclosedSqft(), _w=encWft(), _d=encLft(); if(_w*_d>0 && _a<_w*_d){ _d=_a/_w; } return sellPerSqft('Spray Foam Insulation',_w,_d,Hf); })());
       if(_sf>0){ addonSell+=_sf; addonLines.push({name:'Spray Foam Insulation',amt:_sf}); }
     }
     if(ADDONS.insulation && !ADDONS.sprayFoam && !(INT_FINISH==='drywall'||INT_FINISH==='painted')){
-      var _ip=Math.round(insulationSell(enclosedSqft()));
+      var _ip=Math.round((function(){ var _a=enclosedSqft(), _w=encWft(), _d=encLft(); if(_w*_d>0 && _a<_w*_d){ _d=_a/_w; } return insulationSell(_w,_d,Hf); })());
       if(_ip>0){ addonSell+=_ip; addonLines.push({name:'Insulation',amt:_ip}); }
     }
   }

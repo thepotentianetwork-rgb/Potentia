@@ -4288,7 +4288,7 @@ function computeOptionPrices(cfg) {
 
   const windows = Object.assign({}, SELL.windows);
 
-  const interior = { drywall: interiorPrice("drywall", encW, encD), painted: interiorPrice("painted", encW, encD) };
+  const interior = { drywall: interiorPrice("drywall", encW, encD, false, cfg.h), painted: interiorPrice("painted", encW, encD, false, cfg.h) };
 
   /* Flooring: the finished dollar amount for THIS shed, per tier, so the cards
      can show what the upgrade actually costs without the browser ever holding
@@ -4389,11 +4389,11 @@ function computeOptionPrices(cfg) {
   });
   // Insulation: enclosed room area (same as computePricing). Included in the
   // finish price when a finish is selected; designer shows it as included.
-  addons.insulation = Math.round(insulationSell(encW * encD));
-  addons.sprayFoam = Math.round(sellPerSqft("Spray Foam Insulation", 1, encW * encD));
+  addons.insulation = Math.round(insulationSell(encW, encD, cfg.h));
+  addons.sprayFoam = Math.round(sellPerSqft("Spray Foam Insulation", encW, encD, cfg.h));
   // Finish price without the batt insulation, for when spray foam replaces it.
-  interior.drywallNoIns = interiorPrice("drywall", encW, encD, true);
-  interior.paintedNoIns = interiorPrice("painted", encW, encD, true);
+  interior.drywallNoIns = interiorPrice("drywall", encW, encD, true, cfg.h);
+  interior.paintedNoIns = interiorPrice("painted", encW, encD, true, cfg.h);
   // Ridge vent: $/linear ft of the main ridge (the shed's length), 12 Oct 2026.
   { const rate = (SELL.options.perLinFt || {})["Roof Ridge Vent"];
     addons.ridgeVent = Math.ceil(Number(cfg.l) || 0) * (rate != null ? rate : 15); }
