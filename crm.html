@@ -423,6 +423,15 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
       <div class="intl-evidence" id="intl-evidence" hidden></div>
       <h3 class="intl-h3">Possible duplicates</h3>
       <div id="intl-dupes"><p class="empty">None waiting.</p></div>
+      <h3 class="intl-h3">Email drafts <span class="panel-msg">(drafts only &mdash; nothing is sent)</span></h3>
+      <div class="intl-bar">
+        <select id="ic-lang"><option value="en">English</option><option value="es">Español</option></select>
+        <button class="btn" id="ic-draft" type="button">Draft emails for selected</button>
+        <button class="btn ghost" id="ic-refresh" type="button">Refresh drafts</button>
+        <span class="panel-msg" id="ic-msg"></span>
+      </div>
+      <div id="ic-list"><p class="empty">Not loaded.</p></div>
+      <div class="intl-evidence" id="ic-detail" hidden></div>
     </div>
   </section>
 </main>
@@ -1686,7 +1695,7 @@ if (token) loadClients();
   toggle.addEventListener('click', function () {
     var b = $('intl-body'); b.hidden = !b.hidden; toggle.textContent = b.hidden ? 'Show' : 'Hide';
     toggle.classList.toggle('on', !b.hidden);
-    if (!b.hidden && !loaded) load();
+    if (!b.hidden && !loaded) { load(); loadCampaigns(); }
   });
   ['if-country', 'if-city', 'if-tier', 'if-segment', 'if-status', 'if-email', 'if-dupes'].forEach(function (id) { $(id).addEventListener('change', render); });
   $('if-search').addEventListener('input', render);
@@ -1709,6 +1718,67 @@ if (token) loadClients();
       $('intl-msg').textContent = r.ok && r.data ? 'Moved ' + r.data.changed + ' to ' + st + '.' : 'Could not update.';
       selected = {}; $('intl-all').checked = false; return load();
     });
+  });
+  /* Phase 4: campaign drafts (preview + edit + approve). No send. */
+  function loadCampaigns() {
+    return authFetch('/crm/intl/campaigns').then(function (r) {
+      var box = $('ic-list'), list = (r.data && r.data.campaigns) || [];
+      box.innerHTML = list.length ? '<ul>' + list.map(function (c) {
+        return '<li><a href="#" class="ic-open" data-id="' + c.id + '">' + e(c.name) + '</a> — ' + e(c.status) +
+          ' · ' + e(c.drafts) + ' draft, ' + e(c.blocked) + ' blocked · ' + e(c.lang) + '</li>';
+      }).join('') + '</ul>' : '<p class="empty">No campaigns yet.</p>';
+    });
+  }
+  function openCampaign(id) {
+    var box = $('ic-detail'); box.hidden = false; box.textContent = 'Loading…';
+    authFetch('/crm/intl/campaigns/' + id).then(function (r) {
+      if (!r.ok || !r.data) { box.textContent = 'Could not load.'; return; }
+      var c = r.data.campaign, s = r.data.sender, draft = c.status === 'draft';
+      box.innerHTML = '<b>' + e(c.name) + '</b> — ' + e(c.status) +
+        (s.postal_set ? '' : ' <span class="panel-msg">Postal address not configured; approval disabled.</span>') +
+        '<div>' + (draft ? '<button class="btn ic-st" data-id="' + c.id + '" data-st="approved" type="button">Approve</button>' : '') +
+        (c.status === 'approved' ? '<button class="btn ghost ic-st" data-id="' + c.id + '" data-st="draft" type="button">Back to draft</button>' : '') +
+        '</div>' + r.data.messages.map(function (m) {
+          return '<div class="ic-msg" style="border-top:1px solid var(--dim);margin-top:12px;padding-top:8px">' +
+            '<div>' + e(m.business_name || '') + ' &lt;' + e(m.to_email) + '&gt; — <b>' + e(m.status) + '</b>' +
+            (m.block_reason ? ' (' + e(m.block_reason) + ')' : '') + (m.edited ? ' · edited' : '') + '</div>' +
+            (draft ? '<input class="ic-subj" data-id="' + m.id + '" style="width:100%" value="' + e(m.subject) + '">' +
+              '<textarea class="ic-body" data-id="' + m.id + '" rows="9" style="width:100%">' + e(m.body) + '</textarea>' +
+              '<button class="btn ghost ic-save" data-id="' + m.id + '" data-c="' + c.id + '" type="button">Save edit</button>'
+              : '<div><b>' + e(m.preview.subject) + '</b></div>') +
+            '<pre style="white-space:pre-wrap;font-size:13px">' + e(m.preview.body) + '</pre></div>';
+        }).join('');
+    });
+  }
+  $('ic-refresh').addEventListener('click', loadCampaigns);
+  $('ic-draft').addEventListener('click', function () {
+    var ids = Object.keys(selected).map(Number);
+    if (!ids.length) { $('ic-msg').textContent = 'Select leads first.'; return; }
+    authFetch('/crm/intl/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_ids: ids, lang: $('ic-lang').value }) }).then(function (r) {
+      if (!r.ok || !r.data) { $('ic-msg').textContent = (r.data && r.data.error) || 'Could not draft.'; return; }
+      $('ic-msg').textContent = r.data.drafted + ' drafted, ' + r.data.blocked + ' blocked, ' + r.data.skipped.length + ' skipped.';
+      loadCampaigns(); openCampaign(r.data.campaign_id);
+    });
+  });
+  $('ic-list').addEventListener('click', function (ev) {
+    var t = ev.target; if (!t.classList.contains('ic-open')) return; ev.preventDefault(); openCampaign(t.dataset.id);
+  });
+  $('ic-detail').addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t.classList.contains('ic-save')) {
+      var id = t.dataset.id, box = $('ic-detail');
+      authFetch('/crm/intl/messages/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject: box.querySelector('.ic-subj[data-id="' + id + '"]').value,
+                               body: box.querySelector('.ic-body[data-id="' + id + '"]').value }) })
+        .then(function () { openCampaign(t.dataset.c); });
+    } else if (t.classList.contains('ic-st')) {
+      authFetch('/crm/intl/campaigns/' + t.dataset.id + '/status', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: t.dataset.st }) }).then(function (r) {
+        $('ic-msg').textContent = r.data && r.data.error ? r.data.error : 'Status: ' + t.dataset.st;
+        loadCampaigns(); openCampaign(t.dataset.id);
+      });
+    }
   });
   $('intl-csv').addEventListener('click', csv);
   $('intl-refresh').addEventListener('click', load);

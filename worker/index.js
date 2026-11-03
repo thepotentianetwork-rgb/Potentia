@@ -25,6 +25,7 @@ import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, li
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS, seedIntlSources, listIntlSegments, setIntlSourcesEnabled, intlCityList, listIntlLeads, setIntlLeadStatus, intlLeadEvidence, listIntlDuplicates, resolveIntlDuplicate } from "./leadpipeline.js";
 import { crawlSite } from "./intlcrawl.js";
 import { analyzeIntlLead } from "./intlaudit.js";
+import { listTemplates, saveTemplate, createDraftCampaign, listCampaigns, getCampaign, editMessage, setCampaignStatus, listSuppressions, addSuppression, handleUnsubscribe } from "./intlcampaigns.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
@@ -6302,6 +6303,16 @@ export default {
       return await handleBriefing(request, env, path);
     }
 
+    /* Intl Phase 4: public unsubscribe. GET = confirm page, POST = apply
+       (RFC 8058 one-click). No auth, no CORS: it is opened from an email. */
+    const unsub = path.match(/^\/u\/([A-Za-z0-9]{1,80})$/);
+    if (unsub && (request.method === "GET" || request.method === "POST")) {
+      if (!env.CRM_DB) return new Response("Unavailable", { status: 503 });
+      const r = await handleUnsubscribe(env, unsub[1], request.method);
+      return new Response(r.html, { status: r.status, headers: { "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer" } });
+    }
+
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(origin) });
     }
@@ -6932,6 +6943,29 @@ export default {
           const out = await resolveIntlDuplicate(env, Number(dm[1]), String(body.action || ""));
           return json(out, out.error ? 400 : 200, origin);
         }
+        /* Phase 4: templates, suppressions, draft campaigns. No sending. */
+        const body4 = request.method === "POST" ? await request.json().catch(() => ({})) : null;
+        const reply = (out) => json(out, out.error ? (out.status || 400) : 200, origin);
+        if (path === "/crm/intl/templates") {
+          if (request.method === "GET") return json({ templates: await listTemplates(env) }, 200, origin);
+          if (request.method === "POST") return reply(await saveTemplate(env, body4));
+        }
+        if (path === "/crm/intl/suppressions") {
+          if (request.method === "GET") return json({ suppressions: await listSuppressions(env) }, 200, origin);
+          if (request.method === "POST") return reply(await addSuppression(env, String(body4.kind || ""), body4.value, body4.reason, "manual"));
+        }
+        if (path === "/crm/intl/campaigns") {
+          if (request.method === "GET") return json({ campaigns: await listCampaigns(env) }, 200, origin);
+          if (request.method === "POST") return reply(await createDraftCampaign(env, body4));
+        }
+        const cm = path.match(/^\/crm\/intl\/campaigns\/(\d+)(\/status)?$/);
+        if (cm && !cm[2] && request.method === "GET") {
+          const out = await getCampaign(env, Number(cm[1]));
+          return out ? json(out, 200, origin) : json({ error: "Not found" }, 404, origin);
+        }
+        if (cm && cm[2] && request.method === "POST") return reply(await setCampaignStatus(env, Number(cm[1]), String(body4.status || ""), body4));
+        const mm = path.match(/^\/crm\/intl\/messages\/(\d+)$/);
+        if (mm && request.method === "POST") return reply(await editMessage(env, Number(mm[1]), body4));
         return json({ error: "Not found" }, 404, origin);
       }
       if (path === "/crm/clients" && request.method === "GET") {

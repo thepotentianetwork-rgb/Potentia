@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "91831da-dirty";
-const WORKER_BUILT_AT = "2026-11-03T05:09:59.787Z";
+const WORKER_BUILD = "b77c12c-dirty";
+const WORKER_BUILT_AT = "2026-11-03T19:09:25.534Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -2483,6 +2483,23 @@ async function ensureLeadPipelineTables(env) {
   ).run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_emails_email ON lead_emails(email)").run();
 
+  /* Phase 2 (2026-11-03, migrations/0006_lead_evidence.sql): every US-
+     relevance signal and audit finding, with the page it came from. */
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS lead_evidence (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,              -- usd_price | us_phone | ... | audit_https | audit_viewport | ...
+      category TEXT NOT NULL,          -- us | audit
+      status TEXT NOT NULL,            -- us: confirmed | needs_review; audit: confirmed_issue | opportunity_needs_review | ok | untested
+      confirmed INTEGER NOT NULL DEFAULT 0,
+      url TEXT,
+      snippet TEXT,
+      created_at TEXT NOT NULL)`
+  ).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_evidence_client ON lead_evidence(client_id, category)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_evidence_kind ON lead_evidence(kind, status)").run();
+
   // Same for `screened` — free screening used to be lumped in with `rejected`.
   const runCols = await db.prepare("PRAGMA table_info(enrichment_runs)").all();
   if ((runCols.results || []).map((r) => r.name).indexOf("screened") === -1) {
@@ -2508,7 +2525,18 @@ async function ensureLeadPipelineTables(env) {
     ["created_by_pipeline", "INTEGER NOT NULL DEFAULT 0"],
     // International profile. NULL on every domestic row.
     ["country", "TEXT"],
-    ["city", "TEXT"]
+    ["city", "TEXT"],
+    // Intl Phase 2 (0006). NULL on every domestic row.
+    ["lead_us_score", "INTEGER"],          // 0-100, capped unless >=2 confirmed non-language signals
+    ["lead_us_signals", "INTEGER"],        // confirmed non-language US signals
+    ["lead_opportunity_score", "INTEGER"], // 0-100, rule-based
+    ["lead_suggested_service", "TEXT"],    // website_rebuild | bilingual_site | booking_ux | speed_tuneup | analytics_tracking | growth_retainer
+    ["lead_tier", "TEXT"],                 // A | B | C
+    ["lead_talking_points", "TEXT"],       // JSON array; confirmed evidence only
+    // Intl Phase 3: soft-duplicate review queue. NULL on every domestic row.
+    ["lead_dup_of", "INTEGER"],            // clients.id this lead may duplicate
+    ["lead_dup_status", "TEXT"],           // possible | confirmed | distinct
+    ["lead_dup_reason", "TEXT"]
   ];
   for (const [name, decl] of wanted) {
     if (cols.indexOf(name) === -1) {
@@ -4043,6 +4071,28 @@ async function saveLeadEmails(env, clientId, emails) {
   return n;
 }
 
+/* Phase 2: evidence rows + the summary columns on clients. */
+async function saveLeadEvidence(env, clientId, analysis) {
+  const now = new Date().toISOString();
+  let n = 0;
+  for (const e of (analysis && analysis.evidence) || []) {
+    await env.CRM_DB.prepare(
+      `INSERT INTO lead_evidence (client_id, kind, category, status, confirmed, url, snippet, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(clientId, e.kind, e.category, e.status, e.confirmed ? 1 : 0, e.url || null,
+           String(e.snippet || "").slice(0, 300), now).run();
+    n++;
+  }
+  const us = analysis.us || {}, op = analysis.opportunity || {};
+  await env.CRM_DB.prepare(
+    `UPDATE clients SET lead_us_score = ?, lead_us_signals = ?, lead_opportunity_score = ?,
+            lead_suggested_service = ?, lead_tier = ?, lead_talking_points = ? WHERE id = ?`
+  ).bind(us.score == null ? null : us.score, us.non_language_confirmed == null ? null : us.non_language_confirmed,
+         op.score == null ? null : op.score, op.service || null, op.tier || null,
+         JSON.stringify(op.talking_points || []), clientId).run();
+  return n;
+}
+
 async function intlSpentToday(env) {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const row = await env.CRM_DB.prepare(
@@ -4135,6 +4185,7 @@ async function runIntlPipeline(env, opts) {
         if (p.status && p.status !== "OPERATIONAL") { counts.deduped++; continue; }
         counts.sourced++;
         if (await findExisting(env, p)) { counts.deduped++; continue; }
+        if ((await intlDedupe(env, p, null, s)).hard) { counts.deduped++; continue; }
         const veto = intlReject(p, minRating);
         const now = new Date().toISOString();
         if (veto) {
@@ -4190,10 +4241,47 @@ async function runIntlPipeline(env, opts) {
                      kept: v.qualified, score: v.score, reason: v.reason,
                      emails: (c.emails || []).map((e) => ({ email: e.email, type: e.type, source_url: e.source_url })),
                      phones: c.phones, whatsapp: c.whatsapp };
+      /* Phase 2: US relevance + audit + opportunity, on qualifying sites only.
+         Free (PageSpeed + a few HEADs). A failure here never loses the lead. */
+      let analysis = null;
+      if (v.qualified && typeof deps.analyzeLead === "function") {
+        let ps = null;
+        if (o.pagespeed !== false) {
+          try { ps = await (deps.pageSpeed || pageSpeed)(env, (c.docs && c.docs[0] && c.docs[0].url) || places.website); }
+          catch (e) { ps = null; counts.errors.push("pagespeed[" + places.name + "]: " + String(e).slice(0, 120)); }
+        }
+        try { analysis = await deps.analyzeLead(c, { segment: cand.segment, pagespeed: ps }); }
+        catch (e) { counts.errors.push("analyze[" + places.name + "]: " + String(e).slice(0, 160)); }
+        if (analysis) {
+          counts.analyzed = (counts.analyzed || 0) + 1;
+          item.us_score = analysis.us.score;
+          item.us_gate = analysis.us.gate;
+          item.us_signals = analysis.us.non_language_confirmed;
+          item.opportunity_score = analysis.opportunity.score;
+          item.suggested_service = analysis.opportunity.service;
+          item.tier = analysis.opportunity.tier;
+          item.talking_points = analysis.opportunity.talking_points;
+          if (o.dryRun) item.evidence = analysis.evidence;
+        }
+      }
+      const dup = (!o.dryRun && v.qualified) ? await intlDedupe(env, places, c, src) : { hard: null, soft: null };
       if (o.dryRun) {
         counts.preview.push(item);
+      } else if (v.qualified && dup.hard) {
+        /* Phase 3: the site's own phone/domain matched a lead we already
+           have (e.g. a +52 1 mobile vs the Places national number). */
+        await stripCandidate(env, cand.id, "duplicate", v.score, "duplicate of client " + dup.hard.id + " on " + dup.hard.on, dup.hard.id);
+        counts.deduped++;
+        item.duplicate_of = dup.hard.id;
       } else if (v.qualified) {
         const id = await pushIntlLeadToCrm(env, cand, places, v, c, src);
+        if (id && dup.soft) {
+          await db.prepare("UPDATE clients SET lead_dup_of = ?, lead_dup_status = 'possible', lead_dup_reason = ? WHERE id = ?")
+            .bind(dup.soft.id, dup.soft.on, id).run();
+          counts.possible_duplicates = (counts.possible_duplicates || 0) + 1;
+          item.possible_duplicate_of = dup.soft.id;
+        }
+        if (id && analysis) counts.evidence_saved = (counts.evidence_saved || 0) + await saveLeadEvidence(env, id, analysis);
         counts.emails_saved += id ? ((await db.prepare("SELECT COUNT(*) AS c FROM lead_emails WHERE client_id = ?").bind(id).first()) || {}).c || 0 : 0;
         await stripCandidate(env, cand.id, "pushed", v.score, v.reason, id);
         counts.pushed++;
@@ -4218,6 +4306,167 @@ async function runIntlPipeline(env, opts) {
            counts.errors.length ? counts.errors.join(" | ").slice(0, 900) : null, runId).run();
   }
   return { run_id: runId, profile: "intl", dry_run: !!o.dryRun, ...counts };
+}
+
+// ── Intl Phase 3: dedupe + dashboard ──────────────────────────────────────
+/* Mexican numbers turn up as "+52 624 123 4567", "+52 1 624 123 4567" (the
+   retired mobile prefix, still all over WhatsApp links), "044 624 ...",
+   "01 624 ..." and bare "6241234567". All of those are one line: return
+   the 10-digit national number with a "52" in front. Anything that is not
+   recognisably a 10-digit MX number returns null (never guessed). */
+function intlPhoneKey(v) {
+  let d = String(v == null ? "" : v).replace(/\D+/g, "");
+  if (!d) return null;
+  if (d.startsWith("00")) d = d.slice(2);
+  if (d.length === 13 && d.startsWith("521")) d = d.slice(3);
+  else if (d.length === 12 && d.startsWith("52")) d = d.slice(2);
+  else if (d.length === 13 && (d.startsWith("044") || d.startsWith("045"))) d = d.slice(3);
+  else if (d.length === 12 && d.startsWith("01")) d = d.slice(2);
+  else if (d.length === 11 && d.startsWith("1")) return "1" + d.slice(1);   // +1 US/CA, kept distinct
+  if (d.length !== 10) return null;
+  return "52" + d;
+}
+
+const INTL_SLD = ["com.mx", "org.mx", "net.mx", "gob.mx", "edu.mx", "co.uk", "com.au", "com.br"];
+/* Shared hosts: thousands of unrelated businesses "live" on these, so a
+   match on them means nothing. */
+const INTL_SHARED_HOSTS = ["facebook.com", "instagram.com", "wa.me", "whatsapp.com", "linktr.ee", "google.com",
+  "business.site", "wixsite.com", "wix.com", "squarespace.com", "godaddysites.com", "tripadvisor.com",
+  "tripadvisor.com.mx", "booking.com", "airbnb.com", "airbnb.mx", "yelp.com", "blogspot.com", "wordpress.com"];
+/* Registrable domain that knows .com.mx: shop.example.com.mx -> example.com.mx. */
+function intlDomainKey(url) {
+  const host = registrableDomain(url);
+  if (!host) return null;
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length < 2) return null;
+  const last2 = parts.slice(-2).join(".");
+  const base = (INTL_SLD.indexOf(last2) !== -1 && parts.length >= 3) ? parts.slice(-3).join(".") : last2;
+  return INTL_SHARED_HOSTS.indexOf(base) !== -1 ? null : base;
+}
+/* "cabo-yachts.com" vs "caboyachts.mx": same brand, different TLD. Soft only. */
+function intlBrandKey(url) {
+  const d = intlDomainKey(url);
+  if (!d) return null;
+  const b = d.split(".")[0].replace(/[^a-z0-9]/g, "");
+  return b.length >= 4 ? b : null;
+}
+function intlNameKey(name) {
+  return String(name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(s\.?a\.?( de c\.?v\.?)?|s\. de r\.l\.|restaurante|restaurant|hotel)\b/g, "")
+    .replace(/[^a-z0-9]+/g, "") || null;
+}
+
+/* Hard = same business, skip it (phone key or registrable domain).
+   Soft = probably the same, push it but queue it for a human: same brand on
+   another TLD, or same name in the same city. Checked against every client
+   (domestic included) so an intl lead never doubles a domestic one. */
+async function intlDedupe(env, places, crawl, src) {
+  const phones = [];
+  if (places && places.phone) phones.push(places.phone);
+  if (crawl) {
+    for (const ph of crawl.phones || []) phones.push(ph);
+    for (const w of crawl.whatsapp || []) phones.push("+" + w);
+  }
+  const keys = phones.map(intlPhoneKey).filter(Boolean);
+  const site = (crawl && crawl.pages && crawl.pages[0] && crawl.pages[0].url) || (places && places.website) || null;
+  const dom = intlDomainKey(site);
+  const brand = intlBrandKey(site);
+  const name = intlNameKey(places && places.name);
+  const city = src && src.city ? String(src.city).toLowerCase() : null;
+  const rows = (await env.CRM_DB.prepare(
+    "SELECT id, business_name, phone, website_url, city FROM clients").all()).results || [];
+  let soft = null;
+  for (const r of rows) {
+    if (keys.length && r.phone && keys.indexOf(intlPhoneKey(r.phone)) !== -1) return { hard: { id: r.id, on: "phone" }, soft: null };
+    if (dom && r.website_url && intlDomainKey(r.website_url) === dom) return { hard: { id: r.id, on: "domain" }, soft: null };
+    if (!soft && brand && r.website_url && intlBrandKey(r.website_url) === brand) soft = { id: r.id, on: "brand" };
+    if (!soft && name && city && r.city && String(r.city).toLowerCase() === city && intlNameKey(r.business_name) === name)
+      soft = { id: r.id, on: "name_city" };
+  }
+  return { hard: null, soft };
+}
+
+const INTL_STATUSES = ["lead", "contacted", "proposal", "building", "live", "paused", "lost"];
+
+/* Every intl lead with the columns the International view shows. */
+async function listIntlLeads(env) {
+  await ensureLeadPipelineTables(env);
+  const rows = (await env.CRM_DB.prepare(
+    `SELECT c.id, c.business_name, c.email, c.phone, c.website_url, c.status, c.country, c.city,
+            c.lead_segment, c.lead_trade, c.lead_score, c.lead_us_score, c.lead_us_signals,
+            c.lead_opportunity_score, c.lead_suggested_service, c.lead_tier, c.lead_talking_points,
+            c.lead_dup_of, c.lead_dup_status, c.lead_dup_reason, c.owner, c.created_at, c.updated_at,
+            (SELECT COUNT(*) FROM lead_emails e WHERE e.client_id = c.id AND e.opted_out = 0) AS email_count
+       FROM clients c WHERE c.source = 'pipeline_intl'
+      ORDER BY COALESCE(c.lead_opportunity_score, -1) DESC, c.id DESC LIMIT 1000`).all()).results || [];
+  const m = { total: rows.length, tier_a: 0, tier_b: 0, tier_c: 0, with_email: 0, possible_duplicates: 0,
+              us_relevant: 0, avg_opportunity: null, by_status: {} };
+  let sum = 0, n = 0;
+  for (const r of rows) {
+    if (r.lead_tier === "A") m.tier_a++; else if (r.lead_tier === "B") m.tier_b++; else if (r.lead_tier === "C") m.tier_c++;
+    if (r.email) m.with_email++;
+    if (r.lead_dup_status === "possible") m.possible_duplicates++;
+    if ((r.lead_us_score || 0) >= 50) m.us_relevant++;
+    if (r.lead_opportunity_score != null) { sum += r.lead_opportunity_score; n++; }
+    m.by_status[r.status] = (m.by_status[r.status] || 0) + 1;
+  }
+  if (n) m.avg_opportunity = Math.round(sum / n);
+  return { leads: rows, metrics: m };
+}
+
+/* Bulk "assign to pipeline". Only touches intl rows, so a stray id can never
+   move a domestic client. */
+async function setIntlLeadStatus(env, ids, status) {
+  if (INTL_STATUSES.indexOf(status) === -1) return { error: "Invalid status" };
+  const list = (Array.isArray(ids) ? ids : []).map(Number).filter((x) => Number.isInteger(x) && x > 0).slice(0, 500);
+  if (!list.length) return { error: "No ids" };
+  const now = new Date().toISOString();
+  const r = await env.CRM_DB.prepare(
+    `UPDATE clients SET status = ?, updated_at = ? WHERE source = 'pipeline_intl' AND id IN (${list.map(() => "?").join(",")})`
+  ).bind(status, now, ...list).run();
+  return { ok: true, changed: (r && r.meta && r.meta.changes) || 0 };
+}
+
+async function intlLeadEvidence(env, id) {
+  await ensureLeadPipelineTables(env);
+  const c = await env.CRM_DB.prepare(
+    "SELECT id, business_name, source, lead_us_score, lead_opportunity_score, lead_tier, lead_suggested_service, lead_talking_points FROM clients WHERE id = ?"
+  ).bind(id).first();
+  if (!c) return null;
+  const evidence = (await env.CRM_DB.prepare(
+    "SELECT kind, category, status, confirmed, url, snippet, created_at FROM lead_evidence WHERE client_id = ? ORDER BY category, confirmed DESC, id"
+  ).bind(id).all()).results || [];
+  const emails = (await env.CRM_DB.prepare(
+    "SELECT email, type, source_url, verification_status, eligibility, opted_out FROM lead_emails WHERE client_id = ? ORDER BY id"
+  ).bind(id).all()).results || [];
+  return { client: c, evidence, emails };
+}
+
+async function listIntlDuplicates(env) {
+  await ensureLeadPipelineTables(env);
+  return (await env.CRM_DB.prepare(
+    `SELECT c.id, c.business_name, c.website_url, c.phone, c.city, c.lead_dup_reason AS reason,
+            o.id AS other_id, o.business_name AS other_name, o.website_url AS other_website,
+            o.phone AS other_phone, o.city AS other_city, o.status AS other_status
+       FROM clients c LEFT JOIN clients o ON o.id = c.lead_dup_of
+      WHERE c.source = 'pipeline_intl' AND c.lead_dup_status = 'possible' ORDER BY c.id DESC`).all()).results || [];
+}
+
+/* duplicate -> the new row is marked lost (kept, not deleted); distinct ->
+   flag cleared for good. */
+async function resolveIntlDuplicate(env, id, action) {
+  const now = new Date().toISOString();
+  let r;
+  if (action === "duplicate") {
+    r = await env.CRM_DB.prepare(
+      "UPDATE clients SET lead_dup_status = 'confirmed', status = 'lost', updated_at = ? WHERE id = ? AND source = 'pipeline_intl' AND lead_dup_status = 'possible'"
+    ).bind(now, id).run();
+  } else if (action === "distinct") {
+    r = await env.CRM_DB.prepare(
+      "UPDATE clients SET lead_dup_status = 'distinct', updated_at = ? WHERE id = ? AND source = 'pipeline_intl' AND lead_dup_status = 'possible'"
+    ).bind(now, id).run();
+  } else return { error: "action must be duplicate or distinct" };
+  return { ok: true, changed: (r && r.meta && r.meta.changes) || 0 };
 }
 
 // ---- end inlined leadpipeline.js ----
@@ -9607,7 +9856,9 @@ async function fetchText(fetchImpl, url, timeoutMs, maxBytes, ua) {
    Returns {
      ok, home_status, pages: [{url,status}], emails: [{email,source_url,type,eligibility}],
      excluded: n (personal / off-domain addresses seen), phones: [...], whatsapp: [...],
-     robots_blocked: n, error
+     robots_blocked: n, error,
+     docs: [{url, status, html}]   — only with opts.keepHtml (Phase 2 audit;
+                                     html capped at opts.keepHtmlBytes)
    } */
 async function crawlSite(siteUrl, opts) {
   const o = Object.assign({}, INTL_CRAWL, opts || {});
@@ -9660,6 +9911,11 @@ async function crawlSite(siteUrl, opts) {
       if (!page.ok) { result.error = "homepage " + page.status; break; }
     }
     if (!page.ok || (page.ctype && !/html|text/i.test(page.ctype))) continue;
+    if (o.keepHtml) {
+      if (!result.docs) result.docs = [];
+      result.docs.push({ url: page.url || url, status: page.status,
+                         html: String(page.text || "").slice(0, o.keepHtmlBytes || 200000) });
+    }
 
     for (const e of extractEmails(page.text)) {
       let c = null;
@@ -9684,6 +9940,725 @@ async function crawlSite(siteUrl, opts) {
 }
 
 // ---- end inlined intlcrawl.js ----
+
+// ---- inlined from worker/intlaudit.js by build-bundle.mjs — do not edit below by hand ----
+/* International leads, Phase 2 (2026-11-03): US relevance + site audit +
+   rule-based opportunity. Pure functions over what intlcrawl.crawlSite
+   already fetched (crawl.docs, present when it is called with keepHtml),
+   plus one optional network step: a small HEAD sample of the homepage's
+   own links for the broken-link check.
+
+   No imports (build-bundle.mjs inlines this file). Nothing here invents a
+   problem: an item is `confirmed_issue` only when it was measured on a page
+   we fetched; anything inferred from absence is `opportunity_needs_review`;
+   anything we could not check is `untested`.
+
+   Evidence rows: { kind, category, status, confirmed, url, snippet }.
+     category 'us'    — status 'confirmed' | 'needs_review'
+     category 'audit' — status 'confirmed_issue' | 'opportunity_needs_review' | 'ok' | 'untested' */
+
+const AUDIT_STATUS = ["confirmed_issue", "opportunity_needs_review", "ok", "untested"];
+
+/* Signal weights. lang_en is the only language signal; the score is capped
+   unless at least INTL_US_MIN_NONLANG distinct non-language kinds are
+   CONFIRMED (English alone — or English plus a guess — is not US demand). */
+const US_WEIGHTS = { lang_en: 15, usd_price: 25, us_phone: 25, us_audience: 20,
+                            airport_transfer: 15, medical_tourism: 20, foreign_buyer: 20 };
+const INTL_US_MIN_NONLANG = 2;
+const US_GATE_CAP = 25;
+
+const EN_WORDS = ["the", "and", "you", "your", "with", "our", "for", "are", "book", "now", "tour",
+                  "from", "about", "contact", "we", "this", "will", "have"];
+const ES_WORDS = ["el", "la", "los", "las", "y", "de", "del", "para", "con", "nuestro", "nuestros",
+                  "reserva", "contacto", "somos", "es", "una", "por"];
+
+function decode(s) {
+  return String(s).replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (m, n) => { try { return String.fromCodePoint(Number(n)); } catch (e) { return " "; } });
+}
+
+function visibleText(html) {
+  return decode(String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+function snip(text, idx, len) {
+  const s = Math.max(0, idx - 50);
+  return text.slice(s, Math.min(text.length, idx + (len || 0) + 70)).trim().slice(0, 200);
+}
+
+function firstMatch(text, re) {
+  re.lastIndex = 0;
+  const m = re.exec(text);
+  return m ? { m, snippet: snip(text, m.index, m[0].length) } : null;
+}
+
+/* Share of common English vs Spanish function words in the text. */
+function languageMix(text) {
+  const words = String(text || "").toLowerCase().match(/[a-záéíóúñü]+/g) || [];
+  let en = 0, es = 0;
+  for (const w of words) { if (EN_WORDS.indexOf(w) !== -1) en++; if (ES_WORDS.indexOf(w) !== -1) es++; }
+  return { en, es, words: words.length };
+}
+
+const RE = {
+  usdExplicit: /(US\s?\$\s?\d[\d,.]*|\$\s?\d[\d,.]*\s?(USD|US dollars|dlls?\.?)\b|\bUSD\s?\$?\s?\d[\d,.]*)/i,
+  dollarBare: /\$\s?\d[\d,]*(\.\d{2})?/,
+  usPhoneTel: /href\s*=\s*["']tel:\s*\+?1[\s.\-()]*([2-9]\d{2})[\s.\-()]*(\d{3})[\s.\-]*(\d{4})/i,
+  usPhoneText: /\+1[\s.\-]?\(?([2-9]\d{2})\)?[\s.\-]?(\d{3})[\s.\-]?(\d{4})\b/,
+  usAudience: /\b(from the (US|USA|U\.S\.|United States|States)|American (guests|clients|customers|tourists|travell?ers|patients|visitors|families)|(guests|clients|patients|visitors|travell?ers) from (the )?(US|USA|U\.S\.|United States|Canada and the US)|Estados Unidos|norteamericanos|estadounidenses)\b/i,
+  usaBare: /\b(USA|U\.S\.A?\.)\b/,
+  airport: /\b(airport (pick[\s-]?up|transfers?|shuttle|transportation)|(pick[\s-]?up|transfers?) (from|to) (the )?(SJD |Los Cabos |Cancun |CUN |PVR )?airport|hotel pick[\s-]?up|traslados? (al|del|desde el) aeropuerto|transporte (al|del) aeropuerto)\b/i,
+  medical: /\b(medical tourism|dental tourism|patients? (from|traveling from|coming from) (the )?(US|USA|U\.S\.|United States|Canada|abroad)|international patients|(save|ahorr\w*) (up to )?\d{2}\s?%|compared (to|with) (US|U\.S\.|American) (prices|costs)|cross[\s-]border)\b/i,
+  foreignBuyer: /\b(foreign (buyers?|nationals?|investors?)|fideicomiso|bank trust|buying (real estate|property) in mexico|for (americans|canadians)|non[\s-]residents?|title insurance|restricted zone)\b/i
+};
+
+/* US-relevance evidence from fetched docs [{url, html}]. One row per kind
+   (the first, clearest hit), confirmed only for unambiguous rules. */
+function extractUsSignals(docs) {
+  const found = {};
+  const put = (kind, status, url, snippet) => {
+    const prev = found[kind];
+    if (prev && (prev.status === "confirmed" || status !== "confirmed")) return;
+    found[kind] = { kind, category: "us", status, confirmed: status === "confirmed", url, snippet: String(snippet || "").slice(0, 200) };
+  };
+  for (const d of docs || []) {
+    const html = String(d.html || "");
+    const text = visibleText(html);
+    const url = d.url || null;
+
+    const langAttr = /<html[^>]*\blang\s*=\s*["']?([a-z]{2})/i.exec(html);
+    const mix = languageMix(text);
+    if (langAttr && langAttr[1].toLowerCase() === "en" && mix.en >= 5) put("lang_en", "confirmed", url, "<html lang=\"en\"> · " + text.slice(0, 120));
+    else if (mix.words >= 40 && mix.en >= 8 && mix.en > mix.es) put("lang_en", "needs_review", url, "mostly English text: " + text.slice(0, 120));
+
+    let h = firstMatch(text, RE.usdExplicit);
+    if (h) put("usd_price", "confirmed", url, h.snippet);
+    else if ((h = firstMatch(text, RE.dollarBare))) put("usd_price", "needs_review", url, "$ price, currency not stated (MXN also uses $): " + h.snippet);
+
+    h = firstMatch(html, RE.usPhoneTel);
+    if (h) put("us_phone", "confirmed", url, "tel: +1 " + h.m[1] + " " + h.m[2] + " " + h.m[3]);
+    else if ((h = firstMatch(text, RE.usPhoneText))) put("us_phone", "confirmed", url, h.snippet);
+
+    if ((h = firstMatch(text, RE.usAudience))) put("us_audience", "confirmed", url, h.snippet);
+    else if ((h = firstMatch(text, RE.usaBare))) put("us_audience", "needs_review", url, h.snippet);
+
+    if ((h = firstMatch(text, RE.airport))) put("airport_transfer", "confirmed", url, h.snippet);
+    if ((h = firstMatch(text, RE.medical))) put("medical_tourism", "confirmed", url, h.snippet);
+    if ((h = firstMatch(text, RE.foreignBuyer))) put("foreign_buyer", "confirmed", url, h.snippet);
+  }
+  return Object.values(found);
+}
+
+/* 0–100. Confirmed rows count fully, needs_review rows half. Gate: fewer
+   than INTL_US_MIN_NONLANG confirmed non-language kinds caps the score. */
+function usScore(signals) {
+  let raw = 0, nonLang = 0, nonLangAny = 0;
+  for (const s of signals || []) {
+    if (s.category && s.category !== "us") continue;
+    const w = US_WEIGHTS[s.kind] || 0;
+    raw += s.confirmed ? w : w / 2;
+    if (s.kind !== "lang_en") { nonLangAny++; if (s.confirmed) nonLang++; }
+  }
+  const gate = nonLang >= INTL_US_MIN_NONLANG;
+  const score = Math.min(100, Math.round(raw));
+  return { score: gate ? score : Math.min(US_GATE_CAP, score), raw: score, gate,
+           non_language_confirmed: nonLang, non_language_total: nonLangAny };
+}
+
+const BOOKING_RE = /(fareharbor|peek\.com|peekpro|rezdy|bokun|checkfront|calendly|xola|trekksoft|cloudbeds|opentable|resy\.com|acuityscheduling|simplybook|setmore|booksy|zocdoc|doctoralia|getyourguide|viator|bookeo|regiondo|tripadvisor\.com\/widget|bookingkit|vagaro|square\.site\/book|squareup\.com\/appointments|youcanbook\.me|booking\.com\/widget|mews|sirvoy|little ?hotelier)/i;
+const ANALYTICS_RE = /(googletagmanager\.com|google-analytics\.com|gtag\(|\bga\(\s*['"]create|fbq\(|connect\.facebook\.net\/[^"']*fbevents|clarity\.ms|hotjar|plausible\.io|matomo|static\.cloudflareinsights|tiktok\.com\/i18n\/pixel|analytics\.js)/i;
+
+function sameSiteLinks(html, pageUrl, max) {
+  const out = [];
+  let base;
+  try { base = new URL(pageUrl); } catch (e) { return out; }
+  const re = /<a\b[^>]*href\s*=\s*["']([^"'#]+)["']/gi;
+  let m;
+  const seen = new Set();
+  while ((m = re.exec(String(html || ""))) && out.length < max) {
+    const raw = m[1].trim();
+    if (/^(mailto|tel|javascript|whatsapp|sms):/i.test(raw)) continue;
+    let u;
+    try { u = new URL(raw, base); } catch (e) { continue; }
+    if (!/^https?:$/.test(u.protocol)) continue;
+    if (u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
+    if (/\.(jpe?g|png|gif|webp|svg|pdf|zip|mp4)$/i.test(u.pathname)) continue;
+    u.hash = "";
+    const k = u.toString();
+    if (seen.has(k) || k === base.toString()) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out;
+}
+
+/* HEAD (then GET on 405/501) a sample of same-site links. Returns
+   [{url, status, error}]. status 0 = network error/timeout. */
+async function sampleLinks(html, pageUrl, opts) {
+  const o = opts || {};
+  const f = o.fetchImpl || fetch;
+  const links = sameSiteLinks(html, pageUrl, o.max || 6);
+  const out = [];
+  for (const url of links) {
+    try {
+      let r = await f(url, { method: "HEAD", redirect: "follow", signal: AbortSignal.timeout(o.timeoutMs || 6000) });
+      if (r.status === 405 || r.status === 501) r = await f(url, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(o.timeoutMs || 6000) });
+      out.push({ url, status: r.status });
+    } catch (e) { out.push({ url, status: 0, error: String((e && e.message) || e).slice(0, 80) }); }
+  }
+  return out;
+}
+
+function auditRow(kind, status, url, snippet) {
+  return { kind: "audit_" + kind, category: "audit", status, confirmed: status === "confirmed_issue",
+           url: url || null, snippet: String(snippet || "").slice(0, 200) };
+}
+
+/* input: { crawl, docs, pagespeed: {performance, hasViewport, unreachable}|null|undefined,
+            links: [{url,status}]|null, siteUrl, usSignals } */
+function auditSite(input) {
+  const i = input || {};
+  const crawl = i.crawl || {};
+  const docs = i.docs || [];
+  const home = docs[0];
+  const homeUrl = (home && home.url) || (crawl.pages && crawl.pages[0] && crawl.pages[0].url) || i.siteUrl || null;
+  const rows = [];
+  const allHtml = docs.map((d) => String(d.html || "")).join("\n");
+
+  // HTTPS — where the homepage actually landed after redirects.
+  if (!home) rows.push(auditRow("https", "untested", homeUrl, "homepage not fetched"));
+  else if (/^https:/i.test(home.url)) rows.push(auditRow("https", "ok", home.url, "served over https"));
+  else rows.push(auditRow("https", "confirmed_issue", home.url, "homepage served over plain http (no redirect to https)"));
+
+  // Viewport — meta tag in the fetched homepage; PageSpeed corroborates.
+  if (!home) rows.push(auditRow("viewport", "untested", homeUrl, "homepage not fetched"));
+  else {
+    const vp = /<meta[^>]+name\s*=\s*["']?viewport["']?[^>]*>/i.exec(String(home.html || ""));
+    if (vp) rows.push(auditRow("viewport", "ok", home.url, vp[0]));
+    else if (i.pagespeed && i.pagespeed.hasViewport === true) rows.push(auditRow("viewport", "ok", home.url, "PageSpeed: viewport present (set by script)"));
+    else rows.push(auditRow("viewport", "confirmed_issue", home.url, "no <meta name=\"viewport\"> in homepage HTML" + (i.pagespeed && i.pagespeed.hasViewport === false ? "; PageSpeed agrees" : "")));
+  }
+
+  // Speed — PageSpeed mobile performance.
+  const ps = i.pagespeed;
+  if (!ps || ps.performance == null) rows.push(auditRow("speed", "untested", homeUrl, ps && ps.unreachable ? "PageSpeed could not load the page (" + (ps.code || "") + ")" : "PageSpeed not run"));
+  else if (ps.performance < 50) rows.push(auditRow("speed", "confirmed_issue", homeUrl, "PageSpeed mobile performance " + ps.performance + "/100"));
+  else if (ps.performance < 90) rows.push(auditRow("speed", "opportunity_needs_review", homeUrl, "PageSpeed mobile performance " + ps.performance + "/100"));
+  else rows.push(auditRow("speed", "ok", homeUrl, "PageSpeed mobile performance " + ps.performance + "/100"));
+
+  // Broken links — crawled pages that 404'd plus a HEAD sample.
+  const tested = (i.links || []).concat((crawl.pages || []).slice(1).filter((p) => p.status > 0).map((p) => ({ url: p.url, status: p.status })));
+  const hard = tested.filter((l) => l.status === 404 || l.status === 410 || l.status >= 500);
+  const soft = tested.filter((l) => l.status === 0);
+  if (!tested.length) rows.push(auditRow("broken_links", "untested", homeUrl, "no internal links sampled"));
+  else if (hard.length) rows.push(auditRow("broken_links", "confirmed_issue", hard[0].url, hard.length + " of " + tested.length + " sampled links broken (" + hard.slice(0, 3).map((l) => l.status + " " + l.url).join(", ") + ")"));
+  else if (soft.length) rows.push(auditRow("broken_links", "opportunity_needs_review", soft[0].url, soft.length + " of " + tested.length + " sampled links timed out / refused"));
+  else rows.push(auditRow("broken_links", "ok", homeUrl, tested.length + " sampled links all answered"));
+
+  if (!docs.length) {
+    for (const k of ["forms", "booking", "analytics", "whatsapp", "lang_switch"]) rows.push(auditRow(k, "untested", homeUrl, "no pages fetched"));
+    return rows;
+  }
+  const where = (re) => { for (const d of docs) { re.lastIndex = 0; const m = re.exec(String(d.html || "")); if (m) return { url: d.url, snippet: snip(String(d.html), m.index, m[0].length) }; } return null; };
+
+  let w = where(/<form\b[^>]*>/i);
+  rows.push(w ? auditRow("forms", "ok", w.url, w.snippet.replace(/\s+/g, " "))
+              : auditRow("forms", "opportunity_needs_review", homeUrl, "no <form> on " + docs.length + " crawled page(s); may be script-rendered"));
+
+  w = where(BOOKING_RE);
+  rows.push(w ? auditRow("booking", "ok", w.url, "booking widget: " + w.snippet.replace(/\s+/g, " "))
+              : auditRow("booking", "opportunity_needs_review", homeUrl, "no known booking widget on " + docs.length + " crawled page(s)"));
+
+  w = where(ANALYTICS_RE);
+  rows.push(w ? auditRow("analytics", "ok", w.url, "tag: " + w.snippet.replace(/\s+/g, " "))
+              : auditRow("analytics", "opportunity_needs_review", homeUrl, "no analytics tag in fetched HTML (could be server-side)"));
+
+  w = where(/(wa\.me\/|api\.whatsapp\.com\/send|whatsapp:\/\/)/i);
+  rows.push(w || (crawl.whatsapp && crawl.whatsapp.length)
+    ? auditRow("whatsapp", "ok", w ? w.url : homeUrl, w ? w.snippet.replace(/\s+/g, " ") : "WhatsApp " + crawl.whatsapp[0])
+    : auditRow("whatsapp", "opportunity_needs_review", homeUrl, "no WhatsApp link on crawled pages"));
+
+  w = where(/<link[^>]+hreflang\s*=\s*["']?(en|es)/i) ||
+      where(/<a\b[^>]*href\s*=\s*["'][^"']*\/(en|es)(\/|["'?])[^>]*>/i) ||
+      where(/>\s*(English|Español|EN\s*\|\s*ES|ES\s*\|\s*EN)\s*</i) ||
+      where(/(gtranslate|weglot|translatepress|wpml|google_translate_element)/i);
+  const hasEn = (i.usSignals || []).some((s) => s.kind === "lang_en");
+  rows.push(w ? auditRow("lang_switch", "ok", w.url, w.snippet.replace(/\s+/g, " "))
+              : auditRow("lang_switch", "opportunity_needs_review", homeUrl,
+                         "no EN/ES switcher found; site reads as " + (hasEn ? "English only" : "Spanish only / no English detected")));
+  return rows;
+}
+
+const TOURISM = ["intl_yacht_charter", "intl_tours", "intl_dive", "intl_adventure", "intl_golf",
+                 "intl_boutique_hotel", "intl_property_mgmt", "intl_spa", "intl_transport",
+                 "intl_restaurant", "intl_wedding", "intl_dental", "intl_medical"];
+
+const TALK = {
+  usd_price: "Prices are shown in USD",
+  us_phone: "Publishes a US (+1) phone number",
+  us_audience: "Site speaks directly to US/American visitors",
+  airport_transfer: "Offers airport pickup / transfers",
+  medical_tourism: "Markets to cross-border / international patients",
+  foreign_buyer: "Markets to foreign buyers",
+  lang_en: "Site has English content",
+  audit_https: "Homepage is not on https — browsers flag it as Not Secure",
+  audit_viewport: "No mobile viewport — the site does not adapt to phones",
+  audit_speed: "Slow on mobile",
+  audit_broken_links: "Broken internal links"
+};
+
+/* Rule-based opportunity. Talking points cite only confirmed rows. */
+function opportunity(us, evidence, segment) {
+  const ev = evidence || [];
+  const st = (k) => { const r = ev.find((e) => e.kind === "audit_" + k); return r ? r.status : "untested"; };
+  let gaps = 0;
+  for (const e of ev) if (e.category === "audit") gaps += e.status === "confirmed_issue" ? 18 : e.status === "opportunity_needs_review" ? 5 : 0;
+  const usPart = us ? us.score : 0;
+  const score = Math.min(100, Math.round(usPart * 0.5 + gaps));
+
+  let service;
+  if (st("https") === "confirmed_issue" || st("viewport") === "confirmed_issue" || st("speed") === "confirmed_issue" || st("broken_links") === "confirmed_issue")
+    service = "website_rebuild";
+  else if (st("lang_switch") === "opportunity_needs_review") service = "bilingual_site";
+  else if (st("booking") === "opportunity_needs_review" && TOURISM.indexOf(segment) !== -1) service = "booking_ux";
+  else if (st("speed") === "opportunity_needs_review") service = "speed_tuneup";
+  else if (st("analytics") === "opportunity_needs_review") service = "analytics_tracking";
+  else service = "growth_retainer";
+
+  const gate = !!(us && us.gate);
+  // A US-irrelevant site is never above C, however many gaps it has.
+  const tier = gate && score >= 60 ? "A" : (gate || (score >= 50 && usPart >= 15)) ? "B" : "C";
+
+  const points = [];
+  for (const e of ev) {
+    if (!(e.status === "confirmed" || e.status === "confirmed_issue")) continue;
+    if (e.kind === "lang_en") continue;
+    const head = TALK[e.kind];
+    if (!head) continue;
+    points.push(head + (e.kind === "audit_speed" ? " (" + e.snippet + ")" : "") + " — " + (e.url || ""));
+  }
+  return { score, service, tier, talking_points: points.slice(0, 6) };
+}
+
+const SERVICE_LABELS = {
+  website_rebuild: "Website rebuild (mobile-first, https, fast)",
+  bilingual_site: "Bilingual EN/ES site",
+  booking_ux: "Online booking UX",
+  speed_tuneup: "Speed & performance tune-up",
+  analytics_tracking: "Analytics & conversion tracking",
+  growth_retainer: "Growth / care retainer"
+};
+
+/* Whole Phase 2 pass for one crawled site. opts: { segment, pagespeed (result
+   or null), fetchImpl, linkSample (bool, default true) }. Never throws. */
+async function analyzeIntlLead(crawl, opts) {
+  const o = opts || {};
+  const docs = (crawl && crawl.docs) || [];
+  const us = extractUsSignals(docs);
+  const usS = usScore(us);
+  let links = null;
+  if (o.linkSample !== false && docs[0]) {
+    try { links = await sampleLinks(docs[0].html, docs[0].url, { fetchImpl: o.fetchImpl, max: o.linkMax || 6 }); }
+    catch (e) { links = null; }
+  }
+  const audit = auditSite({ crawl, docs, pagespeed: o.pagespeed, links, usSignals: us });
+  const evidence = us.concat(audit);
+  const opp = opportunity(usS, evidence, o.segment);
+  return { evidence, us: usS, opportunity: opp, suggested_service_label: SERVICE_LABELS[opp.service] };
+}
+
+// ---- end inlined intlaudit.js ----
+
+// ---- inlined from worker/intlcampaigns.js by build-bundle.mjs — do not edit below by hand ----
+/* International Phase 4 (2026-11-03): drafts + compliance. LOCAL build.
+ *
+ * Tables (CRM_DB): email_templates (EN/ES), email_suppressions (email|domain),
+ * campaigns (draft -> approved -> scheduled -> sending -> done), campaign_messages.
+ *
+ * Nothing here sends. There is no provider; `sending` and `done` exist in the
+ * state machine for Phase 5 and cannot be entered by hand.
+ *
+ * Rules:
+ *  - A draft is only written for a lead with at least one CONFIRMED audit
+ *    finding in lead_evidence (status confirmed_issue). Needs-review findings
+ *    never reach copy.
+ *  - Every message gets a footer at render time: sender identity, postal
+ *    address (OUTREACH_POSTAL_ADDRESS; placeholder until set), unsubscribe link.
+ *    The footer is not stored in the editable body, so an edit cannot drop it.
+ *  - Eligibility gate (re-run on approve): verified address or a role address
+ *    on the business's own domain; not opted out; client not do_not_contact;
+ *    email and domain not suppressed; country allowed by COUNTRY_RULES.
+ *  - Unsubscribe: public GET /u/:token (confirm page) and POST /u/:token
+ *    (RFC 8058 one-click) -> suppression + lead_emails.opted_out + clients.do_not_contact.
+ *
+ * No imports: build-bundle.mjs inlines this file.
+ */
+
+const CAMPAIGN_STATUSES = ["draft", "approved", "scheduled", "sending", "done"];
+const TRANSITIONS = { draft: ["approved"], approved: ["draft", "scheduled"], scheduled: ["approved"], sending: [], done: [] };
+
+/* Country rules. MX and US: B2B cold email to a business role address is
+   allowed with identity, postal address and a working opt-out (CAN-SPAM;
+   MX LFPDPPP/LFPC for business contacts — to be confirmed by counsel).
+   Anything else is blocked until someone writes its rule. */
+const COUNTRY_RULES = {
+  MX: { allowed: true, needs: ["identity", "postal", "unsubscribe"], note: "B2B role/verified address only; pending legal review" },
+  US: { allowed: true, needs: ["identity", "postal", "unsubscribe"], note: "CAN-SPAM" },
+  CA: { allowed: false, note: "CASL requires consent" },
+};
+
+const PLACEHOLDER_POSTAL = "[POSTAL ADDRESS NOT SET - configure OUTREACH_POSTAL_ADDRESS]";
+
+const DEFAULT_TEMPLATES = [
+  { key: "audit_intro", lang: "en",
+    subject: "A few quick fixes for {{business}}'s website",
+    body: "Hi {{business}} team,\n\nI took a look at {{website}} and noticed a few things that may be costing you bookings from US visitors:\n\n{{findings}}\n\nWe build and fix sites for businesses that serve US travelers. Happy to send a short plan if it's useful.\n\nBest,\n{{sender}}" },
+  { key: "audit_intro", lang: "es",
+    subject: "Algunas mejoras rápidas para el sitio de {{business}}",
+    body: "Hola equipo de {{business}}:\n\nRevisé {{website}} y noté algunos puntos que podrían estar costándoles reservas de visitantes de EE. UU.:\n\n{{findings}}\n\nCreamos y mejoramos sitios para negocios que atienden a viajeros estadounidenses. Con gusto les envío un plan breve si les sirve.\n\nSaludos,\n{{sender}}" },
+];
+
+/* One line per confirmed audit finding kind. Unknown kinds are skipped. */
+const FINDING_LINES = {
+  audit_https: { en: "The site doesn't load securely (no HTTPS), so browsers show a \"Not secure\" warning.", es: "El sitio no carga de forma segura (sin HTTPS) y los navegadores muestran \"No seguro\"." },
+  audit_viewport: { en: "Pages aren't set up for phones, so they render zoomed-out on mobile.", es: "Las páginas no están adaptadas a celulares y se ven reducidas en móvil." },
+  audit_speed: { en: "The site loads slowly on mobile.", es: "El sitio carga lento en celulares." },
+  audit_broken_links: { en: "Some links on the site are broken.", es: "Algunos enlaces del sitio están rotos." },
+  audit_booking: { en: "There's no clear way to book or check availability online.", es: "No hay una forma clara de reservar o consultar disponibilidad en línea." },
+  audit_forms: { en: "There's no contact or inquiry form.", es: "No hay formulario de contacto o solicitud." },
+  audit_lang_switch: { en: "There's no English version / language switch for US visitors.", es: "No hay versión en inglés ni selector de idioma para visitantes de EE. UU." },
+  audit_whatsapp: { en: "There's no WhatsApp click-to-chat button.", es: "No hay botón de WhatsApp para chatear." },
+  audit_analytics: { en: "No analytics appear to be installed, so you can't see where visitors drop off.", es: "No parece haber analítica instalada, así que no se ve dónde abandonan los visitantes." },
+};
+
+const CAMPAIGN_FREEMAIL = ["gmail.com", "hotmail.com", "outlook.com", "yahoo.com", "yahoo.com.mx", "live.com", "live.com.mx", "icloud.com", "prodigy.net.mx", "aol.com", "msn.com", "protonmail.com"];
+
+async function ensureCampaignTables(env) {
+  const db = env.CRM_DB;
+  await db.prepare(`CREATE TABLE IF NOT EXISTS email_templates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, lang TEXT NOT NULL,
+      subject TEXT NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (key, lang))`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS email_suppressions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, value TEXT NOT NULL,
+      reason TEXT, source TEXT, created_at TEXT NOT NULL, UNIQUE (kind, value))`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS campaigns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, lang TEXT NOT NULL,
+      template_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
+      scheduled_for TEXT, approved_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`).run();
+  await db.prepare(`CREATE TABLE IF NOT EXISTS campaign_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, campaign_id INTEGER NOT NULL, client_id INTEGER NOT NULL,
+      lead_email_id INTEGER, to_email TEXT NOT NULL, lang TEXT NOT NULL,
+      subject TEXT NOT NULL, body TEXT NOT NULL, findings TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',      -- draft | blocked
+      block_reason TEXT, edited INTEGER NOT NULL DEFAULT 0,
+      unsubscribe_token TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE (campaign_id, to_email))`).run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_campaign_messages_campaign ON campaign_messages(campaign_id)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_campaign_messages_email ON campaign_messages(to_email)").run();
+  const now = new Date().toISOString();
+  for (const t of DEFAULT_TEMPLATES) {
+    await db.prepare("INSERT OR IGNORE INTO email_templates (key, lang, subject, body, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(t.key, t.lang, t.subject, t.body, now).run();
+  }
+}
+
+function normEmail(v) { return String(v || "").trim().toLowerCase(); }
+function emailDomain(v) { const e = normEmail(v); const i = e.lastIndexOf("@"); return i > 0 ? e.slice(i + 1) : ""; }
+function hostOf(url) {
+  try { return new URL(/^https?:/i.test(url) ? url : "https://" + url).hostname.toLowerCase().replace(/^www\./, ""); }
+  catch (e) { return ""; }
+}
+
+function senderConfig(env) {
+  const postal = String((env && env.OUTREACH_POSTAL_ADDRESS) || "").trim();
+  return {
+    name: String((env && env.OUTREACH_SENDER_NAME) || "Potentia Network").trim(),
+    email: String((env && env.OUTREACH_SENDER_EMAIL) || "").trim(),
+    postal: postal || PLACEHOLDER_POSTAL,
+    postalSet: !!postal,
+    base: String((env && env.PUBLIC_API_BASE) || "").replace(/\/+$/, ""),
+  };
+}
+
+function unsubscribeUrl(env, token) { return senderConfig(env).base + "/u/" + token; }
+
+function footer(env, lang, token) {
+  const s = senderConfig(env);
+  const u = unsubscribeUrl(env, token);
+  return lang === "es"
+    ? `\n\n--\n${s.name}${s.email ? " <" + s.email + ">" : ""}\n${s.postal}\nSi no desea recibir más correos, dé de baja aquí: ${u}`
+    : `\n\n--\n${s.name}${s.email ? " <" + s.email + ">" : ""}\n${s.postal}\nTo stop receiving these emails, unsubscribe here: ${u}`;
+}
+
+function fill(tpl, vars) {
+  return String(tpl).replace(/\{\{(\w+)\}\}/g, (m, k) => (vars[k] == null ? "" : String(vars[k])));
+}
+
+function findingLines(findings, lang) {
+  const out = [];
+  const seen = {};
+  for (const f of findings || []) {
+    const l = FINDING_LINES[f.kind];
+    if (!l || seen[f.kind]) continue;
+    seen[f.kind] = 1;
+    out.push("- " + (l[lang] || l.en));
+  }
+  return out;
+}
+
+async function confirmedFindings(env, clientId) {
+  return (await env.CRM_DB.prepare(
+    `SELECT kind, url, snippet FROM lead_evidence
+      WHERE client_id = ? AND category = 'audit' AND confirmed = 1 AND status = 'confirmed_issue' ORDER BY id`
+  ).bind(clientId).all()).results || [];
+}
+
+async function isSuppressed(env, email) {
+  const e = normEmail(email), d = emailDomain(e);
+  const r = await env.CRM_DB.prepare(
+    "SELECT kind, value FROM email_suppressions WHERE (kind = 'email' AND value = ?) OR (kind = 'domain' AND value = ?) LIMIT 1"
+  ).bind(e, d).first();
+  return r ? r.kind : null;
+}
+
+/* Pure part of the gate. row: lead_emails row; client: clients row. */
+function addressOk(row, client) {
+  if (!row || !row.email) return "no_address";
+  if (row.verification_status === "invalid") return "invalid_address";
+  if (row.verification_status === "verified") return null;
+  const d = emailDomain(row.email);
+  if (CAMPAIGN_FREEMAIL.indexOf(d) !== -1) return "unverified_freemail";
+  if (row.type !== "role") return "not_role_or_verified";
+  const site = hostOf((client && client.website_url) || "");
+  if (!site || !(site === d || site.endsWith("." + d) || d.endsWith("." + site))) return "role_off_domain";
+  return null;
+}
+
+async function checkEligibility(env, row, client) {
+  if (!client || client.source !== "pipeline_intl") return "not_intl_lead";
+  if (client.do_not_contact) return "do_not_contact";
+  const rule = COUNTRY_RULES[String(client.country || "").toUpperCase()];
+  if (!rule || !rule.allowed) return "country_blocked";
+  const a = addressOk(row, client);
+  if (a) return a;
+  if (row.opted_out) return "opted_out";
+  const s = await isSuppressed(env, row.email);
+  if (s) return "suppressed_" + s;
+  return null;
+}
+
+function newToken() {
+  const b = new Uint8Array(18);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+async function getTemplate(env, key, lang) {
+  return await env.CRM_DB.prepare("SELECT key, lang, subject, body FROM email_templates WHERE key = ? AND lang = ?").bind(key, lang).first();
+}
+
+async function listTemplates(env) {
+  await ensureCampaignTables(env);
+  return (await env.CRM_DB.prepare("SELECT id, key, lang, subject, body, updated_at FROM email_templates ORDER BY key, lang").all()).results || [];
+}
+
+async function saveTemplate(env, b) {
+  await ensureCampaignTables(env);
+  const key = String(b.key || "").trim(), lang = String(b.lang || "");
+  if (!/^[a-z0-9_]{1,40}$/.test(key) || ["en", "es"].indexOf(lang) === -1) return { error: "Invalid key or lang" };
+  const subject = String(b.subject || "").slice(0, 200), body = String(b.body || "").slice(0, 8000);
+  if (!subject.trim() || !body.trim()) return { error: "Subject and body required" };
+  await env.CRM_DB.prepare(
+    `INSERT INTO email_templates (key, lang, subject, body, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(key, lang) DO UPDATE SET subject = excluded.subject, body = excluded.body, updated_at = excluded.updated_at`
+  ).bind(key, lang, subject, body, new Date().toISOString()).run();
+  return { ok: true };
+}
+
+/* Build a draft campaign. Leads with no confirmed finding or no address are
+   skipped (reported). Ineligible addresses get a `blocked` row with the reason
+   so the gate is visible in the UI. */
+async function createDraftCampaign(env, b) {
+  await ensureCampaignTables(env);
+  const lang = b.lang === "es" ? "es" : "en";
+  const key = String(b.template_key || "audit_intro");
+  const tpl = await getTemplate(env, key, lang);
+  if (!tpl) return { error: "Template not found" };
+  const ids = (Array.isArray(b.client_ids) ? b.client_ids : []).map(Number).filter((x) => Number.isInteger(x) && x > 0).slice(0, 500);
+  if (!ids.length) return { error: "No leads" };
+  const now = new Date().toISOString();
+  const name = String(b.name || "").trim().slice(0, 120) || `Intl ${lang.toUpperCase()} ${now.slice(0, 10)}`;
+  const c = await env.CRM_DB.prepare(
+    "INSERT INTO campaigns (name, lang, template_key, status, created_at, updated_at) VALUES (?, ?, ?, 'draft', ?, ?)"
+  ).bind(name, lang, key, now, now).run();
+  const campaignId = c.meta.last_row_id;
+  const s = senderConfig(env);
+  const out = { ok: true, campaign_id: campaignId, drafted: 0, blocked: 0, skipped: [] };
+  for (const id of ids) {
+    const client = await env.CRM_DB.prepare(
+      "SELECT id, business_name, website_url, source, country, do_not_contact FROM clients WHERE id = ?").bind(id).first();
+    if (!client || client.source !== "pipeline_intl") { out.skipped.push({ client_id: id, reason: "not_intl_lead" }); continue; }
+    const findings = await confirmedFindings(env, id);
+    const lines = findingLines(findings, lang);
+    if (!lines.length) { out.skipped.push({ client_id: id, reason: "no_confirmed_findings" }); continue; }
+    const emails = (await env.CRM_DB.prepare(
+      "SELECT id, email, type, verification_status, opted_out FROM lead_emails WHERE client_id = ? ORDER BY CASE type WHEN 'role' THEN 0 ELSE 1 END, id"
+    ).bind(id).all()).results || [];
+    if (!emails.length) { out.skipped.push({ client_id: id, reason: "no_address" }); continue; }
+    // One address per lead: the first eligible one, else the first (blocked).
+    let pick = null, reason = null;
+    for (const e of emails) { const r = await checkEligibility(env, e, client); if (!r) { pick = e; reason = null; break; } if (!pick) { pick = e; reason = r; } }
+    const vars = { business: client.business_name || "", website: client.website_url || "", findings: lines.join("\n"), sender: s.name };
+    const r = await env.CRM_DB.prepare(
+      `INSERT OR IGNORE INTO campaign_messages (campaign_id, client_id, lead_email_id, to_email, lang, subject, body, findings,
+         status, block_reason, unsubscribe_token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(campaignId, id, pick.id, normEmail(pick.email), lang, fill(tpl.subject, vars), fill(tpl.body, vars),
+           JSON.stringify(findings.map((f) => ({ kind: f.kind, url: f.url }))), reason ? "blocked" : "draft", reason,
+           newToken(), now, now).run();
+    if (!r.meta.changes) { out.skipped.push({ client_id: id, reason: "duplicate_address" }); continue; }
+    if (reason) out.blocked++; else out.drafted++;
+  }
+  return out;
+}
+
+function renderMessage(env, m) {
+  return { subject: m.subject, body: m.body + footer(env, m.lang, m.unsubscribe_token),
+           list_unsubscribe: "<" + unsubscribeUrl(env, m.unsubscribe_token) + ">",
+           list_unsubscribe_post: "List-Unsubscribe=One-Click" };
+}
+
+async function listCampaigns(env) {
+  await ensureCampaignTables(env);
+  return (await env.CRM_DB.prepare(
+    `SELECT c.*, (SELECT COUNT(*) FROM campaign_messages m WHERE m.campaign_id = c.id AND m.status = 'draft') AS drafts,
+            (SELECT COUNT(*) FROM campaign_messages m WHERE m.campaign_id = c.id AND m.status = 'blocked') AS blocked
+       FROM campaigns c ORDER BY c.id DESC LIMIT 200`).all()).results || [];
+}
+
+async function getCampaign(env, id) {
+  await ensureCampaignTables(env);
+  const c = await env.CRM_DB.prepare("SELECT * FROM campaigns WHERE id = ?").bind(id).first();
+  if (!c) return null;
+  const msgs = (await env.CRM_DB.prepare(
+    `SELECT m.*, cl.business_name FROM campaign_messages m LEFT JOIN clients cl ON cl.id = m.client_id
+      WHERE m.campaign_id = ? ORDER BY m.status DESC, m.id`).bind(id).all()).results || [];
+  const s = senderConfig(env);
+  return { campaign: c, sender: { name: s.name, email: s.email, postal: s.postal, postal_set: s.postalSet },
+           messages: msgs.map((m) => Object.assign({}, m, { preview: renderMessage(env, m) })) };
+}
+
+async function editMessage(env, id, b) {
+  await ensureCampaignTables(env);
+  const m = await env.CRM_DB.prepare(
+    "SELECT m.id, c.status AS cstatus FROM campaign_messages m JOIN campaigns c ON c.id = m.campaign_id WHERE m.id = ?").bind(id).first();
+  if (!m) return { error: "Not found", status: 404 };
+  if (m.cstatus !== "draft") return { error: "Campaign is not a draft" };
+  const subject = String(b.subject || "").slice(0, 200), body = String(b.body || "").slice(0, 8000);
+  if (!subject.trim() || !body.trim()) return { error: "Subject and body required" };
+  await env.CRM_DB.prepare("UPDATE campaign_messages SET subject = ?, body = ?, edited = 1, updated_at = ? WHERE id = ?")
+    .bind(subject, body, new Date().toISOString(), id).run();
+  return { ok: true };
+}
+
+/* Re-run the gate on every draft row (state may have changed since drafting). */
+async function recheckCampaign(env, id) {
+  const msgs = (await env.CRM_DB.prepare(
+    "SELECT m.id, m.client_id, m.lead_email_id, m.to_email, m.status FROM campaign_messages m WHERE m.campaign_id = ?").bind(id).all()).results || [];
+  let ok = 0;
+  for (const m of msgs) {
+    const row = await env.CRM_DB.prepare("SELECT id, email, type, verification_status, opted_out FROM lead_emails WHERE id = ?").bind(m.lead_email_id).first()
+      || { email: m.to_email, opted_out: 0 };
+    const client = await env.CRM_DB.prepare("SELECT id, website_url, source, country, do_not_contact FROM clients WHERE id = ?").bind(m.client_id).first();
+    let r = await checkEligibility(env, row, client);
+    if (!r && !(await confirmedFindings(env, m.client_id)).length) r = "no_confirmed_findings";
+    await env.CRM_DB.prepare("UPDATE campaign_messages SET status = ?, block_reason = ?, updated_at = ? WHERE id = ?")
+      .bind(r ? "blocked" : "draft", r, new Date().toISOString(), m.id).run();
+    if (!r) ok++;
+  }
+  return ok;
+}
+
+async function setCampaignStatus(env, id, to, b) {
+  await ensureCampaignTables(env);
+  const c = await env.CRM_DB.prepare("SELECT * FROM campaigns WHERE id = ?").bind(id).first();
+  if (!c) return { error: "Not found", status: 404 };
+  if (CAMPAIGN_STATUSES.indexOf(to) === -1) return { error: "Invalid status" };
+  if (to === "sending" || to === "done") return { error: "No send provider yet (Phase 5)" };
+  if ((TRANSITIONS[c.status] || []).indexOf(to) === -1) return { error: `Cannot go from ${c.status} to ${to}` };
+  const now = new Date().toISOString();
+  if (to === "approved" && c.status === "draft") {
+    if (!senderConfig(env).postalSet) return { error: "Postal address not configured (OUTREACH_POSTAL_ADDRESS)" };
+    if (!senderConfig(env).base) return { error: "Unsubscribe base URL not configured (PUBLIC_API_BASE)" };
+    const ok = await recheckCampaign(env, id);
+    if (!ok) return { error: "No eligible messages" };
+    await env.CRM_DB.prepare("UPDATE campaigns SET status = 'approved', approved_at = ?, updated_at = ? WHERE id = ?").bind(now, now, id).run();
+    return { ok: true, status: "approved", eligible: ok };
+  }
+  let sched = c.scheduled_for;
+  if (to === "scheduled") {
+    const t = Date.parse((b && b.scheduled_for) || "");
+    if (!t || t < Date.now()) return { error: "scheduled_for must be a future time" };
+    sched = new Date(t).toISOString();
+  } else sched = null;
+  await env.CRM_DB.prepare("UPDATE campaigns SET status = ?, scheduled_for = ?, approved_at = ?, updated_at = ? WHERE id = ?")
+    .bind(to, sched, to === "draft" ? null : c.approved_at, now, id).run();
+  return { ok: true, status: to };
+}
+
+async function listSuppressions(env) {
+  await ensureCampaignTables(env);
+  return (await env.CRM_DB.prepare("SELECT * FROM email_suppressions ORDER BY id DESC LIMIT 1000").all()).results || [];
+}
+
+async function addSuppression(env, kind, value, reason, source) {
+  await ensureCampaignTables(env);
+  let v = String(value || "").trim().toLowerCase();
+  if (kind === "email") { if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return { error: "Invalid email" }; }
+  else if (kind === "domain") { v = v.replace(/^@/, ""); if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(v)) return { error: "Invalid domain" }; }
+  else return { error: "kind must be email or domain" };
+  await env.CRM_DB.prepare("INSERT OR IGNORE INTO email_suppressions (kind, value, reason, source, created_at) VALUES (?, ?, ?, ?, ?)")
+    .bind(kind, v, reason || null, source || "manual", new Date().toISOString()).run();
+  const pat = kind === "email" ? v : "%@" + v;
+  const op = kind === "email" ? "=" : "LIKE";
+  await env.CRM_DB.prepare(`UPDATE lead_emails SET opted_out = 1 WHERE lower(email) ${op} ?`).bind(pat).run();
+  await env.CRM_DB.prepare(
+    `UPDATE campaign_messages SET status = 'blocked', block_reason = ? WHERE status = 'draft' AND to_email ${op} ?`
+  ).bind("suppressed_" + kind, pat).run();
+  return { ok: true, kind, value: v };
+}
+
+/* Public unsubscribe. Returns { html, status }. GET only shows a confirm
+   page (mail scanners prefetch links); POST applies it. */
+async function handleUnsubscribe(env, token, method) {
+  await ensureCampaignTables(env);
+  const t = String(token || "");
+  const m = /^[a-f0-9]{16,64}$/.test(t)
+    ? await env.CRM_DB.prepare("SELECT id, client_id, to_email, lang FROM campaign_messages WHERE unsubscribe_token = ?").bind(t).first()
+    : null;
+  const es = m && m.lang === "es";
+  const page = (title, msg, form) => `<!doctype html><html lang="${es ? "es" : "en"}"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title></head>` +
+    `<body style="font-family:system-ui,sans-serif;max-width:520px;margin:60px auto;padding:0 20px"><h1 style="font-size:22px">${title}</h1><p>${msg}</p>${form || ""}</body></html>`;
+  if (!m) return { status: 404, html: page("Link not valid", "This unsubscribe link is not valid. / Este enlace no es válido.") };
+  const shown = m.to_email.replace(/[<>&"]/g, "");
+  if (method === "GET") {
+    return { status: 200, html: page(es ? "Darse de baja" : "Unsubscribe",
+      es ? `¿Dejar de enviar correos a <b>${shown}</b>?` : `Stop emails to <b>${shown}</b>?`,
+      `<form method="post"><button type="submit" style="font-size:16px;padding:10px 18px">${es ? "Confirmar baja" : "Unsubscribe"}</button></form>`) };
+  }
+  await addSuppression(env, "email", m.to_email, "unsubscribe", "unsubscribe_link");
+  await env.CRM_DB.prepare("UPDATE clients SET do_not_contact = 1, updated_at = ? WHERE id = ? AND source = 'pipeline_intl'")
+    .bind(new Date().toISOString(), m.client_id).run();
+  return { status: 200, html: page(es ? "Listo" : "Done",
+    es ? `<b>${shown}</b> no recibirá más correos de nosotros.` : `<b>${shown}</b> will not receive any more emails from us.`) };
+}
+
+// ---- end inlined intlcampaigns.js ----
 
 // ---- inlined from worker/dormant.js by build-bundle.mjs — do not edit below by hand ----
 /* Auto-dormant: a design (submission) whose status hasn't moved in 14 days is
@@ -16017,6 +16992,16 @@ export default {
       return await handleBriefing(request, env, path);
     }
 
+    /* Intl Phase 4: public unsubscribe. GET = confirm page, POST = apply
+       (RFC 8058 one-click). No auth, no CORS: it is opened from an email. */
+    const unsub = path.match(/^\/u\/([A-Za-z0-9]{1,80})$/);
+    if (unsub && (request.method === "GET" || request.method === "POST")) {
+      if (!env.CRM_DB) return new Response("Unavailable", { status: 503 });
+      const r = await handleUnsubscribe(env, unsub[1], request.method);
+      return new Response(r.html, { status: r.status, headers: { "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer" } });
+    }
+
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(origin) });
     }
@@ -16436,7 +17421,8 @@ export default {
             const out = profile === "intl"
               ? await runLeadPipeline(env, {
                   profile: "intl", trigger: "manual_intl", limit, dryRun, plan, reseed,
-                  onProgress: emit, deps: { crawlSite }
+                  onProgress: emit,
+                  deps: { crawlSite: (u) => crawlSite(u, { keepHtml: true }), analyzeLead: analyzeIntlLead }
                 })
               : await runLeadPipeline(env, {
                   trigger: "manual", limit, dryRun, reseed, rescreen, onProgress: emit
@@ -16619,6 +17605,57 @@ export default {
       if (path === "/crm/analytics" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleCrmAnalytics(request, env, origin);
+      }
+      /* Intl Phase 3: International view. CRM login only (reading and moving
+         leads, no spend). Every query is scoped to source = 'pipeline_intl'. */
+      if (path.startsWith("/crm/intl/")) {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        if (path === "/crm/intl/leads" && request.method === "GET") {
+          return json(await listIntlLeads(env), 200, origin);
+        }
+        if (path === "/crm/intl/leads/status" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const out = await setIntlLeadStatus(env, body.ids, String(body.status || ""));
+          return json(out, out.error ? 400 : 200, origin);
+        }
+        const ev = path.match(/^\/crm\/intl\/leads\/(\d+)\/evidence$/);
+        if (ev && request.method === "GET") {
+          const out = await intlLeadEvidence(env, Number(ev[1]));
+          return out ? json(out, 200, origin) : json({ error: "Not found" }, 404, origin);
+        }
+        if (path === "/crm/intl/duplicates" && request.method === "GET") {
+          return json({ duplicates: await listIntlDuplicates(env) }, 200, origin);
+        }
+        const dm = path.match(/^\/crm\/intl\/duplicates\/(\d+)$/);
+        if (dm && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const out = await resolveIntlDuplicate(env, Number(dm[1]), String(body.action || ""));
+          return json(out, out.error ? 400 : 200, origin);
+        }
+        /* Phase 4: templates, suppressions, draft campaigns. No sending. */
+        const body4 = request.method === "POST" ? await request.json().catch(() => ({})) : null;
+        const reply = (out) => json(out, out.error ? (out.status || 400) : 200, origin);
+        if (path === "/crm/intl/templates") {
+          if (request.method === "GET") return json({ templates: await listTemplates(env) }, 200, origin);
+          if (request.method === "POST") return reply(await saveTemplate(env, body4));
+        }
+        if (path === "/crm/intl/suppressions") {
+          if (request.method === "GET") return json({ suppressions: await listSuppressions(env) }, 200, origin);
+          if (request.method === "POST") return reply(await addSuppression(env, String(body4.kind || ""), body4.value, body4.reason, "manual"));
+        }
+        if (path === "/crm/intl/campaigns") {
+          if (request.method === "GET") return json({ campaigns: await listCampaigns(env) }, 200, origin);
+          if (request.method === "POST") return reply(await createDraftCampaign(env, body4));
+        }
+        const cm = path.match(/^\/crm\/intl\/campaigns\/(\d+)(\/status)?$/);
+        if (cm && !cm[2] && request.method === "GET") {
+          const out = await getCampaign(env, Number(cm[1]));
+          return out ? json(out, 200, origin) : json({ error: "Not found" }, 404, origin);
+        }
+        if (cm && cm[2] && request.method === "POST") return reply(await setCampaignStatus(env, Number(cm[1]), String(body4.status || ""), body4));
+        const mm = path.match(/^\/crm\/intl\/messages\/(\d+)$/);
+        if (mm && request.method === "POST") return reply(await editMessage(env, Number(mm[1]), body4));
+        return json({ error: "Not found" }, 404, origin);
       }
       if (path === "/crm/clients" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
