@@ -2,209 +2,63 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex,nofollow">
-<title>Website Analytics · ShedPro</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Website — ShedPro</title>
 <link rel="icon" href="shedpro-logo.png">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<!--
-  WEBSITE ANALYTICS — separate from Sales. Source: GA4 (G-GR8BG7DXZE) via GET /api/analytics/overview.
-  Until GA is connected the endpoint returns {connected:false} and this page shows an empty state.
-  No sample or fake numbers are ever rendered.
--->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin-shell.css">
+<!-- Website traffic from GA4 (G-GR8BG7DXZE) via GET /api/analytics/overview. Never shows sample numbers. -->
 <style>
-:root{--bg:#0B0D12;--side:#11151C;--card:#171C25;--bd:#29313D;--ac:#38BDF8;--ok:#34D399;--warn:#F59E0B;--neg:#F87171;--tx:#F8FAFC;--mut:#94A3B8;--sw:232px}
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--tx);font-family:Inter,system-ui,sans-serif;font-size:14px;min-height:100vh;display:flex}
-.num{font-variant-numeric:tabular-nums;letter-spacing:-0.02em}
-a{color:inherit;text-decoration:none}
-/* sidebar */
-.side{width:var(--sw);background:var(--side);border-right:1px solid var(--bd);min-height:100vh;position:sticky;top:0;align-self:flex-start;height:100vh;padding:18px 12px;display:flex;flex-direction:column;transition:width .2s;overflow:hidden;flex-shrink:0}
-body.collapsed{--sw:68px}
-.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 16px;white-space:nowrap}
-.brand>img{width:36px;height:36px;object-fit:contain;border-radius:8px;flex-shrink:0}
-.brand-text{display:flex;flex-direction:column;gap:2px;min-width:0}
-.brand-title{font-weight:700;font-size:14px;letter-spacing:-.01em}
-.brand-powered{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:500;color:var(--mut);letter-spacing:.02em}
-.brand-powered img{width:12px;height:12px;object-fit:contain;border-radius:2px;opacity:.9}
-.sec{font-size:11px;font-weight:600;color:#5b6678;letter-spacing:.08em;margin:14px 10px 6px;white-space:nowrap}
-.nav a{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:8px;color:var(--mut);white-space:nowrap;font-weight:500}
-.nav a:hover{background:#1a202b;color:var(--tx)}
-.nav a.on{background:rgba(56,189,248,.12);color:var(--ac)}
-.nav .ic{width:20px;text-align:center;flex-shrink:0}
-body.collapsed .lbl,body.collapsed .sec,body.collapsed .brand-text{display:none}
-.collapse{margin-top:auto;background:none;border:1px solid var(--bd);color:var(--mut);border-radius:8px;padding:8px;cursor:pointer}
-/* main */
-main{flex:1;min-width:0;padding:28px 32px 60px}
-.banner{background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.4);color:#fcd34d;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:20px}
-.banner.sample{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.45);color:#fecaca}
-.page-brand{display:flex;align-items:center;gap:14px}
-.page-logo{width:44px;height:44px;object-fit:contain;border-radius:10px;flex-shrink:0}
-.powered{display:inline-flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;font-weight:500;color:var(--mut)}
-.powered img{width:14px;height:14px;object-fit:contain;border-radius:3px}
-header{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:24px}
-h1{font-size:28px;font-weight:700;letter-spacing:-.02em}
-.sub{color:var(--mut);margin-top:4px}
-.ctrl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-select,.btn{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:9px 12px;font:inherit;cursor:pointer}
-.toggle{display:flex;align-items:center;gap:6px;color:var(--mut);font-size:13px}
-/* kpis */
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
-.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:18px 20px}
-.kpi{display:flex;flex-direction:column;gap:6px;min-height:168px}
-.kt{display:flex;justify-content:space-between;align-items:center;color:var(--mut);font-weight:500;font-size:13px}
-.badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid var(--bd)}
-.b-live{color:var(--ok);border-color:rgba(52,211,153,.4)}
-.b-part{color:var(--warn);border-color:rgba(245,158,11,.4)}
-.b-miss{color:var(--neg);border-color:rgba(248,113,113,.4)}
-.kv{font-size:34px;font-weight:700}
-.kv.na{font-size:18px;color:var(--mut);font-weight:500}
-.kd{color:var(--mut);font-size:12.5px}
-.goal{margin-top:auto}
-.gbar{height:6px;background:#0f1319;border-radius:4px;overflow:hidden;margin:6px 0 4px}
-.gfill{height:100%;background:var(--ac);border-radius:4px}
-.glbl{display:flex;justify-content:space-between;font-size:12px;color:var(--mut)}
-.spark{height:34px;width:100%}
-/* sections */
-.row{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-top:16px}
-.row3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:16px}
-.ch{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-.ch h3{font-size:15px;font-weight:600}
-.stub{border:1px dashed var(--bd);border-radius:10px;color:var(--mut);padding:18px;font-size:13px;line-height:1.5}
-.bars{display:flex;align-items:flex-end;gap:8px;height:180px;padding-top:10px}
-.bars .b{flex:1;background:linear-gradient(180deg,var(--ac),rgba(56,189,248,.35));border-radius:6px 6px 0 0;position:relative;min-height:2px}
-.bars .b span{position:absolute;bottom:-20px;left:0;right:0;text-align:center;font-size:11px;color:var(--mut)}
-.bars .b em{position:absolute;top:-18px;left:0;right:0;text-align:center;font-size:11px;font-style:normal;color:var(--tx)}
-.list{display:flex;flex-direction:column;gap:10px}
-.li{display:flex;justify-content:space-between;gap:10px;font-size:13px}
-.li .t{color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60%}
-.hb{height:8px;background:#0f1319;border-radius:4px;margin-top:4px}
-.hb i{display:block;height:100%;background:var(--ac);border-radius:4px}
-.funnel .st{display:grid;grid-template-columns:110px 1fr 40px;gap:10px;align-items:center;margin-bottom:10px;font-size:13px}
-.funnel .st .t{color:var(--mut)}
-.hide-m{}
-@media(max-width:1100px){.grid,.row3{grid-template-columns:repeat(2,1fr)}.row{grid-template-columns:1fr}}
-@media(max-width:720px){
-  .side{display:none}
-  main{padding:18px 14px 90px}
-  .grid,.row3{grid-template-columns:1fr}
-  .kv{font-size:30px}
-  .tabbar{display:flex!important}
-}
-.tabbar{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--side);border-top:1px solid var(--bd);justify-content:space-around;padding:10px 0 14px;z-index:5}
-.tabbar a{display:flex;flex-direction:column;align-items:center;font-size:11px;color:var(--mut);gap:3px}
-.tabbar a.on{color:var(--ac)}
-.rng{display:flex;border:1px solid var(--bd);border-radius:8px;overflow:hidden}
-.rng button{background:var(--card);color:var(--mut);border:none;border-right:1px solid var(--bd);padding:8px 11px;font:inherit;font-size:13px;cursor:pointer}
-.rng button:last-child{border-right:none}
-.rng button.on{background:rgba(56,189,248,.12);color:var(--ac)}
-.custom{display:none;gap:6px;align-items:center}
-.custom.show{display:flex}
-.custom input{background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:7px 8px;font:inherit;color-scheme:dark}
-.grid6{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
-.grid6 .kpi{min-height:120px}
-.nc{background:var(--card);border:1px solid rgba(245,158,11,.4);border-radius:14px;padding:18px 20px;margin-bottom:20px;line-height:1.55}
-.nc h2{font-size:16px;margin-bottom:6px;color:#fcd34d}
-.nc ol{margin:8px 0 0 20px;color:var(--mut)}
-.meta{color:var(--mut);font-size:12.5px;margin-top:6px}
-@media(max-width:1100px){.grid6{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:720px){.grid6{grid-template-columns:repeat(2,1fr)}}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+.sec-label{font-family:var(--mono);font-size:9.5px;letter-spacing:.34em;color:var(--silver);opacity:.75;text-transform:uppercase;margin-bottom:6px}
+h2{font-family:var(--serif);font-size:44px;font-weight:300;color:var(--bright);line-height:1.02}
+.lede{font-family:var(--serif);font-size:18px;color:var(--silver);margin:4px 0 26px;font-weight:300}
+.note{max-width:620px;border:1px solid var(--dim);background:var(--deep);padding:20px 22px;font-family:var(--serif);font-size:17px;line-height:1.55;color:var(--silver)}
+.note b{color:var(--bright);font-weight:400}
+.note .st{font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;opacity:.7;margin-top:12px}
+.stats{display:flex;gap:28px;flex-wrap:wrap;font-family:var(--mono);color:var(--silver);font-size:12px;letter-spacing:.08em}
+.stats b{display:block;font-family:var(--serif);font-size:30px;font-weight:300;color:var(--bright);letter-spacing:0}
 </style>
 </head>
-<body>
-<aside class="side">
-  <div class="brand">
+<body class="admin-shell">
+<header class="shell">
+  <a class="h-brand" href="admin-dashboard.html">
     <img src="shedpro-logo.png" alt="ShedPro">
-    <div class="brand-text">
-      <span class="brand-title">ShedPro Website</span>
-      <span class="brand-powered"><img src="Potentia_Logo.png" alt="">Powered by Potentia</span>
-    </div>
-  </div>
-  <nav class="nav">
-    <div class="sec">SELL</div>
-    <a href="admin.html"><span class="ic">👥</span><span class="lbl">Customers</span></a>
-    <div class="sec">OPERATE</div>
-    <a href="admin-schedule.html"><span class="ic">▦</span><span class="lbl">Schedule</span></a>
-    <a href="admin-dashboard.html"><span class="ic">$</span><span class="lbl">Invoices</span></a>
-    <div class="sec">INSIGHT</div>
-    <a class="on" href="admin-website.html"><span class="ic">◎</span><span class="lbl">Website</span></a>
-    <a href="admin-data.html"><span class="ic">◔</span><span class="lbl">Analytics</span></a>
-    <div class="sec">ADMIN</div>
-    <a href="admin-pricing.html"><span class="ic">⚙</span><span class="lbl">Pricing</span></a>
-  </nav>
-  <button class="collapse" onclick="document.body.classList.toggle('collapsed')">⇆</button>
-</aside>
-<main>
-  <div class="banner">PREVIEW — Website Analytics (feat/website-analytics). Not on the live nav until approved.</div>
-  <header>
-    <div>
-      <div class="page-brand"><img class="page-logo" src="shedpro-logo.png" alt=""><div>
-        <h1>Website Analytics</h1>
-        <div class="sub">Source: Google Analytics 4 · shedpro-utah.com · separate from sales data</div>
-      </div></div>
-      <div class="meta" id="meta">Data since — · last synced —</div>
-    </div>
-    <div class="ctrl">
-      <div class="rng" id="rng">
-        <button data-r="7d">7d</button><button data-r="28d" class="on">28d</button><button data-r="90d">90d</button>
-        <button data-r="12mo">12mo</button><button data-r="ytd">YTD</button><button data-r="all">All time</button><button data-r="custom">Custom</button>
-      </div>
-      <div class="custom" id="custom"><input type="date" id="from"> – <input type="date" id="to"><button class="btn" id="apply">Apply</button></div>
-    </div>
-  </header>
-
-  <div class="nc" id="nc" hidden>
-    <h2>Google Analytics not connected</h2>
-    <div>The marketing site is already sending data to GA4 (<b>G-GR8BG7DXZE</b>), but this dashboard can't read it yet. No numbers are shown until it's connected; nothing here is estimated or sample data.</div>
-    <ol>
-      <li>Share the GA4 <b>numeric Property ID</b> (GA Admin → Property settings; not the G- ID).</li>
-      <li>Create a Google Cloud service account with the Analytics Data API enabled, and add its email as <b>Viewer</b> in GA Admin → Property access management.</li>
-      <li>Store <code>GA_PROPERTY_ID</code> and <code>GA_SA_KEY</code> as secrets. "All time" will then start from the property's first day of data.</li>
-    </ol>
-    <div class="meta" id="ncwhy"></div>
-  </div>
-
-  <div class="grid6" id="kpis"></div>
-
-  <div class="row">
-    <div class="card"><div class="ch"><h3>Traffic trend — sessions &amp; avg engagement</h3><span class="badge b-miss">Not connected</span></div>
-      <div class="stub">Monthly trend for the selected range (All time = full GA4 history) appears here once Google Analytics is connected.</div></div>
-    <div class="card"><div class="ch"><h3>Traffic sources</h3><span class="badge b-miss">Not connected</span></div>
-      <div class="stub">Channel split (organic, direct, paid, social, referral) and top source / medium.</div></div>
-  </div>
-  <div class="row3">
-    <div class="card"><div class="ch"><h3>Top pages</h3></div><div class="stub">Page · views · avg time on page</div></div>
-    <div class="card"><div class="ch"><h3>Devices</h3></div><div class="stub">Mobile / desktop / tablet share</div></div>
-    <div class="card"><div class="ch"><h3>Top cities</h3></div><div class="stub">Sessions by city (Utah focus)</div></div>
-  </div>
+    <span class="h-brand-text"><span class="h-title">SHEDPRO</span><span class="h-sub">Command &middot; by Potentia</span></span>
+  </a>
+  <nav class="shell-tabs" aria-label="Admin"></nav>
+  <div class="h-actions"><span class="h-date" id="h-date"></span><button class="logout" id="logout-btn">Log Out</button></div>
+</header>
+<main class="shell-main">
+  <p class="sec-label">Website</p>
+  <h2>Website traffic</h2>
+  <p class="lede">shedpro-utah.com &middot; Google Analytics, last 28 days</p>
+  <div id="body"><div class="note">Checking&hellip;</div></div>
 </main>
-<nav class="tabbar">
-  <a class="on" href="admin-website.html">◎<span>Website</span></a>
-  <a href="admin.html">👥<span>Customers</span></a>
-  <a href="admin-data.html">⋯<span>More</span></a>
-</nav>
+<script src="admin-nav.js"></script>
+<script src="admin-shell.js"></script>
 <script>
-var KPIS=[['sessions','Sessions'],['users','Users'],['avgEngagement','Avg engagement time'],['engagementRate','Engagement rate'],['bounceRate','Bounce rate'],['leads','Leads (generate_lead)']];
-var range='28d';
-function fmt(k,v){if(v==null)return null;if(k==='avgEngagement'){var m=Math.floor(v/60),s=Math.round(v%60);return m+'m '+s+'s';}if(/Rate$/.test(k))return (v*100).toFixed(1)+'%';return Number(v).toLocaleString();}
-function renderKpis(d){var el=document.getElementById('kpis');el.innerHTML=KPIS.map(function(p){
-  var v=d&&d.connected&&d.kpis?fmt(p[0],d.kpis[p[0]]):null;
-  return '<div class="card kpi"><div class="kt">'+p[1]+'</div>'+(v?'<div class="kv num">'+v+'</div>':'<div class="kv na">Not connected</div>')+'</div>';}).join('');}
-function load(){
-  var q='range='+range;if(range==='custom')q+='&from='+document.getElementById('from').value+'&to='+document.getElementById('to').value;
-  fetch('/api/analytics/overview?'+q).then(function(r){return r.ok?r.json():{connected:false,reason:'http_'+r.status};})
-  .catch(function(){return {connected:false,reason:'unreachable'};})
-  .then(function(d){
-    document.getElementById('nc').hidden=!!d.connected;
-    document.getElementById('ncwhy').textContent=d.connected?'':'Status: '+(d.reason||'not_configured');
-    if(d.connected){document.getElementById('meta').textContent='Data since '+(d.earliestDate||'—')+' · last synced '+(d.syncedAt||'—');}
-    renderKpis(d);});
-}
-document.getElementById('rng').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;
-  [].forEach.call(this.children,function(x){x.classList.toggle('on',x===b);});range=b.dataset.r;
-  document.getElementById('custom').classList.toggle('show',range==='custom');if(range!=='custom')load();});
-document.getElementById('apply').onclick=load;
-renderKpis(null);load();
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var token = localStorage.getItem('potentia_admin_token');
+if (!token) window.location.href = 'admin-login.html';
+document.getElementById('logout-btn').addEventListener('click', function () {
+  try { if (token) fetch(API_BASE + '/admin/logout', { method: 'POST', keepalive: true, headers: { 'Authorization': 'Bearer ' + token } }).catch(function () {}); } catch (e) {}
+  localStorage.removeItem('potentia_admin_token'); window.location.href = 'admin-login.html';
+});
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+fetch('/api/analytics/overview?range=28d').then(function(r){return r.ok?r.json():{connected:false,reason:'http_'+r.status};})
+.catch(function(){return {connected:false,reason:'unreachable'};})
+.then(function(d){
+  var el=document.getElementById('body');
+  if(!d.connected||!d.kpis){
+    el.innerHTML='<div class="note">Google Analytics isn&rsquo;t hooked up to this page yet. The site already sends visits to GA4 (<b>G-GR8BG7DXZE</b>); to show them here we still need the GA4 <b>Property ID</b> and a <b>Viewer</b> service account.<div class="st">Status: '+esc(d.reason||'not_configured')+'</div></div>';
+    return;
+  }
+  var k=d.kpis,rows=[['Sessions',k.sessions],['Users',k.users],['Leads',k.leads]].filter(function(r){return r[1]!=null;});
+  el.innerHTML='<div class="stats">'+rows.map(function(r){return '<div><b>'+Number(r[1]).toLocaleString()+'</b>'+r[0]+'</div>';}).join('')+'</div>';
+});
 </script>
 </body>
 </html>
