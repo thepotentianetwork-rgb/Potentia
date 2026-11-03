@@ -44,21 +44,52 @@ async function runReport(token, pid, body) {
   return j;
 }
 
+function rowsOf(rep, n) {
+  return ((rep && rep.rows) || []).slice(0, n).map(function (r) {
+    return { label: r.dimensionValues[0].value, value: Number(r.metricValues[0].value) };
+  });
+}
+
+const SOURCE_LABELS = {
+  'Organic Search': 'Google / search engines', 'Direct': 'Typed the address or a bookmark',
+  'Organic Social': 'Social media', 'Paid Social': 'Social media ads', 'Paid Search': 'Google ads',
+  'Referral': 'Links on other websites', 'Email': 'Email', 'Organic Maps': 'Google Maps',
+  'Unassigned': 'Unknown', 'AI Assistant': 'AI tools (ChatGPT, etc.)', 'Display': 'Display ads', 'Organic Video': 'Video (YouTube etc.)',
+};
+
 async function fetchOverview(pid, key) {
   const token = await getToken(key);
   const dateRanges = [{ startDate: '28daysAgo', endDate: 'yesterday' }];
-  const [tot, leads] = await Promise.all([
-    runReport(token, pid, { dateRanges, metrics: [{ name: 'sessions' }, { name: 'totalUsers' }] }),
-    // Leads = GA4 recommended 'generate_lead' event, only reported if the site sends it.
-    runReport(token, pid, {
-      dateRanges, dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }],
-      dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { value: 'generate_lead' } } },
-    }).catch(() => null),
+  const q = (body) => runReport(token, pid, Object.assign({ dateRanges }, body)).catch(() => null);
+  const top = (dim, metric, n) => q({ dimensions: [{ name: dim }], metrics: [{ name: metric }],
+    orderBys: [{ metric: { metricName: metric }, desc: true }], limit: n });
+  const [tot, leads, src, pages, dev, city, designer] = await Promise.all([
+    runReport(token, pid, { dateRanges, metrics: [{ name: 'sessions' }, { name: 'totalUsers' }, { name: 'newUsers' },
+      { name: 'averageSessionDuration' }, { name: 'engagementRate' }, { name: 'screenPageViews' }] }),
+    // Leads = GA4 'generate_lead' event (sent by the contact form).
+    q({ dimensions: [{ name: 'eventName' }], metrics: [{ name: 'eventCount' }],
+      dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { value: 'generate_lead' } } } }),
+    top('sessionDefaultChannelGroup', 'sessions', 5),
+    top('pagePath', 'screenPageViews', 8),
+    top('deviceCategory', 'sessions', 5),
+    top('city', 'sessions', 6),
+    q({ metrics: [{ name: 'totalUsers' }, { name: 'screenPageViews' }],
+      dimensionFilter: { filter: { fieldName: 'pagePath', stringFilter: { matchType: 'CONTAINS', value: 'designer' } } } }),
   ]);
-  const v = (tot.rows && tot.rows[0] && tot.rows[0].metricValues) || [];
-  const kpis = { sessions: Number(v[0] ? v[0].value : 0), users: Number(v[1] ? v[1].value : 0) };
-  if (leads && leads.rows && leads.rows[0]) kpis.leads = Number(leads.rows[0].metricValues[0].value);
-  return { connected: true, source: 'ga4', measurementId: 'G-GR8BG7DXZE', range: '28d', kpis, fetchedAt: new Date().toISOString() };
+  const v = ((tot.rows && tot.rows[0] && tot.rows[0].metricValues) || []).map((x) => Number(x.value));
+  const kpis = { sessions: v[0] || 0, users: v[1] || 0, newUsers: v[2] || 0,
+    avgSessionSec: Math.round(v[3] || 0), engagementRate: v[4] || 0, pageViews: v[5] || 0 };
+  kpis.leads = leads && leads.rows && leads.rows[0] ? Number(leads.rows[0].metricValues[0].value) : 0;
+  if (designer && designer.rows && designer.rows[0]) {
+    kpis.designerUsers = Number(designer.rows[0].metricValues[0].value);
+    kpis.designerViews = Number(designer.rows[0].metricValues[1].value);
+  } else if (designer) { kpis.designerUsers = 0; kpis.designerViews = 0; }
+  const sources = src && rowsOf(src, 5).map((r) => ({ raw: r.label, label: SOURCE_LABELS[r.label] || r.label, value: r.value }));
+  const topPages = pages && rowsOf(pages, 8);
+  const devices = dev && rowsOf(dev, 5);
+  const cities = city && rowsOf(city, 6).filter((r) => r.label && r.label !== '(not set)');
+  return { connected: true, source: 'ga4', measurementId: 'G-GR8BG7DXZE', range: '28d', kpis,
+    sources, topPages, devices, cities, fetchedAt: new Date().toISOString() };
 }
 
 module.exports = async (req, res) => {

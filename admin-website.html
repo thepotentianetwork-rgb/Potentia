@@ -20,6 +20,19 @@ h2{font-family:var(--serif);font-size:44px;font-weight:300;color:var(--bright);l
 .note .st{font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;opacity:.7;margin-top:12px}
 .stats{display:flex;gap:28px;flex-wrap:wrap;font-family:var(--mono);color:var(--silver);font-size:12px;letter-spacing:.08em}
 .stats b{display:block;font-family:var(--serif);font-size:30px;font-weight:300;color:var(--bright);letter-spacing:0}
+.blocks{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;max-width:1000px}
+.blk{border:1px solid var(--dim);background:var(--deep);padding:20px 22px}
+.blk h3{font-family:var(--serif);font-weight:400;font-size:21px;color:var(--bright);margin-bottom:10px}
+.big{font-family:var(--serif);font-size:40px;font-weight:300;color:var(--bright);line-height:1}
+.big small{font-size:16px;color:var(--silver);margin-left:6px}
+.say{font-family:var(--serif);font-size:16.5px;line-height:1.5;color:var(--silver);margin-top:8px}
+.say b{color:var(--bright);font-weight:400}
+.tip{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;color:var(--silver);opacity:.7;margin-top:12px;line-height:1.5}
+.bar{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-size:16px;color:var(--silver);margin:7px 0}
+.bar span.n{min-width:150px}.bar i{flex:1;height:6px;background:var(--dim);position:relative}
+.bar i em{position:absolute;left:0;top:0;bottom:0;background:var(--silver)}
+.bar b{font-family:var(--mono);font-size:12px;font-weight:400;min-width:44px;text-align:right;color:var(--bright)}
+.foot{font-family:var(--mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;opacity:.55;margin-top:22px;color:var(--silver)}
 </style>
 </head>
 <body class="admin-shell">
@@ -56,8 +69,25 @@ fetch('/api/analytics/overview?range=28d').then(function(r){return r.ok?r.json()
     el.innerHTML='<div class="note">Google Analytics isn&rsquo;t hooked up to this page yet. The site already sends visits to GA4 (<b>G-GR8BG7DXZE</b>); to show them here we still need the GA4 <b>Property ID</b> and a <b>Viewer</b> service account.<div class="st">Status: '+esc(d.reason||'not_configured')+'</div></div>';
     return;
   }
-  var k=d.kpis,rows=[['Sessions',k.sessions],['Users',k.users],['Leads',k.leads]].filter(function(r){return r[1]!=null;});
-  el.innerHTML='<div class="stats">'+rows.map(function(r){return '<div><b>'+Number(r[1]).toLocaleString()+'</b>'+r[0]+'</div>';}).join('')+'</div>';
+  var k=d.kpis,N=function(x){return Number(x||0).toLocaleString();};
+  var mins=Math.floor(k.avgSessionSec/60),secs=k.avgSessionSec%60;
+  var eng=Math.round((k.engagementRate||0)*100);
+  var PAGE={'/':'Home page','/gallery':'Gallery (photos)','/contact':'Contact / quote form','/about':'About us','/faq':'FAQ','/blog':'Blog','/designer':'Shed designer'};
+  function pname(p){var c=p.replace(/\.html$/,'').replace(/\/$/,'')||'/';return PAGE[c]||(c.indexOf('/blog-')===0?'Blog: '+c.slice(6).replace(/-/g,' '):c);}
+  function bars(list,fmt){if(!list||!list.length)return '<p class="say">No data yet.</p>';var t=list.reduce(function(a,r){return a+r.value;},0)||1,m=list[0].value||1;
+    return list.map(function(r){return '<div class="bar"><span class="n">'+esc(fmt?fmt(r.label):r.label)+'</span><i><em style="width:'+Math.round(r.value/m*100)+'%"></em></i><b>'+Math.round(r.value/t*100)+'%</b></div>';}).join('');}
+  var DEV={mobile:'Phones',desktop:'Computers',tablet:'Tablets'};
+  var mob=(d.devices||[]).filter(function(r){return r.label==='mobile';})[0],devT=(d.devices||[]).reduce(function(a,r){return a+r.value;},0)||1;
+  var h='<div class="blocks">';
+  h+='<div class="blk"><h3>People who visited the site</h3><div class="big">'+N(k.users)+'<small>people</small></div><p class="say">They came by <b>'+N(k.sessions)+'</b> times in total and looked at <b>'+N(k.pageViews)+'</b> pages. <b>'+N(k.newUsers)+'</b> of them were first-time visitors.</p><p class="tip">A &ldquo;visit&rdquo; is one sitting. One person can visit more than once.</p></div>';
+  h+='<div class="blk"><h3>How long they stayed</h3><div class="big">'+mins+'m '+secs+'s<small>per visit</small></div><p class="say"><b>'+eng+'%</b> of visits were real interest &mdash; they stayed 10+ seconds, clicked around, or viewed 2+ pages. The rest left quickly.</p><p class="tip">Above ~50% real-interest visits is healthy for a local business site.</p></div>';
+  h+='<div class="blk"><h3>Contacted us (leads)</h3><div class="big">'+N(k.leads)+'<small>form submissions</small></div><p class="say">People who filled out the contact / quote form on the website.'+(k.designerUsers!=null?' <b>'+N(k.designerUsers)+'</b> people opened the shed designer page.':'')+'</p><p class="tip">Compare with leads in the CRM &mdash; phone calls and texts aren&rsquo;t counted here.</p></div>';
+  h+='<div class="blk"><h3>Where they came from</h3>'+bars(d.sources)+'<p class="tip">Share of visits. &ldquo;Typed the address&rdquo; often means word of mouth, a truck sign, or a business card.</p></div>';
+  h+='<div class="blk"><h3>Pages they looked at</h3>'+bars(d.topPages,pname)+'<p class="tip">Share of page views among the top pages. If the gallery is popular, keep adding photos.</p></div>';
+  h+='<div class="blk"><h3>Phone or computer</h3>'+bars(d.devices,function(l){return DEV[l]||l;})+'<p class="tip">'+(mob?Math.round(mob.value/devT*100)+'% browse on a phone &mdash; check how the site looks on yours.':'How people browse the site.')+'</p></div>';
+  if(d.cities&&d.cities.length) h+='<div class="blk"><h3>Where they are</h3>'+bars(d.cities)+'<p class="tip">Approximate, based on internet connection. Out-of-state cities are often internet providers or bots, not customers.</p></div>';
+  h+='</div><p class="foot">Last 28 days &middot; Google Analytics &middot; updated '+esc(new Date(d.fetchedAt).toLocaleString())+'</p>';
+  el.innerHTML=h;
 });
 </script>
 </body>
