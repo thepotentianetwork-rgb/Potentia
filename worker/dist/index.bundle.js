@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "19ad0ae-dirty";
-const WORKER_BUILT_AT = "2026-11-03T19:32:44.273Z";
+const WORKER_BUILD = "a23c4ca";
+const WORKER_BUILT_AT = "2026-11-03T19:33:53.076Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -10451,6 +10451,14 @@ async function checkEligibility(env, row, client) {
   const a = addressOk(row, client);
   if (a) return a;
   if (row.opted_out) return "opted_out";
+  // t1508u: provenance + personal-address review. Rows loaded without these
+  // fields (legacy callers) are re-read so the gate can't be skipped.
+  if (row.id && (row.source_url === undefined || row.eligibility === undefined)) {
+    const full = await env.CRM_DB.prepare("SELECT source_url, eligibility FROM lead_emails WHERE id = ?").bind(row.id).first();
+    if (full) row = Object.assign({}, row, full);
+  }
+  if (!String(row.source_url || "").trim()) return "provenance_unknown_review";
+  if (row.type !== "role" && row.eligibility !== "eligible") return "personal_needs_review";
   const s = await isSuppressed(env, row.email);
   if (s) return "suppressed_" + s;
   return null;
@@ -10511,7 +10519,7 @@ async function createDraftCampaign(env, b) {
     const lines = findingLines(findings, lang);
     if (!lines.length) { out.skipped.push({ client_id: id, reason: "no_confirmed_findings" }); continue; }
     const emails = (await env.CRM_DB.prepare(
-      "SELECT id, email, type, verification_status, opted_out FROM lead_emails WHERE client_id = ? ORDER BY CASE type WHEN 'role' THEN 0 ELSE 1 END, id"
+      "SELECT id, email, type, verification_status, opted_out, source_url, discovered_at, eligibility FROM lead_emails WHERE client_id = ? ORDER BY CASE type WHEN 'role' THEN 0 ELSE 1 END, id"
     ).bind(id).all()).results || [];
     if (!emails.length) { out.skipped.push({ client_id: id, reason: "no_address" }); continue; }
     // One address per lead: the first eligible one, else the first (blocked).
@@ -10525,6 +10533,9 @@ async function createDraftCampaign(env, b) {
            JSON.stringify(findings.map((f) => ({ kind: f.kind, url: f.url }))), reason ? "blocked" : "draft", reason,
            newToken(), now, now).run();
     if (!r.meta.changes) { out.skipped.push({ client_id: id, reason: "duplicate_address" }); continue; }
+    await env.CRM_DB.prepare(`UPDATE campaign_messages SET business_name_at_draft = ?, website_at_draft = ?, email_source_url = ?,
+        email_collected_at = ? WHERE id = ?`).bind(client.business_name || null, client.website_url || null, pick.source_url || null,
+        pick.discovered_at || null, r.meta.last_row_id).run();
     if (reason) out.blocked++; else out.drafted++;
   }
   return out;
@@ -10587,6 +10598,17 @@ async function recheckCampaign(env, id) {
   return ok;
 }
 
+/* t1508u duplicate check: same address or domain already sent/queued in
+   ANOTHER campaign in the last 90 days -> block. */
+async function duplicateContact(env, m) {
+  const since = new Date(Date.now() - 90 * 86400000).toISOString();
+  const r = await env.CRM_DB.prepare(
+    `SELECT id FROM campaign_messages WHERE campaign_id != ? AND (to_email = ? OR to_email LIKE ?)
+       AND (status IN ('queued', 'sending') OR (sent_at IS NOT NULL AND sent_at >= ?)) LIMIT 1`
+  ).bind(m.campaign_id, m.to_email, "%@" + emailDomain(m.to_email), since).first();
+  return r ? "duplicate_recent_contact" : null;
+}
+
 async function setCampaignStatus(env, id, to, b) {
   await ensureCampaignTables(env);
   const c = await env.CRM_DB.prepare("SELECT * FROM campaigns WHERE id = ?").bind(id).first();
@@ -10608,6 +10630,14 @@ async function setCampaignStatus(env, id, to, b) {
     const t = Date.parse((b && b.scheduled_for) || "");
     if (!t || t < Date.now()) return { error: "scheduled_for must be a future time" };
     sched = new Date(t).toISOString();
+    // t1508u: suppression/opt-out + duplicate check before scheduling.
+    const ok = await recheckCampaign(env, id);
+    let dup = 0;
+    for (const m of (await env.CRM_DB.prepare("SELECT id, campaign_id, to_email FROM campaign_messages WHERE campaign_id = ? AND status = 'draft'").bind(id).all()).results || []) {
+      const d = await duplicateContact(env, m);
+      if (d) { dup++; await env.CRM_DB.prepare("UPDATE campaign_messages SET status = 'blocked', block_reason = ? WHERE id = ?").bind(d, m.id).run(); }
+    }
+    if (ok - dup <= 0) return { error: "No eligible messages after suppression/duplicate check" };
   } else sched = null;
   if (to === "paused") sched = c.scheduled_for;
   await env.CRM_DB.prepare("UPDATE campaigns SET status = ?, scheduled_for = ?, approved_at = ?, updated_at = ? WHERE id = ?")
@@ -10684,6 +10714,8 @@ const SEND_COLS_MESSAGE = [
   ["provider_message_id", "TEXT"], ["idempotency_key", "TEXT"], ["attempts", "INTEGER NOT NULL DEFAULT 0"],
   ["last_error", "TEXT"], ["next_attempt_at", "TEXT"], ["queued_at", "TEXT"], ["sent_at", "TEXT"], ["delivered_at", "TEXT"],
   ["bounced_at", "TEXT"], ["bounce_type", "TEXT"], ["complained_at", "TEXT"], ["rendered_hash", "TEXT"], ["dry_run", "INTEGER"],
+  // t1508u provenance snapshot, written at draft time.
+  ["business_name_at_draft", "TEXT"], ["website_at_draft", "TEXT"], ["email_source_url", "TEXT"], ["email_collected_at", "TEXT"],
 ];
 
 async function addCols(db, table, cols) {
@@ -10818,6 +10850,7 @@ async function sendRecheck(env, m, mxCache, opts) {
   const client = await env.CRM_DB.prepare("SELECT id, website_url, source, country, do_not_contact FROM clients WHERE id = ?").bind(m.client_id).first();
   let r = await checkEligibility(env, row, client);
   if (!r && !(await confirmedFindings(env, m.client_id)).length) r = "no_confirmed_findings";
+  if (!r) r = await duplicateContact(env, m);
   if (!r && sendConfig(env).mxCheck) {
     const d = emailDomain(m.to_email);
     if (!(d in mxCache)) mxCache[d] = await mxCheck(d, opts.fetch);
@@ -10871,7 +10904,14 @@ async function runOutreachTick(env, opts) {
   for (const m of queued) {
     if (batchLeft <= 0) break;
     if (halted.has(m.campaign_id)) continue;
-    const dry = m.c_dry !== 0 || cfg.provider !== "resend";
+    const dry = m.c_dry !== 0;
+    if (!dry && (cfg.provider !== "resend" || !env.RESEND_API_KEY || !senderConfig(env).email)) {
+      // t1508u: live campaigns send only via the authenticated Resend identity; never silently dry.
+      const why = "live send refused: OUTREACH_PROVIDER=resend, RESEND_API_KEY and OUTREACH_SENDER_EMAIL required";
+      await db.prepare("UPDATE campaigns SET status = 'failed', fail_reason = ?, finished_at = ?, updated_at = ? WHERE id = ? AND status = 'sending'")
+        .bind(why, nowIso, nowIso, m.campaign_id).run();
+      halted.add(m.campaign_id); out.halted = why; continue;
+    }
     if (dry ? dryLeft <= 0 : realLeft <= 0) { out.deferred++; continue; }
     if (!inSendWindow(m.country, now, cfg.window)) { out.deferred++; continue; }
     const dom = emailDomain(m.to_email);
@@ -10983,6 +11023,14 @@ async function sendStatus(env) {
   return { enabled: c.enabled, provider: c.provider, daily_cap: c.dailyCap, batch: c.batch, per_domain_daily: c.perDomain,
     window: c.window, resend_key_set: c.hasResendKey, webhook_secret_set: c.hasWebhookSecret, mx_check: c.mxCheck,
     sender: senderConfig(env).email, reply_to: c.replyTo,
+    // Caps are env-only; code never raises them (ramp needs Nando's OK).
+    metrics_30d: await env.CRM_DB.prepare(`SELECT
+        SUM(CASE WHEN sent_at IS NOT NULL AND dry_run = 0 THEN 1 ELSE 0 END) AS sent,
+        SUM(CASE WHEN bounce_type = 'hard' THEN 1 ELSE 0 END) AS hard_bounces,
+        SUM(CASE WHEN complained_at IS NOT NULL THEN 1 ELSE 0 END) AS complaints,
+        SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered
+        FROM campaign_messages WHERE sent_at >= ?`).bind(new Date(Date.now() - 30 * 86400000).toISOString()).first(),
+    replies_tracked: false, domain_reputation: "not tracked in-app; check Resend dashboard + Google Postmaster Tools for the sending domain",
     sent_today: await ledgerSent(env.CRM_DB, day, "live"), dry_today: await ledgerSent(env.CRM_DB, day, "dry"),
     window_open: { US: inSendWindow("US", now, c.window), MX: inSendWindow("MX", now, c.window) } };
 }
