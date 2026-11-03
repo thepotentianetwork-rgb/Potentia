@@ -1433,7 +1433,9 @@ var GRID_SHOP_STYLES = { basic:1, craftsman:1, xtrim:1, arch:1, panel4:1 };
    door (basic, X-trim, arch, 4-panel, fairytale, 6-panel residential) and a
    roll-up get none and are not charged. Mirrors the doors whose 3D carries
    glass in designer.html (glassRegion / slider panes). */
-export const GRID_GLAZED_DOORS = { craftsman:1, cedar:1, cedarSingle:1, reshalf:1, reshalfB:1,
+/* Craftsman and cedar transom lites are already divided lites under 12in,
+   so a 12in grid adds nothing visible there: no grids, no charge. */
+export const GRID_GLAZED_DOORS = { reshalf:1, reshalfB:1,
   resfull:1, resfullB:1, resDoubleFull:1, resDoubleFullB:1, slideglass:1, slideglassB:1 };
 export function gridDoorBasis(dd){
   if(!dd || !GRID_GLAZED_DOORS[dd.style||'basic']) return 0;
