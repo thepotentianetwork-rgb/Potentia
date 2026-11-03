@@ -57,9 +57,9 @@ var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var TOKEN = localStorage.getItem('potentia_portal_token');
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function api(path, opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json','Authorization':'Bearer '+TOKEN},opts.headers);
-  return fetch(API_BASE+path,opts).then(function(r){if(r.status===401){localStorage.removeItem('potentia_portal_token');location.href='portal-login.html';throw new Error('expired');}return r.json().then(function(d){return{ok:r.ok,data:d};});});}
-if(!TOKEN) location.href='portal-login.html';
-document.getElementById('logout').onclick=function(){fetch(API_BASE+'/portal/logout',{method:'POST',keepalive:true,headers:{'Authorization':'Bearer '+TOKEN}}).catch(function(){});localStorage.removeItem('potentia_portal_token');location.href='portal-login.html';};
+  return fetch(API_BASE+path,opts).then(function(r){if(r.status===401){localStorage.removeItem('potentia_portal_token');location.href='portal-customer-login.html';throw new Error('expired');}return r.json().then(function(d){return{ok:r.ok,data:d};});});}
+if(!TOKEN) location.href='portal-customer-login.html';
+document.getElementById('logout').onclick=function(){fetch(API_BASE+'/portal/logout',{method:'POST',keepalive:true,headers:{'Authorization':'Bearer '+TOKEN}}).catch(function(){});localStorage.removeItem('potentia_portal_token');location.href='portal-customer-login.html';};
 
 function money(n){return n==null?'—':'$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
 api('/portal/customer/order').then(function(r){var el=document.getElementById('o');

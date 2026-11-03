@@ -97,3 +97,15 @@ test("customer account only after deposit; sees own order only", async () => {
   assert.equal((await call(env, "GET", "/portal/builder/jobs", { token: t })).status, 403);
   assert.equal((await call(env, "GET", "/admin/customers/2", { token: t })).status, 403);
 });
+
+test("separate login pages: team page refuses customers, customer page refuses team", async () => {
+  const { env, admin, db } = await setup();
+  db.exec(`INSERT INTO payments (customer_id,amount,method,paid_at,created_at) VALUES (1,500,'cash','2026-11-01','2026-11-01')`);
+  const c = await mk(env, admin, { role: "customer", login: "ana@x.com", customer_id: 1 });
+  const s = await mk(env, admin, { role: "sales", login: "nando" });
+  const pl = (l, p, portal) => call(env, "POST", "/portal/login", { body: { login: l, password: p, portal } });
+  assert.equal((await pl("ana@x.com", c.password, "team")).status, 401);
+  assert.equal((await pl("ana@x.com", c.password, "customer")).status, 200);
+  assert.equal((await pl("nando", s.password, "customer")).status, 401);
+  assert.equal((await pl("nando", s.password, "team")).status, 200);
+});

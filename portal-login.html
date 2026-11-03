@@ -43,10 +43,10 @@ h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
     <img src="shedpro-logo.png" alt="ShedPro">
     <div class="brand-text">
       <span class="brand-name">SHEDPRO</span>
-      <span class="brand-sub">Team &amp; Customer Portal</span>
+      <span class="brand-sub">Sales &amp; Builder Portal</span>
     </div>
   </div>
-  <p class="label">Secure Access</p>
+  <p class="label">Team Access</p>
   <h1>Sign In</h1>
   <form id="login-form">
     <div class="form-group">
@@ -60,20 +60,20 @@ h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
     <button type="submit" class="submit" id="submit-btn">Log In</button>
     <p class="error" id="error"></p>
   </form>
-  <p data-x style="display:none;margin-top:18px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;text-transform:uppercase"><a href="portal-login.html" style="color:var(--silver)">Sales, builder or customer? Sign in here</a></p>
+  <p style="margin-top:18px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;text-transform:uppercase"><a href="portal-customer-login.html" style="color:var(--silver)">ShedPro customer? Sign in here</a></p>
   <p style="margin-top:18px;font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:0.15em"><a href="admin-login.html" style="color:var(--silver)">Owner login</a></p>
   <p class="footer-tag">Built &amp; managed by Potentia</p>
 </div>
 
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
-var DEST = { sales: 'admin.html', builder: 'portal-builder.html', customer: 'portal-customer.html' };
+var DEST = { sales: 'admin.html', builder: 'portal-builder.html' };
 document.getElementById('login-form').addEventListener('submit', function (e) {
   e.preventDefault();
   var err = document.getElementById('error'), btn = document.getElementById('submit-btn');
   err.textContent = ''; btn.disabled = true;
   fetch(API_BASE + '/portal/login', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ login: document.getElementById('login').value, password: document.getElementById('password').value }) })
+    body: JSON.stringify({ portal: 'team', login: document.getElementById('login').value, password: document.getElementById('password').value }) })
     .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, status: r.status, d: d }; }); })
     .then(function (r) {
       if (!r.ok) { err.textContent = r.status === 401 ? 'Incorrect username or password.' : (r.d.error || 'Something went wrong.'); btn.disabled = false; return; }
