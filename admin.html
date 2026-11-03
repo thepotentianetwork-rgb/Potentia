@@ -97,6 +97,14 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   50%{box-shadow:0 0 0 5px rgba(246,148,31,0)}
 }
 
+.grp-jump{position:sticky;top:0;z-index:20;display:flex;gap:6px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:10px 0;margin:0 0 6px;background:var(--black)}
+.grp-jump::-webkit-scrollbar{display:none}
+.grp-jump button{flex:0 0 auto;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--silver);background:rgba(255,255,255,0.03);border:1px solid var(--dim);border-radius:20px;padding:8px 12px;cursor:pointer;white-space:nowrap}
+.grp-jump button b{font-weight:400;color:var(--dim);margin-left:6px}
+.grp-jump button:not(:disabled):hover,.grp-jump button:not(:disabled):active{color:var(--bright);border-color:var(--sp-orange)}
+.grp-jump button.j-won:not(:disabled){border-color:rgba(246,148,31,0.6);color:var(--sp-orange)}
+.grp-jump button:disabled{opacity:0.35;cursor:default}
+.grp-row{scroll-margin-top:64px}
 .table-wrap{overflow-x:auto}
 /* Search + shop-order button (13 Oct 2026). */
 .cust-search{display:block;width:100%;box-sizing:border-box;font-size:17px;padding:14px 16px;margin:0 0 18px;background:transparent;color:var(--bright,#fff);border:2px solid var(--sp-blue,#29a8e0);border-radius:0;font-family:inherit}
@@ -199,6 +207,7 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
     <h2>Customers</h2>
     <input type="search" id="cust-search" class="cust-search" placeholder="Search name, email, phone, address or quote #" autocomplete="off" aria-label="Search customers">
     <div class="search-count" id="search-count"></div>
+    <nav class="grp-jump" id="grp-jump" aria-label="Jump to section"></nav>
     <div class="table-wrap">
     <table>
       <thead>
@@ -489,16 +498,42 @@ function shopButton(c) {
   return b;
 }
 
+/* Sticky jump chips so Won/Lost are one tap away on mobile (Nando). */
+var JUMP_LABELS = { fresh: 'Fresh', contacted: 'Contacted', quoted: 'Quoted', dormant: 'Dormant', won: 'Won', lost: 'Lost' };
+function renderJump(groups) {
+  var nav = document.getElementById('grp-jump');
+  if (!nav) return;
+  var n = {};
+  groups.forEach(function (x) { n[x.g.key] = x.rows.length; });
+  nav.innerHTML = '';
+  CUST_GROUPS.forEach(function (g) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'j-' + g.key;
+    b.innerHTML = JUMP_LABELS[g.key] + '<b>' + (n[g.key] || 0) + '</b>';
+    if (!n[g.key]) b.disabled = true;
+    b.addEventListener('click', function () {
+      var el = document.getElementById('grp-' + g.key);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    nav.appendChild(b);
+  });
+}
+
 function renderCustomers(list, searching) {
   var body = document.getElementById('customers-body');
   body.innerHTML = '';
   if (!list.length) {
+    renderJump([]);
     body.innerHTML = '<tr><td class="empty" colspan="8">' + (searching ? 'No customers match that search.' : 'No customers yet.') + '</td></tr>';
     return;
   }
-  groupCustomers(list).forEach(function (grp) {
+  var groups = groupCustomers(list);
+  renderJump(groups);
+  groups.forEach(function (grp) {
   var hr = document.createElement('tr');
   hr.className = 'grp-row grp-' + grp.g.key;
+  hr.id = 'grp-' + grp.g.key;
   var htd = document.createElement('td');
   htd.colSpan = 8;
   htd.innerHTML = grp.g.label + '<span class="grp-n">' + grp.rows.length + '</span>' + (grp.g.sub ? '<span class="grp-sub">' + grp.g.sub + '</span>' : '');
