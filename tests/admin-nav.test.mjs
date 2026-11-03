@@ -70,9 +70,9 @@ check('the helpers themselves are one file',
 const nav = readFileSync(path.join(root, 'admin-nav.js'), 'utf8');
 const listed = [...nav.matchAll(/href:\s*'([^']+)'/g)].map((m) => m[1]);
 console.log('\n-- the menu points at pages that exist --');
-check('seven destinations', listed.length === 7, listed);
+check('eight destinations (incl. owner-only Team logins)', listed.length === 8, listed);
 for (const href of listed) {
-  check(href + ' is a real page', PAGES.includes(href) || href === 'admin-website.html', listed);
+  check(href + ' is a real page', PAGES.includes(href) || href === 'admin-website.html' || href === 'admin-team.html', listed);
 }
 /* And every admin page is reachable from it — a page nobody can navigate to
    is a page nobody uses. admin-login is deliberately not in the menu. */
