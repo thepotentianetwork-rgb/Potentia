@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "574d950";
-const WORKER_BUILT_AT = "2026-11-03T23:26:32.527Z";
+const WORKER_BUILD = "fabca08";
+const WORKER_BUILT_AT = "2026-11-03T23:37:27.815Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -11566,7 +11566,26 @@ async function handlePortal(request, env, origin, path, deps) {
     if (!sub) return json({ error: "Your portal opens once your deposit is in." }, 403, origin);
     const data = await deps.trackPayload(env, sub.id);
     const sched = await customerSchedule(env, sub.id);
-    return json({ ...data, ...sched, warranties: WARRANTIES }, 200, origin);
+    let my_notes = [];
+    try { my_notes = (await env.DB.prepare("SELECT id, text, created_at FROM job_notes WHERE submission_id=? AND role='customer' ORDER BY id DESC LIMIT 20").bind(sub.id).all()).results || []; } catch (e) {}
+    my_notes = my_notes.map((n) => ({ id: n.id, text: String(n.text || "").replace(/^Customer note \u2014 /, ""), at: n.created_at }));
+    return json({ ...data, ...sched, warranties: WARRANTIES, warranty_note: WARRANTY_NOTE, my_notes }, 200, origin);
+  }
+  /* Customer leaves a note for the team. Lands in job_notes (role=customer), the
+     same per-order notes the builder portal and owner already read. */
+  if (path === "/portal/customer/note" && method === "POST") {
+    if (role !== "customer") return json({ error: "Forbidden" }, 403, origin);
+    const u = await env.DB.prepare("SELECT * FROM portal_users WHERE id=? AND disabled_at IS NULL").bind(sess.uid).first();
+    const sub = u && await customerSub(env, u, deps);
+    if (!sub) return json({ error: "Your portal opens once your deposit is in." }, 403, origin);
+    let b = {}; try { b = await request.json(); } catch (e) {}
+    const t = String(b.text || "").trim().slice(0, 2000);
+    if (!t) return json({ error: "Write a note first." }, 400, origin);
+    const c = await env.DB.prepare("SELECT COUNT(*) AS n FROM job_notes WHERE submission_id=? AND role='customer' AND created_at > ?").bind(sub.id, new Date(Date.now() - 864e5).toISOString()).first();
+    if (c && Number(c.n) >= 20) return json({ error: "That's a lot of notes today \u2014 please call us instead." }, 429, origin);
+    const at = now();
+    await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)").bind(sub.id, (u.name || sess.name || "customer"), "customer", "Customer note \u2014 " + t, at).run();
+    return json({ ok: true, note: { text: t, at } }, 200, origin);
   }
 
   return json({ error: "Not found" }, 404, origin);
@@ -11621,11 +11640,16 @@ async function customerSub(env, u, deps) {
   return null;
 }
 
-/* Placeholder wording — Nando to confirm the real warranty terms before launch. */
+/* Customer-facing warranty copy, verbatim from ShedPro's master warranty text
+   (scratch/warranty/ShedPro-Warranty-Master.md, same as shedpro-utah.com). The
+   concrete section is internal-only there, so it is not listed here. */
 const WARRANTIES = [
-  { item: "Workmanship", term: "Shed Pro workmanship warranty (terms to be confirmed by Shed Pro)" },
-  { item: "Manufacturer materials", term: "Siding, roofing, doors and windows carry their manufacturers' warranties" }
+  { item: "Workmanship / Structure", term: "3-Year Workmanship Warranty", detail: "If anything we built fails due to our workmanship \u2014 framing, doors, trim, installation \u2014 we come back and fix it. No questions asked." },
+  { item: "Siding", term: "50-Year LP SmartSide Warranty", detail: "LP SmartSide engineered wood siding is backed by a 50-year manufacturer warranty against defects. It's why we choose it on every build." },
+  { item: "Paint", term: "Sherwin-Williams Paint Warranty", detail: "Sherwin-Williams exterior paint is rated for long-term durability against UV, moisture, and temperature extremes. Their warranty backs the finish." },
+  { item: "Roofing", term: "30-Year Asphalt Shingle Warranty", detail: "Our asphalt shingles are backed by a 30-year manufacturer warranty \u2014 so your roof stays protected long after the build is done." }
 ];
+const WARRANTY_NOTE = "Warranty covers defects in materials and workmanship under normal use. It does not cover damage from extreme weather events, accidents, neglect, or unauthorized modifications. Full warranty terms are provided at time of purchase.";
 
 /* A delay logged by the builder portal's "dates" action with no new date. */
 function isDelayNote(text) { return /^[\w ]+: delay( — |$)/.test(String(text || "")); }
