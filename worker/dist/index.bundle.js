@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "501dd00";
-const WORKER_BUILT_AT = "2026-11-02T23:27:31.873Z";
+const WORKER_BUILD = "5ae3d6a-dirty";
+const WORKER_BUILT_AT = "2026-11-03T01:45:58.723Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -9591,6 +9591,54 @@ async function crawlSite(siteUrl, opts) {
 
 // ---- end inlined intlcrawl.js ----
 
+// ---- inlined from worker/dormant.js by build-bundle.mjs — do not edit below by hand ----
+/* Auto-dormant: a design (submission) whose status hasn't moved in 14 days is
+   set to 'dormant'. Never deletes. Only open statuses (new / contacted /
+   quoted) are touched; won, lost, superseded and dormant itself are left alone.
+   Age is measured from status_changed_at, falling back to updated_at, then
+   created_at — whichever exists first on the row. */
+
+const DORMANT_DAYS = 14;
+const DORMANT_FROM = ["new", "contacted", "quoted"];
+
+const ready = new WeakSet();
+async function ensureStatusChangedColumn(db) {
+  if (ready.has(db)) return;
+  const { results } = await db.prepare("PRAGMA table_info(submissions)").all();
+  const have = new Set((results || []).map((r) => r.name));
+  if (!have.has("status_changed_at")) await db.prepare("ALTER TABLE submissions ADD COLUMN status_changed_at TEXT").run();
+  ready.add(db);
+}
+
+async function lastChangeExpr(db) {
+  const { results } = await db.prepare("PRAGMA table_info(submissions)").all();
+  const have = new Set((results || []).map((r) => r.name));
+  const parts = ["status_changed_at", "updated_at", "created_at"].filter((c) => have.has(c));
+  return parts.length > 1 ? "COALESCE(" + parts.join(", ") + ")" : parts[0];
+}
+
+/* dryRun: returns the rows that would change, writes nothing (not even the column). */
+async function runAutoDormant(db, { now = new Date(), dryRun = false } = {}) {
+  if (!dryRun) await ensureStatusChangedColumn(db);
+  const cutoff = new Date(now.getTime() - DORMANT_DAYS * 86400000).toISOString();
+  const expr = await lastChangeExpr(db);
+  const marks = DORMANT_FROM.map(() => "?").join(",");
+  const { results } = await db.prepare(
+    "SELECT id, customer_id, name, status, " + expr + " AS last_change FROM submissions " +
+    "WHERE status IN (" + marks + ") AND " + expr + " < ? ORDER BY id"
+  ).bind(...DORMANT_FROM, cutoff).all();
+  const rows = results || [];
+  if (!dryRun && rows.length) {
+    const at = now.toISOString();
+    await db.batch(rows.map((r) => db.prepare(
+      "UPDATE submissions SET status = 'dormant', status_changed_at = ? WHERE id = ? AND status IN (" + marks + ")"
+    ).bind(at, r.id, ...DORMANT_FROM)));
+  }
+  return { cutoff, count: rows.length, rows, dryRun };
+}
+
+// ---- end inlined dormant.js ----
+
 // Potentia backend Worker — serves three things from one place:
 //  1. /chat            — the AI assistant widget (assistant.js)
 //  2. /admin/*          — password-gated dashboard for the shed company
@@ -12939,6 +12987,10 @@ async function handleUpdateSubmissionStatus(request, env, origin) {
   const status = String(body.status || "").slice(0, 40);
   if (!id || !status) return json({ error: "id and status required" }, 400, origin);
   await ensureSubmissionWonColumn(env);
+  await ensureStatusChangedColumn(env.DB);
+  // Any manual status save restarts the 14-day dormant clock.
+  await env.DB.prepare("UPDATE submissions SET status_changed_at = ? WHERE id = ? AND status IS NOT ?")
+    .bind(new Date().toISOString(), id, status).run();
 
   // Stamped on the way in to won, and cleared on the way out — a job marked won
   // by mistake and moved back shouldn't leave a win date behind for the
@@ -16620,6 +16672,11 @@ export default {
      and swallowed on error — a failed run is already recorded in
      enrichment_runs, and throwing here just retries the whole thing. */
   async scheduled(event, env, ctx) {
+    // Daily 09:00 UTC trigger: auto-dormant stalled ShedPro designs (14 days).
+    if (event.cron === "0 9 * * *") {
+      if (env.DB) ctx.waitUntil(runAutoDormant(env.DB).catch(() => {}));
+      return;
+    }
     if (!env.CRM_DB || !env.GOOGLE_PLACES_API_KEY) return;
     ctx.waitUntil(
       runLeadPipeline(env, { trigger: "cron" }).catch(() => {})

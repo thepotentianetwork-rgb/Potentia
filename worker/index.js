@@ -43,6 +43,7 @@ import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 import { findCustomerDesign } from "./customerdesign.js";
 import { runQuery, parseQueryParams } from "./crmquery.js";
 import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
+import { runAutoDormant, ensureStatusChangedColumn } from "./dormant.js";
 import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
@@ -3372,6 +3373,10 @@ async function handleUpdateSubmissionStatus(request, env, origin) {
   const status = String(body.status || "").slice(0, 40);
   if (!id || !status) return json({ error: "id and status required" }, 400, origin);
   await ensureSubmissionWonColumn(env);
+  await ensureStatusChangedColumn(env.DB);
+  // Any manual status save restarts the 14-day dormant clock.
+  await env.DB.prepare("UPDATE submissions SET status_changed_at = ? WHERE id = ? AND status IS NOT ?")
+    .bind(new Date().toISOString(), id, status).run();
 
   // Stamped on the way in to won, and cleared on the way out — a job marked won
   // by mistake and moved back shouldn't leave a win date behind for the
@@ -7053,6 +7058,11 @@ export default {
      and swallowed on error — a failed run is already recorded in
      enrichment_runs, and throwing here just retries the whole thing. */
   async scheduled(event, env, ctx) {
+    // Daily 09:00 UTC trigger: auto-dormant stalled ShedPro designs (14 days).
+    if (event.cron === "0 9 * * *") {
+      if (env.DB) ctx.waitUntil(runAutoDormant(env.DB).catch(() => {}));
+      return;
+    }
     if (!env.CRM_DB || !env.GOOGLE_PLACES_API_KEY) return;
     ctx.waitUntil(
       runLeadPipeline(env, { trigger: "cron" }).catch(() => {})

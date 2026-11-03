@@ -3126,7 +3126,7 @@ function renderOrders(submissions, installs) {
       var dot = document.createElement('span');
       dot.className = 'status-dot status-' + s.status;
       var select = document.createElement('select');
-      ['new', 'contacted', 'quoted', 'won', 'lost'].forEach(function (opt) {
+      ['new', 'contacted', 'quoted', 'dormant', 'won', 'lost'].forEach(function (opt) {
         var o = document.createElement('option');
         o.value = opt;
         o.textContent = opt;

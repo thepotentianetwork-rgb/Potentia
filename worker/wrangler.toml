@@ -15,4 +15,5 @@ compatibility_date = "2026-08-01"
 # trigger itself has to be added in the dashboard under
 #   Workers & Pages -> potentia-assistant -> Settings -> Triggers -> Cron.
 [triggers]
-crons = ["0 * * * *"]
+# "0 9 * * *" = daily auto-dormant (14 days without a status change).
+crons = ["0 * * * *", "0 9 * * *"]

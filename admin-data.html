@@ -448,7 +448,7 @@ function renderWon(w) {
 function renderFunnel(statusCounts) {
   var host = document.getElementById('funnel');
   host.innerHTML = '';
-  var order = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
+  var order = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['dormant', 'Dormant'], ['won', 'Won'], ['lost', 'Lost']];
   order.forEach(function (pair) {
     var key = pair[0], label = pair[1];
     var seg = el('div', { class: 'funnel-seg funnel-' + key });
