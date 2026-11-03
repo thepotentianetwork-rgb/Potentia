@@ -17,3 +17,15 @@ compatibility_date = "2026-08-01"
 [triggers]
 # "0 9 * * *" = daily auto-dormant (14 days without a status change).
 crons = ["0 * * * *", "0 9 * * *"]
+
+# D1 bindings — must stay in this file or `wrangler deploy` drops them
+# (dropped bindings caused the Partner Admin login outage on 2026-11-03).
+[[d1_databases]]
+binding = "DB"
+database_name = "potentia-shed"
+database_id = "0a6eec64-0670-4854-9dec-b2a1e3eec42b"
+
+[[d1_databases]]
+binding = "CRM_DB"
+database_name = "potentia-crm"
+database_id = "ffb5677f-547b-42cc-ace5-fb095820e622"
