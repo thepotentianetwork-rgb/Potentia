@@ -182,11 +182,16 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 <script src="quotelines.browser.js"></script>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
-var token = localStorage.getItem('potentia_admin_token');
 var submissionId = new URLSearchParams(location.search).get('id');
 var selfUrl = 'quote.html' + location.search;
+/* ?portal=builder: opened from the builder portal. Same document, read through
+   the builder's own route (assigned won jobs only) with the portal session. */
+var BUILDER_VIEW = new URLSearchParams(location.search).get('portal') === 'builder';
+var TOKEN_KEY = BUILDER_VIEW ? 'potentia_portal_token' : 'potentia_admin_token';
+var LOGIN_URL = BUILDER_VIEW ? 'portal-login.html' : 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+var token = localStorage.getItem(TOKEN_KEY);
 
-if (!token) window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+if (!token) window.location.href = LOGIN_URL;
 
 /* SAY WHAT ACTUALLY WENT WRONG.
    Every failure here used to print the same three words, "Quote not found" —
@@ -218,8 +223,8 @@ if (!submissionId) {
 function authFetch(path) {
   return fetch(API_BASE + path, { headers: { 'Authorization': 'Bearer ' + token } }).then(function (res) {
     if (res.status === 401) {
-      localStorage.removeItem('potentia_admin_token');
-      window.location.href = 'admin-login.html?next=' + encodeURIComponent(selfUrl);
+      localStorage.removeItem(TOKEN_KEY);
+      window.location.href = LOGIN_URL;
       throw new Error('Session expired');
     }
     // status comes back too — the caller has to tell a missing order from a
@@ -1510,7 +1515,7 @@ function renderFloorPlan(config, container, frontWall) {
 }
 
 if (token && submissionId) {
-  authFetch('/admin/submissions/' + submissionId).then(function (r) {
+  authFetch(BUILDER_VIEW ? '/portal/builder/jobs/' + submissionId + '/quote' : '/admin/submissions/' + submissionId).then(function (r) {
     if (!r.ok) {
       /* Each of these used to read "Quote not found", which is only true of
          one of them. authFetch already sends a 401 to the login page, so a

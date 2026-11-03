@@ -6381,7 +6381,7 @@ export default {
         }
         return await handlePortal(request, env, origin, path, {
           json, issueSession, verifySession, revokeSession, bearerToken, requireAdmin: requireOwner,
-          orderHasDeposit, trackPayload, configSummary, buildSpecLines, designLinkFor
+          orderHasDeposit, trackPayload, configSummary, buildSpecLines, designLinkFor, getSubmission: handleGetSubmission
         });
       }
       if (path.startsWith("/admin/") && path !== "/admin/login" && path !== "/admin/logout") {

@@ -196,7 +196,7 @@ export async function handlePortal(request, env, origin, path, deps) {
         let d = {}; try { d = JSON.parse(r.details) || {}; } catch (e) {}
         const inst = (await env.DB.prepare("SELECT id, item, install_date, days, note, done_at FROM installs WHERE submission_id=? ORDER BY install_date").bind(r.id).all()).results || [];
         const open = await env.DB.prepare("SELECT id, clock_in FROM time_entries WHERE submission_id=? AND builder_id=? AND clock_out IS NULL").bind(r.id, uid).first();
-        const notes = (await env.DB.prepare("SELECT author, text, created_at FROM job_notes WHERE submission_id=? ORDER BY id DESC LIMIT 20").bind(r.id).all()).results || [];
+        const notes = (await env.DB.prepare("SELECT id, author, role, text, created_at FROM job_notes WHERE submission_id=? ORDER BY id DESC LIMIT 20").bind(r.id).all()).results || [];
         const exps = (await env.DB.prepare("SELECT id, amount, note, created_at, photo IS NOT NULL AS has_photo FROM job_expenses WHERE submission_id=? AND builder_id=? ORDER BY id DESC").bind(r.id, uid).all()).results || [];
         /* Build info only: NO price, redline cost, payments or pipeline. */
         jobs.push({ id: r.id, customer: r.customer_name, address: [r.address, r.city].filter(Boolean).join(", "), phone: r.phone,
@@ -205,7 +205,16 @@ export async function handlePortal(request, env, origin, path, deps) {
       }
       return json({ jobs }, 200, origin);
     }
-    const jm = path.match(/^\/portal\/builder\/jobs\/(\d+)\/(clock|expenses|notes|dates)$/);
+    /* The quote / shop order the CRM opens (quote.html), for an assigned won job only. */
+    const qm = path.match(/^\/portal\/builder\/jobs\/(\d+)\/quote$/);
+    if (qm && method === "GET") {
+      const sid = Number(qm[1]);
+      const mine = await env.DB.prepare("SELECT 1 AS ok FROM job_assignments j JOIN submissions s ON s.id=j.submission_id WHERE j.submission_id=? AND j.builder_id=? AND s.status='won'").bind(sid, uid).first();
+      if (!mine) return json({ error: "Not your job" }, 403, origin);
+      if (!deps.getSubmission) return json({ error: "Not available" }, 501, origin);
+      return deps.getSubmission(request, env, origin, sid);
+    }
+    const jm = path.match(/^\/portal\/builder\/jobs\/(\d+)\/(clock|expenses|notes|dates|undelay)$/);
     if (jm && method === "POST") {
       const sid = Number(jm[1]);
       const mine = await env.DB.prepare("SELECT 1 AS ok FROM job_assignments j JOIN submissions s ON s.id=j.submission_id WHERE j.submission_id=? AND j.builder_id=? AND s.status='won'").bind(sid, uid).first();
@@ -228,6 +237,14 @@ export async function handlePortal(request, env, origin, path, deps) {
         const t = String(b.text || "").trim().slice(0, 2000);
         if (!t) return json({ error: "Empty note" }, 400, origin);
         await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)").bind(sid, sess.name || "builder", "builder", t, now()).run();
+        return json({ ok: true }, 200, origin);
+      }
+      if (jm[2] === "undelay") {
+        // Remove a delay logged with "dates" (a job note "<item>: delay[ — reason]"). Only delay notes on this job.
+        const n = await env.DB.prepare("SELECT id, text FROM job_notes WHERE id=? AND submission_id=?").bind(Number(b.note_id), sid).first();
+        if (!n || !isDelayNote(n.text)) return json({ error: "Not a delay on this job" }, 400, origin);
+        await env.DB.prepare("DELETE FROM job_notes WHERE id=?").bind(n.id).run();
+        await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)").bind(sid, sess.name || "builder", "builder", "Delay cleared: " + String(n.text).slice(0, 300), now()).run();
         return json({ ok: true }, 200, origin);
       }
       if (jm[2] === "dates") {
@@ -269,3 +286,6 @@ export const WARRANTIES = [
   { item: "Workmanship", term: "Shed Pro workmanship warranty (terms to be confirmed by Shed Pro)" },
   { item: "Manufacturer materials", term: "Siding, roofing, doors and windows carry their manufacturers' warranties" }
 ];
+
+/* A delay logged by the builder portal's "dates" action with no new date. */
+export function isDelayNote(text) { return /^[\w ]+: delay( — |$)/.test(String(text || "")); }
