@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "cec1f38-dirty";
-const WORKER_BUILT_AT = "2026-11-03T04:51:44.849Z";
+const WORKER_BUILD = "ee3e8ac-dirty";
+const WORKER_BUILT_AT = "2026-11-03T05:08:38.721Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -589,8 +589,8 @@ let SELL = {
      figure is an upcharge over the included 5' Double (which is $0), so for
      those the door's price is shopDoorBase + its upcharge — otherwise grids
      on the standard door would be free. shopDoorBase ~= the included 5'
-     Double's shop material (~$98) at the 42% target margin. Roll-ups get no
-     grids and no charge; Price-TBD and no-grid windows (72x48 slider, 24x80
+     Double's shop material (~$98) at the 42% target margin. Only glazed doors
+     get grids (solid doors and roll-ups: none, no charge); Price-TBD and no-grid windows (72x48 slider, 24x80
      sidelight) are skipped too. Admin -> Pricing can override (group 'grids'). */
   grids: { pct: 30, shopDoorBase: 170 },
 
@@ -1433,8 +1433,14 @@ function sellWindowPriced(wd){
    taken off this). Shared by computePricing (quote line) and the designer's
    option price so the Upgrades row and the CRM/PDF read the same figure. */
 var GRID_SHOP_STYLES = { basic:1, craftsman:1, xtrim:1, arch:1, panel4:1 };
+/* Glass openings only (Nando, 2 Nov 2026): grids go on lites, so a solid
+   door (basic, X-trim, arch, 4-panel, fairytale, 6-panel residential) and a
+   roll-up get none and are not charged. Mirrors the doors whose 3D carries
+   glass in designer.html (glassRegion / slider panes). */
+const GRID_GLAZED_DOORS = { craftsman:1, cedar:1, cedarSingle:1, reshalf:1, reshalfB:1,
+  resfull:1, resfullB:1, resDoubleFull:1, resDoubleFullB:1, slideglass:1, slideglassB:1 };
 function gridDoorBasis(dd){
-  if(!dd || dd.style==='rollup') return 0;
+  if(!dd || !GRID_GLAZED_DOORS[dd.style||'basic']) return 0;
   var up = sellDoorUpcharge(dd);
   var g = SELL.grids || {};
   if(GRID_SHOP_STYLES[dd.style||'basic']) up += (+g.shopDoorBase||0);
