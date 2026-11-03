@@ -77,6 +77,10 @@ input.cell{width:100%;font-family:'Cormorant Garamond',serif;font-size:15px}
 .view-link{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--sp-blue);text-decoration:none;text-transform:uppercase;white-space:nowrap}
 .view-link:hover{color:var(--bright)}
 
+.grp-row td{padding:22px 12px 8px;border-bottom:1px solid var(--dim);background:none!important;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:var(--silver)}
+.grp-row .grp-n{color:var(--dim);margin-left:10px;letter-spacing:0.15em}
+.grp-row .grp-sub{display:block;margin-top:4px;font-size:9px;letter-spacing:0.12em;color:var(--dim);text-transform:none}
+.grp-fresh td{color:var(--sp-orange)}
 tr.lead-new{background:linear-gradient(90deg,rgba(246,148,31,0.09),rgba(246,148,31,0.01) 55%)}
 tr.lead-new:hover td{background:rgba(246,148,31,0.05)}
 tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
@@ -365,14 +369,41 @@ function renderActivityCell(td, c) {
   }
 }
 
-/* Lost customers always sit at the bottom, below everyone else, keeping the
-   server's order (newest activity first) inside each group. "Lost" is a
-   submission status, not a customer field, so it is read the way the Status
-   column reads it: from the customer's latest order. */
+/* Priority sections (Nando, Nov 2026). The list is split into sections in
+   this order, each with a header row:
+     1. Fresh leads   - status new or contacted (not yet quoted). Inside it,
+                        leads with no logged call/note come first, then newest
+                        activity first.
+     2. Quoted        - status quoted, newest quote first.
+     3. Dormant       - status dormant (auto after 14 days only when a call was
+                        logged with no answer; never-touched leads stay new).
+     4. Won, then Lost at the very bottom.
+   Superseded/unknown fall in with Fresh. Server order (newest first) is kept
+   as the tie-breaker. Status is the customer's latest order, as in the
+   Status column. */
+var CUST_GROUPS = [
+  { key: 'fresh', label: 'Fresh leads \u00b7 not yet quoted', sub: 'Never contacted first, then newest' },
+  { key: 'quoted', label: 'Quoted', sub: 'Newest quote first' },
+  { key: 'dormant', label: 'Dormant', sub: 'Called, no response for 2+ weeks' },
+  { key: 'won', label: 'Won' },
+  { key: 'lost', label: 'Lost' }
+];
+function custGroup(c) {
+  var st = c.latest_status || 'new';
+  if (st === 'quoted' || st === 'dormant' || st === 'won' || st === 'lost') return st;
+  return 'fresh';
+}
 function isLostCustomer(c) { return c.latest_status === 'lost'; }
-function lostLast(list) {
-  return list.filter(function (c) { return !isLostCustomer(c); })
-    .concat(list.filter(isLostCustomer));
+function groupCustomers(list) {
+  var by = {};
+  CUST_GROUPS.forEach(function (g) { by[g.key] = []; });
+  list.forEach(function (c, i) { c._ord = i; by[custGroup(c)].push(c); });
+  by.fresh.sort(function (a, b) {
+    var ua = lastContactMs(a) ? 1 : 0, ub = lastContactMs(b) ? 1 : 0;
+    return ua - ub || a._ord - b._ord;
+  });
+  return CUST_GROUPS.map(function (g) { return { g: g, rows: by[g.key] }; })
+    .filter(function (x) { return x.rows.length; });
 }
 function digits(v) { return String(v || '').replace(/\D/g, ''); }
 function customerMatches(c, q) {
@@ -393,7 +424,7 @@ var ALL_CUSTOMERS = [];
 function applySearch() {
   var box = document.getElementById('cust-search');
   var q = box ? box.value : '';
-  var shown = lostLast(ALL_CUSTOMERS.filter(function (c) { return customerMatches(c, q); }));
+  var shown = ALL_CUSTOMERS.filter(function (c) { return customerMatches(c, q); });
   var cnt = document.getElementById('search-count');
   if (cnt) cnt.textContent = q.trim() ? shown.length + ' of ' + ALL_CUSTOMERS.length + ' customers' : '';
   renderCustomers(shown, !!q.trim());
@@ -464,7 +495,15 @@ function renderCustomers(list, searching) {
     body.innerHTML = '<tr><td class="empty" colspan="8">' + (searching ? 'No customers match that search.' : 'No customers yet.') + '</td></tr>';
     return;
   }
-  list.forEach(function (c) {
+  groupCustomers(list).forEach(function (grp) {
+  var hr = document.createElement('tr');
+  hr.className = 'grp-row grp-' + grp.g.key;
+  var htd = document.createElement('td');
+  htd.colSpan = 8;
+  htd.innerHTML = grp.g.label + '<span class="grp-n">' + grp.rows.length + '</span>' + (grp.g.sub ? '<span class="grp-sub">' + grp.g.sub + '</span>' : '');
+  hr.appendChild(htd);
+  body.appendChild(hr);
+  grp.rows.forEach(function (c) {
     var tr = document.createElement('tr');
     var isNew = c.latest_status === 'new';
     if (isNew) tr.className = 'lead-new';
@@ -602,6 +641,7 @@ function renderCustomers(list, searching) {
     tr.appendChild(tdNote);
     tr.appendChild(tdView);
     body.appendChild(tr);
+  });
   });
 }
 
