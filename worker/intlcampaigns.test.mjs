@@ -49,8 +49,8 @@ async function setup(extra) {
   const lead = (o) => {
     const id = Number(crm.prepare(`INSERT INTO clients (business_name, website_url, status, source, country, do_not_contact, created_at, updated_at)
       VALUES (?, ?, 'lead', ?, ?, ?, ?, ?)`).run(o.name, o.website || null, o.source || 'pipeline_intl', o.country || 'MX', o.dnc ? 1 : 0, now, now).lastInsertRowid);
-    for (const em of o.emails || []) crm.prepare(`INSERT INTO lead_emails (client_id, email, discovered_at, type, verification_status)
-      VALUES (?, ?, ?, ?, ?)`).run(id, em.email, now, em.type || 'role', em.v || 'unverified');
+    for (const em of o.emails || []) crm.prepare(`INSERT INTO lead_emails (client_id, email, discovered_at, type, verification_status, source_url, eligibility)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(id, em.email, now, em.type || 'role', em.v || 'unverified', em.src === undefined ? 'https://' + (o.website || 'x').replace(/^https?:\/\//, '') + '/contacto' : em.src, em.elig || 'pending_verification');
     for (const ev of o.evidence || []) crm.prepare(`INSERT INTO lead_evidence (client_id, kind, category, status, confirmed, created_at)
       VALUES (?, ?, 'audit', ?, ?, ?)`).run(id, ev[0], ev[1], ev[1] === 'confirmed_issue' ? 1 : 0, now);
     return id;

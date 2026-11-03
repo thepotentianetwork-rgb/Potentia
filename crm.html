@@ -1721,6 +1721,11 @@ if (token) loadClients();
   });
   /* Phase 4: campaign drafts (preview + edit + approve). No send. */
   function loadCampaigns() {
+    authFetch('/crm/intl/send/status').then(function (r) {
+      var d = r.data; if (!d) return;
+      $('ic-msg').textContent = 'Sending ' + (d.enabled ? 'ENABLED' : 'OFF (kill switch)') + ' · provider ' + d.provider +
+        ' · today ' + d.sent_today + '/' + d.daily_cap + (d.resend_key_set ? '' : ' · RESEND_API_KEY not set');
+    });
     return authFetch('/crm/intl/campaigns').then(function (r) {
       var box = $('ic-list'), list = (r.data && r.data.campaigns) || [];
       box.innerHTML = list.length ? '<ul>' + list.map(function (c) {
@@ -1738,7 +1743,17 @@ if (token) loadClients();
         (s.postal_set ? '' : ' <span class="panel-msg">Postal address not configured; approval disabled.</span>') +
         '<div>' + (draft ? '<button class="btn ic-st" data-id="' + c.id + '" data-st="approved" type="button">Approve</button>' : '') +
         (c.status === 'approved' ? '<button class="btn ghost ic-st" data-id="' + c.id + '" data-st="draft" type="button">Back to draft</button>' : '') +
-        '</div>' + r.data.messages.map(function (m) {
+        /* Phase 5 send controls */
+        (c.status === 'approved' ? '<button class="btn ghost ic-sched" data-id="' + c.id + '" type="button">Schedule…</button>' : '') +
+        ((c.status === 'approved' || c.status === 'scheduled') && !c.nando_approved_at ? '<button class="btn ic-nando" data-id="' + c.id + '" type="button">Nando: approve to send</button>' : '') +
+        ((c.status === 'draft' || c.status === 'approved') ? '<button class="btn ghost ic-dry" data-id="' + c.id + '" data-v="' + (c.dry_run ? 0 : 1) + '" type="button">' + (c.dry_run ? 'Switch to LIVE' : 'Switch to dry-run') + '</button>' : '') +
+        ((c.status === 'sending' || c.status === 'scheduled') ? '<button class="btn ghost ic-st" data-id="' + c.id + '" data-st="paused" type="button">Pause</button>' : '') +
+        (c.status === 'paused' ? '<button class="btn ic-resume" data-id="' + c.id + '" type="button">Resume</button>' : '') +
+        '<button class="btn ghost ic-report" data-id="' + c.id + '" type="button">Dry-run report</button>' +
+        '</div><div class="panel-msg">' + (c.dry_run ? 'DRY RUN' : 'LIVE') + ' · Nando approval: ' + e(c.nando_approved_at || 'none') +
+        ' · sent ' + e(c.sent_count || 0) + ', bounced ' + e(c.bounce_count || 0) + ', complaints ' + e(c.complaint_count || 0) +
+        (c.scheduled_for ? ' · scheduled ' + e(c.scheduled_for) : '') + (c.fail_reason ? ' · ' + e(c.fail_reason) : '') + '</div>' +
+        '<pre class="ic-rep" style="white-space:pre-wrap;font-size:12px"></pre>' + r.data.messages.map(function (m) {
           return '<div class="ic-msg" style="border-top:1px solid var(--dim);margin-top:12px;padding-top:8px">' +
             '<div>' + e(m.business_name || '') + ' &lt;' + e(m.to_email) + '&gt; — <b>' + e(m.status) + '</b>' +
             (m.block_reason ? ' (' + e(m.block_reason) + ')' : '') + (m.edited ? ' · edited' : '') + '</div>' +
@@ -1772,6 +1787,28 @@ if (token) loadClients();
         body: JSON.stringify({ subject: box.querySelector('.ic-subj[data-id="' + id + '"]').value,
                                body: box.querySelector('.ic-body[data-id="' + id + '"]').value }) })
         .then(function () { openCampaign(t.dataset.c); });
+    } else if (t.classList.contains('ic-sched') || t.classList.contains('ic-nando') || t.classList.contains('ic-dry') || t.classList.contains('ic-resume')) {
+      var cid = t.dataset.id, url, payload = {};
+      if (t.classList.contains('ic-sched')) {
+        var when = prompt('Send start (ISO, e.g. 2026-11-10T16:00:00Z):'); if (!when) return;
+        url = '/crm/intl/campaigns/' + cid + '/status'; payload = { status: 'scheduled', scheduled_for: when };
+      } else if (t.classList.contains('ic-nando')) {
+        if (!confirm('Record Nando\'s approval to send this campaign?')) return;
+        url = '/crm/intl/campaigns/' + cid + '/nando-approve'; payload = { confirm: true, by: 'Nando' };
+      } else if (t.classList.contains('ic-dry')) {
+        if (t.dataset.v === '0' && !confirm('Switch to LIVE? Nando approval will need to be recorded again.')) return;
+        url = '/crm/intl/campaigns/' + cid + '/dry-run'; payload = { dry_run: Number(t.dataset.v) };
+      } else url = '/crm/intl/campaigns/' + cid + '/resume';
+      authFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(function (r) {
+        $('ic-msg').textContent = r.data && r.data.error ? r.data.error : 'OK'; loadCampaigns(); openCampaign(cid);
+      });
+    } else if (t.classList.contains('ic-report')) {
+      authFetch('/crm/intl/campaigns/' + t.dataset.id + '/report').then(function (r) {
+        var d = r.data || {}, out = $('ic-detail').querySelector('.ic-rep');
+        out.textContent = d.error || ('From: ' + d.from + '\nWould send (' + d.would_send.length + '):\n' +
+          d.would_send.map(function (x) { return '  ' + x.to + ' — ' + x.subject; }).join('\n') +
+          '\nWould skip (' + d.would_skip.length + '):\n' + d.would_skip.map(function (x) { return '  ' + x.to + ' — ' + x.reason; }).join('\n'));
+      });
     } else if (t.classList.contains('ic-st')) {
       authFetch('/crm/intl/campaigns/' + t.dataset.id + '/status', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: t.dataset.st }) }).then(function (r) {

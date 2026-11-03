@@ -25,7 +25,7 @@ import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, li
 import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS, seedIntlSources, listIntlSegments, setIntlSourcesEnabled, intlCityList, listIntlLeads, setIntlLeadStatus, intlLeadEvidence, listIntlDuplicates, resolveIntlDuplicate } from "./leadpipeline.js";
 import { crawlSite } from "./intlcrawl.js";
 import { analyzeIntlLead } from "./intlaudit.js";
-import { listTemplates, saveTemplate, createDraftCampaign, listCampaigns, getCampaign, editMessage, setCampaignStatus, listSuppressions, addSuppression, handleUnsubscribe } from "./intlcampaigns.js";
+import { listTemplates, saveTemplate, createDraftCampaign, listCampaigns, getCampaign, editMessage, setCampaignStatus, listSuppressions, addSuppression, handleUnsubscribe, runOutreachTick, nandoApprove, setDryRun, resumeCampaign, sendStatus, dryRunReport, handleResendWebhook } from "./intlcampaigns.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
 import { googleCalendarUrl, installTitle, installDetails, isOnSite } from "./calendar.js";
 import { fullAddress } from "./address.js";
@@ -6313,6 +6313,14 @@ export default {
         "Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer" } });
     }
 
+    /* Intl Phase 5: Resend delivery webhook (Svix-signed). Public, no CORS. */
+    if (path === "/webhooks/email/resend" && request.method === "POST") {
+      if (!env.CRM_DB) return new Response("Unavailable", { status: 503 });
+      const raw = await request.text();
+      const r = await handleResendWebhook(env, request.headers, raw);
+      return new Response(JSON.stringify(r.body), { status: r.status, headers: { "Content-Type": "application/json" } });
+    }
+
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders(origin) });
     }
@@ -6964,6 +6972,18 @@ export default {
           return out ? json(out, 200, origin) : json({ error: "Not found" }, 404, origin);
         }
         if (cm && cm[2] && request.method === "POST") return reply(await setCampaignStatus(env, Number(cm[1]), String(body4.status || ""), body4));
+        /* Phase 5: send controls. Kill switch is env-only (read here, never set). */
+        if (path === "/crm/intl/send/status" && request.method === "GET") return json(await sendStatus(env), 200, origin);
+        const sa = path.match(/^\/crm\/intl\/campaigns\/(\d+)\/(nando-approve|dry-run|resume|report)$/);
+        if (sa) {
+          const id = Number(sa[1]);
+          if (sa[2] === "report" && request.method === "GET") return reply(await dryRunReport(env, id));
+          if (request.method === "POST") {
+            if (sa[2] === "nando-approve") return reply(await nandoApprove(env, id, body4));
+            if (sa[2] === "dry-run") return reply(await setDryRun(env, id, body4));
+            if (sa[2] === "resume") return reply(await resumeCampaign(env, id));
+          }
+        }
         const mm = path.match(/^\/crm\/intl\/messages\/(\d+)$/);
         if (mm && request.method === "POST") return reply(await editMessage(env, Number(mm[1]), body4));
         return json({ error: "Not found" }, 404, origin);
@@ -7137,6 +7157,8 @@ export default {
       if (env.DB) ctx.waitUntil(runAutoDormant(env.DB).catch(() => {}));
       return;
     }
+    // Intl Phase 5 outreach sender: no-op unless OUTREACH_SEND_ENABLED === "true".
+    if (env.CRM_DB) ctx.waitUntil(runOutreachTick(env).catch(() => {}));
     if (!env.CRM_DB || !env.GOOGLE_PLACES_API_KEY) return;
     ctx.waitUntil(
       runLeadPipeline(env, { trigger: "cron" }).catch(() => {})
