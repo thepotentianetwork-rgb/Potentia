@@ -205,6 +205,26 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
   .lead-detail{flex-direction:column;gap:5px}
   td.empty::before{display:none}
 }
+/* Intl Phase 3: International view */
+.intl-head{display:flex;align-items:center;gap:14px;margin-bottom:24px}
+.intl-head h2{margin-bottom:0}
+.intl-stats{grid-template-columns:repeat(5,1fr)}
+.intl-filters,.intl-bulk{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.intl-filters select,.intl-bulk select,.intl-filters input[type=search]{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'DM Mono',monospace;font-size:11px;padding:8px 10px}
+.intl-check{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--silver);display:inline-flex;gap:6px;align-items:center}
+.intl-sel{font-family:'DM Mono',monospace;font-size:11px;color:var(--silver)}
+.intl-table{table-layout:auto}
+.intl-table td{font-size:13px}
+.intl-table th.ic-sel,.intl-table td.ic-sel{width:32px}
+.intl-tier{font-family:'DM Mono',monospace;font-weight:600}
+.intl-tier.A{color:var(--live)}.intl-tier.B{color:var(--warm)}.intl-tier.C{color:var(--silver)}
+.intl-dup{font-family:'DM Mono',monospace;font-size:9px;color:var(--warm);border:1px solid var(--warm);padding:1px 5px;margin-left:6px;text-transform:uppercase}
+.intl-name{cursor:pointer;color:var(--bright);text-decoration:underline dotted}
+.intl-evidence{border:1px solid var(--dim);background:var(--deep);padding:16px 18px;margin:16px 0;font-size:14px}
+.intl-evidence li{margin-left:18px}
+.intl-h3{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:var(--silver);margin:28px 0 10px}
+.intl-duprow{border:1px solid var(--dim);padding:12px 14px;margin-bottom:8px;display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:14px}
+@media (max-width:760px){.intl-stats{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -354,6 +374,55 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
         <tr><td class="empty" colspan="8">Loading…</td></tr>
       </tbody>
     </table>
+    </div>
+  </section>
+  <!-- Intl Phase 3: International view. Its own section, own table and own
+       endpoints (/crm/intl/*); the domestic Clients list above is untouched. -->
+  <section id="intl-view">
+    <p class="sec-label">International</p>
+    <div class="intl-head">
+      <h2>International Leads</h2>
+      <button class="chip" id="intl-toggle" type="button">Show</button>
+    </div>
+    <div id="intl-body" hidden>
+      <div class="stats intl-stats" id="intl-metrics">
+        <div class="stat"><div class="sl">Intl Leads</div><div class="sv" id="im-total">—</div><div class="sn" id="im-status"></div></div>
+        <div class="stat"><div class="sl">Tier A / B / C</div><div class="sv" id="im-tiers">—</div><div class="sn">Opportunity tier</div></div>
+        <div class="stat"><div class="sl">US Relevant</div><div class="sv" id="im-us">—</div><div class="sn">US score &ge; 50</div></div>
+        <div class="stat"><div class="sl">With Email</div><div class="sv" id="im-email">—</div><div class="sn" id="im-opp"></div></div>
+        <div class="stat"><div class="sl">Possible Dupes</div><div class="sv" id="im-dupes">—</div><div class="sn">Waiting for review</div></div>
+      </div>
+      <div class="toolbar intl-filters">
+        <select id="if-country"><option value="">All countries</option></select>
+        <select id="if-city"><option value="">All cities</option></select>
+        <select id="if-tier"><option value="">All tiers</option><option>A</option><option>B</option><option>C</option></select>
+        <select id="if-segment"><option value="">All segments</option></select>
+        <select id="if-status"><option value="">All statuses</option></select>
+        <label class="intl-check"><input type="checkbox" id="if-email"> Has email</label>
+        <label class="intl-check"><input type="checkbox" id="if-dupes"> Possible dupes only</label>
+        <input id="if-search" type="search" placeholder="Search name, email, website…" autocomplete="off">
+      </div>
+      <div class="toolbar intl-bulk">
+        <span class="intl-sel" id="intl-sel">0 selected</span>
+        <select id="intl-assign"><option value="">Assign to pipeline…</option></select>
+        <button class="btn" id="intl-apply" type="button">Apply</button>
+        <button class="btn ghost" id="intl-csv" type="button">Export CSV</button>
+        <button class="btn ghost" id="intl-refresh" type="button">Refresh</button>
+        <span class="panel-msg" id="intl-msg"></span>
+      </div>
+      <div class="table-wrap">
+      <table class="intl-table">
+        <thead><tr>
+          <th class="ic-sel"><input type="checkbox" id="intl-all" aria-label="Select all"></th>
+          <th>Business</th><th>Country</th><th>City</th><th>US</th><th>Opp.</th><th>Tier</th>
+          <th>Email</th><th>Phone</th><th>Website</th><th>Segment</th><th>Status</th>
+        </tr></thead>
+        <tbody id="intl-rows"><tr><td class="empty" colspan="12">Not loaded.</td></tr></tbody>
+      </table>
+      </div>
+      <div class="intl-evidence" id="intl-evidence" hidden></div>
+      <h3 class="intl-h3">Possible duplicates</h3>
+      <div id="intl-dupes"><p class="empty">None waiting.</p></div>
     </div>
   </section>
 </main>
@@ -1488,6 +1557,168 @@ function loadClients() {
 }
 
 if (token) loadClients();
+</script>
+<script>
+/* Intl Phase 3: International view. Self-contained: only reads API_BASE,
+   token and authFetch from the page, and only calls /crm/intl/*. */
+(function () {
+  var STATUSES = ['lead', 'contacted', 'proposal', 'building', 'live', 'paused', 'lost'];
+  var all = [], selected = {}, loaded = false;
+  function $(id) { return document.getElementById(id); }
+  function e(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function opts(el, values) {
+    var keep = el.value, first = el.options[0];
+    el.innerHTML = ''; el.appendChild(first);
+    values.forEach(function (v) { var o = document.createElement('option'); o.value = v; o.textContent = v; el.appendChild(o); });
+    el.value = keep;
+  }
+  function uniq(key) {
+    var s = {}; all.forEach(function (r) { if (r[key]) s[r[key]] = 1; }); return Object.keys(s).sort();
+  }
+  function filtered() {
+    var c = $('if-country').value, city = $('if-city').value, t = $('if-tier').value,
+        seg = $('if-segment').value, st = $('if-status').value,
+        em = $('if-email').checked, du = $('if-dupes').checked,
+        q = $('if-search').value.trim().toLowerCase();
+    return all.filter(function (r) {
+      if (c && r.country !== c) return false;
+      if (city && r.city !== city) return false;
+      if (t && r.lead_tier !== t) return false;
+      if (seg && r.lead_segment !== seg) return false;
+      if (st && r.status !== st) return false;
+      if (em && !r.email) return false;
+      if (du && r.lead_dup_status !== 'possible') return false;
+      if (q && [r.business_name, r.email, r.website_url, r.phone].join(' ').toLowerCase().indexOf(q) === -1) return false;
+      return true;
+    });
+  }
+  function paintMetrics(m) {
+    $('im-total').textContent = m.total;
+    $('im-status').textContent = Object.keys(m.by_status || {}).map(function (k) { return k + ' ' + m.by_status[k]; }).join(' · ');
+    $('im-tiers').textContent = m.tier_a + ' / ' + m.tier_b + ' / ' + m.tier_c;
+    $('im-us').textContent = m.us_relevant;
+    $('im-email').textContent = m.with_email;
+    $('im-opp').textContent = m.avg_opportunity == null ? '' : 'Avg opportunity ' + m.avg_opportunity;
+    $('im-dupes').textContent = m.possible_duplicates;
+  }
+  function render() {
+    var rows = filtered(), body = $('intl-rows');
+    if (!rows.length) { body.innerHTML = '<tr><td class="empty" colspan="12">No international leads match.</td></tr>'; }
+    else body.innerHTML = rows.map(function (r) {
+      var site = r.website_url ? '<a href="' + e(r.website_url) + '" target="_blank" rel="noopener">' + e(r.website_url.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '')) + '</a>' : '—';
+      return '<tr data-id="' + r.id + '">' +
+        '<td class="ic-sel"><input type="checkbox" class="intl-pick" data-id="' + r.id + '"' + (selected[r.id] ? ' checked' : '') + '></td>' +
+        '<td><span class="intl-name" data-id="' + r.id + '">' + e(r.business_name || '(no name)') + '</span>' +
+          (r.lead_dup_status === 'possible' ? '<span class="intl-dup">dupe?</span>' : '') + '</td>' +
+        '<td>' + e(r.country || '') + '</td><td>' + e(r.city || '') + '</td>' +
+        '<td>' + (r.lead_us_score == null ? '—' : e(r.lead_us_score)) + '</td>' +
+        '<td>' + (r.lead_opportunity_score == null ? '—' : e(r.lead_opportunity_score)) + '</td>' +
+        '<td><span class="intl-tier ' + e(r.lead_tier || '') + '">' + e(r.lead_tier || '—') + '</span></td>' +
+        '<td>' + (r.email ? '<a href="mailto:' + e(r.email) + '">' + e(r.email) + '</a>' : '—') + '</td>' +
+        '<td>' + e(r.phone || '—') + '</td><td>' + site + '</td>' +
+        '<td>' + e(r.lead_segment || '') + '</td><td>' + e(r.status) + '</td></tr>';
+    }).join('');
+    var n = Object.keys(selected).length;
+    $('intl-sel').textContent = n + ' selected';
+  }
+  function load() {
+    $('intl-msg').textContent = 'Loading…';
+    return Promise.all([authFetch('/crm/intl/leads'), authFetch('/crm/intl/duplicates')]).then(function (rs) {
+      var r = rs[0], d = rs[1];
+      if (!r.ok || !r.data) { $('intl-msg').textContent = 'Could not load international leads.'; return; }
+      all = r.data.leads || []; loaded = true;
+      paintMetrics(r.data.metrics || {});
+      opts($('if-country'), uniq('country')); opts($('if-city'), uniq('city')); opts($('if-segment'), uniq('lead_segment'));
+      var ids = {}; all.forEach(function (x) { ids[x.id] = 1; });
+      Object.keys(selected).forEach(function (k) { if (!ids[k]) delete selected[k]; });
+      render();
+      paintDupes(d.ok && d.data ? d.data.duplicates : []);
+      $('intl-msg').textContent = '';
+    }).catch(function () { $('intl-msg').textContent = 'Could not reach the server.'; });
+  }
+  function paintDupes(list) {
+    var el = $('intl-dupes');
+    if (!list || !list.length) { el.innerHTML = '<p class="empty">None waiting.</p>'; return; }
+    el.innerHTML = list.map(function (x) {
+      return '<div class="intl-duprow" data-id="' + x.id + '"><span><b>' + e(x.business_name) + '</b> ' + e(x.website_url || '') + ' ' + e(x.phone || '') +
+        '</span><span>looks like #' + e(x.other_id) + ' <b>' + e(x.other_name || '') + '</b> ' + e(x.other_website || '') + ' (' + e(x.reason) + ')</span>' +
+        '<button class="btn ghost intl-dup-act" data-act="duplicate" data-id="' + x.id + '">Same business (mark lost)</button>' +
+        '<button class="btn ghost intl-dup-act" data-act="distinct" data-id="' + x.id + '">Different business</button></div>';
+    }).join('');
+  }
+  function csv() {
+    var cols = ['id', 'business_name', 'country', 'city', 'lead_us_score', 'lead_opportunity_score', 'lead_tier',
+                'lead_suggested_service', 'email', 'phone', 'website_url', 'lead_segment', 'status', 'lead_dup_status'];
+    var pick = Object.keys(selected).length ? all.filter(function (r) { return selected[r.id]; }) : filtered();
+    var q = function (v) { v = v == null ? '' : String(v); if (/^[=+\-@]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
+    var text = cols.join(',') + '\n' + pick.map(function (r) { return cols.map(function (c) { return q(r[c]); }).join(','); }).join('\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['\ufeff' + text], { type: 'text/csv;charset=utf-8' }));
+    a.download = 'intl-leads-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function evidence(id) {
+    var box = $('intl-evidence'); box.hidden = false; box.textContent = 'Loading evidence…';
+    authFetch('/crm/intl/leads/' + id + '/evidence').then(function (r) {
+      if (!r.ok || !r.data) { box.textContent = 'Could not load evidence.'; return; }
+      var c = r.data.client, tp = [];
+      try { tp = JSON.parse(c.lead_talking_points || '[]') || []; } catch (x) {}
+      box.innerHTML = '<b>' + e(c.business_name) + '</b> &mdash; US ' + e(c.lead_us_score == null ? '—' : c.lead_us_score) +
+        ' · opportunity ' + e(c.lead_opportunity_score == null ? '—' : c.lead_opportunity_score) + ' · tier ' + e(c.lead_tier || '—') +
+        ' · ' + e(c.lead_suggested_service || '') +
+        (tp.length ? '<p>Talking points:</p><ul>' + tp.map(function (t) { return '<li>' + e(t) + '</li>'; }).join('') + '</ul>' : '') +
+        '<p>Evidence:</p><ul>' + (r.data.evidence.length ? r.data.evidence.map(function (v) {
+          return '<li>[' + e(v.category) + '] ' + e(v.kind) + ' — ' + e(v.status) + (v.url ? ' <a href="' + e(v.url) + '" target="_blank" rel="noopener">source</a>' : '') +
+            (v.snippet ? ' <i>' + e(v.snippet) + '</i>' : '') + '</li>';
+        }).join('') : '<li>No evidence stored.</li>') + '</ul>' +
+        '<p>Emails:</p><ul>' + (r.data.emails.length ? r.data.emails.map(function (m) {
+          return '<li>' + e(m.email) + ' (' + e(m.type || '') + ', ' + e(m.eligibility || '') + ')</li>';
+        }).join('') : '<li>None found.</li>') + '</ul>';
+    }).catch(function () { box.textContent = 'Could not reach the server.'; });
+  }
+  var toggle = $('intl-toggle');
+  if (!toggle) return;
+  opts($('if-status'), STATUSES); opts($('intl-assign'), STATUSES);
+  toggle.addEventListener('click', function () {
+    var b = $('intl-body'); b.hidden = !b.hidden; toggle.textContent = b.hidden ? 'Show' : 'Hide';
+    toggle.classList.toggle('on', !b.hidden);
+    if (!b.hidden && !loaded) load();
+  });
+  ['if-country', 'if-city', 'if-tier', 'if-segment', 'if-status', 'if-email', 'if-dupes'].forEach(function (id) { $(id).addEventListener('change', render); });
+  $('if-search').addEventListener('input', render);
+  $('intl-rows').addEventListener('change', function (ev) {
+    var t = ev.target; if (!t.classList.contains('intl-pick')) return;
+    if (t.checked) selected[t.dataset.id] = 1; else delete selected[t.dataset.id];
+    $('intl-sel').textContent = Object.keys(selected).length + ' selected';
+  });
+  $('intl-rows').addEventListener('click', function (ev) {
+    var t = ev.target; if (t.classList.contains('intl-name')) evidence(t.dataset.id);
+  });
+  $('intl-all').addEventListener('change', function () {
+    var on = this.checked; filtered().forEach(function (r) { if (on) selected[r.id] = 1; else delete selected[r.id]; }); render();
+  });
+  $('intl-apply').addEventListener('click', function () {
+    var st = $('intl-assign').value, ids = Object.keys(selected).map(Number);
+    if (!st || !ids.length) { $('intl-msg').textContent = 'Pick leads and a status first.'; return; }
+    authFetch('/crm/intl/leads/status', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids, status: st }) }).then(function (r) {
+      $('intl-msg').textContent = r.ok && r.data ? 'Moved ' + r.data.changed + ' to ' + st + '.' : 'Could not update.';
+      selected = {}; $('intl-all').checked = false; return load();
+    });
+  });
+  $('intl-csv').addEventListener('click', csv);
+  $('intl-refresh').addEventListener('click', load);
+  $('intl-dupes').addEventListener('click', function (ev) {
+    var t = ev.target; if (!t.classList.contains('intl-dup-act')) return;
+    t.disabled = true;
+    authFetch('/crm/intl/duplicates/' + t.dataset.id, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: t.dataset.act }) }).then(load);
+  });
+})();
 </script>
 </body>
 </html>

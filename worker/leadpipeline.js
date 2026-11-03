@@ -197,7 +197,11 @@ export async function ensureLeadPipelineTables(env) {
     ["lead_opportunity_score", "INTEGER"], // 0-100, rule-based
     ["lead_suggested_service", "TEXT"],    // website_rebuild | bilingual_site | booking_ux | speed_tuneup | analytics_tracking | growth_retainer
     ["lead_tier", "TEXT"],                 // A | B | C
-    ["lead_talking_points", "TEXT"]        // JSON array; confirmed evidence only
+    ["lead_talking_points", "TEXT"],       // JSON array; confirmed evidence only
+    // Intl Phase 3: soft-duplicate review queue. NULL on every domestic row.
+    ["lead_dup_of", "INTEGER"],            // clients.id this lead may duplicate
+    ["lead_dup_status", "TEXT"],           // possible | confirmed | distinct
+    ["lead_dup_reason", "TEXT"]
   ];
   for (const [name, decl] of wanted) {
     if (cols.indexOf(name) === -1) {
@@ -1846,6 +1850,7 @@ export async function runIntlPipeline(env, opts) {
         if (p.status && p.status !== "OPERATIONAL") { counts.deduped++; continue; }
         counts.sourced++;
         if (await findExisting(env, p)) { counts.deduped++; continue; }
+        if ((await intlDedupe(env, p, null, s)).hard) { counts.deduped++; continue; }
         const veto = intlReject(p, minRating);
         const now = new Date().toISOString();
         if (veto) {
@@ -1924,10 +1929,23 @@ export async function runIntlPipeline(env, opts) {
           if (o.dryRun) item.evidence = analysis.evidence;
         }
       }
+      const dup = (!o.dryRun && v.qualified) ? await intlDedupe(env, places, c, src) : { hard: null, soft: null };
       if (o.dryRun) {
         counts.preview.push(item);
+      } else if (v.qualified && dup.hard) {
+        /* Phase 3: the site's own phone/domain matched a lead we already
+           have (e.g. a +52 1 mobile vs the Places national number). */
+        await stripCandidate(env, cand.id, "duplicate", v.score, "duplicate of client " + dup.hard.id + " on " + dup.hard.on, dup.hard.id);
+        counts.deduped++;
+        item.duplicate_of = dup.hard.id;
       } else if (v.qualified) {
         const id = await pushIntlLeadToCrm(env, cand, places, v, c, src);
+        if (id && dup.soft) {
+          await db.prepare("UPDATE clients SET lead_dup_of = ?, lead_dup_status = 'possible', lead_dup_reason = ? WHERE id = ?")
+            .bind(dup.soft.id, dup.soft.on, id).run();
+          counts.possible_duplicates = (counts.possible_duplicates || 0) + 1;
+          item.possible_duplicate_of = dup.soft.id;
+        }
         if (id && analysis) counts.evidence_saved = (counts.evidence_saved || 0) + await saveLeadEvidence(env, id, analysis);
         counts.emails_saved += id ? ((await db.prepare("SELECT COUNT(*) AS c FROM lead_emails WHERE client_id = ?").bind(id).first()) || {}).c || 0 : 0;
         await stripCandidate(env, cand.id, "pushed", v.score, v.reason, id);
@@ -1953,4 +1971,165 @@ export async function runIntlPipeline(env, opts) {
            counts.errors.length ? counts.errors.join(" | ").slice(0, 900) : null, runId).run();
   }
   return { run_id: runId, profile: "intl", dry_run: !!o.dryRun, ...counts };
+}
+
+// ── Intl Phase 3: dedupe + dashboard ──────────────────────────────────────
+/* Mexican numbers turn up as "+52 624 123 4567", "+52 1 624 123 4567" (the
+   retired mobile prefix, still all over WhatsApp links), "044 624 ...",
+   "01 624 ..." and bare "6241234567". All of those are one line: return
+   the 10-digit national number with a "52" in front. Anything that is not
+   recognisably a 10-digit MX number returns null (never guessed). */
+export function intlPhoneKey(v) {
+  let d = String(v == null ? "" : v).replace(/\D+/g, "");
+  if (!d) return null;
+  if (d.startsWith("00")) d = d.slice(2);
+  if (d.length === 13 && d.startsWith("521")) d = d.slice(3);
+  else if (d.length === 12 && d.startsWith("52")) d = d.slice(2);
+  else if (d.length === 13 && (d.startsWith("044") || d.startsWith("045"))) d = d.slice(3);
+  else if (d.length === 12 && d.startsWith("01")) d = d.slice(2);
+  else if (d.length === 11 && d.startsWith("1")) return "1" + d.slice(1);   // +1 US/CA, kept distinct
+  if (d.length !== 10) return null;
+  return "52" + d;
+}
+
+const INTL_SLD = ["com.mx", "org.mx", "net.mx", "gob.mx", "edu.mx", "co.uk", "com.au", "com.br"];
+/* Shared hosts: thousands of unrelated businesses "live" on these, so a
+   match on them means nothing. */
+const INTL_SHARED_HOSTS = ["facebook.com", "instagram.com", "wa.me", "whatsapp.com", "linktr.ee", "google.com",
+  "business.site", "wixsite.com", "wix.com", "squarespace.com", "godaddysites.com", "tripadvisor.com",
+  "tripadvisor.com.mx", "booking.com", "airbnb.com", "airbnb.mx", "yelp.com", "blogspot.com", "wordpress.com"];
+/* Registrable domain that knows .com.mx: shop.example.com.mx -> example.com.mx. */
+export function intlDomainKey(url) {
+  const host = registrableDomain(url);
+  if (!host) return null;
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length < 2) return null;
+  const last2 = parts.slice(-2).join(".");
+  const base = (INTL_SLD.indexOf(last2) !== -1 && parts.length >= 3) ? parts.slice(-3).join(".") : last2;
+  return INTL_SHARED_HOSTS.indexOf(base) !== -1 ? null : base;
+}
+/* "cabo-yachts.com" vs "caboyachts.mx": same brand, different TLD. Soft only. */
+export function intlBrandKey(url) {
+  const d = intlDomainKey(url);
+  if (!d) return null;
+  const b = d.split(".")[0].replace(/[^a-z0-9]/g, "");
+  return b.length >= 4 ? b : null;
+}
+export function intlNameKey(name) {
+  return String(name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(s\.?a\.?( de c\.?v\.?)?|s\. de r\.l\.|restaurante|restaurant|hotel)\b/g, "")
+    .replace(/[^a-z0-9]+/g, "") || null;
+}
+
+/* Hard = same business, skip it (phone key or registrable domain).
+   Soft = probably the same, push it but queue it for a human: same brand on
+   another TLD, or same name in the same city. Checked against every client
+   (domestic included) so an intl lead never doubles a domestic one. */
+export async function intlDedupe(env, places, crawl, src) {
+  const phones = [];
+  if (places && places.phone) phones.push(places.phone);
+  if (crawl) {
+    for (const ph of crawl.phones || []) phones.push(ph);
+    for (const w of crawl.whatsapp || []) phones.push("+" + w);
+  }
+  const keys = phones.map(intlPhoneKey).filter(Boolean);
+  const site = (crawl && crawl.pages && crawl.pages[0] && crawl.pages[0].url) || (places && places.website) || null;
+  const dom = intlDomainKey(site);
+  const brand = intlBrandKey(site);
+  const name = intlNameKey(places && places.name);
+  const city = src && src.city ? String(src.city).toLowerCase() : null;
+  const rows = (await env.CRM_DB.prepare(
+    "SELECT id, business_name, phone, website_url, city FROM clients").all()).results || [];
+  let soft = null;
+  for (const r of rows) {
+    if (keys.length && r.phone && keys.indexOf(intlPhoneKey(r.phone)) !== -1) return { hard: { id: r.id, on: "phone" }, soft: null };
+    if (dom && r.website_url && intlDomainKey(r.website_url) === dom) return { hard: { id: r.id, on: "domain" }, soft: null };
+    if (!soft && brand && r.website_url && intlBrandKey(r.website_url) === brand) soft = { id: r.id, on: "brand" };
+    if (!soft && name && city && r.city && String(r.city).toLowerCase() === city && intlNameKey(r.business_name) === name)
+      soft = { id: r.id, on: "name_city" };
+  }
+  return { hard: null, soft };
+}
+
+const INTL_STATUSES = ["lead", "contacted", "proposal", "building", "live", "paused", "lost"];
+
+/* Every intl lead with the columns the International view shows. */
+export async function listIntlLeads(env) {
+  await ensureLeadPipelineTables(env);
+  const rows = (await env.CRM_DB.prepare(
+    `SELECT c.id, c.business_name, c.email, c.phone, c.website_url, c.status, c.country, c.city,
+            c.lead_segment, c.lead_trade, c.lead_score, c.lead_us_score, c.lead_us_signals,
+            c.lead_opportunity_score, c.lead_suggested_service, c.lead_tier, c.lead_talking_points,
+            c.lead_dup_of, c.lead_dup_status, c.lead_dup_reason, c.owner, c.created_at, c.updated_at,
+            (SELECT COUNT(*) FROM lead_emails e WHERE e.client_id = c.id AND e.opted_out = 0) AS email_count
+       FROM clients c WHERE c.source = 'pipeline_intl'
+      ORDER BY COALESCE(c.lead_opportunity_score, -1) DESC, c.id DESC LIMIT 1000`).all()).results || [];
+  const m = { total: rows.length, tier_a: 0, tier_b: 0, tier_c: 0, with_email: 0, possible_duplicates: 0,
+              us_relevant: 0, avg_opportunity: null, by_status: {} };
+  let sum = 0, n = 0;
+  for (const r of rows) {
+    if (r.lead_tier === "A") m.tier_a++; else if (r.lead_tier === "B") m.tier_b++; else if (r.lead_tier === "C") m.tier_c++;
+    if (r.email) m.with_email++;
+    if (r.lead_dup_status === "possible") m.possible_duplicates++;
+    if ((r.lead_us_score || 0) >= 50) m.us_relevant++;
+    if (r.lead_opportunity_score != null) { sum += r.lead_opportunity_score; n++; }
+    m.by_status[r.status] = (m.by_status[r.status] || 0) + 1;
+  }
+  if (n) m.avg_opportunity = Math.round(sum / n);
+  return { leads: rows, metrics: m };
+}
+
+/* Bulk "assign to pipeline". Only touches intl rows, so a stray id can never
+   move a domestic client. */
+export async function setIntlLeadStatus(env, ids, status) {
+  if (INTL_STATUSES.indexOf(status) === -1) return { error: "Invalid status" };
+  const list = (Array.isArray(ids) ? ids : []).map(Number).filter((x) => Number.isInteger(x) && x > 0).slice(0, 500);
+  if (!list.length) return { error: "No ids" };
+  const now = new Date().toISOString();
+  const r = await env.CRM_DB.prepare(
+    `UPDATE clients SET status = ?, updated_at = ? WHERE source = 'pipeline_intl' AND id IN (${list.map(() => "?").join(",")})`
+  ).bind(status, now, ...list).run();
+  return { ok: true, changed: (r && r.meta && r.meta.changes) || 0 };
+}
+
+export async function intlLeadEvidence(env, id) {
+  await ensureLeadPipelineTables(env);
+  const c = await env.CRM_DB.prepare(
+    "SELECT id, business_name, source, lead_us_score, lead_opportunity_score, lead_tier, lead_suggested_service, lead_talking_points FROM clients WHERE id = ?"
+  ).bind(id).first();
+  if (!c) return null;
+  const evidence = (await env.CRM_DB.prepare(
+    "SELECT kind, category, status, confirmed, url, snippet, created_at FROM lead_evidence WHERE client_id = ? ORDER BY category, confirmed DESC, id"
+  ).bind(id).all()).results || [];
+  const emails = (await env.CRM_DB.prepare(
+    "SELECT email, type, source_url, verification_status, eligibility, opted_out FROM lead_emails WHERE client_id = ? ORDER BY id"
+  ).bind(id).all()).results || [];
+  return { client: c, evidence, emails };
+}
+
+export async function listIntlDuplicates(env) {
+  await ensureLeadPipelineTables(env);
+  return (await env.CRM_DB.prepare(
+    `SELECT c.id, c.business_name, c.website_url, c.phone, c.city, c.lead_dup_reason AS reason,
+            o.id AS other_id, o.business_name AS other_name, o.website_url AS other_website,
+            o.phone AS other_phone, o.city AS other_city, o.status AS other_status
+       FROM clients c LEFT JOIN clients o ON o.id = c.lead_dup_of
+      WHERE c.source = 'pipeline_intl' AND c.lead_dup_status = 'possible' ORDER BY c.id DESC`).all()).results || [];
+}
+
+/* duplicate -> the new row is marked lost (kept, not deleted); distinct ->
+   flag cleared for good. */
+export async function resolveIntlDuplicate(env, id, action) {
+  const now = new Date().toISOString();
+  let r;
+  if (action === "duplicate") {
+    r = await env.CRM_DB.prepare(
+      "UPDATE clients SET lead_dup_status = 'confirmed', status = 'lost', updated_at = ? WHERE id = ? AND source = 'pipeline_intl' AND lead_dup_status = 'possible'"
+    ).bind(now, id).run();
+  } else if (action === "distinct") {
+    r = await env.CRM_DB.prepare(
+      "UPDATE clients SET lead_dup_status = 'distinct', updated_at = ? WHERE id = ? AND source = 'pipeline_intl' AND lead_dup_status = 'possible'"
+    ).bind(now, id).run();
+  } else return { error: "action must be duplicate or distinct" };
+  return { ok: true, changed: (r && r.meta && r.meta.changes) || 0 };
 }

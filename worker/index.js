@@ -22,7 +22,7 @@ import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConf
 import { applyColorEdit, detailsWithColors } from "./colors.js";
 import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.js";
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
-import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS, seedIntlSources, listIntlSegments, setIntlSourcesEnabled, intlCityList } from "./leadpipeline.js";
+import { runLeadPipeline, ensureLeadPipelineTables, listSegments, setSegmentEnabled, seedLeadSources, tradeLabels, recheckLeads, SEGMENTS, seedIntlSources, listIntlSegments, setIntlSourcesEnabled, intlCityList, listIntlLeads, setIntlLeadStatus, intlLeadEvidence, listIntlDuplicates, resolveIntlDuplicate } from "./leadpipeline.js";
 import { crawlSite } from "./intlcrawl.js";
 import { analyzeIntlLead } from "./intlaudit.js";
 import { quoteLines, compedMap, padPromoOf, overridePays, shedStyleName, travelAmount, cardUpliftOf, cashDiscountPctLabel, cashDiscountDisclosure } from "./quotelines.js";
@@ -6905,6 +6905,34 @@ export default {
       if (path === "/crm/analytics" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleCrmAnalytics(request, env, origin);
+      }
+      /* Intl Phase 3: International view. CRM login only (reading and moving
+         leads, no spend). Every query is scoped to source = 'pipeline_intl'. */
+      if (path.startsWith("/crm/intl/")) {
+        if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        if (path === "/crm/intl/leads" && request.method === "GET") {
+          return json(await listIntlLeads(env), 200, origin);
+        }
+        if (path === "/crm/intl/leads/status" && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const out = await setIntlLeadStatus(env, body.ids, String(body.status || ""));
+          return json(out, out.error ? 400 : 200, origin);
+        }
+        const ev = path.match(/^\/crm\/intl\/leads\/(\d+)\/evidence$/);
+        if (ev && request.method === "GET") {
+          const out = await intlLeadEvidence(env, Number(ev[1]));
+          return out ? json(out, 200, origin) : json({ error: "Not found" }, 404, origin);
+        }
+        if (path === "/crm/intl/duplicates" && request.method === "GET") {
+          return json({ duplicates: await listIntlDuplicates(env) }, 200, origin);
+        }
+        const dm = path.match(/^\/crm\/intl\/duplicates\/(\d+)$/);
+        if (dm && request.method === "POST") {
+          const body = await request.json().catch(() => ({}));
+          const out = await resolveIntlDuplicate(env, Number(dm[1]), String(body.action || ""));
+          return json(out, out.error ? 400 : 200, origin);
+        }
+        return json({ error: "Not found" }, 404, origin);
       }
       if (path === "/crm/clients" && request.method === "GET") {
         if (!(await requireCrmAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

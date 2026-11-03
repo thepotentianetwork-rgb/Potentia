@@ -384,3 +384,26 @@ test('intl run: a homepage that times out is retried later, not rejected', async
   const c = db.prepare("SELECT status, attempts FROM lead_candidates WHERE place_id='P1'").get();
   assert.equal(c.status, 'new'); assert.equal(c.attempts, 1);
 });
+
+// ── Phase 3: dedupe inside the intl run ───────────────────────────────────
+test('intl run: an existing client with the +52 1 WhatsApp number is a hard duplicate (not pushed)', async () => {
+  const { env, db } = await freshEnv();
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO clients (business_name, phone, status, created_at, updated_at) VALUES ('Old Cabo', '+52 1 624 143 1234', 'lead', ?, ?)").run(now, now);
+  const out = await runLeadPipeline(env, { profile: 'intl', deps: intlDeps([]) });
+  assert.equal(out.pushed, 0);
+  assert.equal(Number(db.prepare("SELECT COUNT(*) AS c FROM clients").get().c), 1);
+});
+
+test('intl run: same name in the same city is pushed but queued as possible_duplicate', async () => {
+  const { env, db } = await freshEnv();
+  const now = new Date().toISOString();
+  const old = Number(db.prepare("INSERT INTO clients (business_name, website_url, city, status, created_at, updated_at) VALUES ('Cabo Yachts', 'https://other-site.com', 'Cabo San Lucas', 'lead', ?, ?)").run(now, now).lastInsertRowid);
+  const out = await runLeadPipeline(env, { profile: 'intl', deps: intlDeps([]) });
+  assert.equal(out.pushed, 1, JSON.stringify(out.errors));
+  assert.equal(out.possible_duplicates, 1);
+  const c = db.prepare("SELECT * FROM clients WHERE source = 'pipeline_intl'").get();
+  assert.equal(c.lead_dup_of, old);
+  assert.equal(c.lead_dup_status, 'possible');
+  assert.equal(c.lead_dup_reason, 'name_city');
+});
