@@ -371,18 +371,19 @@ function renderActivityCell(td, c) {
 
 /* Priority sections (Nando, Nov 2026). The list is split into sections in
    this order, each with a header row:
-     1. Fresh leads   - status new or contacted (not yet quoted). Inside it,
-                        leads with no logged call/note come first, then newest
-                        activity first.
-     2. Quoted        - status quoted, newest quote first.
-     3. Dormant       - status dormant (auto after 14 days only when a call was
+     1. Fresh leads   - status new only (never contacted). Contacted does
+                        NOT count as fresh (Nando). No logged call/note first.
+     2. Contacted     - status contacted, not yet quoted.
+     3. Quoted        - status quoted, newest quote first.
+     4. Dormant       - status dormant (auto after 14 days only when a call was
                         logged with no answer; never-touched leads stay new).
-     4. Won, then Lost at the very bottom.
+     5. Won, then Lost at the very bottom.
    Superseded/unknown fall in with Fresh. Server order (newest first) is kept
    as the tie-breaker. Status is the customer's latest order, as in the
    Status column. */
 var CUST_GROUPS = [
-  { key: 'fresh', label: 'Fresh leads \u00b7 not yet quoted', sub: 'Never contacted first, then newest' },
+  { key: 'fresh', label: 'Fresh leads \u00b7 never contacted', sub: 'Newest first' },
+  { key: 'contacted', label: 'Contacted', sub: 'Reached out, not yet quoted' },
   { key: 'quoted', label: 'Quoted', sub: 'Newest quote first' },
   { key: 'dormant', label: 'Dormant', sub: 'Called, no response for 2+ weeks' },
   { key: 'won', label: 'Won' },
@@ -390,7 +391,7 @@ var CUST_GROUPS = [
 ];
 function custGroup(c) {
   var st = c.latest_status || 'new';
-  if (st === 'quoted' || st === 'dormant' || st === 'won' || st === 'lost') return st;
+  if (st === 'contacted' || st === 'quoted' || st === 'dormant' || st === 'won' || st === 'lost') return st;
   return 'fresh';
 }
 function isLostCustomer(c) { return c.latest_status === 'lost'; }
