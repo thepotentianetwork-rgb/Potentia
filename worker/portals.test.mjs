@@ -109,3 +109,30 @@ test("separate login pages: team page refuses customers, customer page refuses t
   assert.equal((await pl("nando", s.password, "customer")).status, 401);
   assert.equal((await pl("nando", s.password, "team")).status, 200);
 });
+
+import { addressPassword } from "./portals.js";
+test("addressPassword: street line only, lowercase, punctuation stripped, short -> null", () => {
+  assert.equal(addressPassword("123 N Main St."), "123 n main st");
+  assert.equal(addressPassword("  2645 S  Highway 89 "), "2645 s highway 89");
+  assert.equal(addressPassword("#4, Elm"), "4 elm");
+  assert.equal(addressPassword("1 A"), null);
+  assert.equal(addressPassword(null), null);
+});
+test("customer create/reset use street address (not city/zip); fallback random; team stays random", async () => {
+  const { env, admin, db } = await setup();
+  db.exec(`UPDATE customers SET address='123 N Main St.', city='Provo', state='UT', zip='84601' WHERE id=1`);
+  db.exec(`INSERT INTO payments (customer_id,amount,method,paid_at,created_at) VALUES (1,500,'cash','2026-11-01','2026-11-01'),(2,500,'cash','2026-11-01','2026-11-01')`);
+  const c = await mk(env, admin, { role: "customer", login: "ana@x.com", customer_id: 1 });
+  assert.equal(c.password, "123 n main st"); assert.equal(c.password_source, "address");
+  assert.equal((await call(env, "POST", "/portal/login", { body: { login: "ana@x.com", password: "123 n main st", portal: "customer" } })).status, 200);
+  const uid = db.prepare("SELECT id FROM portal_users WHERE login='ana@x.com'").get().id;
+  const r = (await call(env, "POST", `/portal/users/${uid}/reset`, { token: admin })).data;
+  assert.equal(r.password, "123 n main st"); assert.equal(r.password_source, "address");
+  const b = await mk(env, admin, { role: "customer", login: "bo@x.com", customer_id: 2 });
+  assert.equal(b.password_source, "random"); assert.equal(b.password.length, 16);
+  const s = await mk(env, admin, { role: "sales", login: "nando" });
+  assert.equal(s.password_source, "random"); assert.equal(s.password.length, 16);
+  const sid = db.prepare("SELECT id FROM portal_users WHERE login='nando'").get().id;
+  const sr = (await call(env, "POST", `/portal/users/${sid}/reset`, { token: admin })).data;
+  assert.equal(sr.password_source, "random"); assert.equal(sr.password.length, 16);
+});

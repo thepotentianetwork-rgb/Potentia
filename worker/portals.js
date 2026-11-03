@@ -43,6 +43,20 @@ export function generatePassword() {
   return Array.from(b, (x) => a[x % a.length]).join("");
 }
 
+/* Customer portal passwords are the street line of customers.address only
+   (never city/state/zip): lowercase, punctuation stripped, spaces collapsed.
+   "123 N Main St." -> "123 n main st". Under 4 chars -> null (use random). */
+export function addressPassword(address) {
+  const v = String(address || "").toLowerCase().replace(/[^a-z0-9\s]+/g, " ").replace(/\s+/g, " ").trim();
+  return v.length >= 4 ? v : null;
+}
+export async function customerPassword(env, customerId) {
+  let c = null;
+  try { c = customerId && await env.DB.prepare("SELECT address FROM customers WHERE id = ?").bind(Number(customerId)).first(); } catch (e) {}
+  const a = addressPassword(c && c.address);
+  return a ? { password: a, password_source: "address" } : { password: generatePassword(), password_source: "random" };
+}
+
 // ---- tables (lazy, additive only) ----
 const ensured = new WeakSet();
 export async function ensurePortalTables(env) {
@@ -134,13 +148,13 @@ export async function handlePortal(request, env, origin, path, deps) {
         const u = { customer_id: customerId };
         if (!(await customerSub(env, u, deps))) return json({ error: "No won order with a deposit yet" }, 409, origin);
       }
-      const password = generatePassword();
+      const { password, password_source } = role === "customer" ? await customerPassword(env, customerId) : { password: generatePassword(), password_source: "random" };
       try {
         await env.DB.prepare("INSERT INTO portal_users (role, login, name, pass_hash, customer_id, created_at) VALUES (?,?,?,?,?,?)")
           .bind(role, login, String(b.name || "").slice(0, 80), await hashPassword(password), customerId, now()).run();
       } catch (e) { return json({ error: "Login already exists" }, 409, origin); }
       /* The ONLY time the password exists in the clear. */
-      return json({ ok: true, role, login, password }, 200, origin);
+      return json({ ok: true, role, login, password, password_source }, 200, origin);
     }
   }
   if (path === "/portal/users/auto-sweep" && method === "POST") {
@@ -154,9 +168,10 @@ export async function handlePortal(request, env, origin, path, deps) {
       await env.DB.prepare("UPDATE portal_users SET disabled_at = ? WHERE id = ?").bind(now(), Number(um[1])).run();
       return json({ ok: true }, 200, origin);
     }
-    const password = generatePassword();
+    const pu = await env.DB.prepare("SELECT role, customer_id FROM portal_users WHERE id = ?").bind(Number(um[1])).first();
+    const { password, password_source } = pu && pu.role === "customer" ? await customerPassword(env, pu.customer_id) : { password: generatePassword(), password_source: "random" };
     await env.DB.prepare("UPDATE portal_users SET pass_hash = ?, disabled_at = NULL, needs_password = NULL WHERE id = ?").bind(await hashPassword(password), Number(um[1])).run();
-    return json({ ok: true, password }, 200, origin);
+    return json({ ok: true, password, password_source }, 200, origin);
   }
 
   // everything below needs a portal session (or admin for assign/builders)
@@ -307,7 +322,7 @@ export async function autoCustomerLogin(env, customerId, deps, opts = {}) {
     const now = new Date().toISOString();
     try {
       const r = await env.DB.prepare("INSERT INTO portal_users (role, login, name, pass_hash, customer_id, created_at, needs_password, auto_created_at) VALUES ('customer',?,?,?,?,?,1,?)")
-        .bind(login, String(c.name || "").slice(0, 80), await hashPassword(generatePassword()), customerId, now, now).run();
+        .bind(login, String(c.name || "").slice(0, 80), await hashPassword((await customerPassword(env, customerId)).password), customerId, now, now).run();
       return { created: true, id: r.meta && r.meta.last_row_id, login };
     } catch (e) { return { created: false, reason: "exists" }; }
   } catch (e) { return { created: false, reason: "error: " + (e && e.message) }; }
