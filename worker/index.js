@@ -47,7 +47,7 @@ import { runQuery, parseQueryParams } from "./crmquery.js";
 import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
 import { runAutoDormant, ensureStatusChangedColumn } from "./dormant.js";
 import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
-import { handlePortal, salesMayUse } from "./portals.js";
+import { handlePortal, salesMayUse, autoCustomerLogin, autoCustomerLoginSweep } from "./portals.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -1673,6 +1673,8 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
     ? env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ?, fee_paid_cents = ? WHERE id = ?").bind(now, fee.feeCents, row.id)
     : env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
   await env.DB.batch(stmts);
+  /* Deposit landed: make the customer's portal login if it is due. */
+  await autoCustomerLogin(env, row.customer_id, { orderHasDeposit });
 
   return { already: false, amount, fee: fromCents(fee.feeCents), discount: fromCents(discCents) };
 }
@@ -2201,7 +2203,8 @@ async function handleAddPayment(request, env, origin, customerId) {
     : await env.DB.prepare(
         "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?,?)"
       ).bind(customerId, amount, discount, method, note || null, paidAt, now, submissionId).run();
-  return json({ ok: true, id: res.meta.last_row_id, discount_amount: discount }, 200, origin);
+  const portal = await autoCustomerLogin(env, customerId, { orderHasDeposit });
+  return json({ ok: true, id: res.meta.last_row_id, discount_amount: discount, portal_login_created: !!portal.created }, 200, origin);
 }
 
 /* PUT the shed onto a payment that has none — or move one that went on the
@@ -3421,6 +3424,11 @@ async function handleUpdateSubmissionStatus(request, env, origin) {
       .run();
     // Moving out of lost clears the lost stamp so stats don't count it; reason/note kept as history.
     if (await hasLostColumns(env)) await env.DB.prepare("UPDATE submissions SET lost_at = NULL WHERE id = ?").bind(id).run();
+  }
+  /* Won with a deposit already on it: make the customer's portal login. */
+  if (status === "won") {
+    const so = await env.DB.prepare("SELECT customer_id FROM submissions WHERE id = ?").bind(id).first();
+    if (so && so.customer_id) await autoCustomerLogin(env, so.customer_id, { orderHasDeposit });
   }
   return json({ ok: true }, 200, origin);
 }
@@ -7199,6 +7207,8 @@ export default {
       if (env.DB) ctx.waitUntil(runAutoDormant(env.DB).catch(() => {}));
       return;
     }
+    // Safety net: portal logins for Won+deposit customers a missed event skipped.
+    if (env.DB) ctx.waitUntil(autoCustomerLoginSweep(env, { orderHasDeposit }).catch(() => {}));
     // Intl Phase 5 outreach sender: no-op unless OUTREACH_SEND_ENABLED === "true".
     if (env.CRM_DB) ctx.waitUntil(runOutreachTick(env).catch(() => {}));
     if (!env.CRM_DB || !env.GOOGLE_PLACES_API_KEY) return;
