@@ -158,6 +158,16 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
   td.empty::before{display:none}
 }
 
+.prod{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:0 0 30px}
+.prod-k{border:1px solid var(--dim);padding:14px 16px;background:rgba(255,255,255,0.02)}
+.prod-l{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;text-transform:uppercase;color:var(--silver)}
+.prod-v{font-size:26px;font-weight:300;color:var(--bright);margin-top:6px}
+.prod-s{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.06em;color:var(--dim);margin-top:4px}
+.prod-bar{height:4px;background:var(--dim);margin-top:8px}.prod-bar i{display:block;height:4px;background:var(--sp-orange)}
+.prod-months{grid-column:1/-1;display:flex;gap:6px;align-items:flex-end;height:54px;border:1px solid var(--dim);padding:8px 12px}
+.prod-months div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;font-family:'DM Mono',monospace;font-size:8px;color:var(--dim);letter-spacing:0.08em}
+.prod-months b{display:block;width:100%;background:var(--sp-blue);min-height:1px;margin-bottom:3px}
+@media (max-width:760px){.prod{grid-template-columns:repeat(2,minmax(0,1fr))}.prod-v{font-size:21px}}
 </style>
 </head>
 <body>
@@ -176,6 +186,10 @@ tr.lead-new td:first-child{box-shadow:inset 3px 0 0 var(--sp-orange)}
 </header>
 
 <main>
+  <section id="prod-wrap" hidden>
+    <p class="sec-label">Production</p>
+    <div class="prod" id="prod"></div>
+  </section>
   <section>
     <p class="sec-label">ShedPro Partner</p>
     <h2>Customers</h2>
@@ -614,6 +628,31 @@ if (token) {
   if (!window.AdminActivity) return;
   AdminActivity.load(authFetch, { limit: 80 }).then(function (r) {
     AdminNav.setCount(r.unseen);
+  }).catch(function () {});
+})();
+
+/* PRODUCTION STRIP. Advisors are driven by production: average closed deal,
+   average quote, and average booked ("generated") per month against the
+   $75k monthly goal. Server: GET /admin/production (sales may read it). */
+(function () {
+  function usd(n) { return '$' + Math.round(Number(n) || 0).toLocaleString(); }
+  var t = new Date(), today = t.getFullYear() + '-' + ('0' + (t.getMonth() + 1)).slice(-2) + '-' + ('0' + t.getDate()).slice(-2);
+  authFetch('/admin/production?today=' + today).then(function (r) {
+    if (!r.ok || !r.data || !r.data.months) return;
+    var k = r.data, goal = k.goal || 75000, pct = Math.min(100, Math.round(k.thisMonth.amount / goal * 100));
+    var max = Math.max.apply(null, k.months.map(function (m) { return m.amount; }).concat([goal]));
+    function card(l, v, s, bar) { return '<div class="prod-k"><div class="prod-l">' + l + '</div><div class="prod-v">' + v + '</div><div class="prod-s">' + s + '</div>' + (bar != null ? '<div class="prod-bar"><i style="width:' + bar + '%"></i></div>' : '') + '</div>'; }
+    var monName = new Date(Number(k.thisMonth.month.slice(0, 4)), Number(k.thisMonth.month.slice(5)) - 1, 1).toLocaleDateString(undefined, { month: 'long' });
+    document.getElementById('prod').innerHTML =
+      card('Average deal', usd(k.avgDeal.amount), k.avgDeal.count + ' closed / won') +
+      card('Average quote', usd(k.avgQuote.amount), k.avgQuote.count + ' quotes priced') +
+      card('Avg generated / month', usd(k.avgMonthly.amount), 'over ' + k.avgMonthly.months + ' mo · goal ' + usd(goal)) +
+      card(monName + ' generated', usd(k.thisMonth.amount), pct + '% of ' + usd(goal) + ' · ' + k.thisMonth.count + ' won', pct) +
+      '<div class="prod-months">' + k.months.map(function (m) {
+        var mn = new Date(Number(m.month.slice(0, 4)), Number(m.month.slice(5)) - 1, 1).toLocaleDateString(undefined, { month: 'short' });
+        return '<div title="' + mn + ' ' + m.month.slice(0, 4) + ': ' + usd(m.amount) + ' generated (' + m.count + ' won)"><b style="height:' + Math.round(m.amount / max * 34) + 'px"></b>' + mn + '</div>';
+      }).join('') + '</div>';
+    document.getElementById('prod-wrap').hidden = false;
   }).catch(function () {});
 })();
 

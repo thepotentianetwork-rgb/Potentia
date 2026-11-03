@@ -33,6 +33,7 @@ import { buildSpecLines, designLinkFor } from "./buildspec.js";
 import { planBuild, foundationKind, anchorLabel, STAGE_LABELS } from "./schedule.js";
 import { trackPhases, trackComplete, trackChangeWindow } from "./tracker.js";
 import { scheduleMessage } from "./schedulemsg.js";
+import { productionKpis } from "./production.js";
 import { dashDay, daysBetween, agoLabel, monthToDate, daySeries,
          stagesInWindow, pickFollowUps, renderThumb } from "./dashboard.js";
 import { buildInvoice, splitPayments, fromCents, toCents, usd, fingerprint, balanceSummary,
@@ -6503,6 +6504,14 @@ export default {
       if (path === "/admin/activity" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         return await handleActivity(request, env, origin);
+      }
+      if (path === "/admin/production" && request.method === "GET") {
+        if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+        await ensureSubmissionWonColumn(env);
+        await ensureSubmissionAdjustColumns(env);
+        const pr = await env.DB.prepare("SELECT status, created_at, won_at, effective_price, details FROM submissions WHERE status != 'superseded'").all();
+        const td = dashDay(new URL(request.url).searchParams.get("today")) || new Date().toISOString().slice(0, 10);
+        return json(productionKpis(pr.results || [], td), 200, origin);
       }
       if (path === "/admin/dashboard" && request.method === "GET") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);

@@ -75,7 +75,7 @@ const N = "\\d+";
 const SALES_ALLOW = [
   ["GET", `^/admin/customers$`], ["GET", `^/admin/customers/${N}$`], ["GET", `^/admin/customers/${N}/note-edits$`],
   ["GET", `^/admin/submissions/${N}$`], ["GET", `^/admin/submissions/${N}/design-status$`],
-  ["GET", `^/admin/schedule$`], ["GET", `^/admin/activity$`],
+  ["GET", `^/admin/schedule$`], ["GET", `^/admin/production$`], ["GET", `^/admin/activity$`],
   ["POST", `^/admin/customers/${N}/(notes|followup|calls)$`], ["POST", `^/admin/notes/${N}$`],
   ["POST", `^/admin/submissions/${N}/(customer-notes|design|colors|choose|track-link|installs|plan|schedule-message)$`],
   ["POST", `^/admin/submissions/(status|lost-reason)$`], ["POST", `^/admin/installs/${N}/done$`],

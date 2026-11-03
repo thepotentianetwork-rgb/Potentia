@@ -17,7 +17,7 @@ import { fileURLToPath } from "url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 
 // Add a module here when index.js starts importing one. Nothing else to change.
-export const MODULES = ["pricing.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js", "stripewebhook.js",
+export const MODULES = ["pricing.js", "production.js", "leadpipeline.js", "quotelines.js", "invoices.js", "stripe.js", "stripewebhook.js",
   "calendar.js", "schedule.js", "address.js", "buildspec.js", "tracker.js", "schedulemsg.js", "dashboard.js", "colors.js", "noteedits.js", "quotehistory.js", "briefing.js", "gmail.js", "customerdesign.js", "crmquery.js", "intlcrawl.js", "intlaudit.js", "intlcampaigns.js", "dormant.js", "portals.js"];
 
 /* The commit the bundle was built from, for the stamp below and the log

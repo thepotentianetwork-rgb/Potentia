@@ -66,6 +66,18 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 .chip-ground{color:var(--silver);border-color:var(--dim);background:rgba(255,255,255,0.03)}
 .chip-shop{color:var(--sp-orange);border-color:rgba(246,148,31,0.45);background:rgba(246,148,31,0.1)}
 .cal-more{font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
+/* FILLED SQUARES (Nov 2026) — same rules as the builder portal: a day is
+   filled with its kind (shop orange, install blue, concrete prep white, pour
+   grey); a day with several kinds is split into side-by-side stripes. */
+.cal-day.has{border-color:transparent;border-radius:2px}
+.cal-day.has .cal-num{color:#0b0d10;font-weight:600}
+.cal-day.has .cal-chip{color:#0b0d10;border-color:rgba(11,13,16,0.35);background:rgba(255,255,255,0.45)}
+.cal-day.has .cal-more{color:#0b0d10}
+.cal-day.has.today{box-shadow:inset 0 0 0 2px #5fd08a}
+.cal-day.has.picked{box-shadow:inset 0 0 0 2px var(--bright)}
+.cal-legend{display:flex;gap:14px;flex-wrap:wrap;margin:0 0 10px}
+.cal-legend span{display:flex;gap:6px;align-items:center;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;color:var(--silver);text-transform:uppercase}
+.cal-legend i{width:9px;height:9px;border-radius:1px;display:block}
 .picked-head{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--dim);margin:28px 0 10px}
 
 /* iPad (Oct 2026): day cells sized to their content, so any day with jobs
@@ -85,8 +97,8 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
   .cal-day{min-height:56px;padding:4px 3px;gap:3px;align-items:center}
   /* The chips cannot fit at this width, so each job becomes a dot and the
      day opens to show them. A truncated name is worse than no name. */
-  .cal-chip{width:6px;height:6px;padding:0;border-radius:50%;font-size:0;line-height:0}
-  .cal-dots{display:flex;gap:3px;flex-wrap:wrap;justify-content:center}
+  /* The filled square carries the kind at this width; names show on tap. */
+  .cal-dots{display:none}
   .cal-more{display:none}
 }
 
@@ -511,6 +523,23 @@ function byDay(installs) {
   return map;
 }
 
+var KCOL = { shop: '#f6941f', shed: '#2cc0fd', prep: '#ffffff', pour: '#8a8f99', other: '#555a63' };
+var KLABEL = { shop: 'Shop', shed: 'Install', prep: 'Concrete prep', pour: 'Pour' };
+function calKind(item) {
+  if (item === 'shop') return 'shop';
+  if (item === 'shed') return 'shed';
+  if (item === 'prep' || item === 'gravel') return 'prep';
+  if (item === 'pour' || item === 'concrete') return 'pour';
+  return 'other';
+}
+function calFill(jobs) {
+  var ks = [];
+  jobs.forEach(function (e) { var k = calKind(e.job.item); if (ks.indexOf(k) < 0) ks.push(k); });
+  if (ks.length === 1) return KCOL[ks[0]];
+  var st = 100 / ks.length;
+  return 'linear-gradient(90deg,' + ks.map(function (k, i) { return KCOL[k] + ' ' + (i * st) + '% ' + ((i + 1) * st) + '%'; }).join(',') + ')';
+}
+
 function renderCalendar(installs) {
   var host = document.getElementById('cal');
   host.innerHTML = '';
@@ -519,6 +548,13 @@ function renderCalendar(installs) {
 
   document.getElementById('month-name').textContent =
     new Date(viewY, viewM, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  var legend = document.createElement('div');
+  legend.className = 'cal-legend';
+  legend.innerHTML = ['shop', 'shed', 'prep', 'pour'].map(function (k) {
+    return '<span><i style="background:' + KCOL[k] + '"></i>' + KLABEL[k] + '</span>';
+  }).join('');
+  host.appendChild(legend);
 
   var head = document.createElement('div');
   head.className = 'cal-head';
@@ -547,6 +583,7 @@ function renderCalendar(installs) {
     /* The cell's own date, so what is rendered can be checked against what
        was booked without counting squares. */
     cell.setAttribute('data-day', key);
+    if (jobs.length) cell.style.background = calFill(jobs);
 
     var num = document.createElement('span');
     num.className = 'cal-num';
