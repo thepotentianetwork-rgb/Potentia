@@ -36,22 +36,51 @@ h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
 .footer-tag{margin-top:32px;padding-top:20px;border-top:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:center}
 </style>
 <style>
-body{display:block;align-items:initial}
-.wide{max-width:860px;margin:0 auto}
-.job{border:1px solid var(--dim);background:var(--deep);padding:22px;margin:16px 0;position:relative}
-.job h2{font-weight:300;color:var(--bright);font-size:24px;margin-bottom:6px}
-.mono{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--silver)}
-.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;background:none;color:var(--bright);border:1px solid var(--dim);padding:9px 14px;cursor:pointer;margin:6px 6px 0 0}
-.btn:hover{border-color:var(--sp-blue)} .btn.on{background:var(--sp-orange);color:var(--black);border-color:var(--sp-orange)}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
-input,textarea,select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:8px 10px}
-ul{margin:8px 0 0 18px} li{margin:3px 0}
-.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--dim);padding:8px;text-align:left}
+body{display:block;align-items:initial;padding:18px}
+.wide{max-width:900px;margin:0 auto}
+.mono{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.08em;color:var(--silver)}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px}
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;background:none;color:var(--bright);border:1px solid var(--dim);padding:9px 14px;cursor:pointer;text-decoration:none;display:inline-block;border-radius:6px}
+.btn:hover{border-color:var(--sp-orange)} .btn.o{background:var(--sp-orange);color:#111;border-color:var(--sp-orange);font-weight:700}
+.hero{border:1px solid var(--dim);border-radius:14px;padding:22px;background:linear-gradient(135deg,rgba(246,148,31,.13),rgba(8,8,15,.9) 55%);margin:12px 0 16px;position:relative;overflow:hidden}
+.hero h1{font-size:30px;margin:4px 0 6px;color:var(--bright);font-weight:300}
+.bar{height:8px;background:#1a1c24;border-radius:6px;overflow:hidden;margin:14px 0 6px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--sp-orange),#ffb45c);width:0;transition:width 1.2s cubic-bezier(.2,.8,.2,1)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:14px 0}
+.stat{border:1px solid var(--dim);border-radius:12px;padding:14px;background:var(--deep);transition:transform .2s,border-color .2s}
+.stat:hover{transform:translateY(-2px);border-color:var(--sp-orange)}
+.stat b{display:block;font-size:22px;color:var(--bright);font-weight:400;margin-top:4px}
+.stat.shop{border-left:4px solid var(--sp-orange)} .stat.build{border-left:4px solid var(--sp-blue)} .stat.warn{border-left:4px solid #e0684f}
+.sec{border:1px solid var(--dim);border-radius:14px;background:var(--deep);margin:14px 0;overflow:hidden}
+.sec>summary{list-style:none;cursor:pointer;padding:16px 18px;display:flex;justify-content:space-between;align-items:center;font-size:22px;color:var(--bright)}
+.sec>summary::-webkit-details-marker{display:none}
+.sec>summary:after{content:'+';font-family:'DM Mono',monospace;color:var(--sp-orange);font-size:20px;transition:transform .2s}
+.sec[open]>summary:after{transform:rotate(45deg)}
+.sec .in{padding:0 18px 18px}
+.tl{position:relative;margin-left:10px;padding-left:22px;border-left:2px solid var(--dim)}
+.ev{position:relative;margin:0 0 16px;padding:12px 14px;border:1px solid var(--dim);border-radius:10px;background:rgba(255,255,255,.02);opacity:0;transform:translateY(8px);animation:up .5s forwards}
+.ev:before{content:'';position:absolute;left:-31px;top:16px;width:14px;height:14px;border-radius:50%;background:var(--black);border:3px solid var(--silver)}
+.ev.shop:before{border-color:var(--sp-orange)} .ev.build:before{border-color:var(--sp-blue)} .ev.site:before{border-color:#7d8696}
+.ev.done:before{background:currentColor} .ev.shop.done{color:var(--sp-orange)} .ev.build.done{color:var(--sp-blue)}
+.ev.next{border-color:var(--sp-orange);box-shadow:0 0 0 1px rgba(246,148,31,.35),0 0 24px rgba(246,148,31,.12)}
+.ev h3{font-weight:400;font-size:19px;color:var(--bright)}
+.tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;border-radius:20px;margin-left:6px;vertical-align:middle}
+.tag.shop{background:rgba(246,148,31,.18);color:var(--sp-orange)} .tag.build{background:rgba(44,192,253,.16);color:var(--sp-blue)} .tag.site{background:#1d2029;color:var(--silver)}
+.tag.ok{background:rgba(80,200,120,.15);color:#6fd29a} .tag.late{background:rgba(224,104,79,.16);color:#ff8a72}
+.delay{border:1px solid rgba(224,104,79,.5);background:rgba(224,104,79,.08);border-radius:10px;padding:12px 14px;margin:8px 0}
+.note{border-left:3px solid var(--sp-orange);padding:8px 12px;margin:10px 0;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;white-space:pre-wrap}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:8px}
+.cal div{aspect-ratio:1;border-radius:6px;background:#12141b;font-family:'DM Mono',monospace;font-size:11px;display:flex;align-items:center;justify-content:center;color:var(--silver)}
+.cal .h{background:none;aspect-ratio:auto;font-size:9px}.cal .shop{background:var(--sp-orange);color:#111}.cal .build{background:var(--sp-blue);color:#111}.cal .site{background:#4a5160;color:#fff}.cal .today{outline:2px solid var(--bright)}
+.calnav{display:flex;justify-content:space-between;align-items:center}
+table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--dim);padding:8px;text-align:left} td:last-child,th:last-child{text-align:right;white-space:nowrap}
+ul{margin:6px 0 0 18px}
+@keyframes up{to{opacity:1;transform:none}}
+@media(max-width:560px){.hero h1{font-size:24px}.sec>summary{font-size:19px}td,th{padding:6px 4px}}
 </style>
 </head>
 <body>
-<div class="wide"><div class="top"><div class="brand" style="margin:0"><img src="shedpro-logo.png" alt="ShedPro"><div class="brand-text"><span class="brand-name">SHEDPRO</span><span class="brand-sub">Customer Portal</span></div></div><button class="btn" id="logout">Log out</button></div><div id="o"><p class="mono">Loading…</p></div></div>
+<div class="wide"><div class="top"><div class="brand" style="margin:0"><img src="shedpro-logo.png" alt="ShedPro"><div class="brand-text"><span class="brand-name">SHEDPRO</span><span class="brand-sub">Customer Portal</span></div></div><button class="btn" id="logout">Log out</button></div><div id="o"><p class="mono">Loading your build…</p></div></div>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var TOKEN = localStorage.getItem('potentia_portal_token');
@@ -60,17 +89,51 @@ function api(path, opts){opts=opts||{};opts.headers=Object.assign({'Content-Type
   return fetch(API_BASE+path,opts).then(function(r){if(r.status===401){localStorage.removeItem('potentia_portal_token');location.href='portal-customer-login.html';throw new Error('expired');}return r.json().then(function(d){return{ok:r.ok,data:d};});});}
 if(!TOKEN) location.href='portal-customer-login.html';
 document.getElementById('logout').onclick=function(){fetch(API_BASE+'/portal/logout',{method:'POST',keepalive:true,headers:{'Authorization':'Bearer '+TOKEN}}).catch(function(){});localStorage.removeItem('potentia_portal_token');location.href='portal-customer-login.html';};
-
 function money(n){return n==null?'—':'$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+function dt(s,o){if(!s)return '';var d=new Date(String(s).slice(0,10)+'T12:00:00');return isNaN(d)?esc(s):d.toLocaleDateString(undefined,o||{weekday:'short',month:'short',day:'numeric'});}
+function range(d){return d.end&&d.end!==d.start?dt(d.start)+' – '+dt(d.end):dt(d.start);}
+var TODAY=new Date().toISOString().slice(0,10);
+function until(s){var n=Math.round((new Date(s+'T12:00:00')-new Date(TODAY+'T12:00:00'))/864e5);return n>1?'in '+n+' days':n===1?'tomorrow':n===0?'today':'';}
+var KLBL={shop:'Shop day',build:'Build day',site:'Site prep'};
+var calM=null,SCHED=[];
+function drawCal(){var el=document.getElementById('cal');if(!el)return;var y=calM.getFullYear(),m=calM.getMonth();var map={};
+ SCHED.forEach(function(d){for(var i=0;i<d.days;i++){var x=new Date(d.start+'T12:00:00');x.setDate(x.getDate()+i);map[x.toISOString().slice(0,10)]=d.kind;}});
+ var h='';'SMTWTFS'.split('').forEach(function(c){h+='<div class="h">'+c+'</div>';});var f=new Date(y,m,1).getDay(),n=new Date(y,m+1,0).getDate();
+ for(var i=0;i<f;i++)h+='<div style="background:none"></div>';
+ for(var d=1;d<=n;d++){var k=y+'-'+String(m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0');h+='<div class="'+(map[k]||'')+(k===TODAY?' today':'')+'" title="'+(map[k]?KLBL[map[k]]:'')+'">'+d+'</div>';}
+ el.innerHTML=h;document.getElementById('calm').textContent=calM.toLocaleDateString(undefined,{month:'long',year:'numeric'});}
+function sec(title,body,open){return '<details class="sec"'+(open?' open':'')+'><summary>'+title+'</summary><div class="in">'+body+'</div></details>';}
 api('/portal/customer/order').then(function(r){var el=document.getElementById('o');
- if(!r.ok){el.innerHTML='<div class="job"><p>'+esc(r.data.error)+'</p></div>';return;}var o=r.data;
- el.innerHTML='<p class="label" style="margin-top:20px">Hi '+esc(o.first_name)+'</p><div class="job"><h2>Your build progress</h2>'+
-  (o.phases||[]).map(function(p){return '<p style="margin-top:8px">'+(p.state==='done'?'✓':(p.state==='active'?'●':'○'))+' '+esc(p.label)+(p.date?' <span class="mono">'+esc(p.date)+'</span>':'')+'</p>';}).join('')+'</div>'+
-  '<div class="job"><h2>Your agreement</h2><p class="mono">'+esc(o.summary)+'</p><table>'+(o.items||[]).map(function(i){return '<tr><td>'+esc(i.label)+(i.lines&&i.lines.length?'<ul>'+i.lines.map(function(l){return '<li class="mono">'+esc(l.label)+'</li>';}).join('')+'</ul>':'')+'</td><td>'+money(i.amount)+'</td></tr>';}).join('')+
-  (o.pricing?'<tr><td>Subtotal</td><td>'+money(o.pricing.subtotal)+'</td></tr><tr><td>Tax</td><td>'+money(o.pricing.tax)+'</td></tr><tr><th>Total</th><th>'+money(o.pricing.total)+'</th></tr>':'')+'</table>'+
-  (o.design_url?'<p><a class="btn" target="_blank" href="'+esc(o.design_url)+'">View your 3D design</a></p>':'')+'</div>'+
-  '<div class="job"><h2>Warranties</h2><ul>'+(o.warranties||[]).map(function(w){return '<li><b>'+esc(w.item)+'</b> — '+esc(w.term)+'</li>';}).join('')+'</ul></div>'+
-  '<p class="mono">Questions? '+esc(o.shop_phone||'')+' · '+esc(o.shop_email||'')+'</p>';});
+ if(!r.ok){el.innerHTML='<div class="hero"><h1>Almost there</h1><p>'+esc(r.data.error)+'</p></div>';return;}var o=r.data;
+ SCHED=(o.schedule||[]).slice().sort(function(a,b){return a.start<b.start?-1:1;});
+ var phases=o.phases||[],done=phases.filter(function(p){return p.state==='done';}).length,pct=phases.length?Math.round((done+(phases.some(function(p){return p.state==='active';})?.5:0))/phases.length*100):0;
+ if(o.complete)pct=100;
+ var active=phases.filter(function(p){return p.state==='active';})[0];
+ var shop=o.shop_dates||[],build=o.build_dates||[],delays=o.delays||[],notes=o.notes||[];
+ var nextEv=SCHED.filter(function(d){return !d.done&&(d.end||d.start)>=TODAY;})[0];
+ var h='<div class="hero"><p class="label" style="margin:0;color:var(--sp-orange)">Hi '+esc(o.first_name)+' 👋</p><h1>'+(o.complete?'Your shed is complete!':'Your shed is underway')+'</h1><p class="mono">'+esc(o.summary||'')+'</p>'+
+  '<div class="bar"><i id="pb"></i></div><p class="mono">'+pct+'% · '+(o.complete?'All done — enjoy it!':active?'Now: '+esc(active.label):'Getting scheduled')+'</p></div>';
+ h+='<div class="stats">'+
+  '<div class="stat shop"><span class="mono">🔨 Shop days (aim)</span><b>'+(shop.length?range(shop[0]):'TBD')+'</b><span class="mono">'+(shop.length?(shop[0].done?'Done ✓':until(shop[0].start)):'We\'ll set this soon')+'</span></div>'+
+  '<div class="stat build"><span class="mono">🏗 Build / install (aim)</span><b>'+(build.length?range(build[0]):'TBD')+'</b><span class="mono">'+(build.length?(build[0].done?'Done ✓':until(build[0].start)):'We\'ll set this soon')+'</span></div>'+
+  '<div class="stat'+(delays.length?' warn':'')+'"><span class="mono">⏱ Status</span><b>'+(delays.length?delays.length+' delay'+(delays.length>1?'s':''):'On track')+'</b><span class="mono">'+(delays.length?'See details below':'No delays reported')+'</span></div></div>';
+ if(delays.length)h+=delays.map(function(d){return '<div class="delay"><b style="color:#ff8a72">⚠ Delay'+(d.stage?' — '+esc(d.stage):'')+'</b><p style="margin-top:4px">'+(d.reason?esc(d.reason):'We\'ve hit a delay on this step and will update your dates shortly.')+'</p><p class="mono">'+dt(d.at)+'</p></div>';}).join('');
+ var tl=SCHED.length?'<div class="tl">'+SCHED.map(function(d,i){var nx=nextEv&&d===nextEv;var late=delays.some(function(x){return x.stage===d.label;});
+   return '<div class="ev '+d.kind+(d.done?' done':'')+(nx?' next':'')+'" style="animation-delay:'+(i*0.08)+'s"><h3>'+esc(d.label)+'<span class="tag '+d.kind+'">'+KLBL[d.kind]+'</span>'+(d.done?'<span class="tag ok">Done</span>':late?'<span class="tag late">Delayed</span>':nx?'<span class="tag shop">Up next</span>':'')+'</h3><p class="mono" style="margin-top:4px">'+range(d)+(d.days>1?' · '+d.days+' days':'')+(!d.done&&until(d.start)?' · '+until(d.start):'')+'</p></div>';}).join('')+'</div>'
+   :'<p class="mono">Your dates aren\'t on the calendar yet — we\'ll post your aim shop and build days here as soon as they\'re booked.</p>';
+ h+=sec('Your build timeline',tl+(SCHED.length?'<div style="margin-top:14px"><div class="calnav"><button class="btn" id="cp">‹</button><span class="mono" id="calm"></span><button class="btn" id="cn">›</button></div><div class="cal" id="cal"></div><p class="mono" style="margin-top:8px"><span style="color:var(--sp-orange)">■</span> Shop &nbsp; <span style="color:var(--sp-blue)">■</span> Build / install &nbsp; <span style="color:#7d8696">■</span> Site prep</p></div>':''),true);
+ h+=sec('Progress',phases.map(function(p){return '<p style="margin:8px 0;font-size:18px">'+(p.state==='done'?'<span style="color:#6fd29a">✓</span>':p.state==='active'?'<span style="color:var(--sp-orange)">●</span>':'<span class="mono">○</span>')+' '+esc(p.label)+(p.date?' <span class="mono">'+dt(p.date)+'</span>':'')+'</p>';}).join('')||'<p class="mono">—</p>',false);
+ h+=sec('Notes &amp; updates'+(notes.length?' <span class="tag shop">'+notes.length+'</span>':''),notes.length?notes.map(function(n){return '<div class="note"><b>'+esc(n.title)+'</b>'+(n.at?' <span class="mono">'+dt(n.at)+'</span>':'')+'<div style="margin-top:4px">'+esc(n.text)+'</div></div>';}).join(''):'<p class="mono">No notes yet. Updates from our crew about your schedule will show here.</p>',notes.length>0);
+ h+=sec('Your agreement','<table>'+(o.items||[]).map(function(i){return '<tr><td>'+esc(i.label)+(i.lines&&i.lines.length?'<ul>'+i.lines.map(function(l){return '<li class="mono">'+esc(l.label)+'</li>';}).join('')+'</ul>':'')+'</td><td>'+money(i.amount)+'</td></tr>';}).join('')+
+  (o.pricing?(o.pricing.discount?'<tr><td>Discount</td><td>−'+money(o.pricing.discount)+'</td></tr>':'')+'<tr><td>Subtotal</td><td>'+money(o.pricing.subtotal)+'</td></tr><tr><td>Tax</td><td>'+money(o.pricing.tax)+'</td></tr><tr><th>Total</th><th>'+money(o.pricing.total)+'</th></tr>':'')+'</table>'+
+  ((o.included||[]).length?'<p class="mono" style="margin-top:8px">Included: '+o.included.map(esc).join(', ')+'</p>':'')+
+  (o.design_url?'<p style="margin-top:12px"><a class="btn o" target="_blank" rel="noopener" href="'+esc(o.design_url)+'">View your 3D design</a></p>':''),false);
+ if((o.warranties||[]).length)h+=sec('Warranties','<ul>'+o.warranties.map(function(w){return '<li><b>'+esc(w.item)+'</b> — '+esc(w.term)+'</li>';}).join('')+'</ul>',false);
+ h+='<p class="mono" style="margin:18px 0;text-align:center">Questions? '+(o.shop_phone?'<a style="color:var(--sp-orange)" href="tel:'+esc(o.shop_phone)+'">'+esc(o.shop_phone)+'</a>':'')+(o.shop_email?' · <a style="color:var(--sp-orange)" href="mailto:'+esc(o.shop_email)+'">'+esc(o.shop_email)+'</a>':'')+'</p>';
+ el.innerHTML=h;setTimeout(function(){var b=document.getElementById('pb');if(b)b.style.width=pct+'%';},60);
+ if(SCHED.length){var a=(nextEv||SCHED[0]).start;calM=new Date(a+'T12:00:00');calM.setDate(1);drawCal();
+  document.getElementById('cp').onclick=function(){calM.setMonth(calM.getMonth()-1);drawCal();};document.getElementById('cn').onclick=function(){calM.setMonth(calM.getMonth()+1);drawCal();};}
+});
 </script>
 </body>
 </html>

@@ -293,7 +293,8 @@ export async function handlePortal(request, env, origin, path, deps) {
     const sub = u && await customerSub(env, u, deps);
     if (!sub) return json({ error: "Your portal opens once your deposit is in." }, 403, origin);
     const data = await deps.trackPayload(env, sub.id);
-    return json({ ...data, warranties: WARRANTIES }, 200, origin);
+    const sched = await customerSchedule(env, sub.id);
+    return json({ ...data, ...sched, warranties: WARRANTIES }, 200, origin);
   }
 
   return json({ error: "Not found" }, 404, origin);
@@ -356,3 +357,70 @@ export const WARRANTIES = [
 
 /* A delay logged by the builder portal's "dates" action with no new date. */
 export function isDelayNote(text) { return /^[\w ]+: delay( — |$)/.test(String(text || "")); }
+
+/* CUSTOMER SCHEDULE — the shop/build days we are aiming for, any delays and
+   customer-safe notes, for the customer portal timeline. Built from the same
+   installs rows the builder calendar uses. Never returns install.note (crew
+   notes), expenses, costs, or general builder/admin notes: only schedule
+   lines (delays / moves / cleared) and the order notes the customer gave us. */
+const CUST_STAGE = { prep: "Site prep", pour: "Concrete pour", concrete: "Concrete pad", gravel: "Gravel pad",
+  materials: "Materials gathered", shop: "Built in our shop", shed: "Build / install at your place", install: "Build / install at your place" };
+export function stageKind(item) {
+  const k = String(item || "").toLowerCase();
+  if (k === "shop" || k === "materials") return "shop";
+  if (k === "prep" || k === "pour" || k === "concrete" || k === "gravel") return "site";
+  return "build";
+}
+function addDaysISO(d, n) {
+  const t = Date.parse(String(d).slice(0, 10) + "T00:00:00Z");
+  if (!isFinite(t)) return null;
+  return new Date(t + Math.max(0, n - 1) * 86400000).toISOString().slice(0, 10);
+}
+export function scheduleNoteKind(text) {
+  const t = String(text || "");
+  if (isDelayNote(t)) return "delay";
+  if (/^Delay cleared: /.test(t)) return "cleared";
+  if (/^[\w ]+: moved \S+ \u2192 \S+/.test(t)) return "moved";
+  return null;
+}
+function prettyItem(t) {
+  return String(t || "").replace(/^([\w ]+?):/, (m, k) => (CUST_STAGE[k.trim().toLowerCase()] || k) + ":");
+}
+export async function customerSchedule(env, sid) {
+  let inst = [], notes = [], details = {};
+  try { inst = (await env.DB.prepare("SELECT id, item, install_date, days, done_at FROM installs WHERE submission_id=? ORDER BY install_date, id").bind(sid).all()).results || []; } catch (e) {}
+  try { notes = (await env.DB.prepare("SELECT id, text, created_at FROM job_notes WHERE submission_id=? ORDER BY id DESC LIMIT 60").bind(sid).all()).results || []; } catch (e) {}
+  try { const r = await env.DB.prepare("SELECT details FROM submissions WHERE id=?").bind(sid).first(); details = JSON.parse(r && r.details) || {}; } catch (e) {}
+  const days = inst.filter((r) => r.install_date).map((r) => {
+    const n = Math.max(1, Number(r.days) || 1);
+    return { item: String(r.item || ""), label: CUST_STAGE[String(r.item || "").toLowerCase()] || String(r.item || ""),
+      kind: stageKind(r.item), start: String(r.install_date).slice(0, 10), end: addDaysISO(r.install_date, n), days: n, done: !!r.done_at };
+  });
+  const delays = [], updates = [];
+  const cleared = new Set();
+  for (const n of notes) {
+    const k = scheduleNoteKind(n.text);
+    if (k === "cleared") { cleared.add(String(n.text).replace(/^Delay cleared: /, "")); updates.push({ kind: "cleared", text: prettyItem(String(n.text).replace(/^Delay cleared: /, "")) + " (resolved)", at: n.created_at }); }
+  }
+  for (const n of notes) {
+    const k = scheduleNoteKind(n.text);
+    if (k === "delay" && !cleared.has(n.text)) {
+      const m = String(n.text).match(/^([\w ]+): delay(?: \u2014 (.*))?$/s);
+      const item = m ? m[1] : "";
+      delays.push({ stage: CUST_STAGE[item.trim().toLowerCase()] || item, reason: (m && m[2]) || "", at: n.created_at, active: true });
+    } else if (k === "moved") {
+      updates.push({ kind: "moved", text: prettyItem(n.text), at: n.created_at });
+    }
+  }
+  const cust = [];
+  if (typeof details.notes === "string" && details.notes.trim()) cust.push({ kind: "order", title: "Notes on your order", text: details.notes.trim().slice(0, 2000), at: details.notesEditedAt || null });
+  for (const u of updates) cust.push({ kind: "schedule", title: u.kind === "moved" ? "Schedule update" : "Delay resolved", text: u.text, at: u.at });
+  const first = (k) => days.filter((d) => d.kind === k).sort((a, b) => a.start < b.start ? -1 : 1);
+  const shop = first("shop"), build = first("build");
+  return {
+    schedule: days,
+    shop_dates: shop.map((d) => ({ start: d.start, end: d.end, days: d.days, done: d.done, label: d.label })),
+    build_dates: build.map((d) => ({ start: d.start, end: d.end, days: d.days, done: d.done, label: d.label })),
+    delays, notes: cust
+  };
+}
