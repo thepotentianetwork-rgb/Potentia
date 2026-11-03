@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Jobs — ShedPro</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+  background-image:radial-gradient(circle at 15% 10%, rgba(44,192,253,0.07), transparent 45%), radial-gradient(circle at 85% 90%, rgba(246,148,31,0.05), transparent 45%);}
+.card{width:100%;max-width:400px;border:1px solid var(--dim);padding:44px 40px;background:var(--deep);position:relative}
+.card::before{content:'';position:absolute;top:-1px;left:-1px;right:-1px;height:2px;background:linear-gradient(90deg,var(--sp-blue),var(--sp-orange))}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:32px}
+.brand img{width:44px;height:44px;object-fit:contain}
+.brand-text{display:flex;flex-direction:column;gap:3px}
+.brand-name{font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.2em;color:var(--bright)}
+.brand-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase}
+.label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--sp-blue);text-transform:uppercase;margin-bottom:14px}
+h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
+.form-group{margin-bottom:20px}
+.form-group label{display:block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px}
+.form-group input{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;padding:13px 16px;outline:none;transition:border-color 0.3s}
+.form-group input:focus{border-color:var(--sp-blue)}
+.submit{width:100%;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--sp-blue);padding:15px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.3s;margin-top:8px;font-weight:700}
+.submit:hover{background:#5ad0ff}
+.submit:disabled{opacity:0.5;cursor:not-allowed}
+.error{font-family:'DM Mono',monospace;font-size:11px;color:#e0684f;margin-top:16px;min-height:14px}
+.footer-tag{margin-top:32px;padding-top:20px;border-top:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:center}
+</style>
+<style>
+body{display:block;align-items:initial}
+.wide{max-width:860px;margin:0 auto}
+.job{border:1px solid var(--dim);background:var(--deep);padding:22px;margin:16px 0;position:relative}
+.job h2{font-weight:300;color:var(--bright);font-size:24px;margin-bottom:6px}
+.mono{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--silver)}
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;background:none;color:var(--bright);border:1px solid var(--dim);padding:9px 14px;cursor:pointer;margin:6px 6px 0 0}
+.btn:hover{border-color:var(--sp-blue)} .btn.on{background:var(--sp-orange);color:var(--black);border-color:var(--sp-orange)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+input,textarea,select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:8px 10px}
+ul{margin:8px 0 0 18px} li{margin:3px 0}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--dim);padding:8px;text-align:left}
+</style>
+</head>
+<body>
+<div class="wide"><div class="top"><div class="brand" style="margin:0"><img src="shedpro-logo.png" alt="ShedPro"><div class="brand-text"><span class="brand-name">SHEDPRO</span><span class="brand-sub">Builder Portal</span></div></div><button class="btn" id="logout">Log out</button></div><p class="label" style="margin-top:20px">Assigned jobs</p><div id="jobs"><p class="mono">Loading…</p></div></div>
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var TOKEN = localStorage.getItem('potentia_portal_token');
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function api(path, opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json','Authorization':'Bearer '+TOKEN},opts.headers);
+  return fetch(API_BASE+path,opts).then(function(r){if(r.status===401){localStorage.removeItem('potentia_portal_token');location.href='portal-login.html';throw new Error('expired');}return r.json().then(function(d){return{ok:r.ok,data:d};});});}
+if(!TOKEN) location.href='portal-login.html';
+document.getElementById('logout').onclick=function(){fetch(API_BASE+'/portal/logout',{method:'POST',keepalive:true,headers:{'Authorization':'Bearer '+TOKEN}}).catch(function(){});localStorage.removeItem('potentia_portal_token');location.href='portal-login.html';};
+
+function load(){api('/portal/builder/jobs').then(function(r){var el=document.getElementById('jobs');
+  if(!r.ok){el.innerHTML='<p class="mono">'+esc(r.data.error)+'</p>';return;}
+  if(!r.data.jobs.length){el.innerHTML='<p class="mono">No jobs assigned to you yet.</p>';return;}
+  el.innerHTML='';r.data.jobs.forEach(function(j){var d=document.createElement('div');d.className='job';
+   d.innerHTML='<h2>#'+j.id+' · '+esc(j.customer)+'</h2><p class="mono">'+esc(j.address)+(j.phone?' · <a style="color:var(--sp-blue)" href="tel:'+esc(j.phone)+'">'+esc(j.phone)+'</a>':'')+'</p>'+
+   '<p style="margin-top:8px">'+esc(j.summary)+'</p>'+(j.spec&&j.spec.length?'<ul>'+j.spec.map(function(s){return '<li>'+esc(typeof s==='string'?s:(s.label||'')+(s.value?': '+s.value:''))+'</li>';}).join('')+'</ul>':'')+
+   (j.design_url?'<p><a class="btn" target="_blank" href="'+esc(j.design_url)+'">Open 3D design</a></p>':'')+
+   '<p class="label" style="margin-top:16px">Shop &amp; install dates</p><table>'+j.installs.map(function(i){return '<tr><td>'+esc(i.item)+'</td><td>'+esc(i.install_date)+(i.done_at?' ✓':'')+'</td><td><input type="date" data-i="'+i.id+'"> <input placeholder="Delay reason" data-r="'+i.id+'"> <button class="btn" data-mv="'+i.id+'">Save</button></td></tr>';}).join('')+'</table>'+
+   '<div class="row"><button class="btn '+(j.clocked_in?'on':'')+'" data-clock>'+(j.clocked_in?'Clock out (in since '+new Date(j.clocked_in.clock_in).toLocaleTimeString()+')':'Clock in')+'</button></div>'+
+   '<p class="label" style="margin-top:16px">Expenses</p><div class="row"><input type="number" step="0.01" placeholder="$" data-amt style="width:110px"><input placeholder="What for" data-en><input type="file" accept="image/*" capture="environment" data-ph><button class="btn" data-exp>Add</button></div>'+
+   '<ul>'+j.expenses.map(function(e){return '<li class="mono">'+esc(e.created_at.slice(0,10))+' · $'+esc(e.amount||'—')+' · '+esc(e.note)+(e.has_photo?' 📷':'')+'</li>';}).join('')+'</ul>'+
+   '<p class="label" style="margin-top:16px">Notes</p><div class="row"><textarea data-nt rows="2" style="flex:1"></textarea><button class="btn" data-note>Add note</button></div>'+
+   '<ul>'+j.notes.map(function(n){return '<li><span class="mono">'+esc(n.created_at.slice(0,16).replace('T',' '))+' '+esc(n.author)+'</span> — '+esc(n.text)+'</li>';}).join('')+'</ul>';
+   var P='/portal/builder/jobs/'+j.id+'/';
+   d.querySelector('[data-clock]').onclick=function(){api(P+'clock',{method:'POST'}).then(load);};
+   d.querySelector('[data-note]').onclick=function(){var t=d.querySelector('[data-nt]').value;if(t)api(P+'notes',{method:'POST',body:JSON.stringify({text:t})}).then(load);};
+   d.querySelectorAll('[data-mv]').forEach(function(b){b.onclick=function(){var id=b.getAttribute('data-mv');api(P+'dates',{method:'POST',body:JSON.stringify({install_id:Number(id),date:d.querySelector('[data-i="'+id+'"]').value||null,reason:d.querySelector('[data-r="'+id+'"]').value})}).then(load);};});
+   d.querySelector('[data-exp]').onclick=function(){var f=d.querySelector('[data-ph]').files[0];var send=function(photo){api(P+'expenses',{method:'POST',body:JSON.stringify({amount:d.querySelector('[data-amt]').value,note:d.querySelector('[data-en]').value,photo:photo})}).then(function(r){if(!r.ok)alert(r.data.error);load();});};
+     if(!f)return send(null);var img=new Image();img.onload=function(){var c=document.createElement('canvas'),s=Math.min(1,1400/Math.max(img.width,img.height));c.width=img.width*s;c.height=img.height*s;c.getContext('2d').drawImage(img,0,0,c.width,c.height);send(c.toDataURL('image/jpeg',0.75));};img.src=URL.createObjectURL(f);};
+   el.appendChild(d);});});}
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Shed — ShedPro</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+  background-image:radial-gradient(circle at 15% 10%, rgba(44,192,253,0.07), transparent 45%), radial-gradient(circle at 85% 90%, rgba(246,148,31,0.05), transparent 45%);}
+.card{width:100%;max-width:400px;border:1px solid var(--dim);padding:44px 40px;background:var(--deep);position:relative}
+.card::before{content:'';position:absolute;top:-1px;left:-1px;right:-1px;height:2px;background:linear-gradient(90deg,var(--sp-blue),var(--sp-orange))}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:32px}
+.brand img{width:44px;height:44px;object-fit:contain}
+.brand-text{display:flex;flex-direction:column;gap:3px}
+.brand-name{font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.2em;color:var(--bright)}
+.brand-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase}
+.label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--sp-blue);text-transform:uppercase;margin-bottom:14px}
+h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
+.form-group{margin-bottom:20px}
+.form-group label{display:block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px}
+.form-group input{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;padding:13px 16px;outline:none;transition:border-color 0.3s}
+.form-group input:focus{border-color:var(--sp-blue)}
+.submit{width:100%;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--sp-blue);padding:15px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.3s;margin-top:8px;font-weight:700}
+.submit:hover{background:#5ad0ff}
+.submit:disabled{opacity:0.5;cursor:not-allowed}
+.error{font-family:'DM Mono',monospace;font-size:11px;color:#e0684f;margin-top:16px;min-height:14px}
+.footer-tag{margin-top:32px;padding-top:20px;border-top:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:center}
+</style>
+<style>
+body{display:block;align-items:initial}
+.wide{max-width:860px;margin:0 auto}
+.job{border:1px solid var(--dim);background:var(--deep);padding:22px;margin:16px 0;position:relative}
+.job h2{font-weight:300;color:var(--bright);font-size:24px;margin-bottom:6px}
+.mono{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--silver)}
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;background:none;color:var(--bright);border:1px solid var(--dim);padding:9px 14px;cursor:pointer;margin:6px 6px 0 0}
+.btn:hover{border-color:var(--sp-blue)} .btn.on{background:var(--sp-orange);color:var(--black);border-color:var(--sp-orange)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+input,textarea,select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:8px 10px}
+ul{margin:8px 0 0 18px} li{margin:3px 0}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--dim);padding:8px;text-align:left}
+</style>
+</head>
+<body>
+<div class="wide"><div class="top"><div class="brand" style="margin:0"><img src="shedpro-logo.png" alt="ShedPro"><div class="brand-text"><span class="brand-name">SHEDPRO</span><span class="brand-sub">Customer Portal</span></div></div><button class="btn" id="logout">Log out</button></div><div id="o"><p class="mono">Loading…</p></div></div>
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var TOKEN = localStorage.getItem('potentia_portal_token');
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function api(path, opts){opts=opts||{};opts.headers=Object.assign({'Content-Type':'application/json','Authorization':'Bearer '+TOKEN},opts.headers);
+  return fetch(API_BASE+path,opts).then(function(r){if(r.status===401){localStorage.removeItem('potentia_portal_token');location.href='portal-login.html';throw new Error('expired');}return r.json().then(function(d){return{ok:r.ok,data:d};});});}
+if(!TOKEN) location.href='portal-login.html';
+document.getElementById('logout').onclick=function(){fetch(API_BASE+'/portal/logout',{method:'POST',keepalive:true,headers:{'Authorization':'Bearer '+TOKEN}}).catch(function(){});localStorage.removeItem('potentia_portal_token');location.href='portal-login.html';};
+
+function money(n){return n==null?'—':'$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
+api('/portal/customer/order').then(function(r){var el=document.getElementById('o');
+ if(!r.ok){el.innerHTML='<div class="job"><p>'+esc(r.data.error)+'</p></div>';return;}var o=r.data;
+ el.innerHTML='<p class="label" style="margin-top:20px">Hi '+esc(o.first_name)+'</p><div class="job"><h2>Your build progress</h2>'+
+  (o.phases||[]).map(function(p){return '<p style="margin-top:8px">'+(p.state==='done'?'✓':(p.state==='active'?'●':'○'))+' '+esc(p.label)+(p.date?' <span class="mono">'+esc(p.date)+'</span>':'')+'</p>';}).join('')+'</div>'+
+  '<div class="job"><h2>Your agreement</h2><p class="mono">'+esc(o.summary)+'</p><table>'+(o.items||[]).map(function(i){return '<tr><td>'+esc(i.label)+(i.lines&&i.lines.length?'<ul>'+i.lines.map(function(l){return '<li class="mono">'+esc(l.label)+'</li>';}).join('')+'</ul>':'')+'</td><td>'+money(i.amount)+'</td></tr>';}).join('')+
+  (o.pricing?'<tr><td>Subtotal</td><td>'+money(o.pricing.subtotal)+'</td></tr><tr><td>Tax</td><td>'+money(o.pricing.tax)+'</td></tr><tr><th>Total</th><th>'+money(o.pricing.total)+'</th></tr>':'')+'</table>'+
+  (o.design_url?'<p><a class="btn" target="_blank" href="'+esc(o.design_url)+'">View your 3D design</a></p>':'')+'</div>'+
+  '<div class="job"><h2>Warranties</h2><ul>'+(o.warranties||[]).map(function(w){return '<li><b>'+esc(w.item)+'</b> — '+esc(w.term)+'</li>';}).join('')+'</ul></div>'+
+  '<p class="mono">Questions? '+esc(o.shop_phone||'')+' · '+esc(o.shop_email||'')+'</p>';});
+</script>
+</body>
+</html>

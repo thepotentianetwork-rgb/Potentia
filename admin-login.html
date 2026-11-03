@@ -56,6 +56,7 @@ h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
     <button type="submit" class="submit" id="submit-btn">Log In</button>
     <p class="error" id="error"></p>
   </form>
+  <p style="margin-top:18px;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.15em;text-transform:uppercase"><a href="portal-login.html" style="color:var(--silver)">Sales, builder or customer? Sign in here</a></p>
   <p class="footer-tag">Built &amp; managed by Potentia</p>
 </div>
 
@@ -90,6 +91,7 @@ form.addEventListener('submit', function (e) {
     .then(function (r) {
       if (!r.ok) throw new Error(r.data && r.data.error ? r.data.error : 'Login failed');
       localStorage.setItem('potentia_admin_token', r.data.token);
+      localStorage.removeItem('potentia_role');
       window.location.href = nextUrl;
     })
     .catch(function (err) {

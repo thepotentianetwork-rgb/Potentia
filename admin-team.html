@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Logins — ShedPro</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="shedpro-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Syncopate:wght@400;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --black:#040407;--deep:#08080f;--chrome:#c8cdd6;--silver:#8a909e;--bright:#e8ecf4;--dim:#2a2d38;
+  --sp-blue:#2cc0fd;--sp-blue-deep:#1c8fc2;--sp-orange:#f6941f;
+}
+body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond',serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+  background-image:radial-gradient(circle at 15% 10%, rgba(44,192,253,0.07), transparent 45%), radial-gradient(circle at 85% 90%, rgba(246,148,31,0.05), transparent 45%);}
+.card{width:100%;max-width:400px;border:1px solid var(--dim);padding:44px 40px;background:var(--deep);position:relative}
+.card::before{content:'';position:absolute;top:-1px;left:-1px;right:-1px;height:2px;background:linear-gradient(90deg,var(--sp-blue),var(--sp-orange))}
+.brand{display:flex;align-items:center;gap:14px;margin-bottom:32px}
+.brand img{width:44px;height:44px;object-fit:contain}
+.brand-text{display:flex;flex-direction:column;gap:3px}
+.brand-name{font-family:'Syncopate',sans-serif;font-size:13px;letter-spacing:0.2em;color:var(--bright)}
+.brand-sub{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase}
+.label{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--sp-blue);text-transform:uppercase;margin-bottom:14px}
+h1{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:28px}
+.form-group{margin-bottom:20px}
+.form-group label{display:block;font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px}
+.form-group input{width:100%;background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:18px;font-weight:300;padding:13px 16px;outline:none;transition:border-color 0.3s}
+.form-group input:focus{border-color:var(--sp-blue)}
+.submit{width:100%;font-family:'DM Mono',monospace;font-size:12px;letter-spacing:0.2em;color:var(--black);background:var(--sp-blue);padding:15px;border:none;text-transform:uppercase;cursor:pointer;transition:background 0.3s;margin-top:8px;font-weight:700}
+.submit:hover{background:#5ad0ff}
+.submit:disabled{opacity:0.5;cursor:not-allowed}
+.error{font-family:'DM Mono',monospace;font-size:11px;color:#e0684f;margin-top:16px;min-height:14px}
+.footer-tag{margin-top:32px;padding-top:20px;border-top:1px solid var(--dim);font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;text-align:center}
+</style>
+<style>
+body{display:block;align-items:initial}
+.wide{max-width:860px;margin:0 auto}
+.job{border:1px solid var(--dim);background:var(--deep);padding:22px;margin:16px 0;position:relative}
+.job h2{font-weight:300;color:var(--bright);font-size:24px;margin-bottom:6px}
+.mono{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;color:var(--silver)}
+.btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;background:none;color:var(--bright);border:1px solid var(--dim);padding:9px 14px;cursor:pointer;margin:6px 6px 0 0}
+.btn:hover{border-color:var(--sp-blue)} .btn.on{background:var(--sp-orange);color:var(--black);border-color:var(--sp-orange)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+input,textarea,select{background:rgba(255,255,255,0.03);border:1px solid var(--dim);color:var(--bright);font-family:'Cormorant Garamond',serif;font-size:16px;padding:8px 10px}
+ul{margin:8px 0 0 18px} li{margin:3px 0}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--dim);padding:8px;text-align:left}
+</style>
+</head>
+<body>
+<div class="wide"><div class="top"><div class="brand" style="margin:0"><img src="shedpro-logo.png" alt="ShedPro"><div class="brand-text"><span class="brand-name">SHEDPRO</span><span class="brand-sub">Team logins (owner)</span></div></div><a class="btn" href="admin.html">Back to CRM</a></div><div class="job"><h2>Create a login</h2><div class="row"><select id="role"><option value="sales">Sales</option><option value="builder">Builder</option><option value="customer">Customer (deposit required)</option></select><input id="login" placeholder="username or email"><input id="name" placeholder="Display name"><input id="cid" placeholder="Customer # (customers only)" style="width:200px"><button class="btn" id="create">Create</button></div><p class="mono" id="once" style="margin-top:12px;color:var(--sp-orange)"></p></div><div class="job"><h2>Accounts</h2><table id="list"></table></div></div>
+<script>
+var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
+var T=localStorage.getItem('potentia_admin_token'); if(!T||localStorage.getItem('potentia_role')==='sales') location.href='admin-login.html';
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function api(p,o){o=o||{};o.headers={'Content-Type':'application/json','Authorization':'Bearer '+T};return fetch(API_BASE+p,o).then(function(r){if(r.status===401){location.href='admin-login.html';}return r.json().then(function(d){return{ok:r.ok,data:d};});});}
+/* Shown once, never stored by us. Hand it over in person or via a one-time share. */
+function showOnce(login,pw){document.getElementById('once').innerHTML='Password for <b>'+esc(login)+'</b> (shown once — copy it now): <code style="user-select:all">'+esc(pw)+'</code>';}
+function load(){api('/portal/users').then(function(r){document.getElementById('list').innerHTML='<tr><th>Role</th><th>Login</th><th>Name</th><th>Customer</th><th></th></tr>'+(r.data.users||[]).map(function(u){return '<tr><td>'+esc(u.role)+'</td><td>'+esc(u.login)+'</td><td>'+esc(u.name)+'</td><td>'+esc(u.customer_id||'')+'</td><td>'+(u.disabled_at?'<span class="mono">disabled</span> ':'')+'<button class="btn" data-reset="'+u.id+'" data-l="'+esc(u.login)+'">Reset password</button>'+(u.disabled_at?'':'<button class="btn" data-dis="'+u.id+'">Disable</button>')+'</td></tr>';}).join('');
+ document.querySelectorAll('[data-reset]').forEach(function(b){b.onclick=function(){api('/portal/users/'+b.dataset.reset+'/reset',{method:'POST'}).then(function(r){if(r.ok)showOnce(b.dataset.l,r.data.password);load();});};});
+ document.querySelectorAll('[data-dis]').forEach(function(b){b.onclick=function(){if(confirm('Disable this login?'))api('/portal/users/'+b.dataset.dis+'/disable',{method:'POST'}).then(load);};});});}
+document.getElementById('create').onclick=function(){var b={role:document.getElementById('role').value,login:document.getElementById('login').value,name:document.getElementById('name').value,customer_id:Number(document.getElementById('cid').value)||null};
+ api('/portal/users',{method:'POST',body:JSON.stringify(b)}).then(function(r){if(!r.ok){alert(r.data.error);return;}showOnce(r.data.login,r.data.password);load();});};
+load();
+</script>
+</body>
+</html>

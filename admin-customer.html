@@ -505,6 +505,7 @@ select:focus{border-color:var(--sp-blue)}
 </main>
 
 <script src="admin-nav.js"></script>
+<script src="admin-roles.js"></script>
 <script src="crm-paint.js"></script>
 <script src="admin-voice.js"></script>
 <script src="admin-activity.js"></script>
@@ -3199,6 +3200,8 @@ function renderOrders(submissions, installs) {
        thing the worker will issue a link for. */
     if (s.status === 'won') {
       actions.appendChild(trackingButtons(s.id));
+      /* Won -> hand it to a builder (role portals). */
+      if (window.AdminRoles) actions.appendChild(AdminRoles.assignControl(s.id));
       /* Only once dates are booked — before that there is no schedule to send. */
       if ((installs || []).some(function (i) { return i.submission_id === s.id; })) {
         actions.appendChild(scheduleSendButton(s.id));

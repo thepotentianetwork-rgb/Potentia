@@ -59,6 +59,19 @@
     return p || 'admin.html';
   }
 
+  /* ROLE: a sales login uses these same pages, minus the money ones. The
+     server enforces it (403); this just keeps dead links out of the menu. */
+  var ROLE = (function () { try { return localStorage.getItem('potentia_role') || 'admin'; } catch (e) { return 'admin'; } })();
+  var SALES_PAGES = { 'admin.html': 1, 'admin-schedule.html': 1, 'admin-activity.html': 1 };
+  if (ROLE === 'sales') {
+    PAGES = PAGES.filter(function (p) { return SALES_PAGES[p.href]; });
+    try { document.documentElement.classList.add('role-sales'); } catch (e) {}
+    var here0 = (location.pathname || '').split('/').pop() || 'admin.html';
+    if (/^admin-(dashboard|data|pricing|website|team)\.html$/.test(here0)) location.replace('admin.html');
+  } else {
+    PAGES = PAGES.concat([{ href: 'admin-team.html', label: 'Team logins' }]);
+  }
+
   function render(mount, opts) {
     opts = opts || {};
     if (!mount) return null;

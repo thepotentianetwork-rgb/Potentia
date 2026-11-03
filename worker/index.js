@@ -47,6 +47,7 @@ import { runQuery, parseQueryParams } from "./crmquery.js";
 import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
 import { runAutoDormant, ensureStatusChangedColumn } from "./dormant.js";
 import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
+import { handlePortal, salesMayUse } from "./portals.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -337,13 +338,13 @@ function bearerToken(request) {
    unlock). A new secret that is unset falls back to ADMIN_SESSION_SECRET so an
    existing deploy keeps working — production should set all three, distinct.
    The payload flag (admin/crm/leads) is still checked as a second guard. */
-const SESSION_AREAS = { admin: "ADMIN_SESSION_SECRET", crm: "CRM_SESSION_SECRET", leads: "LEADS_SESSION_SECRET" };
+const SESSION_AREAS = { admin: "ADMIN_SESSION_SECRET", crm: "CRM_SESSION_SECRET", leads: "LEADS_SESSION_SECRET", portal: "PORTAL_SESSION_SECRET" };
 function sessionSecret(env, area) {
   return env[SESSION_AREAS[area]] || env.ADMIN_SESSION_SECRET || null;
 }
 // Admin sessions live in the shed DB; CRM + leads sessions in the CRM DB.
 function sessionDb(env, area) {
-  return area === "admin" ? env.DB : (env.CRM_DB || env.DB);
+  return (area === "admin" || area === "portal") ? env.DB : (env.CRM_DB || env.DB);
 }
 const ensuredSessionDbs = new WeakSet();
 async function ensureSessionsTable(db) {
@@ -366,7 +367,7 @@ function newSessionId() {
 }
 // Creates the server-side row and returns the signed token, or null when the
 // area is not configured (no secret / no DB) — callers answer 5xx then.
-async function issueSession(env, area) {
+async function issueSession(env, area, extra) {
   const secret = sessionSecret(env, area);
   const db = sessionDb(env, area);
   if (!secret || !db) return null;
@@ -380,7 +381,7 @@ async function issueSession(env, area) {
   try {
     await db.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now - 7 * 24 * 60 * 60 * 1000).run();
   } catch (e) {}
-  return signToken(secret, { [area]: true, sid, exp });
+  return signToken(secret, { ...(extra || {}), [area]: true, sid, exp });
 }
 // Signature + flag + sessions row (exists, same area, not revoked, not expired).
 async function verifySession(env, area, token) {
@@ -409,6 +410,15 @@ async function revokeSession(env, area, token) {
 }
 // Shed-partner admin session.
 async function requireAuth(request, env) {
+  const tok = bearerToken(request);
+  const a = await verifySession(env, "admin", tok);
+  if (a) return a;
+  /* Sales role: same CRM screens, allow-listed routes only (portals.js). */
+  const p = await verifySession(env, "portal", tok);
+  if (p && p.role === "sales" && salesMayUse(request.method, new URL(request.url).pathname)) return p;
+  return null;
+}
+async function requireOwner(request, env) {
   return verifySession(env, "admin", bearerToken(request));
 }
 // Potentia's own client CRM session — see the CRM section further down.
@@ -4920,14 +4930,24 @@ async function handleTrack(request, env, origin, token) {
      because anything depends on it. */
   if (!/^[0-9a-f]{32}$/.test(clean)) return json({ error: "Not found" }, 404, origin);
 
+  const data = await trackPayload(env, null, clean);
+  if (!data) return json({ error: "Not found" }, 404, origin);
+  return json(data, 200, origin);
+}
+/* The tracker's data for one won order, by track token or by submission id.
+   Shared by the public /track link and the customer portal. */
+async function trackPayload(env, submissionId, token) {
+  await ensureInstallsTable(env);
+  await ensureSubmissionWonColumn(env);
+  await ensureSubmissionAdjustColumns(env);
   const sub = await env.DB.prepare(
     `SELECT s.id, s.details, s.status, s.won_at, s.effective_price,
             s.adjustments, s.price_adjustment, s.adjustment_note,
             c.name AS customer_name
      FROM submissions s JOIN customers c ON s.customer_id = c.id
-     WHERE s.track_token = ?`
-  ).bind(clean).first();
-  if (!sub || sub.status !== "won") return json({ error: "Not found" }, 404, origin);
+     WHERE ${token ? "s.track_token = ?" : "s.id = ?"}`
+  ).bind(token || submissionId).first();
+  if (!sub || sub.status !== "won") return null;
 
   const { results: installs } = await env.DB.prepare(
     `SELECT item, install_date, days, done_at FROM installs
@@ -5031,7 +5051,7 @@ async function handleTrack(request, env, origin, token) {
     ? Object.keys(compedMap(details.redline, adjList)).map(String)
     : [];
 
-  return json({
+  return {
     order_id: sub.id,
     first_name: firstName,
     summary: configSummary(details.config),
@@ -5057,7 +5077,7 @@ async function handleTrack(request, env, origin, token) {
     changes: trackChangeWindow(rows),
     shop_email: shopEmail(env),
     shop_phone: shopPhone(env),
-  }, 200, origin);
+  };
 }
 
 /* ---- POST /track/:token/change: "can we change something?" ----------------
@@ -6351,6 +6371,27 @@ export default {
         return await handleChat(request, env, origin);
       }
 
+      /* ROLE PORTALS (sales / builder / customer). A portal token on an
+         /admin route it is not allowed answers 403, never 401, so the CRM
+         page does not log the salesperson out over a money panel. */
+      if (path.startsWith("/portal/")) {
+        if (path === "/portal/login" && request.method === "POST") {
+          const rl = await rateLimit(request, env, "login-portal", 10, 900);
+          if (!rl.ok) return tooMany(rl.retryAfter, origin);
+        }
+        return await handlePortal(request, env, origin, path, {
+          json, issueSession, verifySession, revokeSession, bearerToken, requireAdmin: requireOwner,
+          orderHasDeposit, trackPayload, configSummary, buildSpecLines, designLinkFor
+        });
+      }
+      if (path.startsWith("/admin/") && path !== "/admin/login" && path !== "/admin/logout") {
+        const tok = bearerToken(request);
+        if (tok && !(await verifySession(env, "admin", tok))) {
+          const p = await verifySession(env, "portal", tok);
+          if (p && !(p.role === "sales" && salesMayUse(request.method, path))) return json({ error: "Forbidden for this role" }, 403, origin);
+        }
+      }
+
       if (path === "/admin/login" && request.method === "POST") {
         // Brute-force lockout: 10 attempts per IP per 15 minutes.
         const rl = await rateLimit(request, env, "login-admin", 10, 900);
@@ -6359,7 +6400,8 @@ export default {
       }
       // Server-side revoke. Always 200 so logout never strands the page.
       if (path === "/admin/logout" && request.method === "POST") {
-        const revoked = await revokeSession(env, "admin", bearerToken(request));
+        const revoked = (await revokeSession(env, "admin", bearerToken(request)))
+          || (await revokeSession(env, "portal", bearerToken(request))); // sales uses these pages too
         return json({ ok: true, revoked }, 200, origin);
       }
 
