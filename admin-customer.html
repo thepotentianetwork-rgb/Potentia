@@ -1430,7 +1430,7 @@ function copyAdjustmentsButton(s, list) {
    history + a CRM note, flags adjustments that no longer match, and is refused
    on an order with any deposit or payment. Patterns mirror ADDON_LINE_KEYS in
    worker/index.js. */
-var REMOVABLE_ADDON_RE = /^(Shutters|Flowerboxes\b|Cupola\b|Roof Ridge Vent\b|Skylight|Stairs|Ramp|Stationary Ladder|Attic Pull-Down Ladder|Shed Removal|Concrete Removal|Sprinkler Relocation\b|Floor Weather Guard|Radiant Roof Barrier|House Wrap|Hurricane Ties)/i;
+var REMOVABLE_ADDON_RE = /^(Shutters|Flowerboxes\b|Cupola\b|Roof Ridge Vent\b|Skylight|Stairs|Ramp|Stationary Ladder|Attic Pull-Down Ladder|Shed Removal|Concrete Removal|Sprinkler Relocation\b|Floor Weather Guard|Radiant Roof Barrier|House Wrap|Hurricane Ties|Insulation$|Spray Foam Insulation)/i;
 function removeAddonBlock(s, details) {
   var lines = ((details.redline && details.redline.addonLines) || []).filter(function (l) { return l && REMOVABLE_ADDON_RE.test(String(l.name)); });
   if (!lines.length || !details.config) return null;

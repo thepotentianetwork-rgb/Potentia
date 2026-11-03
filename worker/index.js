@@ -18,7 +18,7 @@
 // import) so it's evaluated once when the isolate boots, same as every
 // other module-level const here.
 
-import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor, porchAddsSize } from "./pricing.js";
+import { computePricing, repriceFinish, applyPricingOverrides, mergedPricingConfig, SELL, interiorPrice, insulationSell, foundationFinishPrice, gravelFoundationPrice, porchLineFor, porchDeckLineFor, porchIsPartialFor, porchLenFtFor, wallAreaFt, sellDoorUpcharge, sellPerSqft, flooringPrice, clampMarginTarget, elecIncludesFor, sellBarLedge, sprinklerHeadPrice, sprinklerFeet, concretePromoAmount, cardFeeSettings, cashDiscountSettings, concreteScopeFor, porchAddsSize } from "./pricing.js";
 import { applyColorEdit, detailsWithColors } from "./colors.js";
 import { ensureChosenColumn, chooseQuote, quotedAverage } from "./quotehistory.js";
 import { ensureNoteEditTables, editCrmNote, deleteCrmNote, editCustomerNotes, listNoteEdits } from "./noteedits.js";
@@ -3162,7 +3162,8 @@ const ADDON_LINE_KEYS = [
   [/^Stationary Ladder$/i, "statLadder"], [/^Attic Pull-Down Ladder$/i, "atticLadder"],
   [/^Shed Removal$/i, "shedRemoval"], [/^Concrete Removal$/i, "concreteRemoval"],
   [/^Sprinkler Relocation\b/i, "sprinklers"], [/^Floor Weather Guard$/i, "weatherGuard"],
-  [/^Radiant Roof Barrier$/i, "radiantBarrier"], [/^House Wrap$/i, "houseWrap"], [/^Hurricane Ties$/i, "hurricaneTies"]
+  [/^Radiant Roof Barrier$/i, "radiantBarrier"], [/^House Wrap$/i, "houseWrap"], [/^Hurricane Ties$/i, "hurricaneTies"],
+  [/^Insulation$/i, "insulation"], [/^Spray Foam Insulation$/i, "sprayFoam"]
 ];
 function addonKeyForLine(name) {
   const n = String(name || "").trim();
@@ -4386,6 +4387,13 @@ function computeOptionPrices(cfg) {
   Object.keys(ADDON_PERSQFT_KEYS).forEach((k) => {
     addons[k] = sellPerSqft(ADDON_PERSQFT_KEYS[k], cfg.w, cfg.l, cfg.h);
   });
+  // Insulation: enclosed room area (same as computePricing). Included in the
+  // finish price when a finish is selected; designer shows it as included.
+  addons.insulation = Math.round(insulationSell(encW * encD));
+  addons.sprayFoam = Math.round(sellPerSqft("Spray Foam Insulation", 1, encW * encD));
+  // Finish price without the batt insulation, for when spray foam replaces it.
+  interior.drywallNoIns = interiorPrice("drywall", encW, encD, true);
+  interior.paintedNoIns = interiorPrice("painted", encW, encD, true);
   // Ridge vent: $/linear ft of the main ridge (the shed's length), 12 Oct 2026.
   { const rate = (SELL.options.perLinFt || {})["Roof Ridge Vent"];
     addons.ridgeVent = Math.ceil(Number(cfg.l) || 0) * (rate != null ? rate : 15); }

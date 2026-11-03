@@ -113,7 +113,7 @@ let STYLE='gable', PITCH=6, ROOFTYPE='shingle', OVTYPE='gable', OVH=4,
     LOFT='none', LOFT_SIDE='ends', ELEC='none', INT_FINISH='none', FLOOR='none',
     ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
       skylight:false, stairs:false, statLadder:false, atticLadder:false,
-      weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
+      weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false, insulation:false, sprayFoam:false,
       doorAwning:false, fbColor:'brown', shutterColor:'brown',
       shedRemoval:false, concreteRemoval:false },
     doorsData=[], windowsData=[], ventsData=[], shelvesData=[],
@@ -187,7 +187,7 @@ export function resetConfig(){
   LOFT='none'; LOFT_SIDE='ends'; ELEC='none'; INT_FINISH='none'; FLOOR='none';
   ADDONS={ shutters:false, flowerboxes:false, cupola:'none',
     skylight:false, stairs:false, statLadder:false, atticLadder:false,
-    weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false,
+    weatherGuard:false, radiantBarrier:false, houseWrap:false, hurricaneTies:false, insulation:false, sprayFoam:false,
     doorAwning:false, fbColor:'brown', shutterColor:'brown',
     shedRemoval:false, concreteRemoval:false };
   doorsData=[]; windowsData=[]; ventsData=[]; shelvesData=[];
@@ -290,17 +290,28 @@ function padSqft(){ return Math.round(enclosedSqft()); }
      kind: 'drywall' (mud only) | 'painted' (mud + paint) | anything else -> 0
    Painted pays the tier outright. Drywall-and-mud takes unpaintedPct off and
    snaps to roundTo, because 15% off these tiers lands on half dollars. */
-export function interiorPrice(kind, wf, df){
+export function interiorPrice(kind, wf, df, noIns){
   if(kind!=='drywall' && kind!=='painted') return 0;
   var iv=SELL.interior; if(!iv) return 0;
   var floor=(wf||0)*(df||0);
   var tier=(floor>=iv.breakHi) ? iv.over
           :(floor>=iv.breakLo) ? iv.mid
           : iv.under;
-  if(kind==='painted') return tier;
+  /* A finished interior is always insulated (Nando, 2 Nov 2026): the
+     insulation + vapor barrier is folded into the finish price, billed on the
+     same enclosed floor area, so the button and the quote carry it and the
+     standalone Insulation add-on is never charged on top. */
+  var ins=noIns ? 0 : Math.round(insulationSell(floor));
+  if(kind==='painted') return tier+ins;
   var raw=tier*(1-(iv.unpaintedPct||0)/100);
   var step=iv.roundTo>0 ? iv.roundTo : 1;
-  return Math.round(raw/step)*step;
+  return Math.round(raw/step)*step+ins;
+}
+/* INSULATION w/ 6-mil vapor barrier, by enclosed floor sqft. Rate is the
+   Marissa Mills 12x16 quote: $2,135 cash / 192 sqft (~$11.12/sqft). */
+export function insulationSell(floorSqft){
+  var o=SELL.options.perSqft['Insulation']; if(!o) return 0;
+  return o.rate*(floorSqft||0);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -796,7 +807,14 @@ export let SELL = {
       "Floor Weather Guard":{rate:5.25,  basis:"floor"},
       "Radiant Roof Barrier":{rate:1.05, basis:"roof"},   // inside roof area
       "House Wrap":         {rate:3.10,  basis:"wall"},
-      "Hurricane Ties":     {rate:1.00,  basis:"floor"}
+      "Hurricane Ties":     {rate:1.00,  basis:"floor"},
+      // Insulation + 6-mil vapor barrier. 2135/192 = Mills 12x16 quote exactly.
+      "Insulation":         {rate:2135/192, basis:"floor"},
+      /* Closed-cell spray foam, contracted out. Contract ~ $3.00/sqft for 2in
+         closed-cell (Hansen Insulation UT, Oct 2026) over walls + roof deck
+         ~= 3.45x floor area on a 12x16 8ft gable -> ~$10.50/floor sqft.
+         Sold at ~50% margin: 10.50 / 0.5 = $21/floor sqft. */
+      "Spray Foam Insulation":{rate:21.00, basis:"floor"}
     }
   }
 };
@@ -1762,9 +1780,10 @@ export function computePricing(cfgIn, opts){
     var _floor = _encW * _encD;
     // A partial porch takes a notch, not a strip: bill the real room area.
     if(porchPartial()){ _floor = enclosedSqft(); _encW = _floor; _encD = 1; }
-    intSell = interiorPrice(intId, _encW, _encD);
+    var _noIns = !!(ADDONS && ADDONS.sprayFoam);
+    intSell = interiorPrice(intId, _encW, _encD, _noIns);
     intSellName = (intId==='drywall' ? 'Drywall & Mud' : 'Drywall, Mud & Paint')
-                + ' (' + _floor + ' sqft)';
+                + (_noIns ? '' : ' + Insulation') + ' (' + _floor + ' sqft)';
   }
   customerPrice += intSell;
 
@@ -1908,6 +1927,20 @@ export function computePricing(cfgIn, opts){
     _sq(ADDONS.radiantBarrier,'Radiant Roof Barrier');
     _sq(ADDONS.houseWrap,'House Wrap');
     _sq(ADDONS.hurricaneTies,'Hurricane Ties');
+    /* Standalone insulation: only on a bare interior. With a finish selected
+       it is already inside the finish price (interiorPrice), so no double
+       charge. Billed on the enclosed room, not the porch. */
+    /* Spray foam is its own upgrade and REPLACES the standard insulation:
+       with it on, neither the standalone batt line nor the batt folded into
+       the finish is charged (see intSell). */
+    if(ADDONS.sprayFoam){
+      var _sf=Math.round(sellPerSqft('Spray Foam Insulation',1,enclosedSqft()));
+      if(_sf>0){ addonSell+=_sf; addonLines.push({name:'Spray Foam Insulation',amt:_sf}); }
+    }
+    if(ADDONS.insulation && !ADDONS.sprayFoam && !(INT_FINISH==='drywall'||INT_FINISH==='painted')){
+      var _ip=Math.round(insulationSell(enclosedSqft()));
+      if(_ip>0){ addonSell+=_ip; addonLines.push({name:'Insulation',amt:_ip}); }
+    }
   }
   customerPrice += addonSell;
 
