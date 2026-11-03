@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "4fcc295";
-const WORKER_BUILT_AT = "2026-11-03T20:51:20.481Z";
+const WORKER_BUILD = "3b38ddd";
+const WORKER_BUILT_AT = "2026-11-03T21:26:45.681Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -11311,6 +11311,12 @@ async function handlePortal(request, env, origin, path, deps) {
     const login = String(b.login || "").trim().toLowerCase();
     const u = login && await env.DB.prepare("SELECT * FROM portal_users WHERE login = ? AND disabled_at IS NULL").bind(login).first();
     if (!u || !(await checkPassword(String(b.password || ""), u.pass_hash))) return json({ error: "Invalid credentials" }, 401, origin);
+    /* Customers and the team sign in on separate pages. "team" (portal-login)
+       refuses customer accounts; "customer" (portal-customer-login) refuses
+       everyone else. Same 401 so the page reveals nothing about the account. */
+    const page = String(b.portal || "");
+    if (page === "team" && u.role === "customer") return json({ error: "Invalid credentials" }, 401, origin);
+    if (page === "customer" && u.role !== "customer") return json({ error: "Invalid credentials" }, 401, origin);
     if (u.role === "customer" && !(await customerSub(env, u, deps))) return json({ error: "Your portal opens once your deposit is in." }, 403, origin);
     const token = await deps.issueSession(env, "portal", { role: u.role, uid: u.id, name: u.name || "" });
     if (!token) return json({ error: "Server not configured" }, 500, origin);
