@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "4d61b20";
-const WORKER_BUILT_AT = "2026-11-03T21:45:09.831Z";
+const WORKER_BUILD = "db77d69-dirty";
+const WORKER_BUILT_AT = "2026-11-03T22:01:33.677Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -11279,6 +11279,12 @@ async function ensurePortalTables(env) {
        author TEXT, role TEXT, text TEXT NOT NULL, created_at TEXT NOT NULL)`
   ];
   for (const s of stmts) await env.DB.prepare(s).run();
+  /* Additive: auto-created customer logins. needs_password=1 means nobody has
+     seen this account's password yet — the owner presses Reset in Team logins
+     to get one (shown once). No plaintext password is ever stored. */
+  for (const c of ["needs_password INTEGER", "auto_created_at TEXT"]) {
+    try { await env.DB.prepare("ALTER TABLE portal_users ADD COLUMN " + c).run(); } catch (e) {}
+  }
   ensured.add(env.DB);
 }
 
@@ -11330,7 +11336,7 @@ async function handlePortal(request, env, origin, path, deps) {
   if (path === "/portal/users") {
     if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
     if (method === "GET") {
-      const { results } = await env.DB.prepare("SELECT id, role, login, name, customer_id, disabled_at, created_at FROM portal_users ORDER BY id").all();
+      const { results } = await env.DB.prepare("SELECT id, role, login, name, customer_id, disabled_at, created_at, needs_password, auto_created_at FROM portal_users ORDER BY id").all();
       return json({ users: results || [] }, 200, origin);
     }
     if (method === "POST") {
@@ -11355,6 +11361,10 @@ async function handlePortal(request, env, origin, path, deps) {
       return json({ ok: true, role, login, password }, 200, origin);
     }
   }
+  if (path === "/portal/users/auto-sweep" && method === "POST") {
+    if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+    return json({ ok: true, ...(await autoCustomerLoginSweep(env, deps)) }, 200, origin);
+  }
   const um = path.match(/^\/portal\/users\/(\d+)\/(reset|disable)$/);
   if (um && method === "POST") {
     if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
@@ -11363,7 +11373,7 @@ async function handlePortal(request, env, origin, path, deps) {
       return json({ ok: true }, 200, origin);
     }
     const password = generatePassword();
-    await env.DB.prepare("UPDATE portal_users SET pass_hash = ?, disabled_at = NULL WHERE id = ?").bind(await hashPassword(password), Number(um[1])).run();
+    await env.DB.prepare("UPDATE portal_users SET pass_hash = ?, disabled_at = NULL, needs_password = NULL WHERE id = ?").bind(await hashPassword(password), Number(um[1])).run();
     return json({ ok: true, password }, 200, origin);
   }
 
@@ -11493,6 +11503,48 @@ async function handlePortal(request, env, origin, path, deps) {
 }
 
 /* The customer's newest won order that has a deposit, or null. */
+/* AUTO CUSTOMER LOGIN — once a customer has a Won order with a deposit on it,
+   make their portal login (email = username, linked to customer_id) so the
+   owner does not have to. Idempotent: an existing login for this customer or
+   this email is left alone. The password is random and never revealed here;
+   the account is flagged needs_password and Team logins shows "Reset to get
+   password" — Reset is the one place a password is shown, once.
+   Returns { created, id, reason }. Never throws. */
+async function autoCustomerLogin(env, customerId, deps, opts = {}) {
+  try {
+    customerId = Number(customerId);
+    if (!customerId || !env.DB) return { created: false, reason: "no customer" };
+    await ensurePortalTables(env);
+    const c = await env.DB.prepare("SELECT id, name, email FROM customers WHERE id = ?").bind(customerId).first();
+    if (!c) return { created: false, reason: "no such customer" };
+    const login = String(c.email || "").trim().toLowerCase();
+    if (!/^[a-z0-9._@+-]{3,80}$/.test(login) || login.indexOf("@") < 1) return { created: false, reason: "no usable email" };
+    const have = await env.DB.prepare("SELECT id, role, customer_id FROM portal_users WHERE customer_id = ? OR login = ?").bind(customerId, login).first();
+    if (have) return { created: false, id: have.id, reason: have.customer_id === customerId ? "exists" : "login taken" };
+    if (!opts.force && !(await customerSub(env, { customer_id: customerId }, deps))) return { created: false, reason: "no won order with a deposit" };
+    const now = new Date().toISOString();
+    try {
+      const r = await env.DB.prepare("INSERT INTO portal_users (role, login, name, pass_hash, customer_id, created_at, needs_password, auto_created_at) VALUES ('customer',?,?,?,?,?,1,?)")
+        .bind(login, String(c.name || "").slice(0, 80), await hashPassword(generatePassword()), customerId, now, now).run();
+      return { created: true, id: r.meta && r.meta.last_row_id, login };
+    } catch (e) { return { created: false, reason: "exists" }; }
+  } catch (e) { return { created: false, reason: "error: " + (e && e.message) }; }
+}
+/* Safety net for missed events (hourly cron + Team logins button): every
+   customer with a Won order and no portal login yet. */
+async function autoCustomerLoginSweep(env, deps) {
+  await ensurePortalTables(env);
+  const { results } = await env.DB.prepare(
+    "SELECT DISTINCT s.customer_id AS cid FROM submissions s WHERE s.status='won' AND s.customer_id IS NOT NULL AND s.customer_id NOT IN (SELECT customer_id FROM portal_users WHERE customer_id IS NOT NULL)"
+  ).all();
+  const created = [];
+  for (const r of results || []) {
+    const out = await autoCustomerLogin(env, r.cid, deps);
+    if (out.created) created.push({ customer_id: r.cid, login: out.login });
+  }
+  return { checked: (results || []).length, created };
+}
+
 async function customerSub(env, u, deps) {
   const { results } = await env.DB.prepare("SELECT id, customer_id FROM submissions WHERE customer_id=? AND status='won' ORDER BY id DESC").bind(u.customer_id).all();
   for (const s of results || []) if (await deps.orderHasDeposit(env, s)) return s;
@@ -13155,6 +13207,8 @@ async function recordInvoicePaid(env, row, amountPaidCents) {
     ? env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ?, fee_paid_cents = ? WHERE id = ?").bind(now, fee.feeCents, row.id)
     : env.DB.prepare("UPDATE invoices SET status = 'paid', paid_at = ? WHERE id = ?").bind(now, row.id));
   await env.DB.batch(stmts);
+  /* Deposit landed: make the customer's portal login if it is due. */
+  await autoCustomerLogin(env, row.customer_id, { orderHasDeposit });
 
   return { already: false, amount, fee: fromCents(fee.feeCents), discount: fromCents(discCents) };
 }
@@ -13683,7 +13737,8 @@ async function handleAddPayment(request, env, origin, customerId) {
     : await env.DB.prepare(
         "INSERT INTO payments (customer_id, amount, discount_amount, method, note, paid_at, created_at, submission_id) VALUES (?,?,?,?,?,?,?,?)"
       ).bind(customerId, amount, discount, method, note || null, paidAt, now, submissionId).run();
-  return json({ ok: true, id: res.meta.last_row_id, discount_amount: discount }, 200, origin);
+  const portal = await autoCustomerLogin(env, customerId, { orderHasDeposit });
+  return json({ ok: true, id: res.meta.last_row_id, discount_amount: discount, portal_login_created: !!portal.created }, 200, origin);
 }
 
 /* PUT the shed onto a payment that has none — or move one that went on the
@@ -14903,6 +14958,11 @@ async function handleUpdateSubmissionStatus(request, env, origin) {
       .run();
     // Moving out of lost clears the lost stamp so stats don't count it; reason/note kept as history.
     if (await hasLostColumns(env)) await env.DB.prepare("UPDATE submissions SET lost_at = NULL WHERE id = ?").bind(id).run();
+  }
+  /* Won with a deposit already on it: make the customer's portal login. */
+  if (status === "won") {
+    const so = await env.DB.prepare("SELECT customer_id FROM submissions WHERE id = ?").bind(id).first();
+    if (so && so.customer_id) await autoCustomerLogin(env, so.customer_id, { orderHasDeposit });
   }
   return json({ ok: true }, 200, origin);
 }
@@ -18681,6 +18741,8 @@ export default {
       if (env.DB) ctx.waitUntil(runAutoDormant(env.DB).catch(() => {}));
       return;
     }
+    // Safety net: portal logins for Won+deposit customers a missed event skipped.
+    if (env.DB) ctx.waitUntil(autoCustomerLoginSweep(env, { orderHasDeposit }).catch(() => {}));
     // Intl Phase 5 outreach sender: no-op unless OUTREACH_SEND_ENABLED === "true".
     if (env.CRM_DB) ctx.waitUntil(runOutreachTick(env).catch(() => {}));
     if (!env.CRM_DB || !env.GOOGLE_PLACES_API_KEY) return;
