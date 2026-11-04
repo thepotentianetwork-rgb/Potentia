@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "fabca08";
-const WORKER_BUILT_AT = "2026-11-03T23:37:27.815Z";
+const WORKER_BUILD = "5cb451e-dirty";
+const WORKER_BUILT_AT = "2026-11-04T21:55:04.416Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -11364,7 +11364,8 @@ const SALES_ALLOW = [
   ["GET", `^/admin/schedule$`], ["GET", `^/admin/production$`], ["GET", `^/admin/activity$`],
   ["POST", `^/admin/customers/${N}/(notes|followup|calls)$`], ["POST", `^/admin/notes/${N}$`],
   ["POST", `^/admin/submissions/${N}/(customer-notes|design|colors|choose|track-link|installs|plan|schedule-message)$`],
-  ["POST", `^/admin/submissions/(status|lost-reason)$`], ["POST", `^/admin/installs/${N}/done$`],
+  ["POST", `^/admin/submissions/(status|lost-reason)$`], ["POST", `^/admin/installs/${N}/(done|edit)$`],
+  ["GET", `^/admin/submissions/${N}/schedule-view$`], ["POST", `^/admin/submissions/${N}/undelay$`],
   ["DELETE", `^/admin/installs/${N}$`]
 ].map(([m, r]) => [m, new RegExp(r)]);
 function salesMayUse(method, path) {
@@ -11537,22 +11538,12 @@ async function handlePortal(request, env, origin, path, deps) {
         return json({ ok: true }, 200, origin);
       }
       if (jm[2] === "undelay") {
-        // Remove a delay logged with "dates" (a job note "<item>: delay[ — reason]"). Only delay notes on this job.
-        const n = await env.DB.prepare("SELECT id, text FROM job_notes WHERE id=? AND submission_id=?").bind(Number(b.note_id), sid).first();
-        if (!n || !isDelayNote(n.text)) return json({ error: "Not a delay on this job" }, 400, origin);
-        await env.DB.prepare("DELETE FROM job_notes WHERE id=?").bind(n.id).run();
-        await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)").bind(sid, sess.name || "builder", "builder", "Delay cleared: " + String(n.text).slice(0, 300), now()).run();
-        return json({ ok: true }, 200, origin);
+        const out = await clearDelay(env, sid, Number(b.note_id), sess.name || "builder", "builder");
+        return json(out.error ? out : { ok: true }, out.error ? 400 : 200, origin);
       }
       if (jm[2] === "dates") {
-        // Move a shop/install date, or log a delay against it — the owner sees it in the schedule + job notes.
-        const inst = await env.DB.prepare("SELECT id, item, install_date FROM installs WHERE id=? AND submission_id=?").bind(Number(b.install_id), sid).first();
-        if (!inst) return json({ error: "Unknown install" }, 400, origin);
-        if (b.date && !/^\d{4}-\d{2}-\d{2}$/.test(b.date)) return json({ error: "Bad date" }, 400, origin);
-        if (b.date) await env.DB.prepare("UPDATE installs SET install_date=? WHERE id=?").bind(b.date, inst.id).run();
-        const msg = `${inst.item}: ${b.date ? `moved ${inst.install_date} → ${b.date}` : "delay"}${b.reason ? " — " + String(b.reason).slice(0, 300) : ""}`;
-        await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)").bind(sid, sess.name || "builder", "builder", msg, now()).run();
-        return json({ ok: true }, 200, origin);
+        const out = await editInstall(env, { sid, installId: Number(b.install_id), date: b.date, days: b.days, reason: b.reason, delay: b.delay, author: sess.name || "builder", role: "builder" });
+        return json(out.error ? out : { ok: true, ...out }, out.error ? 400 : 200, origin);
       }
     }
     return json({ error: "Not found" }, 404, origin);
@@ -11663,7 +11654,8 @@ const CUST_STAGE = { prep: "Site prep", pour: "Concrete pour", concrete: "Concre
   materials: "Materials gathered", shop: "Built in our shop", shed: "Build / install at your place", install: "Build / install at your place" };
 function stageKind(item) {
   const k = String(item || "").toLowerCase();
-  if (k === "shop" || k === "materials") return "shop";
+  if (k === "shop") return "shop";
+  if (k === "materials") return "materials";
   if (k === "prep" || k === "pour" || k === "concrete" || k === "gravel") return "site";
   return "build";
 }
@@ -11700,7 +11692,7 @@ async function customerSchedule(env, sid) {
   }
   for (const n of notes) {
     const k = scheduleNoteKind(n.text);
-    if (k === "delay" && !cleared.has(n.text)) {
+    if (k === "delay") {
       const m = String(n.text).match(/^([\w ]+): delay(?: \u2014 (.*))?$/s);
       const item = m ? m[1] : "";
       delays.push({ stage: CUST_STAGE[item.trim().toLowerCase()] || item, reason: (m && m[2]) || "", at: n.created_at, active: true });
@@ -11719,6 +11711,44 @@ async function customerSchedule(env, sid) {
     build_dates: build.map((d) => ({ start: d.start, end: d.end, days: d.days, done: d.done, label: d.label })),
     delays, notes: cust
   };
+}
+
+/* ONE SCHEDULE EDIT, SHARED BY THE CRM (owner + advisors) AND THE BUILDER
+   PORTAL. Moves a stage's date and/or days on the installs row — the same row
+   the customer portal reads — and writes the matching job note so the move or
+   delay shows up for the customer and the team. No date + delay => a delay. */
+async function editInstall(env, o) {
+  const inst = await env.DB.prepare("SELECT id, submission_id, item, install_date, days FROM installs WHERE id=?" + (o.sid ? " AND submission_id=?" : ""))
+    .bind(...(o.sid ? [o.installId, o.sid] : [o.installId])).first();
+  if (!inst) return { error: "Unknown schedule stage" };
+  const date = o.date ? String(o.date).slice(0, 10) : null;
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: "Bad date" };
+  let days = o.days === "" || o.days == null ? null : Number(o.days);
+  if (days != null && !(days > 0 && days <= 30)) return { error: "Days must be 1–30" };
+  const moved = date && date !== String(inst.install_date || "").slice(0, 10);
+  const reDays = days != null && Number(inst.days) !== days;
+  if (!moved && !reDays && !o.delay) return { error: "Nothing changed" };
+  if (moved || reDays) await env.DB.prepare("UPDATE installs SET install_date=?, days=? WHERE id=?")
+    .bind(moved ? date : inst.install_date, reDays ? days : inst.days, inst.id).run();
+  const why = o.reason ? " \u2014 " + String(o.reason).trim().slice(0, 300) : "";
+  const msgs = [];
+  if (moved) msgs.push(`${inst.item}: moved ${inst.install_date} \u2192 ${date}${why}`);
+  if (o.delay && !moved) msgs.push(`${inst.item}: delay${why}`);
+  for (const m of msgs) await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)")
+    .bind(inst.submission_id, o.author || "team", o.role || "admin", m, new Date().toISOString()).run();
+  return { ok: true, submission_id: inst.submission_id, notes: msgs };
+}
+async function clearDelay(env, sid, noteId, author, role) {
+  const n = await env.DB.prepare("SELECT id, text FROM job_notes WHERE id=? AND submission_id=?").bind(noteId, sid).first();
+  if (!n || !isDelayNote(n.text)) return { error: "Not a delay on this job" };
+  await env.DB.prepare("DELETE FROM job_notes WHERE id=?").bind(n.id).run();
+  await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)").bind(sid, author || "team", role || "admin", "Delay cleared: " + String(n.text).slice(0, 300), new Date().toISOString()).run();
+  return { ok: true };
+}
+/* Open (un-cleared) delay notes with ids, for the team's editors. */
+async function openDelays(env, sid) {
+  const { results } = await env.DB.prepare("SELECT id, author, text, created_at FROM job_notes WHERE submission_id=? ORDER BY id").bind(sid).all();
+  return (results || []).filter((n) => isDelayNote(n.text));
 }
 
 // ---- end inlined portals.js ----
@@ -18286,6 +18316,34 @@ export default {
          method is what actually separates this from the DELETE below, so the
          order is convention rather than load-bearing — but the next person to
          add a POST on /admin/installs/ is the one who would find out. */
+      /* SCHEDULE EDITING — owner + advisors (sales allow-list). Same edit the
+         builder portal makes, so one change updates every view incl. the
+         customer portal. */
+      {
+        const em = path.match(/^\/admin\/installs\/(\d+)\/edit$/);
+        if (em && request.method === "POST") {
+          const who = await requireAuth(request, env);
+          if (!who) return json({ error: "Unauthorized" }, 401, origin);
+          const b = await request.json().catch(() => ({}));
+          const out = await editInstall(env, { installId: Number(em[1]), date: b.date, days: b.days, reason: b.reason, delay: !!b.delay,
+            author: (who && who.name) || (who && who.role === "sales" ? "Advisor" : "Owner"), role: who && who.role === "sales" ? "sales" : "admin" });
+          return json(out, out.error ? 400 : 200, origin);
+        }
+        const sm = path.match(/^\/admin\/submissions\/(\d+)\/(schedule-view|undelay)$/);
+        if (sm) {
+          const who = await requireAuth(request, env);
+          if (!who) return json({ error: "Unauthorized" }, 401, origin);
+          const sid = Number(sm[1]);
+          if (sm[2] === "schedule-view" && request.method === "GET") {
+            return json({ ...(await customerSchedule(env, sid)), open_delays: await openDelays(env, sid) }, 200, origin);
+          }
+          if (sm[2] === "undelay" && request.method === "POST") {
+            const b = await request.json().catch(() => ({}));
+            const out = await clearDelay(env, sid, Number(b.note_id), (who && who.name) || "Team", who && who.role === "sales" ? "sales" : "admin");
+            return json(out, out.error ? 400 : 200, origin);
+          }
+        }
+      }
       if (path.startsWith("/admin/installs/") && path.endsWith("/done") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const id = Number(path.slice("/admin/installs/".length, -"/done".length));
