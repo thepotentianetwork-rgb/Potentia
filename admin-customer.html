@@ -2073,7 +2073,7 @@ function portalInviteText(kind) {
 function portalInviteControl() {
   var wrap = document.createElement('span');
   wrap.className = 'portal-invite';
-  wrap.style.cssText = 'display:inline-flex;gap:2px;align-items:stretch';
+  wrap.style.cssText = 'display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap';
   function mk(label, kind, title) {
     var b = document.createElement('button');
     b.type = 'button'; b.className = 'sep-btn'; b.textContent = label; b.title = title;
@@ -2085,8 +2085,20 @@ function portalInviteControl() {
     });
     return b;
   }
-  wrap.appendChild(mk('Copy portal invite', 'sms', 'Copies the SMS invite (portal link, their email, password hint). No password is included.'));
-  wrap.appendChild(mk('Email', 'email', 'Copies the email version (subject line first).'));
+  /* Send invite: opens a ready-to-send email to the customer in the mail
+     app (send from info@shedpro-utah.com). The worker has no send-mail
+     access (Gmail is read-only), so this is a prefilled draft, one click. */
+  var send = document.createElement('a');
+  send.className = 'btn';
+  send.textContent = 'Send invite';
+  var full = portalInviteText('email');
+  var subj = full.split('\n')[0].replace(/^Subject: /, '');
+  var body = full.split('\n').slice(2).join('\n');
+  send.href = 'mailto:' + encodeURIComponent(CUSTOMER_EMAIL || '') + '?subject=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body);
+  send.title = CUSTOMER_EMAIL ? 'Opens the portal invite email to ' + CUSTOMER_EMAIL + ', ready to send.' : 'No email on file for this customer.';
+  wrap.appendChild(send);
+  wrap.appendChild(mk('Copy SMS', 'sms', 'Copies the SMS invite. No password is included.'));
+  wrap.appendChild(mk('Copy email', 'email', 'Copies the email version (subject line first).'));
   return wrap;
 }
 
