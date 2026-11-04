@@ -2095,11 +2095,31 @@ function portalInviteControl() {
   var full = portalInviteText('email');
   var subj = full.split('\n')[0].replace(/^Subject: /, '');
   var body = full.split('\n').slice(2).join('\n');
-  /* Gmail web compose, not mailto: (mailto opened the Mac's iCloud Mail).
+  /* Gmail, never mailto: (mailto opened the Mac's iCloud Mail).
+     Phones/tablets: open the Gmail app via googlegmail://co; if the app
+     doesn't take over within ~1.5s, fall back to Gmail web compose.
+     Desktop (Gmail has no Mac app): Gmail web compose in a new tab.
      Sends from whichever Gmail account is signed in, so use info@. */
-  send.href = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(CUSTOMER_EMAIL || '') + '&su=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body);
+  var toE = encodeURIComponent(CUSTOMER_EMAIL || '');
+  var appUrl = 'googlegmail://co?to=' + toE + '&subject=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body);
+  var webUrl = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + toE + '&su=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body);
+  send.href = webUrl;
   send.target = '_blank';
   send.rel = 'noopener';
+  var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (isMobile) {
+    send.addEventListener('click', function (e) {
+      e.preventDefault();
+      var left = false;
+      var mark = function () { left = true; };
+      document.addEventListener('visibilitychange', mark, { once: true });
+      window.addEventListener('pagehide', mark, { once: true });
+      window.addEventListener('blur', mark, { once: true });
+      window.location.href = appUrl;
+      setTimeout(function () { if (!left && !document.hidden) window.location.href = webUrl; }, 1500);
+    });
+  }
   send.title = CUSTOMER_EMAIL ? 'Opens the portal invite in Gmail to ' + CUSTOMER_EMAIL + ', ready to send.' : 'No email on file for this customer.';
   wrap.appendChild(send);
   wrap.appendChild(mk('Copy SMS', 'sms', 'Copies the SMS invite. No password is included.'));
