@@ -61,6 +61,12 @@ nav{position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:ce
 .iframe-wrap{position:absolute;inset:0;overflow:hidden;pointer-events:none}
 .iframe-wrap iframe{width:1400px;height:900px;border:none;transform-origin:top left;transform:scale(0.3)}
 .grid-item.wide .iframe-wrap iframe{transform:scale(0.48)}
+/* Static poster under every live preview. Phones/touch never mount the
+   iframes (five 1400x900 cross-origin documents got iOS Safari to kill the
+   tab); desktop mounts each one only when its card nears the viewport. */
+.iframe-wrap .poster{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:top left;display:block}
+.iframe-wrap iframe{position:relative;opacity:0;transition:opacity .4s}
+.iframe-wrap iframe.live{opacity:1}
 .grid-overlay{position:absolute;inset:0;background:rgba(4,4,7,0.65);display:flex;flex-direction:column;justify-content:flex-end;padding:28px;opacity:0;transition:opacity 0.3s;pointer-events:all}
 .grid-item:hover .grid-overlay{opacity:1}
 .grid-tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.3em;color:var(--silver);text-transform:uppercase;margin-bottom:8px}
@@ -237,7 +243,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
   <h2 class="section-title reveal">Work that<br><em>keeps working</em></h2>
   <div class="grid reveal">
     <div class="grid-item wide" onclick="window.open('https://shedpro-utah.com','_blank')">
-      <div class="iframe-wrap"><iframe src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah"></iframe></div>
+      <div class="iframe-wrap"><img class="poster" src="img/work-shedpro.jpg" alt="ShedPro Utah website preview" loading="lazy" decoding="async"><iframe data-src="https://www.shedpro-utah.com" loading="lazy" scrolling="no" title="ShedPro Utah" tabindex="-1"></iframe></div>
       <div class="grid-overlay">
         <p class="grid-tag">Website + Sales Platform · Utah</p>
         <p class="grid-name">ShedPro LLC</p>
@@ -245,7 +251,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       </div>
     </div>
     <div class="grid-item" onclick="window.open('https://chonis.net','_blank')">
-      <div class="iframe-wrap"><iframe src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis"></iframe></div>
+      <div class="iframe-wrap"><img class="poster" src="img/work-chonis.jpg" alt="Chonis website preview" loading="lazy" decoding="async"><iframe data-src="https://www.chonis.net" loading="lazy" scrolling="no" title="Chonis" tabindex="-1"></iframe></div>
       <div class="grid-overlay">
         <p class="grid-tag">Fashion · Brand Launch</p>
         <p class="grid-name">Chonis</p>
@@ -253,7 +259,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       </div>
     </div>
     <div class="grid-item" onclick="window.open('https://www.juansautodetailing.com','_blank')">
-      <div class="iframe-wrap"><iframe src="https://www.juansautodetailing.com" loading="lazy" scrolling="no" title="Juan's Auto Detailing"></iframe></div>
+      <div class="iframe-wrap"><img class="poster" src="img/work-juans.jpg" alt="Juan's Auto Detailing website preview" loading="lazy" decoding="async"><iframe data-src="https://www.juansautodetailing.com" loading="lazy" scrolling="no" title="Juan's Auto Detailing" tabindex="-1"></iframe></div>
       <div class="grid-overlay">
         <p class="grid-tag">Auto Detailing · Tremonton, UT</p>
         <p class="grid-name">Juan's Auto Detailing</p>
@@ -261,7 +267,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       </div>
     </div>
     <div class="grid-item" onclick="window.open('https://www.tireprosshop.com','_blank')">
-      <div class="iframe-wrap"><iframe src="https://www.tireprosshop.com" loading="lazy" scrolling="no" title="Tire Pros Shop"></iframe></div>
+      <div class="iframe-wrap"><img class="poster" src="img/work-tirepros.jpg" alt="Tire Pros Shop website preview" loading="lazy" decoding="async"><iframe data-src="https://www.tireprosshop.com" loading="lazy" scrolling="no" title="Tire Pros Shop" tabindex="-1"></iframe></div>
       <div class="grid-overlay">
         <p class="grid-tag">Tire &amp; TPMS Service · Logan, UT</p>
         <p class="grid-name">Tire Pros Shop</p>
@@ -269,7 +275,7 @@ footer{border-top:1px solid var(--dim);padding:48px;display:flex;justify-content
       </div>
     </div>
     <div class="grid-item" onclick="window.open('https://www.alvaradoscc.com','_blank')">
-      <div class="iframe-wrap"><iframe src="https://www.alvaradoscc.com" loading="lazy" scrolling="no" title="Alvarado’s Custom &amp; Countertops"></iframe></div>
+      <div class="iframe-wrap"><img class="poster" src="img/work-alvarados.jpg" alt="Alvarado’s Custom &amp; Countertops website preview" loading="lazy" decoding="async"><iframe data-src="https://www.alvaradoscc.com" loading="lazy" scrolling="no" title="Alvarado’s Custom &amp; Countertops" tabindex="-1"></iframe></div>
       <div class="grid-overlay">
         <p class="grid-tag">Countertops &amp; Cabinets · Utah</p>
         <p class="grid-name">Alvarado’s Custom &amp; Countertops</p>
@@ -422,9 +428,30 @@ reveals.forEach(function(el) { io.observe(el); });
    a client's website.
    The CSS keeps its fixed scale as the starting value, so this only ever
    improves on it and the cards still fill without JavaScript. */
+/* Live previews: desktop + fine pointer only, mounted lazily. On phones/touch
+   the iframes are removed and the static posters stay. */
+var liveOK = window.matchMedia('(min-width: 1024px) and (hover: hover) and (pointer: fine)').matches;
+(function () {
+  var frames = [].slice.call(document.querySelectorAll('.iframe-wrap iframe[data-src]'));
+  if (!liveOK || !('IntersectionObserver' in window)) {
+    frames.forEach(function (f) { f.parentNode.removeChild(f); });
+    return;
+  }
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (!e.isIntersecting) return;
+      var f = e.target;
+      io.unobserve(f);
+      f.addEventListener('load', function () { f.classList.add('live'); });
+      f.src = f.getAttribute('data-src');
+      fitPreviews();
+    });
+  }, { rootMargin: '200px 0px' });
+  frames.forEach(function (f) { io.observe(f); });
+})();
 function fitPreviews() {
   document.querySelectorAll('.iframe-wrap').forEach(function (wrap) {
-    var frame = wrap.querySelector('iframe');
+    var frame = wrap.querySelector('iframe[src]');
     if (!frame) return;
     var box = wrap.getBoundingClientRect();
     if (!box.width || !box.height) return;
