@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "7227203";
-const WORKER_BUILT_AT = "2026-11-04T22:02:00.375Z";
+const WORKER_BUILD = "086317d-dirty";
+const WORKER_BUILT_AT = "2026-11-04T22:11:30.832Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -11560,6 +11560,8 @@ async function handlePortal(request, env, origin, path, deps) {
     let my_notes = [];
     try { my_notes = (await env.DB.prepare("SELECT id, text, created_at FROM job_notes WHERE submission_id=? AND role='customer' ORDER BY id DESC LIMIT 20").bind(sub.id).all()).results || []; } catch (e) {}
     my_notes = my_notes.map((n) => ({ id: n.id, text: String(n.text || "").replace(/^Customer note \u2014 /, ""), at: n.created_at }));
+    const PH = { materials: "Material Day", shop: "Shop Day", install: "Install Day" };
+    if (Array.isArray(data.phases)) data.phases = data.phases.filter((p) => PH[p.key]).map((p) => ({ ...p, label: PH[p.key] }));
     return json({ ...data, ...sched, warranties: WARRANTIES, warranty_note: WARRANTY_NOTE, my_notes }, 200, origin);
   }
   /* Customer leaves a note for the team. Lands in job_notes (role=customer), the
@@ -11650,8 +11652,10 @@ function isDelayNote(text) { return /^[\w ]+: delay( — |$)/.test(String(text |
    installs rows the builder calendar uses. Never returns install.note (crew
    notes), expenses, costs, or general builder/admin notes: only schedule
    lines (delays / moves / cleared) and the order notes the customer gave us. */
-const CUST_STAGE = { prep: "Site prep", pour: "Concrete pour", concrete: "Concrete pad", gravel: "Gravel pad",
-  materials: "Materials gathered", shop: "Built in our shop", shed: "Build / install at your place", install: "Build / install at your place" };
+/* Customer-facing timeline is exactly three stages (Nov 2026): Material Day,
+   Shop Day, Install Day. Site prep / concrete / gravel rows stay internal and
+   are not shown to the customer. */
+const CUST_STAGE = { materials: "Material Day", shop: "Shop Day", shed: "Install Day", install: "Install Day", build: "Install Day" };
 function stageKind(item) {
   const k = String(item || "").toLowerCase();
   if (k === "shop") return "shop";
@@ -11672,16 +11676,16 @@ function scheduleNoteKind(text) {
   return null;
 }
 function prettyItem(t) {
-  return String(t || "").replace(/^([\w ]+?):/, (m, k) => (CUST_STAGE[k.trim().toLowerCase()] || k) + ":");
+  return String(t || "").replace(/^([\w ]+?):/, (m, k) => (CUST_STAGE[k.trim().toLowerCase()] || "Schedule") + ":");
 }
 async function customerSchedule(env, sid) {
   let inst = [], notes = [], details = {};
   try { inst = (await env.DB.prepare("SELECT id, item, install_date, days, done_at FROM installs WHERE submission_id=? ORDER BY install_date, id").bind(sid).all()).results || []; } catch (e) {}
   try { notes = (await env.DB.prepare("SELECT id, text, created_at FROM job_notes WHERE submission_id=? ORDER BY id DESC LIMIT 60").bind(sid).all()).results || []; } catch (e) {}
   try { const r = await env.DB.prepare("SELECT details FROM submissions WHERE id=?").bind(sid).first(); details = JSON.parse(r && r.details) || {}; } catch (e) {}
-  const days = inst.filter((r) => r.install_date).map((r) => {
+  const days = inst.filter((r) => r.install_date && stageKind(r.item) !== "site").map((r) => {
     const n = Math.max(1, Number(r.days) || 1);
-    return { item: String(r.item || ""), label: CUST_STAGE[String(r.item || "").toLowerCase()] || String(r.item || ""),
+    return { item: String(r.item || ""), label: CUST_STAGE[String(r.item || "").toLowerCase()] || "Install Day",
       kind: stageKind(r.item), start: String(r.install_date).slice(0, 10), end: addDaysISO(r.install_date, n), days: n, done: !!r.done_at };
   });
   const delays = [], updates = [];
@@ -11695,7 +11699,7 @@ async function customerSchedule(env, sid) {
     if (k === "delay") {
       const m = String(n.text).match(/^([\w ]+): delay(?: \u2014 (.*))?$/s);
       const item = m ? m[1] : "";
-      delays.push({ stage: CUST_STAGE[item.trim().toLowerCase()] || item, reason: (m && m[2]) || "", at: n.created_at, active: true });
+      delays.push({ stage: CUST_STAGE[item.trim().toLowerCase()] || "", reason: (m && m[2]) || "", at: n.created_at, active: true });
     } else if (k === "moved") {
       // Newest first (ORDER BY id DESC): only the most recent date change shows.
       if (updates.some((u) => u.kind === "moved")) continue;
