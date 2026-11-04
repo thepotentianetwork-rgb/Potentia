@@ -375,6 +375,37 @@ export const WARRANTY_NOTE = "Warranty covers defects in materials and workmansh
 /* A delay logged by the builder portal's "dates" action with no new date. */
 export function isDelayNote(text) { return /^[\w ]+: delay( — |$)/.test(String(text || "")); }
 
+/* DELAY NOTES NEVER CARRY DATES (Nov 2026, Dillon #81): a delay reason typed
+   as "Rain pushed us 1 day. Shop day Mon Nov 10, install Tue Nov 11." went
+   stale the moment the stage rows moved again, so the customer saw one set of
+   dates in the delay box and another on the timeline. The reason now keeps
+   only the "why"; any sentence naming a calendar date is stripped on save, on
+   every later date edit, and again at render time (legacy rows). The customer
+   portal shows the live stage dates right under the delay instead. */
+const MON = "(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?";
+const DATE_RE = new RegExp("\\b(?:" + MON + "\\s*\\d{1,2}(?:st|nd|rd|th)?\\b|\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?" + MON + "|\\d{4}-\\d{2}-\\d{2}|\\d{1,2}/\\d{1,2}(?:/\\d{2,4})?)", "i");
+export function stripDelayDates(reason) {
+  const parts = String(reason || "").split(/(?<=[.!?;\n])\s+|\s+[\u2014\u2013]\s+|\n+/);
+  return parts.filter((p) => p.trim() && !DATE_RE.test(p)).join(" ").replace(/\s+/g, " ").trim();
+}
+/* Rewrite every open delay note on the job so its text is date-free. Called
+   on each schedule edit (CRM, advisor, builder) — idempotent. */
+export async function syncDelayNotes(env, sid) {
+  let fixed = 0;
+  try {
+    const rows = (await env.DB.prepare("SELECT id, text FROM job_notes WHERE submission_id=?").bind(sid).all()).results || [];
+    for (const n of rows) {
+      if (!isDelayNote(n.text)) continue;
+      const m = String(n.text).match(/^([\w ]+): delay(?: \u2014 (.*))?$/s);
+      if (!m) continue;
+      const r = stripDelayDates(m[2] || "");
+      const next = `${m[1]}: delay${r ? " \u2014 " + r : ""}`;
+      if (next !== n.text) { await env.DB.prepare("UPDATE job_notes SET text=? WHERE id=?").bind(next, n.id).run(); fixed++; }
+    }
+  } catch (e) {}
+  return fixed;
+}
+
 /* CUSTOMER SCHEDULE — the shop/build days we are aiming for, any delays and
    customer-safe notes, for the customer portal timeline. Built from the same
    installs rows the builder calendar uses. Never returns install.note (crew
@@ -427,7 +458,7 @@ export async function customerSchedule(env, sid) {
     if (k === "delay") {
       const m = String(n.text).match(/^([\w ]+): delay(?: \u2014 (.*))?$/s);
       const item = m ? m[1] : "";
-      delays.push({ stage: CUST_STAGE[item.trim().toLowerCase()] || "", reason: (m && m[2]) || "", at: n.created_at, active: true });
+      delays.push({ stage: CUST_STAGE[item.trim().toLowerCase()] || "", reason: stripDelayDates((m && m[2]) || ""), at: n.created_at, active: true });
     } else if (k === "moved") {
       // Newest first (ORDER BY id DESC): only the most recent date change shows.
       if (updates.some((u) => u.kind === "moved")) continue;
@@ -439,6 +470,9 @@ export async function customerSchedule(env, sid) {
   for (const u of updates) cust.push({ kind: "schedule", title: u.kind === "moved" ? "Schedule update" : "Delay resolved", text: u.text, at: u.at });
   const first = (k) => days.filter((d) => d.kind === k).sort((a, b) => a.start < b.start ? -1 : 1);
   const shop = first("shop"), build = first("build");
+  // Live dates the portal renders under each delay (never from the note text).
+  const current = days.filter((d) => !d.done && d.kind !== "materials").map((d) => ({ label: d.label, kind: d.kind, start: d.start, end: d.end, days: d.days }));
+  for (const d of delays) d.current = current;
   return {
     schedule: days,
     shop_dates: shop.map((d) => ({ start: d.start, end: d.end, days: d.days, done: d.done, label: d.label })),
@@ -467,7 +501,7 @@ export async function editInstall(env, o) {
   const why = o.reason ? " \u2014 " + String(o.reason).trim().slice(0, 300) : "";
   const msgs = [];
   if (moved) msgs.push(`${inst.item}: moved ${inst.install_date} \u2192 ${date}${why}`);
-  if (o.delay && !moved) msgs.push(`${inst.item}: delay${why}`);
+  if (o.delay && !moved) { const r = stripDelayDates(String(o.reason || "").slice(0, 300)); msgs.push(`${inst.item}: delay${r ? " \u2014 " + r : ""}`); }
   /* ONE DATE-CHANGE NOTE PER JOB (Nov 2026): editing dates several times
      used to stack a "moved" note per tweak on the customer's Notes & updates.
      A new move replaces every older moved note on the job, so only the most
@@ -480,7 +514,8 @@ export async function editInstall(env, o) {
   }
   for (const m of msgs) await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)")
     .bind(inst.submission_id, o.author || "team", o.role || "admin", m, new Date().toISOString()).run();
-  return { ok: true, submission_id: inst.submission_id, notes: msgs };
+  const delaysSynced = await syncDelayNotes(env, inst.submission_id);
+  return { ok: true, submission_id: inst.submission_id, notes: msgs, delays_synced: delaysSynced };
 }
 export async function clearDelay(env, sid, noteId, author, role) {
   const n = await env.DB.prepare("SELECT id, text FROM job_notes WHERE id=? AND submission_id=?").bind(noteId, sid).first();
