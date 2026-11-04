@@ -2086,8 +2086,8 @@ function portalInviteControl() {
     });
     return b;
   }
-  /* Send invite: opens a ready-to-send email to the customer in the mail
-     app (send from info@shedpro-utah.com). The worker has no send-mail
+  /* Send invite: opens a ready-to-send email to the customer in Gmail
+     compose (send from info@shedpro-utah.com). The worker has no send-mail
      access (Gmail is read-only), so this is a prefilled draft, one click. */
   var send = document.createElement('a');
   send.className = 'btn';
@@ -2095,8 +2095,12 @@ function portalInviteControl() {
   var full = portalInviteText('email');
   var subj = full.split('\n')[0].replace(/^Subject: /, '');
   var body = full.split('\n').slice(2).join('\n');
-  send.href = 'mailto:' + encodeURIComponent(CUSTOMER_EMAIL || '') + '?subject=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body);
-  send.title = CUSTOMER_EMAIL ? 'Opens the portal invite email to ' + CUSTOMER_EMAIL + ', ready to send.' : 'No email on file for this customer.';
+  /* Gmail web compose, not mailto: (mailto opened the Mac's iCloud Mail).
+     Sends from whichever Gmail account is signed in, so use info@. */
+  send.href = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(CUSTOMER_EMAIL || '') + '&su=' + encodeURIComponent(subj) + '&body=' + encodeURIComponent(body);
+  send.target = '_blank';
+  send.rel = 'noopener';
+  send.title = CUSTOMER_EMAIL ? 'Opens the portal invite in Gmail to ' + CUSTOMER_EMAIL + ', ready to send.' : 'No email on file for this customer.';
   wrap.appendChild(send);
   wrap.appendChild(mk('Copy SMS', 'sms', 'Copies the SMS invite. No password is included.'));
   wrap.appendChild(mk('Copy email', 'email', 'Copies the email version (subject line first).'));
