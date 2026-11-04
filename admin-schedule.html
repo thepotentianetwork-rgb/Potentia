@@ -68,7 +68,7 @@ h2{font-size:30px;font-weight:300;color:var(--bright);margin-bottom:6px}
 .cal-more{font-family:'DM Mono',monospace;font-size:9px;color:var(--dim)}
 /* FILLED SQUARES (Nov 2026) — same rules as the builder portal: a day is
    filled with its kind (shop orange, install blue, concrete prep white, pour
-   grey); a day with several kinds is split into side-by-side stripes. */
+   grey, materials purple); a day with several kinds is split into side-by-side stripes. */
 .cal-day.has{border-color:transparent;border-radius:2px}
 .cal-day.has .cal-num{color:#0b0d10;font-weight:600}
 .cal-day.has .cal-chip{color:#0b0d10;border-color:rgba(11,13,16,0.35);background:rgba(255,255,255,0.45)}
@@ -523,13 +523,14 @@ function byDay(installs) {
   return map;
 }
 
-var KCOL = { shop: '#f6941f', shed: '#2cc0fd', prep: '#ffffff', pour: '#8a8f99', other: '#555a63' };
-var KLABEL = { shop: 'Shop', shed: 'Install', prep: 'Concrete prep', pour: 'Pour' };
+var KCOL = { shop: '#f6941f', shed: '#2cc0fd', prep: '#ffffff', pour: '#8a8f99', materials: '#a78bfa', other: '#555a63' };
+var KLABEL = { shop: 'Shop', shed: 'Install', prep: 'Concrete prep', pour: 'Pour', materials: 'Materials' };
 function calKind(item) {
   if (item === 'shop') return 'shop';
   if (item === 'shed') return 'shed';
   if (item === 'prep' || item === 'gravel') return 'prep';
   if (item === 'pour' || item === 'concrete') return 'pour';
+  if (item === 'materials') return 'materials';
   return 'other';
 }
 function calFill(jobs) {
@@ -551,7 +552,7 @@ function renderCalendar(installs) {
 
   var legend = document.createElement('div');
   legend.className = 'cal-legend';
-  legend.innerHTML = ['shop', 'shed', 'prep', 'pour'].map(function (k) {
+  legend.innerHTML = ['materials', 'shop', 'shed', 'prep', 'pour'].map(function (k) {
     return '<span><i style="background:' + KCOL[k] + '"></i>' + KLABEL[k] + '</span>';
   }).join('');
   host.appendChild(legend);

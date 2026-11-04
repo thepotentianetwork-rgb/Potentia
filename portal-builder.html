@@ -65,7 +65,7 @@ table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--d
 .cal-g .d.today{border-color:var(--sp-blue)}
 .cal-g .d.x{opacity:.25}
 .cal-g .d.ev{color:#0b0d10;font-weight:600;border-radius:2px}
-.k-shop{background:var(--sp-orange)}.k-shed{background:var(--sp-blue)}.k-prep{background:#fff}.k-pour{background:#8a8f99}.k-other{background:var(--dim)}
+.k-shop{background:var(--sp-orange)}.k-shed{background:var(--sp-blue)}.k-prep{background:#fff}.k-pour{background:#8a8f99}.k-materials{background:#a78bfa}.k-other{background:var(--dim)}
 .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}.legend span{display:flex;gap:5px;align-items:center;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;color:var(--silver);text-transform:uppercase}.legend i{width:9px;height:9px;border-radius:1px;display:block}
 </style>
 </head>
@@ -81,11 +81,11 @@ if(!TOKEN) location.href='portal-login.html';
 document.getElementById('logout').onclick=function(){fetch(API_BASE+'/portal/logout',{method:'POST',keepalive:true,headers:{'Authorization':'Bearer '+TOKEN}}).catch(function(){});localStorage.removeItem('potentia_portal_token');location.href='portal-login.html';};
 
 var OPEN={},JOBS=[],CM=null;
-function kind(it){it=String(it||'').toLowerCase();if(it==='shop')return 'shop';if(it==='shed')return 'shed';if(it==='prep')return 'prep';if(it==='pour'||it==='concrete')return 'pour';return 'other';}
-var KLABEL={shop:'Shop',shed:'Install',prep:'Concrete prep',pour:'Pour',other:'Other'};
+function kind(it){it=String(it||'').toLowerCase();if(it==='shop')return 'shop';if(it==='shed')return 'shed';if(it==='prep')return 'prep';if(it==='pour'||it==='concrete')return 'pour';if(it==='materials')return 'materials';return 'other';}
+var KLABEL={shop:'Shop',shed:'Install',prep:'Concrete prep',pour:'Pour',materials:'Materials',other:'Other'};
 function iso(d){return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);}
 function isDelay(t){return /^[\w ]+: delay( — |$)/.test(String(t||''));}
-var KCOL={shop:'#f6941f',shed:'#2cc0fd',prep:'#ffffff',pour:'#8a8f99',other:'#555a63'};
+var KCOL={shop:'#f6941f',shed:'#2cc0fd',prep:'#ffffff',pour:'#8a8f99',materials:'#a78bfa',other:'#555a63'};
 function fill(ev){var ks=[];ev.forEach(function(e){if(ks.indexOf(e.k)<0)ks.push(e.k);});if(ks.length===1)return KCOL[ks[0]];var st=100/ks.length;return 'linear-gradient(90deg,'+ks.map(function(k,i){return KCOL[k]+' '+(i*st)+'% '+((i+1)*st)+'%';}).join(',')+')';}
 function calendar(){var el=document.getElementById('cal');var now=new Date();if(!CM)CM=new Date(now.getFullYear(),now.getMonth(),1);
   var map={};JOBS.forEach(function(j){(j.installs||[]).forEach(function(i){if(!i.install_date)return;var p=i.install_date.split('-');var d0=new Date(+p[0],+p[1]-1,+p[2]);var n=Math.max(1,Math.ceil(Number(i.days)||1));
@@ -94,7 +94,7 @@ function calendar(){var el=document.getElementById('cal');var now=new Date();if(
   var h='<div class="cal-h"><button class="btn" data-cm="-1">‹</button><span class="label" style="margin:0">'+first.toLocaleDateString(undefined,{month:'long',year:'numeric'})+'</span><button class="btn" data-cm="1">›</button></div><div class="cal-g">'+['S','M','T','W','T','F','S'].map(function(x){return '<div class="dw">'+x+'</div>';}).join('');
   for(var c=0;c<42;c++){var d=new Date(start);d.setDate(start.getDate()+c);var key=iso(d),ev=map[key]||[];
     h+='<div class="d'+(d.getMonth()!==m?' x':'')+(key===iso(now)?' today':'')+(ev.length?' ev':'')+'"'+(ev.length?' title="'+esc(ev.map(function(e){return e.t;}).join('\n'))+'" data-j="'+ev[0].id+'" style="cursor:pointer;background:'+fill(ev)+'"':'')+'>'+d.getDate()+'</div>';}
-  h+='</div><div class="legend">'+['shop','shed','prep','pour'].map(function(k){return '<span><i class="k-'+k+'"></i>'+KLABEL[k]+'</span>';}).join('')+'</div>';
+  h+='</div><div class="legend">'+['materials','shop','shed','prep','pour'].map(function(k){return '<span><i class="k-'+k+'"></i>'+KLABEL[k]+'</span>';}).join('')+'</div>';
   el.innerHTML=h;
   el.querySelectorAll('[data-cm]').forEach(function(b){b.onclick=function(){CM=new Date(y,m+Number(b.getAttribute('data-cm')),1);calendar();};});
   el.querySelectorAll('[data-j]').forEach(function(b){b.onclick=function(){var id=b.getAttribute('data-j');OPEN[id]=true;var j=document.getElementById('job-'+id);if(j){j.classList.add('open');j.scrollIntoView({behavior:'smooth',block:'start'});}};});}

@@ -352,7 +352,7 @@ select:focus{border-color:var(--sp-blue)}
 #sched-top .st-row{display:flex;flex-wrap:wrap;gap:8px}
 #sched-top .st{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#1a1e27;font-size:14px}
 #sched-top .st i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid #555}
-#sched-top .k-shop{background:#f6941f}#sched-top .k-shed{background:#2cc0fd}#sched-top .k-prep{background:#fff}#sched-top .k-pour{background:#8a8f99}#sched-top .k-other{background:#3a4050}
+#sched-top .k-shop{background:#f6941f}#sched-top .k-shed{background:#2cc0fd}#sched-top .k-prep{background:#fff}#sched-top .k-pour{background:#8a8f99}#sched-top .k-materials{background:#a78bfa}#sched-top .k-other{background:#3a4050}
 #sched-top .st.done{opacity:.55}#sched-top .warn{color:#ff8a72;margin-top:8px;font-size:13px}
 </style>
 </head>
@@ -990,8 +990,8 @@ function renderSchedTop(subs, installs) {
   var rows = (installs || []).filter(function (i) { return won.indexOf(i.submission_id) !== -1 && i.install_date; })
     .sort(function (a, b) { return String(a.install_date) < String(b.install_date) ? -1 : 1; });
   if (!rows.length) { el.style.display = 'none'; return; }
-  var K = function (it) { it = String(it || '').toLowerCase(); return it === 'shop' ? 'shop' : it === 'shed' ? 'shed' : it === 'prep' ? 'prep' : (it === 'pour' || it === 'concrete') ? 'pour' : 'other'; };
-  var L = { shop: 'Shop', shed: 'Install', prep: 'Concrete prep', pour: 'Pour', other: '' };
+  var K = function (it) { it = String(it || '').toLowerCase(); return it === 'shop' ? 'shop' : it === 'shed' ? 'shed' : it === 'prep' ? 'prep' : (it === 'pour' || it === 'concrete') ? 'pour' : it === 'materials' ? 'materials' : 'other'; };
+  var L = { shop: 'Shop', shed: 'Install', prep: 'Concrete prep', pour: 'Pour', materials: 'Materials', other: '' };
   var fmt = function (d) { var x = new Date(String(d).slice(0, 10) + 'T00:00:00'); return x.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); };
   var h = '<div class="st-h">Build schedule</div><div class="st-row">';
   rows.forEach(function (i) { var k = K(i.item), n = Number(i.days) || 1;

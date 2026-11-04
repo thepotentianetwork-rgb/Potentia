@@ -425,6 +425,8 @@ export async function customerSchedule(env, sid) {
       const item = m ? m[1] : "";
       delays.push({ stage: CUST_STAGE[item.trim().toLowerCase()] || item, reason: (m && m[2]) || "", at: n.created_at, active: true });
     } else if (k === "moved") {
+      // Newest first (ORDER BY id DESC): only the most recent date change shows.
+      if (updates.some((u) => u.kind === "moved")) continue;
       updates.push({ kind: "moved", text: prettyItem(n.text), at: n.created_at });
     }
   }
@@ -462,6 +464,16 @@ export async function editInstall(env, o) {
   const msgs = [];
   if (moved) msgs.push(`${inst.item}: moved ${inst.install_date} \u2192 ${date}${why}`);
   if (o.delay && !moved) msgs.push(`${inst.item}: delay${why}`);
+  /* ONE DATE-CHANGE NOTE PER JOB (Nov 2026): editing dates several times
+     used to stack a "moved" note per tweak on the customer's Notes & updates.
+     A new move replaces every older moved note on the job, so only the most
+     recent date change remains. Delay notes are untouched. */
+  if (moved) {
+    try {
+      const old = (await env.DB.prepare("SELECT id, text FROM job_notes WHERE submission_id=?").bind(inst.submission_id).all()).results || [];
+      for (const n of old) if (scheduleNoteKind(n.text) === "moved") await env.DB.prepare("DELETE FROM job_notes WHERE id=?").bind(n.id).run();
+    } catch (e) {}
+  }
   for (const m of msgs) await env.DB.prepare("INSERT INTO job_notes (submission_id, author, role, text, created_at) VALUES (?,?,?,?,?)")
     .bind(inst.submission_id, o.author || "team", o.role || "admin", m, new Date().toISOString()).run();
   return { ok: true, submission_id: inst.submission_id, notes: msgs };
