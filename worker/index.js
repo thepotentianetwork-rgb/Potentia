@@ -48,7 +48,7 @@ import { runQuery, parseQueryParams } from "./crmquery.js";
 import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
 import { runAutoDormant, ensureStatusChangedColumn } from "./dormant.js";
 import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
-import { handlePortal, salesMayUse, autoCustomerLogin, autoCustomerLoginSweep } from "./portals.js";
+import { handlePortal, salesMayUse, autoCustomerLogin, autoCustomerLoginSweep, editInstall, clearDelay, openDelays, customerSchedule } from "./portals.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -6592,6 +6592,34 @@ export default {
          method is what actually separates this from the DELETE below, so the
          order is convention rather than load-bearing — but the next person to
          add a POST on /admin/installs/ is the one who would find out. */
+      /* SCHEDULE EDITING — owner + advisors (sales allow-list). Same edit the
+         builder portal makes, so one change updates every view incl. the
+         customer portal. */
+      {
+        const em = path.match(/^\/admin\/installs\/(\d+)\/edit$/);
+        if (em && request.method === "POST") {
+          const who = await requireAuth(request, env);
+          if (!who) return json({ error: "Unauthorized" }, 401, origin);
+          const b = await request.json().catch(() => ({}));
+          const out = await editInstall(env, { installId: Number(em[1]), date: b.date, days: b.days, reason: b.reason, delay: !!b.delay,
+            author: (who && who.name) || (who && who.role === "sales" ? "Advisor" : "Owner"), role: who && who.role === "sales" ? "sales" : "admin" });
+          return json(out, out.error ? 400 : 200, origin);
+        }
+        const sm = path.match(/^\/admin\/submissions\/(\d+)\/(schedule-view|undelay)$/);
+        if (sm) {
+          const who = await requireAuth(request, env);
+          if (!who) return json({ error: "Unauthorized" }, 401, origin);
+          const sid = Number(sm[1]);
+          if (sm[2] === "schedule-view" && request.method === "GET") {
+            return json({ ...(await customerSchedule(env, sid)), open_delays: await openDelays(env, sid) }, 200, origin);
+          }
+          if (sm[2] === "undelay" && request.method === "POST") {
+            const b = await request.json().catch(() => ({}));
+            const out = await clearDelay(env, sid, Number(b.note_id), (who && who.name) || "Team", who && who.role === "sales" ? "sales" : "admin");
+            return json(out, out.error ? 400 : 200, origin);
+          }
+        }
+      }
       if (path.startsWith("/admin/installs/") && path.endsWith("/done") && request.method === "POST") {
         if (!(await requireAuth(request, env))) return json({ error: "Unauthorized" }, 401, origin);
         const id = Number(path.slice("/admin/installs/".length, -"/done".length));

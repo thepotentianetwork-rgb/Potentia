@@ -65,7 +65,7 @@ body{display:block;align-items:initial;padding:18px}
 .ev.next{border-color:var(--sp-orange);box-shadow:0 0 0 1px rgba(246,148,31,.35),0 0 24px rgba(246,148,31,.12)}
 .ev h3{font-weight:400;font-size:19px;color:var(--bright)}
 .tag{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;border-radius:20px;margin-left:6px;vertical-align:middle}
-.tag.shop{background:rgba(246,148,31,.18);color:var(--sp-orange)} .tag.build{background:rgba(44,192,253,.16);color:var(--sp-blue)} .tag.site{background:#1d2029;color:var(--silver)}
+.tag.shop{background:rgba(246,148,31,.18);color:var(--sp-orange)} .tag.build{background:rgba(44,192,253,.16);color:var(--sp-blue)} .tag.site,.tag.materials{background:#1d2029;color:var(--silver)}
 .tag.ok{background:rgba(80,200,120,.15);color:#6fd29a} .tag.late{background:rgba(224,104,79,.16);color:#ff8a72}
 .delay{border:1px solid rgba(224,104,79,.5);background:rgba(224,104,79,.08);border-radius:10px;padding:12px 14px;margin:8px 0}
 .note{border-left:3px solid var(--sp-orange);padding:8px 12px;margin:10px 0;background:rgba(255,255,255,.02);border-radius:0 8px 8px 0;white-space:pre-wrap}
@@ -92,9 +92,9 @@ document.getElementById('logout').onclick=function(){fetch(API_BASE+'/portal/log
 function money(n){return n==null?'—':'$'+Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});}
 function dt(s,o){if(!s)return '';var d=new Date(String(s).slice(0,10)+'T12:00:00');return isNaN(d)?esc(s):d.toLocaleDateString(undefined,o||{weekday:'short',month:'short',day:'numeric'});}
 function range(d){return d.end&&d.end!==d.start?dt(d.start)+' – '+dt(d.end):dt(d.start);}
-var TODAY=new Date().toISOString().slice(0,10);
+var TODAY=(function(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');})(new Date());
 function until(s){var n=Math.round((new Date(s+'T12:00:00')-new Date(TODAY+'T12:00:00'))/864e5);return n>1?'in '+n+' days':n===1?'tomorrow':n===0?'today':'';}
-var KLBL={shop:'Shop day',build:'Build day',site:'Site prep'};
+var KLBL={shop:'Shop day',build:'Build day',site:'Site prep',materials:'Materials'};
 var calM=null,SCHED=[];
 function drawCal(){var el=document.getElementById('cal');if(!el)return;var y=calM.getFullYear(),m=calM.getMonth();var map={};
  SCHED.forEach(function(d){for(var i=0;i<d.days;i++){var x=new Date(d.start+'T12:00:00');x.setDate(x.getDate()+i);map[x.toISOString().slice(0,10)]=d.kind;}});

@@ -346,6 +346,15 @@ select:focus{border-color:var(--sp-blue)}
   .logout{padding:7px 12px;font-size:10px}
 }
 </style>
+<style>
+#sched-top{margin:10px 0 16px;padding:12px 14px;border:1px solid #2a2f3a;border-radius:10px;background:#12151c}
+#sched-top .st-h{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:#9aa3b2;margin-bottom:8px}
+#sched-top .st-row{display:flex;flex-wrap:wrap;gap:8px}
+#sched-top .st{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#1a1e27;font-size:14px}
+#sched-top .st i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid #555}
+#sched-top .k-shop{background:#f6941f}#sched-top .k-shed{background:#2cc0fd}#sched-top .k-prep{background:#fff}#sched-top .k-pour{background:#8a8f99}#sched-top .k-other{background:#3a4050}
+#sched-top .st.done{opacity:.55}#sched-top .warn{color:#ff8a72;margin-top:8px;font-size:13px}
+</style>
 </head>
 <body>
 
@@ -365,6 +374,7 @@ select:focus{border-color:var(--sp-blue)}
 <main>
   <p class="sec-label">Customer</p>
   <h2 id="customer-name">Loading…</h2>
+  <div id="sched-top" style="display:none"></div>
 
   <div class="info-grid">
     <div class="info-item"><div class="il">Email</div><div class="iv" id="c-email">—</div></div>
@@ -969,6 +979,29 @@ function scheduleSummary(s, installs) {
   return 'Build schedule \u00b7 ' + (next ? 'next ' : 'last ') + label + ' (' + mine.length + ' booked)';
 }
 
+
+/* SCHEDULE FIRST (Nando, 4 Nov 2026): once a won order has dates, they lead
+   the customer page, in the calendar's colours (shop orange, install blue,
+   concrete prep white, pour grey). Same installs rows every portal reads. */
+function renderSchedTop(subs, installs) {
+  var esc = function (v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+  var el = document.getElementById('sched-top'); if (!el) return;
+  var won = (subs || []).filter(function (s) { return s.status === 'won'; }).map(function (s) { return s.id; });
+  var rows = (installs || []).filter(function (i) { return won.indexOf(i.submission_id) !== -1 && i.install_date; })
+    .sort(function (a, b) { return String(a.install_date) < String(b.install_date) ? -1 : 1; });
+  if (!rows.length) { el.style.display = 'none'; return; }
+  var K = function (it) { it = String(it || '').toLowerCase(); return it === 'shop' ? 'shop' : it === 'shed' ? 'shed' : it === 'prep' ? 'prep' : (it === 'pour' || it === 'concrete') ? 'pour' : 'other'; };
+  var L = { shop: 'Shop', shed: 'Install', prep: 'Concrete prep', pour: 'Pour', other: '' };
+  var fmt = function (d) { var x = new Date(String(d).slice(0, 10) + 'T00:00:00'); return x.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); };
+  var h = '<div class="st-h">Build schedule</div><div class="st-row">';
+  rows.forEach(function (i) { var k = K(i.item), n = Number(i.days) || 1;
+    var end = n > 1 ? (function () { var x = new Date(String(i.install_date).slice(0, 10) + 'T00:00:00'); x.setDate(x.getDate() + n - 1); return ' \u2013 ' + x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); })() : '';
+    h += '<span class="st' + (i.done_at ? ' done' : '') + '"><i class="k-' + k + '"></i><b>' + esc(L[k] || (INSTALL_ITEM_LABELS[i.item] || i.item)) + '</b> ' + esc(fmt(i.install_date) + end) + (i.done_at ? ' \u2713' : '') + '</span>'; });
+  h += '</div>';
+  var shop = rows.filter(function (i) { return i.item === 'shop'; })[0], shed = rows.filter(function (i) { return i.item === 'shed'; })[0];
+  if (shop && shed && String(shop.install_date) >= String(shed.install_date)) h += '<div class="warn">\u26a0 Shop day is not before the install \u2014 fix it in Build schedule below.</div>';
+  el.innerHTML = h; el.style.display = '';
+}
 function renderInstallBlock(card, s, details, installs) {
   var items = stagesFor(details, installs, s.id);
 
@@ -1016,6 +1049,30 @@ function renderInstallBlock(card, s, details, installs) {
         });
       });
       row.appendChild(done);
+
+      /* EDIT IN PLACE (owner + advisors). Same /admin/installs/:id/edit the
+         builder portal's change uses, so one save updates the CRM, builder
+         calendar and the customer portal. Leave date blank + tick Delay to
+         log a delay without moving it. */
+      (function (latest) {
+        var ed = document.createElement('span');
+        ed.className = 'install-form sched-edit';
+        var di = document.createElement('input'); di.type = 'date'; di.value = String(latest.install_date || '').slice(0, 10);
+        var dd = document.createElement('input'); dd.type = 'number'; dd.min = '1'; dd.max = '30'; dd.step = '1'; dd.style.width = '56px';
+        dd.value = latest.days != null ? latest.days : 1; dd.title = 'Days';
+        var why = document.createElement('input'); why.placeholder = 'Reason (shown to customer)'; why.style.width = '170px';
+        var dl = document.createElement('label'); dl.style.fontSize = '12px';
+        var dc = document.createElement('input'); dc.type = 'checkbox'; dl.appendChild(dc); dl.appendChild(document.createTextNode(' Delay'));
+        var sv = document.createElement('button'); sv.type = 'button'; sv.textContent = 'Save';
+        sv.addEventListener('click', function () {
+          sv.disabled = true;
+          authFetch('/admin/installs/' + latest.id + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: di.value || null, days: dd.value || null, reason: why.value, delay: dc.checked }) })
+            .then(function (r) { sv.disabled = false; if (r.ok) loadCustomer(); else alert((r.data && r.data.error) || 'Could not save'); });
+        });
+        [di, dd, why, dl, sv].forEach(function (x) { ed.appendChild(x); });
+        row.appendChild(ed);
+      })(latest);
 
       /* One tap opens Google Calendar with the whole event filled in — dates,
          address, phone, and the customer already on the guest list. Pressing
@@ -1088,6 +1145,31 @@ function renderInstallBlock(card, s, details, installs) {
       row.appendChild(form);
     }
     block.appendChild(row);
+  });
+
+  /* Sanity: the shop day must come before the install. */
+  var by = {}; installs.filter(function (i) { return i.submission_id === s.id; }).forEach(function (i) { if (!by[i.item]) by[i.item] = String(i.install_date).slice(0, 10); });
+  if (by.shop && by.shed && by.shop >= by.shed) {
+    var w = document.createElement('div'); w.className = 'plan-warn';
+    w.textContent = '\u26a0 Shop day (' + by.shop + ') is not before the install (' + by.shed + '). Fix one so the customer timeline adds up.';
+    block.insertBefore(w, block.children[1] || null);
+  }
+  /* WHAT THE CUSTOMER SEES + open delays, from the same endpoint data the
+     customer portal uses. */
+  var cv = document.createElement('div'); cv.className = 'cust-view'; cv.style.cssText = 'margin-top:10px;font-size:13px';
+  block.appendChild(cv);
+  if (String(s.status) === 'won') authFetch('/admin/submissions/' + s.id + '/schedule-view').then(function (r) {
+    if (!r.ok) return; var v = r.data, f = function (a) { return a && a.length ? a[0].start + (a[0].end && a[0].end !== a[0].start ? ' \u2192 ' + a[0].end : '') : 'TBD'; };
+    cv.innerHTML = '<b>Customer portal shows:</b> Shop ' + f(v.shop_dates) + ' \u00b7 Build/install ' + f(v.build_dates) + ' \u00b7 ' +
+      ((v.open_delays || []).length ? (v.open_delays.length + ' delay(s)') : 'On track');
+    (v.open_delays || []).forEach(function (n) {
+      var r2 = document.createElement('div'); r2.style.marginTop = '4px';
+      r2.textContent = '\u26a0 ' + n.text + ' (' + String(n.created_at).slice(0, 10) + ', ' + (n.author || '') + ') ';
+      var x = document.createElement('button'); x.type = 'button'; x.className = 'ghost'; x.textContent = 'Clear delay';
+      x.addEventListener('click', function () { if (!confirm('Clear this delay? The customer stops seeing it.')) return;
+        authFetch('/admin/submissions/' + s.id + '/undelay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note_id: n.id }) }).then(function () { loadCustomer(); }); });
+      r2.appendChild(x); cv.appendChild(r2);
+    });
   });
 
   card.appendChild(collapsibleBlock(block, 'sched-' + s.id, scheduleSummary(s, installs)));
@@ -3747,6 +3829,7 @@ function loadCustomer() {
     document.getElementById('c-since').textContent = c.created_at ? new Date(c.created_at).toLocaleDateString() : '—';
 
     var submissions = r.data.submissions || [], notes = r.data.notes || [], payments = r.data.payments || [], installs = r.data.installs || [];
+    renderSchedTop(submissions, installs);
     /* Before renderPayments, which names a build on every payment row. */
     SUBMISSIONS = submissions;
     fillSubmissionPicker();
