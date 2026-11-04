@@ -640,10 +640,6 @@ function appendContactParams(permalink, submission, details, staffOrder) {
    permalink: reusing the stored path is exactly what breaks. */
 var DESIGNER_URL = 'https://www.shedpro-utah.com/designer.html';
 
-function designerBase() {
-  return DESIGNER_URL;
-}
-
 /* base64url, matching designPermalink() in designer.html so a link built here
    is one loadDesignFromHash() can read. */
 function encodeDesignConfig(config) {
@@ -692,102 +688,6 @@ function copyText(text) {
   });
 }
 
-function makeCustomerLinkButton(details) {
-  var btn = plainBtn('Copy Customer Link');
-
-  btn.addEventListener('click', function () {
-    var base = designerBase();
-    if (!base || !details.config) {
-      btn.textContent = 'No design saved';
-      setTimeout(function () { btn.textContent = 'Copy Customer Link'; }, 2000);
-      return;
-    }
-    btn.disabled = true;
-    btn.textContent = 'Creating…';
-    fetch(API_BASE + '/shed/design', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: details.config })
-    })
-      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
-      .then(function (res) {
-        if (!res.ok || !res.j || !res.j.code) throw new Error('save failed');
-        var url = base + '?d=' + res.j.code;
-        return copyText(url).then(function () {
-          btn.textContent = 'Copied ✓';
-        }).catch(function () {
-          // Clipboard blocked — show the link so it can be copied by hand
-          // rather than leaving them with nothing.
-          window.prompt('Copy this link:', url);
-          btn.textContent = 'Copy Customer Link';
-        });
-      })
-      .catch(function () {
-        btn.textContent = 'Failed — retry';
-      })
-      .then(function () {
-        btn.disabled = false;
-        setTimeout(function () {
-          if (btn.textContent === 'Copied ✓') btn.textContent = 'Copy Customer Link';
-        }, 2500);
-      });
-  });
-  return btn;
-}
-
-/* ---- THE CUSTOMER'S TRACKING LINK -----------------------------------------
-   ONE BUTTON, AND IT COPIES. There were two: Copy, and a Text that handed an
-   sms: link to the phone's own messages app. This shop sends from Google Voice,
-   so that second button went out from the wrong number or nowhere at all, on
-   every press. Voice cannot be deep-linked to a thread with a message already
-   in it either — see the long note in admin-voice.js, where the Text action
-   beside the phone number opens Voice and copies the NUMBER for exactly that
-   reason. So the useful thing here is the link on the clipboard, ready to paste
-   into whatever is actually writing the message.
-
-   Only on a won order: the worker refuses to issue a link for anything else,
-   since a link that answers "not found" when the customer taps it is worse than
-   no link at all. */
-function trackingButtons(submissionId) {
-  var copy = plainBtn('Copy Tracking Link');
-  copy.title = 'Copies their progress link, to paste into Google Voice or an email.';
-
-  /* Fetched once and remembered, so a second press does not ask again. */
-  var cached = null;
-
-  function put(url) {
-    copyText(url).then(function () {
-      copy.textContent = 'Copied \u2713';
-      setTimeout(function () { copy.textContent = 'Copy Tracking Link'; }, 2500);
-    }).catch(function () {
-      /* Clipboard blocked \u2014 show it rather than leaving them with nothing. */
-      window.prompt('Copy this link:', url);
-      copy.textContent = 'Copy Tracking Link';
-    });
-  }
-
-  copy.addEventListener('click', function () {
-    if (cached) { put(cached); return; }
-    copy.disabled = true;
-    copy.textContent = 'Getting link\u2026';
-    authFetch('/admin/submissions/' + submissionId + '/track-link', { method: 'POST' })
-      .then(function (res) {
-        copy.disabled = false;
-        copy.textContent = 'Copy Tracking Link';
-        if (!res.ok || !res.data || !res.data.url) throw new Error('no link');
-        cached = res.data.url;
-        put(cached);
-      })
-      .catch(function () {
-        copy.disabled = false;
-        copy.textContent = 'Failed \u2014 retry';
-        setTimeout(function () { copy.textContent = 'Copy Tracking Link'; }, 2500);
-      });
-  });
-
-  return copy;
-}
-
 /* Hands a mailto: link to the browser. One function so the browser test can
    watch what would have opened instead of leaving the page.
    There was an smsHref beside this, and it is gone: an sms: link opens the
@@ -796,67 +696,7 @@ function openExternal(url) {
   window.location.href = url;
 }
 
-/* ---- THE BUILD SCHEDULE, AS A MESSAGE --------------------------------------
-   One button, and it copies. The worker writes the message — every booked stage
-   in plain words, the tracking link, add-to-calendar links for the days at their
-   place — and it goes on the clipboard to paste into Google Voice.
-
-   It used to open the phone's own text app with the message filled in, with
-   Copy Message and Email It beside it. That top button never worked here: this
-   shop sends from Google Voice, so an sms: link addressed the wrong line. What
-   is left is the one of the three that was always doing the real work.
-
-   The words come from the worker, not from here, so when Twilio is connected
-   the automatic text says exactly what this one does. */
-function scheduleSendButton(submissionId) {
-  var LABEL = 'Copy Build Schedule';
-  var btn = plainBtn(LABEL);
-  btn.title = 'Copies their dates and tracking link, to paste into Google Voice or an email.';
-
-  var cached = null;
-
-  function put(text) {
-    copyText(text).then(function () {
-      btn.textContent = 'Copied \u2713';
-      setTimeout(function () { btn.textContent = LABEL; }, 2500);
-    }).catch(function () {
-      window.prompt('Copy this message:', text);
-      btn.textContent = LABEL;
-    });
-  }
-
-  btn.addEventListener('click', function () {
-    if (cached) { put(cached); return; }
-    btn.disabled = true;
-    btn.textContent = 'Writing\u2026';
-    authFetch('/admin/submissions/' + submissionId + '/schedule-message', { method: 'POST' })
-      .then(function (res) {
-        btn.disabled = false;
-        btn.textContent = LABEL;
-        if (!res.ok || !res.data || !res.data.text) {
-          /* "Plan the build first" is the common one and is not a failure —
-             there is nothing to send until the dates exist. */
-          var why = (res.data && res.data.error) || 'Failed \u2014 retry';
-          btn.textContent = /plan the build/i.test(why) ? 'Plan the build first' : 'Failed \u2014 retry';
-          btn.title = why;
-          setTimeout(function () { btn.textContent = LABEL; }, 3000);
-          return;
-        }
-        cached = res.data.text;
-        put(cached);
-      })
-      .catch(function () {
-        btn.disabled = false;
-        btn.textContent = 'Failed \u2014 retry';
-        setTimeout(function () { btn.textContent = LABEL; }, 2500);
-      });
-  });
-
-  return btn;
-}
-
-/* The outline-button look the Copy Customer Link button already uses, which was
-   five inline styles repeated by hand. */
+/* The shared outline-button look (five inline styles, kept in one place). */
 function plainBtn(label) {
   var btn = document.createElement('button');
   btn.type = 'button';
@@ -3186,7 +3026,6 @@ function renderOrders(submissions, installs) {
       designLink.textContent = 'View 3D Design ↗';
       designLink.title = 'Opens the design with this customer\'s info prefilled — for staff, not for sending.';
       actions.appendChild(designLink);
-      actions.appendChild(makeCustomerLinkButton(details));
     }
 
     var quoteLink = document.createElement('a');
@@ -3196,16 +3035,11 @@ function renderOrders(submissions, installs) {
     quoteLink.textContent = 'Generate Quote';
     actions.appendChild(quoteLink);
 
-    /* The customer's own progress page. Won orders only — that is the only
-       thing the worker will issue a link for. */
+    /* Copy Tracking Link / Copy Build Schedule were removed: the customer
+       portal now shows progress, dates, and documents directly. */
     if (s.status === 'won') {
-      actions.appendChild(trackingButtons(s.id));
       /* Won -> hand it to a builder (role portals). */
       if (window.AdminRoles) actions.appendChild(AdminRoles.assignControl(s.id));
-      /* Only once dates are booked — before that there is no schedule to send. */
-      if ((installs || []).some(function (i) { return i.submission_id === s.id; })) {
-        actions.appendChild(scheduleSendButton(s.id));
-      }
     }
 
     card.appendChild(top);

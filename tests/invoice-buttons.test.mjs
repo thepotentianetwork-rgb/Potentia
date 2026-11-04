@@ -310,6 +310,7 @@ function txt(el) { return (el && el.textContent || '').replace(/\\s+/g, ' ').tri
     R.trackOnWon = trackBtns(won || document.body).map(txt);
     R.trackOnQuote = trackBtns(priced === won ? document.createElement('div') : priced).map(txt);
     R.trackOnAnyCard = cards().map(function(c){return trackBtns(c).length});
+    R.custLinkCount = [].slice.call(document.querySelectorAll('button')).filter(function(b){return /customer link/i.test(txt(b))}).length;
 
     if (won) {
       /* Whatever the page hands to the clipboard is the link it would give the
@@ -664,21 +665,10 @@ check('and saying no sends nothing',
   invoicePosts.filter((p) => !p.preview).length === 1,
   invoicePosts.map((p) => (p.preview ? 'preview' : 'SEND') + ':' + p.kind));
 
-console.log('\n-- the customer\u2019s tracking link --');
-check('a won order offers one way of getting the link',
-  JSON.stringify(R.trackOnWon) === JSON.stringify(['Copy Tracking Link']), R.trackOnWon);
-check('a quote that has not sold offers neither',
-  (R.trackOnQuote || []).length === 0, R.trackOnQuote);
-/* Both won orders, and only those: a tracking link is a thing a sold job has. */
-check('every won order has it, and nothing else does',
-  JSON.stringify(R.trackOnAnyCard) === '[0,1,1,0]', R.trackOnAnyCard);
-check('pressing Copy produces a real link', R.copyBtnFound === true &&
-  /\/track\.html\?t=[0-9a-f]{32}$/.test(R.copiedLink || ''), R.copiedLink);
-check('and the button says it copied', /copied/i.test(R.copyBtnAfter || ''),
-  { after: R.copyBtnAfter, link: R.copiedLink });
-/* THE SHOP SENDS FROM GOOGLE VOICE. An sms: link hands the message to the
-   phone's own app, which is a different number — so every one of them went out
-   wrong, or nowhere. None may come back. */
+console.log('\n-- old copy helpers are gone (customer portal replaces them) --');
+check('no card offers Copy Tracking Link',
+  (R.trackOnAnyCard || []).every((n) => n === 0), R.trackOnAnyCard);
+check('no card offers Copy Customer Link', R.custLinkCount === 0, R.custLinkCount);
 check('nothing on the card hands a message to the phone\u2019s own text app',
   R.anySmsOnCard === 0, R.anySmsOnCard);
 
@@ -758,24 +748,8 @@ check('the header fields carry the order and the build',
   (R.fields || []).some((f) => /^Order=#/.test(f)) &&
   (R.fields || []).some((f) => /^Job total=/.test(f)), R.fields);
 
-console.log('\n-- the build schedule, as a message --');
-check('a won order with dates offers one button',
-  JSON.stringify(R.schedOnWon) === JSON.stringify(['Copy Build Schedule']), R.schedOnWon);
-check('and no other card does', (R.schedOnAnyCard || []).filter((n) => n > 0).length === 1, R.schedOnAnyCard);
-/* THE GATE THAT MATTERS: a won order with no dates has no schedule to send,
-   and offering the button there produces "Plan the build first" on a press. */
-check('a won order with no dates does not offer it',
-  R.schedOnWonUnbooked === 0, R.schedOnWonUnbooked);
-const msg = R.schedCopied || '';
-check('one tap puts the message on the clipboard', !!msg, msg);
-check('with their dates in plain words',
-  /Shed install: Thu Oct 15 \(2 days\) - at your place/.test(msg), msg);
-check('and their tracking link', /track\.html\?t=[0-9a-f]{32}/.test(msg), msg);
-check('and none of the shop\u2019s notes', !/gate code/.test(msg), msg);
-check('and it says it copied', /copied/i.test(R.schedBtnAfter || ''), R.schedBtnAfter);
-/* The whole point of the change: it must not navigate anywhere. */
-check('it opens nothing \u2014 no text app, no mail client',
-  R.schedOpenedAnything === 0, R.schedOpenedAnything);
+check('no card offers Copy Build Schedule',
+  (R.schedOnAnyCard || []).every((n) => n === 0), R.schedOnAnyCard);
 
 console.log('\n-- the link, as something you can text --');
 check('Copy pay link is offered on an unpaid invoice', R.copyOffered === true);
