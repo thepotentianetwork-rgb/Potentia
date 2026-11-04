@@ -2047,6 +2047,49 @@ function invPreviewPanel(kind, data, onSend, onCancel) {
  * so the figure on the button is the figure that would be billed. Null when
  * that endpoint is not there (an older worker): the page then falls back to
  * the plain "Work out the …" buttons rather than showing a guessed number. */
+
+/* ---- Customer portal invite copy (source: shedpro-portal-invite-copy.md) ---- */
+var PORTAL_URL = 'https://www.potentianetwork.com/portal-customer.html';
+function portalInviteText(kind) {
+  var first = String(CUSTOMER_NAME || '').trim().split(/\s+/)[0] || 'there';
+  var email = CUSTOMER_EMAIL || '(your email on file)';
+  if (kind === 'sms') {
+    return 'Hi ' + first + ", it's Fernando at ShedPro \u2014 your custom shed is on its way, and you can now follow every step in your private portal: " +
+      PORTAL_URL + '. Sign in with ' + email + '; your password is your street address only, in lowercase (e.g. "123 main st"). Questions? info@shedpro-utah.com';
+  }
+  return 'Subject: Your ShedPro portal is ready, ' + first + '\n\n' +
+    'Hi ' + first + ',\n\n' +
+    'Your custom shed is on its way, and you now have a private portal where you can follow your build, review your order details, and stay up to date from deposit to delivery.\n\n' +
+    'How to sign in:\n' +
+    '1. Go to ' + PORTAL_URL + '\n' +
+    '2. Enter your email: ' + email + '\n' +
+    '3. Enter your password: your street address line only, all lowercase, with no city, state, or ZIP.\n' +
+    '   Example: if your address is 123 Main St, Wellsville UT, your password is: 123 main st\n' +
+    "4. Click Sign in. You're in.\n\n" +
+    "Trouble signing in? Just reply to this email or write to info@shedpro-utah.com and we'll reset it for you right away.\n\n" +
+    "Thank you for choosing ShedPro. We're excited to build this for you.\n\n" +
+    'Fernando\nShedPro\ninfo@shedpro-utah.com';
+}
+function portalInviteControl() {
+  var wrap = document.createElement('span');
+  wrap.className = 'portal-invite';
+  wrap.style.cssText = 'display:inline-flex;gap:2px;align-items:stretch';
+  function mk(label, kind, title) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'sep-btn'; b.textContent = label; b.title = title;
+    b.addEventListener('click', function () {
+      copyText(portalInviteText(kind)).then(function () {
+        var t = b.textContent; b.textContent = 'Copied \u2713';
+        setTimeout(function () { b.textContent = t; }, 1600);
+      }, function () { window.prompt('Copy this:', portalInviteText(kind)); });
+    });
+    return b;
+  }
+  wrap.appendChild(mk('Copy portal invite', 'sms', 'Copies the SMS invite (portal link, their email, password hint). No password is included.'));
+  wrap.appendChild(mk('Email', 'email', 'Copies the email version (subject line first).'));
+  return wrap;
+}
+
 var BALANCES = null;
 function balanceFor(id) {
   if (!BALANCES) return null;
@@ -3119,6 +3162,14 @@ function renderOrders(submissions, installs) {
 
     /* Copy Tracking Link / Copy Build Schedule were removed: the customer
        portal now shows progress, dates, and documents directly. */
+    /* Copy portal invite (Nov 2026): won jobs, or any order with a deposit /
+       payment on it. SMS by default; the caret menu copies the email. The
+       password is never in the text — only how it is formed (street line,
+       lowercase). */
+    var invBal = balanceFor(s.id);
+    if (s.status === 'won' || (invBal && Number(invBal.paid) > 0)) {
+      actions.appendChild(portalInviteControl());
+    }
     if (s.status === 'won') {
       /* Won -> hand it to a builder (role portals). */
       if (window.AdminRoles) actions.appendChild(AdminRoles.assignControl(s.id));
