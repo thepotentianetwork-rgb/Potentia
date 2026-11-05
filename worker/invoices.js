@@ -868,15 +868,38 @@ function resolveSelection(ts, selected) {
     const g = ts.groups.find((x) => x.phase === Number(s.phase));
     if (!g) throw Object.assign(new Error('there is no phase ' + s.phase + ' to bill'), { code: 'bad_phase' });
     const sub = s.sub != null && s.sub !== '' ? Number(s.sub) : null;
-    want.push({ g, part: s.part, sub });
+    /* Optional partial amount (cents): bill only part of what is left on
+       that part — a progress payment. Omitted = the whole part, as before. */
+    let cents = null;
+    if (s.cents != null && s.cents !== '') {
+      cents = Number(s.cents);
+      if (!Number.isInteger(cents) || cents <= 0) {
+        throw Object.assign(new Error('partial amount on Phase ' + s.phase + ' ' + s.part + ' must be a whole number of cents above 0'), { code: 'bad_cents' });
+      }
+    }
+    want.push({ g, part: s.part, sub, cents });
   });
   if (!want.length) throw Object.assign(new Error('pick at least one phase to bill'), { code: 'nothing_selected' });
 
   const picks = [];                          // { g, item, part }
   const seen = {};
-  want.forEach(({ g, part, sub }) => {
+  want.forEach(({ g, part, sub, cents }) => {
     const items = g.items.filter((i) => sub == null || Number(i.sub) === sub);
     if (!items.length) throw Object.assign(new Error('that build has no phase ' + g.phase), { code: 'bad_phase' });
+    if (cents != null) {
+      if (items.length !== 1) throw Object.assign(new Error('a partial amount needs the build (sub) it is for'), { code: 'bad_cents' });
+      const it = items[0];
+      const what = 'Phase ' + g.phase + ' ' + part;
+      if (it[part].openInvoice) throw Object.assign(new Error(what + ' is already on a sent invoice — void it first'), { code: 'already_billed' });
+      if (cents > it[part].remainingCents) {
+        throw Object.assign(new Error('partial amount ' + cents + ' is more than the ' + it[part].remainingCents + ' left on ' + what), { code: 'bad_cents' });
+      }
+      const k = it.sub + ':' + it.phase + ':' + part;
+      if (seen[k]) throw Object.assign(new Error(what + ' picked twice'), { code: 'bad_cents' });
+      seen[k] = 1;
+      picks.push({ g, item: it, part, cents });
+      return;
+    }
     const billable = items.filter((i) => i[part].remainingCents > 0 && !i[part].openInvoice);
     /* Both halves of a phase ticked and one is already paid: bill the other. */
     const sibling = want.some((w) => w.g === g && w.part !== part &&
@@ -937,7 +960,8 @@ export function buildTogetherInvoice(builds, selected, opts = {}) {
      already under way. Within that, phase order, then build order. */
   const both = {};
   picks.forEach((p) => { both[p.item.sub + ':' + p.item.phase] = (both[p.item.sub + ':' + p.item.phase] || 0) + 1; });
-  const isBoth = (p) => both[p.item.sub + ':' + p.item.phase] === 2;
+  const isBoth = (p) => both[p.item.sub + ':' + p.item.phase] === 2 &&
+    !picks.some((q) => q.cents != null && q.item.sub === p.item.sub && q.item.phase === p.item.phase);
   const order = (p) => (p.part === 'deposit' && !isBoth(p) ? 0 : 1) * 1000 + p.g.phase;
   const sorted = picks.slice().sort((a, b) => order(a) - order(b) ||
     builds.findIndex((x) => x.sub === a.item.sub) - builds.findIndex((x) => x.sub === b.item.sub));
@@ -968,6 +992,15 @@ export function buildTogetherInvoice(builds, selected, opts = {}) {
     const less = (paidC) => (paidC > 0 ? ', less ' + usd(fromCents(paidC)) + ' already paid' : '');
     const cover = (part, cents) => covers.push(Object.assign(it.sub != null ? { sub: it.sub } : {},
                                                  { phase: it.phase, part, cents }));
+    if (p.cents != null) {
+      /* Partial: a progress payment toward the part. No discount line — the
+         amount typed is exactly what is asked for. */
+      const left = p.part === 'deposit' ? it.deposit.remainingCents : it.remainder.remainingCents;
+      lines.push({ label: 'Progress payment toward ' + (p.part === 'deposit' ? head + ' deposit' : 'remainder of ' + head) + tag +
+                   ' (' + usd(fromCents(p.cents)) + ' of ' + usd(fromCents(left)) + ' left)', amountCents: p.cents });
+      cover(p.part, p.cents);
+      return;
+    }
     if (isBoth(p)) {
       if (done[k]) return;
       done[k] = 1;
@@ -1063,11 +1096,14 @@ function describeTogether(ts, picks, many) {
     const whole = d.filter((i) => r.indexOf(i) > -1);
     if (whole.length) { bits.push(label(g, 'all of Phase ' + g.phase, whole)); did[g.phase] = whole; }
     const depOnly = d.filter((i) => whole.indexOf(i) === -1);
-    if (depOnly.length) bits.push(label(g, 'Phase ' + g.phase + ' deposit' + (many && depOnly.length > 1 ? 's' : ''), depOnly));
+    if (depOnly.length) bits.push(label(g, (picks.some((p) => p.g === g && p.part === 'deposit' && p.cents != null) ? 'progress payment toward ' : '') + 'Phase ' + g.phase + ' deposit' + (many && depOnly.length > 1 ? 's' : ''), depOnly));
   });
   groupsIn('remainder').forEach((g) => {
     const r = byGP(g.phase, 'remainder').filter((i) => (did[g.phase] || []).indexOf(i) === -1);
-    if (r.length) bits.push(label(g, 'rest of Phase ' + g.phase, r));
+    if (r.length) {
+      const part = picks.some((p) => p.g === g && p.part === 'remainder' && p.cents != null);
+      bits.push(label(g, (part ? 'progress payment toward the rest of Phase ' : 'rest of Phase ') + g.phase, r));
+    }
   });
   return bits.join(' + ');
 }
