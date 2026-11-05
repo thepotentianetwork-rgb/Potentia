@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "fcf6e43-dirty";
-const WORKER_BUILT_AT = "2026-11-05T14:42:55.914Z";
+const WORKER_BUILD = "1bb9a15-dirty";
+const WORKER_BUILT_AT = "2026-11-05T22:00:02.930Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -9680,6 +9680,64 @@ async function statsView(db, nowMs) {
 
 // ---- end inlined crmquery.js ----
 
+// ---- inlined from worker/potentiacrm.js by build-bundle.mjs — do not edit below by hand ----
+/* GET /api/briefing/potentia — Jarvis report over Potentia's OWN CRM
+ * (env.CRM_DB, D1 potentia-crm). Read-only: every statement is a SELECT.
+ * Separate from briefing.js on purpose: that one reads the ShedPro shed DB
+ * (env.DB) and must never be pointed at CRM_DB, nor this at DB.
+ * Missing tables (lead_emails etc. are created lazily) read as empty.
+ * Nothing here sends mail or touches OUTREACH_* / campaigns.
+ */
+const POTENTIA_CRM_SQL = {
+  byStatus: `SELECT COALESCE(status,'unknown') AS k, COUNT(*) AS n FROM clients GROUP BY 1 ORDER BY n DESC`,
+  bySource: `SELECT COALESCE(NULLIF(source,''),'unknown') AS k, COUNT(*) AS n FROM clients GROUP BY 1 ORDER BY n DESC`,
+  newClients: `SELECT id, business_name, contact_name, status, source, created_at FROM clients WHERE created_at >= ? ORDER BY created_at DESC LIMIT 25`,
+  newBySource: `SELECT COALESCE(NULLIF(source,''),'unknown') AS k, COUNT(*) AS n FROM clients WHERE created_at >= ? GROUP BY 1 ORDER BY n DESC`,
+  recentNotes: `SELECT n.client_id, n.text, n.created_at, c.business_name FROM client_notes n LEFT JOIN clients c ON c.id = n.client_id WHERE n.created_at >= ? ORDER BY n.created_at DESC LIMIT 15`,
+  tasksDue: `SELECT t.id, t.client_id, t.title, t.due_date, c.business_name FROM client_tasks t LEFT JOIN clients c ON c.id = t.client_id WHERE t.done = 0 AND t.due_date IS NOT NULL AND t.due_date <= ? ORDER BY t.due_date LIMIT 25`,
+  mrr: `SELECT COALESCE(SUM(monthly_fee),0) AS mrr, COUNT(*) AS live FROM clients WHERE status = 'live'`,
+  emails: `SELECT eligibility AS k, COUNT(*) AS n FROM lead_emails GROUP BY 1`
+};
+
+async function pcQ(db, sql, ...args) {
+  try { return (await db.prepare(sql).bind(...args).all()).results || []; }
+  catch { return []; }
+}
+const pcToMap = (rows) => Object.fromEntries(rows.map(r => [r.k, r.n]));
+
+function buildPotentiaReport(rows, { nowMs, days }) {
+  const by_status = pcToMap(rows.byStatus), by_source = pcToMap(rows.bySource);
+  const total = Object.values(by_status).reduce((a, b) => a + b, 0);
+  const newN = rows.newClients.length;
+  const m = rows.mrr[0] || {};
+  const src = Object.entries(pcToMap(rows.newBySource)).map(([k, n]) => `${n} from ${k.replace(/_/g, ' ')}`).join(', ');
+  const spoken = [
+    `Potentia CRM: ${total} clients in total, ${by_status.lead || 0} open leads, ${m.live || 0} live.`,
+    newN ? `${newN} new in the last ${days === 1 ? 'day' : days + ' days'}${src ? ': ' + src : ''}.` : `No new clients in the last ${days === 1 ? 'day' : days + ' days'}.`,
+    rows.tasksDue.length ? `${rows.tasksDue.length} task${rows.tasksDue.length === 1 ? '' : 's'} due.` : ''
+  ].filter(Boolean).join(' ');
+  return {
+    crm: 'potentia', database: 'potentia-crm', generated_at: new Date(nowMs).toISOString(), days,
+    totals: { clients: total, by_status, by_source, live: m.live || 0, mrr: m.mrr || 0 },
+    new_clients: rows.newClients, new_by_source: pcToMap(rows.newBySource),
+    recent_notes: rows.recentNotes.map(n => ({ ...n, text: String(n.text || '').slice(0, 200) })),
+    tasks_due: rows.tasksDue, lead_emails_by_eligibility: pcToMap(rows.emails), spoken
+  };
+}
+
+async function loadPotentiaReport(db, { nowMs, days = 1 }) {
+  if (!db) return { crm: 'potentia', error: 'CRM_DB not bound' };
+  const from = new Date(nowMs - days * 86400000).toISOString();
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver' }).format(new Date(nowMs));
+  const S = POTENTIA_CRM_SQL;
+  const [byStatus, bySource, newClients, newBySource, recentNotes, tasksDue, mrr, emails] = await Promise.all([
+    pcQ(db, S.byStatus), pcQ(db, S.bySource), pcQ(db, S.newClients, from), pcQ(db, S.newBySource, from),
+    pcQ(db, S.recentNotes, from), pcQ(db, S.tasksDue, today), pcQ(db, S.mrr), pcQ(db, S.emails)]);
+  return buildPotentiaReport({ byStatus, bySource, newClients, newBySource, recentNotes, tasksDue, mrr, emails }, { nowMs, days });
+}
+
+// ---- end inlined potentiacrm.js ----
+
 // ---- inlined from worker/intlcrawl.js by build-bundle.mjs — do not edit below by hand ----
 /* ══════════════════════════════════════════════════════════════════════════
    INTERNATIONAL LEADS — SITE CRAWL + PUBLIC ROLE-EMAIL EXTRACTION
@@ -18033,7 +18091,13 @@ async function handleBriefing(request, env, path) {
   try {
     if (path === "/api/briefing") {
       const { days, sections } = parseBriefingParams(url.searchParams);
-      return ok(await loadBriefing(env.DB, { nowMs, days, sections, fetchThreads, selfAddresses: self }));
+      const shed = await loadBriefing(env.DB, { nowMs, days, sections, fetchThreads, selfAddresses: self });
+      /* ?crm=all adds Potentia's CRM (CRM_DB) as its own block; default unchanged. */
+      if (url.searchParams.get("crm") === "all") {
+        const potentia = await loadPotentiaReport(env.CRM_DB, { nowMs, days });
+        return ok({ ...shed, potentia, spoken_all: [shed.spoken, potentia.spoken].filter(Boolean).join(" ") });
+      }
+      return ok(shed);
     }
     const lead = /^\/api\/briefing\/lead\/(\d+)$/.exec(path);
     if (lead) {
@@ -18097,6 +18161,12 @@ async function handleBriefing(request, env, path) {
       const r = await handlePlanBuild(inner, env, null, sid);
       const out = await r.json();
       return briefingJson({ submission_id: sid, ...out, side_effects: body.confirm && out.ok ? "installs_written" : "none" }, r.status);
+    }
+    /* JARVIS: Potentia's own CRM (CRM_DB / potentia-crm), read-only. The
+       ShedPro briefing above stays on env.DB; never mix the two. */
+    if (path === "/api/briefing/potentia") {
+      const d = Math.min(Math.max(parseInt(url.searchParams.get("days") || "1", 10) || 1, 1), 90);
+      return ok(await loadPotentiaReport(env.CRM_DB, { nowMs, days: d }));
     }
     if (path === "/api/briefing/follow-ups") {
       const b = buildBriefing(await loadRows(env.DB, { nowMs, days: 1 }), { nowMs, sections: ["follow_ups"] });
