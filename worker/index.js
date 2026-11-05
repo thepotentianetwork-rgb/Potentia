@@ -45,6 +45,7 @@ import { ensureCustomer, createAndSendInvoice, voidInvoice, getInvoice, invoiceM
 import { verifyStripeSignature, timingSafeEqual } from "./stripewebhook.js";
 import { findCustomerDesign } from "./customerdesign.js";
 import { runQuery, parseQueryParams } from "./crmquery.js";
+import { loadPotentiaReport } from "./potentiacrm.js";
 import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
 import { runAutoDormant, ensureStatusChangedColumn } from "./dormant.js";
 import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
@@ -6222,7 +6223,13 @@ async function handleBriefing(request, env, path) {
   try {
     if (path === "/api/briefing") {
       const { days, sections } = parseBriefingParams(url.searchParams);
-      return ok(await loadBriefing(env.DB, { nowMs, days, sections, fetchThreads, selfAddresses: self }));
+      const shed = await loadBriefing(env.DB, { nowMs, days, sections, fetchThreads, selfAddresses: self });
+      /* ?crm=all adds Potentia's CRM (CRM_DB) as its own block; default unchanged. */
+      if (url.searchParams.get("crm") === "all") {
+        const potentia = await loadPotentiaReport(env.CRM_DB, { nowMs, days });
+        return ok({ ...shed, potentia, spoken_all: [shed.spoken, potentia.spoken].filter(Boolean).join(" ") });
+      }
+      return ok(shed);
     }
     const lead = /^\/api\/briefing\/lead\/(\d+)$/.exec(path);
     if (lead) {
@@ -6286,6 +6293,12 @@ async function handleBriefing(request, env, path) {
       const r = await handlePlanBuild(inner, env, null, sid);
       const out = await r.json();
       return briefingJson({ submission_id: sid, ...out, side_effects: body.confirm && out.ok ? "installs_written" : "none" }, r.status);
+    }
+    /* JARVIS: Potentia's own CRM (CRM_DB / potentia-crm), read-only. The
+       ShedPro briefing above stays on env.DB; never mix the two. */
+    if (path === "/api/briefing/potentia") {
+      const d = Math.min(Math.max(parseInt(url.searchParams.get("days") || "1", 10) || 1, 1), 90);
+      return ok(await loadPotentiaReport(env.CRM_DB, { nowMs, days: d }));
     }
     if (path === "/api/briefing/follow-ups") {
       const b = buildBriefing(await loadRows(env.DB, { nowMs, days: 1 }), { nowMs, sections: ["follow_ups"] });
