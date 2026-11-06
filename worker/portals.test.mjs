@@ -136,3 +136,24 @@ test("customer create/reset use street address (not city/zip); fallback random; 
   const sr = (await call(env, "POST", `/portal/users/${sid}/reset`, { token: admin })).data;
   assert.equal(sr.password_source, "random"); assert.equal(sr.password.length, 16);
 });
+
+test("owner can set advisor/builder password; customer set refused; login works", async () => {
+  const { env, admin, db } = await setup();
+  const s = await mk(env, admin, { role: "builder", login: "cristian", name: "Cristian" });
+  assert.equal(s.password_source, "random");
+  const id = db.prepare("SELECT id FROM portal_users WHERE login='cristian'").get().id;
+  const bad = await call(env, "POST", `/portal/users/${id}/password`, { token: admin, body: { password: "short" } });
+  assert.equal(bad.status, 400);
+  const set = await call(env, "POST", `/portal/users/${id}/password`, { token: admin, body: { password: "MyShopPass1" } });
+  assert.equal(set.status, 200);
+  assert.equal(set.data.password_source, "owner");
+  assert.equal(set.data.password, "MyShopPass1");
+  assert.equal((await call(env, "POST", "/portal/login", { body: { login: "cristian", password: "MyShopPass1", portal: "team" } })).status, 200);
+  assert.equal((await call(env, "POST", "/portal/login", { body: { login: "cristian", password: s.password, portal: "team" } })).status, 401);
+  db.exec(`INSERT INTO payments (customer_id,amount,method,paid_at,created_at) VALUES (1,500,'cash','2026-11-01','2026-11-01')`);
+  db.exec(`UPDATE customers SET address='9 Oak Rd' WHERE id=1`);
+  await mk(env, admin, { role: "customer", login: "c@x.com", customer_id: 1 });
+  const cid = db.prepare("SELECT id FROM portal_users WHERE login='c@x.com'").get().id;
+  const refused = await call(env, "POST", `/portal/users/${cid}/password`, { token: admin, body: { password: "notallowed1" } });
+  assert.equal(refused.status, 400);
+});

@@ -162,7 +162,7 @@ export async function handlePortal(request, env, origin, path, deps) {
     if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
     return json({ ok: true, ...(await autoCustomerLoginSweep(env, deps)) }, 200, origin);
   }
-  const um = path.match(/^\/portal\/users\/(\d+)\/(reset|disable)$/);
+  const um = path.match(/^\/portal\/users\/(\d+)\/(reset|disable|password)$/);
   if (um && method === "POST") {
     if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
     if (um[2] === "disable") {
@@ -170,7 +170,18 @@ export async function handlePortal(request, env, origin, path, deps) {
       return json({ ok: true }, 200, origin);
     }
     const pu = await env.DB.prepare("SELECT role, customer_id FROM portal_users WHERE id = ?").bind(Number(um[1])).first();
-    const { password, password_source } = pu && pu.role === "customer" ? await customerPassword(env, pu.customer_id) : { password: generatePassword(), password_source: "random" };
+    if (!pu) return json({ error: "Not found" }, 404, origin);
+    /* Owner-chosen password for advisors/builders (Team logins Set password).
+       Customers stay on street-address / Reset — do not override that convention. */
+    if (um[2] === "password") {
+      if (pu.role === "customer") return json({ error: "Customer passwords use street address — use Get password / Reset" }, 400, origin);
+      const b = await body();
+      const password = String(b.password || "");
+      if (password.length < 6 || password.length > 128) return json({ error: "Password must be 6–128 characters" }, 400, origin);
+      await env.DB.prepare("UPDATE portal_users SET pass_hash = ?, disabled_at = NULL, needs_password = NULL WHERE id = ?").bind(await hashPassword(password), Number(um[1])).run();
+      return json({ ok: true, password, password_source: "owner" }, 200, origin);
+    }
+    const { password, password_source } = pu.role === "customer" ? await customerPassword(env, pu.customer_id) : { password: generatePassword(), password_source: "random" };
     await env.DB.prepare("UPDATE portal_users SET pass_hash = ?, disabled_at = NULL, needs_password = NULL WHERE id = ?").bind(await hashPassword(password), Number(um[1])).run();
     return json({ ok: true, password, password_source }, 200, origin);
   }
