@@ -53,6 +53,8 @@ h2{font-family:var(--serif);font-size:44px;font-weight:300;color:var(--bright);l
 <script src="admin-nav.js"></script>
 <script src="admin-shell.js"></script>
 <script>
+AdminShell.mount();
+
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var token = localStorage.getItem('potentia_admin_token');
 if (!token) window.location.href = 'admin-login.html';
