@@ -77,6 +77,17 @@ body{display:block;align-items:initial;padding:18px}
 table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--dim);padding:8px;text-align:left} td:last-child,th:last-child{text-align:right;white-space:nowrap}
 ul{margin:6px 0 0 18px}
 @keyframes up{to{opacity:1;transform:none}}
+
+html{-webkit-text-size-adjust:100%}
+body{padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.wide{width:100%;overflow-x:hidden}
+.card,.job{overflow-wrap:anywhere}
+@media(max-width:560px){
+  .card{padding:22px 16px}
+  .job{padding:16px}
+  .top{flex-wrap:wrap;gap:8px}
+  .brand-sub{letter-spacing:0.14em}
+}
 @media(max-width:560px){.hero h1{font-size:24px}.sec>summary{font-size:19px}td,th{padding:6px 4px}}
 </style>
 </head>

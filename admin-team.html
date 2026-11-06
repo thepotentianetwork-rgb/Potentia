@@ -48,10 +48,29 @@ input,textarea,select{background:rgba(255,255,255,0.03);border:1px solid var(--d
 ul{margin:8px 0 0 18px} li{margin:3px 0}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
 table{width:100%;border-collapse:collapse} td,th{border-bottom:1px solid var(--dim);padding:8px;text-align:left}
+
+html{-webkit-text-size-adjust:100%}
+body{padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.wide{max-width:860px;width:100%}
+.top{flex-wrap:wrap;gap:10px}
+.job{padding:16px;overflow:hidden}
+.row{flex-direction:column;align-items:stretch}
+.row > *{width:100% !important;max-width:100%;box-sizing:border-box}
+.row .btn{width:100%;text-align:center;margin:0}
+#list-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px;padding-bottom:4px}
+table{min-width:560px}
+td,th{padding:8px 6px;font-size:13px;vertical-align:top}
+td .btn{display:inline-block;margin:4px 4px 0 0;white-space:nowrap}
+.mono{overflow-wrap:anywhere;word-break:break-word}
+@media (min-width:700px){
+  .row{flex-direction:row;align-items:center}
+  .row > *{width:auto !important}
+  .row .btn{width:auto}
+}
 </style>
 </head>
 <body>
-<div class="wide"><div class="top"><div class="brand" style="margin:0"><img src="shedpro-logo.png" alt="ShedPro"><div class="brand-text"><span class="brand-name">SHEDPRO</span><span class="brand-sub">Team logins (owner)</span></div></div><a class="btn" href="admin.html">Back to CRM</a></div><div class="job"><h2>Create a login</h2><div class="row"><select id="role"><option value="sales">Advisor</option><option value="builder">Builder</option><option value="customer">Customer (deposit required)</option></select><input id="login" placeholder="username or email"><input id="name" placeholder="Display name"><input id="cid" placeholder="Customer # (customers only)" style="width:200px"><button class="btn" id="create">Create</button></div><p class="mono" style="margin-top:12px">Advisors &amp; builders sign in at <b>potentianetwork.com/portal-login.html</b> · Customers sign in at <b>potentianetwork.com/portal-customer-login.html</b></p><p class="mono" id="once" style="margin-top:12px;color:var(--sp-orange)"></p></div><div class="job"><h2>Accounts</h2><p class="mono">Customer logins are made automatically once a Won order has a deposit (email = username). Rows marked <b>NEW</b> have never had a password shown — press <b>Get password</b> to see it once, then share it via a one-time link. Customer passwords are their <b>street address only</b> (no city/state/zip), lowercase, no punctuation — e.g. <code>123 n main st</code>. Get password / Reset replaces the old password. <button class="btn" id="sweep">Check for new customer logins</button></p><table id="list"></table></div></div>
+<div class="wide"><div class="top"><div class="brand" style="margin:0"><img src="shedpro-logo.png" alt="ShedPro"><div class="brand-text"><span class="brand-name">SHEDPRO</span><span class="brand-sub">Team logins (owner)</span></div></div><a class="btn" href="admin.html">Back to CRM</a></div><div class="job"><h2>Create a login</h2><div class="row"><select id="role"><option value="sales">Advisor</option><option value="builder">Builder</option><option value="customer">Customer (deposit required)</option></select><input id="login" placeholder="username or email"><input id="name" placeholder="Display name"><input id="cid" placeholder="Customer # (customers only)" style="width:200px"><button class="btn" id="create">Create</button></div><p class="mono" style="margin-top:12px">Advisors &amp; builders sign in at <b>potentianetwork.com/portal-login.html</b> · Customers sign in at <b>potentianetwork.com/portal-customer-login.html</b></p><p class="mono" id="once" style="margin-top:12px;color:var(--sp-orange)"></p></div><div class="job"><h2>Accounts</h2><p class="mono">Customer logins are made automatically once a Won order has a deposit (email = username). Rows marked <b>NEW</b> have never had a password shown — press <b>Get password</b> to see it once, then share it via a one-time link. Customer passwords are their <b>street address only</b> (no city/state/zip), lowercase, no punctuation — e.g. <code>123 n main st</code>. Get password / Reset replaces the old password. <button class="btn" id="sweep">Check for new customer logins</button></p><div id="list-wrap"><table id="list"></table></div></div></div>
 <script>
 var API_BASE = "https://potentia-assistant.thepotentianetwork.workers.dev";
 var T=localStorage.getItem('potentia_admin_token'); if(!T||localStorage.getItem('potentia_role')==='sales') location.href='admin-login.html';
