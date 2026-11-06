@@ -1,47 +1,72 @@
 /* THE ADMIN NAV, DEFINED ONCE.
  *
- * Seven pages had hand-written header bars, and they had already drifted:
- * Activity was missing its link to Data, Pricing only appeared on two of
- * them, and the same page called itself "Customers" in one header and "All
- * Customers" in another. Every page added made that worse, and the row was
- * running out of width on an iPad regardless.
+ * Top-level labels (order): Home, Sales, Shop, Data, Web analytics.
+ * Sales opens Customers / Activity / Pricing. Shop is Schedule only.
+ * Team logins stays in the owner menu — never the main top nav.
  *
- * So: one list of pages, one button. The button says where you are, the menu
- * says where you can go, and the activity count rides on both — visible
- * without opening anything.
- *
- * The styles are injected from here rather than copied into six <style>
- * blocks, for exactly the reason above.
+ * Desktop shell tabs and the phone dropdown both read the same NAV tree.
+ * Styles are injected once so every admin page stays in sync.
  */
 (function (global) {
   'use strict';
 
-  var PAGES = [
-    { href: 'admin-dashboard.html', label: 'Dashboard' },
-    { href: 'admin-website.html',  label: 'Website' },
-    { href: 'admin.html',          label: 'Customers' },
-    { href: 'admin-schedule.html', label: 'Schedule' },
-    { href: 'admin-activity.html', label: 'Activity', badge: true },
-    { href: 'admin-data.html',     label: 'Data' },
-    { href: 'admin-pricing.html',  label: 'Pricing' }
+  var NAV = [
+    { id: 'home', href: 'admin-dashboard.html', label: 'Home' },
+    {
+      id: 'sales',
+      label: 'Sales',
+      children: [
+        { href: 'admin.html', label: 'Customers' },
+        { href: 'admin-activity.html', label: 'Activity', badge: true },
+        { href: 'admin-pricing.html', label: 'Pricing' }
+      ]
+    },
+    { id: 'shop', href: 'admin-schedule.html', label: 'Shop' },
+    { id: 'data', href: 'admin-data.html', label: 'Data' },
+    { id: 'web', href: 'admin-website.html', label: 'Web analytics' }
   ];
+
+  var OWNER_LINKS = [
+    { href: 'admin-team.html', label: 'Team logins' }
+  ];
+
+  /* Flat leaf pages — kept for callers that walk AdminNav.PAGES / setCount. */
+  function flatten(items) {
+    var out = [];
+    items.forEach(function (item) {
+      if (item.children && item.children.length) {
+        item.children.forEach(function (c) { out.push(c); });
+      } else if (item.href) {
+        out.push({ href: item.href, label: item.label, badge: item.badge });
+      }
+    });
+    return out;
+  }
+
+  var PAGES = flatten(NAV);
 
   var CSS = [
     '.nav-wrap{position:relative;display:inline-block}',
     ".nav-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--bright);background:none;border:1px solid var(--dim);padding:9px 14px;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:border-color 0.2s}",
     '.nav-btn:hover,.nav-btn[aria-expanded="true"]{border-color:var(--sp-blue)}',
     '.nav-caret{color:var(--silver);font-size:10px;line-height:1}',
-    '.nav-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:190px;background:#0b0b13;border:1px solid var(--dim);z-index:60;box-shadow:0 14px 34px rgba(0,0,0,0.55)}',
+    '.nav-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:210px;background:#0b0b13;border:1px solid var(--dim);z-index:60;box-shadow:0 14px 34px rgba(0,0,0,0.55)}',
     '.nav-menu[hidden]{display:none}',
     ".nav-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 15px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--silver);text-decoration:none;border-bottom:1px solid rgba(42,45,56,0.7)}",
     '.nav-item:last-child{border-bottom:none}',
     '.nav-item:hover{background:rgba(44,192,253,0.1);color:var(--bright)}',
     '.nav-item.current{color:var(--sp-blue)}',
     '.nav-item.current::after{content:"●";font-size:7px;color:var(--sp-blue)}',
+    '.nav-item.child{padding-left:24px;font-size:10.5px}',
+    ".nav-group{display:block;padding:10px 15px 4px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.18em;text-transform:uppercase;color:var(--silver);opacity:0.7}",
     ".act-badge{display:inline-block;font-family:'DM Mono',monospace;font-size:9px;line-height:1;color:var(--black);background:var(--sp-orange);border-radius:20px;padding:3px 6px}",
-    '@media (max-width:760px){.nav-menu{min-width:170px}}',
-    /* iPad: 40px+ tap targets on the menu button and items. Tablet-only. */
-    '@media (min-width:761px) and (max-width:1199px){.nav-btn{min-height:40px}.nav-item{min-height:46px;box-sizing:border-box}}'
+    '.owner-wrap{position:relative;display:inline-block}',
+    ".owner-btn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--silver);background:none;border:1px solid var(--dim);padding:9px 12px;cursor:pointer}",
+    '.owner-btn:hover,.owner-btn[aria-expanded="true"]{border-color:var(--sp-blue);color:var(--bright)}',
+    '.owner-menu{position:absolute;right:0;top:calc(100% + 6px);min-width:170px;background:#0b0b13;border:1px solid var(--dim);z-index:60;box-shadow:0 14px 34px rgba(0,0,0,0.55)}',
+    '.owner-menu[hidden]{display:none}',
+    '@media (max-width:760px){.nav-menu{min-width:180px}}',
+    '@media (min-width:761px) and (max-width:1199px){.nav-btn,.owner-btn{min-height:40px}.nav-item{min-height:46px;box-sizing:border-box}}'
   ].join('');
 
   function injectStyles() {
@@ -52,24 +77,122 @@
     document.head.appendChild(s);
   }
 
-  /* The file this page was served as. Compared rather than passed in, so a
-     page cannot mark the wrong item as current by mistyping its own name. */
   function currentFile() {
     var p = (location.pathname || '').split('/').pop();
     return p || 'admin.html';
   }
 
-  /* ROLE: a sales login uses these same pages, minus the money ones. The
-     server enforces it (403); this just keeps dead links out of the menu. */
+  function leafLabel(href) {
+    var found = null;
+    PAGES.forEach(function (p) { if (p.href === href) found = p.label; });
+    OWNER_LINKS.forEach(function (p) { if (p.href === href) found = p.label; });
+    return found;
+  }
+
+  function itemContains(item, href) {
+    if (item.href === href) return true;
+    if (!item.children) return false;
+    for (var i = 0; i < item.children.length; i++) {
+      if (item.children[i].href === href) return true;
+    }
+    return false;
+  }
+
+  /* ROLE: sales keeps Customers + Schedule + Activity under Sales / Shop. */
   var ROLE = (function () { try { return localStorage.getItem('potentia_role') || 'admin'; } catch (e) { return 'admin'; } })();
-  var SALES_PAGES = { 'admin.html': 1, 'admin-schedule.html': 1, 'admin-activity.html': 1 };
+  var IS_OWNER = ROLE !== 'sales';
+  var SALES_ALLOWED = { 'admin.html': 1, 'admin-schedule.html': 1, 'admin-activity.html': 1 };
+
   if (ROLE === 'sales') {
-    PAGES = PAGES.filter(function (p) { return SALES_PAGES[p.href]; });
+    NAV = NAV.filter(function (item) {
+      return item.id === 'sales' || item.id === 'shop';
+    }).map(function (item) {
+      if (!item.children) return item;
+      return {
+        id: item.id,
+        label: item.label,
+        children: item.children.filter(function (c) { return SALES_ALLOWED[c.href]; })
+      };
+    });
+    PAGES = flatten(NAV);
     try { document.documentElement.classList.add('role-sales'); } catch (e) {}
-    var here0 = (location.pathname || '').split('/').pop() || 'admin.html';
-    if (/^admin-(dashboard|data|pricing|website|team)\.html$/.test(here0)) location.replace('admin.html');
-  } else {
-    PAGES = PAGES.concat([{ href: 'admin-team.html', label: 'Team logins' }]);
+    var here0 = currentFile();
+    if (!SALES_ALLOWED[here0] && here0 !== 'admin-customer.html') {
+      location.replace('admin.html');
+    }
+  }
+
+  function appendBadge(el, id) {
+    var b = document.createElement('span');
+    b.className = 'act-badge';
+    b.id = id;
+    b.style.display = 'none';
+    el.appendChild(b);
+    return b;
+  }
+
+  function addMenuLink(menu, href, label, opts) {
+    opts = opts || {};
+    var a = document.createElement('a');
+    a.className = 'nav-item' + (opts.child ? ' child' : '') + (opts.current ? ' current' : '');
+    a.href = href;
+    a.appendChild(document.createTextNode(label));
+    if (opts.badge) appendBadge(a, opts.badgeId || 'nav-badge');
+    menu.appendChild(a);
+    return a;
+  }
+
+  function bindDropdown(wrap, btn, menu) {
+    var GUTTER = 8;
+    function place() {
+      menu.style.right = '';
+      var vw = document.documentElement.clientWidth || 0;
+      if (!vw) return;
+      var m = menu.getBoundingClientRect();
+      if (m.left < GUTTER) menu.style.right = (m.left - GUTTER) + 'px';
+    }
+    function close() { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
+    function open() { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); place(); }
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      menu.hidden ? open() : close();
+    });
+    document.addEventListener('click', function (e) {
+      if (!wrap.contains(e.target)) close();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') close();
+    });
+    window.addEventListener('resize', function () { if (!menu.hidden) place(); });
+    return { close: close, open: open };
+  }
+
+  function renderOwnerMenu(mount) {
+    if (!IS_OWNER || !mount) return null;
+    injectStyles();
+    var wrap = document.createElement('div');
+    wrap.className = 'owner-wrap';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'owner-btn';
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('aria-haspopup', 'true');
+    btn.setAttribute('aria-label', 'Owner menu');
+    btn.textContent = 'Owner';
+    wrap.appendChild(btn);
+    var menu = document.createElement('div');
+    menu.className = 'owner-menu';
+    menu.hidden = true;
+    OWNER_LINKS.forEach(function (p) {
+      addMenuLink(menu, p.href, p.label, { current: currentFile() === p.href });
+    });
+    wrap.appendChild(menu);
+    bindDropdown(wrap, btn, menu);
+    /* Sit before logout when present. */
+    var logout = mount.querySelector('#logout-btn, .logout');
+    if (logout) mount.insertBefore(wrap, logout);
+    else mount.appendChild(wrap);
+    return { wrap: wrap, button: btn, menu: menu };
   }
 
   function render(mount, opts) {
@@ -78,7 +201,7 @@
     injectStyles();
 
     var here = opts.current || currentFile();
-    var page = PAGES.filter(function (p) { return p.href === here; })[0];
+    var btnLabel = leafLabel(here) || 'Menu';
 
     var wrap = document.createElement('div');
     wrap.className = 'nav-wrap';
@@ -89,18 +212,12 @@
     btn.id = 'nav-btn';
     btn.setAttribute('aria-expanded', 'false');
     btn.setAttribute('aria-haspopup', 'true');
-    /* Names the page you are on, so the button is a location as well as a
-       control — on a phone that is the only thing telling you where you are. */
-    btn.appendChild(document.createTextNode(page ? page.label : 'Menu'));
+    btn.appendChild(document.createTextNode(btnLabel));
     var caret = document.createElement('span');
     caret.className = 'nav-caret';
     caret.textContent = '▾';
     btn.appendChild(caret);
-    var btnBadge = document.createElement('span');
-    btnBadge.className = 'act-badge';
-    btnBadge.id = 'hdr-badge';
-    btnBadge.style.display = 'none';
-    btn.appendChild(btnBadge);
+    appendBadge(btn, 'hdr-badge');
     wrap.appendChild(btn);
 
     var menu = document.createElement('div');
@@ -108,82 +225,33 @@
     menu.id = 'nav-menu';
     menu.hidden = true;
 
-    PAGES.forEach(function (p) {
-      var a = document.createElement('a');
-      a.className = 'nav-item' + (p.href === here ? ' current' : '');
-      a.href = p.href;
-      a.appendChild(document.createTextNode(p.label));
-      if (p.badge) {
-        var b = document.createElement('span');
-        b.className = 'act-badge';
-        b.id = 'nav-badge';
-        b.style.display = 'none';
-        a.appendChild(b);
+    NAV.forEach(function (item) {
+      if (item.children && item.children.length) {
+        var g = document.createElement('div');
+        g.className = 'nav-group';
+        g.textContent = item.label;
+        menu.appendChild(g);
+        item.children.forEach(function (c) {
+          addMenuLink(menu, c.href, c.label, {
+            child: true,
+            current: c.href === here,
+            badge: !!c.badge
+          });
+        });
+      } else if (item.href) {
+        addMenuLink(menu, item.href, item.label, { current: item.href === here });
       }
-      menu.appendChild(a);
     });
     wrap.appendChild(menu);
-
-    /* KEEP THE MENU ON THE SCREEN.
-       It hangs off the button's RIGHT edge, which is correct on a desktop,
-       where the header sits at the top right and the menu opens back under
-       it. On a phone the header wraps, the button lands against the LEFT
-       margin, and a 190px menu anchored to the right edge of a button 80px
-       from the left runs 90px off the side of the screen — which is where the
-       first three destinations were. Nothing errors and nothing looks broken:
-       the panel is there, the words are simply outside the glass.
-       Measured and nudged back on every open rather than fixed with a media
-       query, because what matters is where the button actually ENDED UP, and
-       that depends on how the header wrapped — which depends on the page, the
-       brand text, the font and the device. A query guesses; this looks. */
-    var GUTTER = 8;
-    function place() {
-      /* Back to the CSS anchor FIRST, every time. Without this the menu is
-         measured while still carrying the shift from last time, so a nudge
-         that is no longer needed is never taken back — rotate a phone to
-         landscape and the header stops wrapping, but the menu stays pushed
-         right by the amount portrait needed and hangs off the other side. */
-      menu.style.right = '';
-      var vw = document.documentElement.clientWidth || 0;
-      if (!vw) return;
-      var m = menu.getBoundingClientRect();
-      /* Only the LEFT edge can escape. `right:0` puts the menu's right edge
-         on the button's own, and the button is on the screen by definition —
-         so there is no right-hand case to handle, and a branch for one would
-         be a guard no test could ever reach. If this anchor ever changes,
-         that stops being true and this needs the other half.
-         A NEGATIVE right pushes the whole menu further right, back on. */
-      if (m.left < GUTTER) menu.style.right = (m.left - GUTTER) + 'px';
-    }
-
-    function close() { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); }
-    function open() { menu.hidden = false; btn.setAttribute('aria-expanded', 'true'); place(); }
-
-    btn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      menu.hidden ? open() : close();
-    });
-    /* Closing on an outside tap matters more on a phone than a desktop: there
-       is no Escape key and nowhere obvious to click away to. */
-    document.addEventListener('click', function (e) {
-      if (!wrap.contains(e.target)) close();
-    });
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') close();
-    });
-    /* Rotating a phone with the menu open re-wraps the header under it, which
-       moves the button and leaves the menu measured against a screen that is
-       no longer there. */
-    window.addEventListener('resize', function () { if (!menu.hidden) place(); });
+    bindDropdown(wrap, btn, menu);
 
     mount.insertBefore(wrap, mount.firstChild);
-    return { wrap: wrap, button: btn, menu: menu, close: close };
+    renderOwnerMenu(mount);
+    return { wrap: wrap, button: btn, menu: menu };
   }
 
-  /* Both badges at once — the one on the button and the one in the menu —
-     so they cannot disagree about how much is waiting. */
   function setCount(n) {
-    ['hdr-badge', 'nav-badge'].forEach(function (id) {
+    ['hdr-badge', 'nav-badge', 'tab-badge', 'sales-badge'].forEach(function (id) {
       var el = document.getElementById(id);
       if (!el) return;
       var c = Number(n) || 0;
@@ -192,5 +260,15 @@
     });
   }
 
-  global.AdminNav = { PAGES: PAGES, render: render, setCount: setCount };
+  global.AdminNav = {
+    NAV: NAV,
+    PAGES: PAGES,
+    OWNER_LINKS: OWNER_LINKS,
+    ROLE: ROLE,
+    render: render,
+    renderOwnerMenu: renderOwnerMenu,
+    setCount: setCount,
+    itemContains: itemContains,
+    currentFile: currentFile
+  };
 })(typeof window !== 'undefined' ? window : globalThis);

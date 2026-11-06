@@ -30,3 +30,13 @@ body.admin-shell{background:radial-gradient(1200px 500px at 85% -10%,rgba(44,192
 @media (max-width:760px){.shell .h-date{display:none}}
 .shell-main{padding:30px 32px 90px;max-width:var(--maxw);margin:0 auto}
 @media (max-width:760px){.shell-main{padding:22px 16px 80px}}
+
+/* Sales (and any future) top-nav group with flyout. */
+.shell-tab-group{position:relative;display:flex;align-items:stretch}
+.shell-tab-btn{background:none;border:0;cursor:pointer}
+.shell-tab-caret{font-size:9px;opacity:.7;margin-left:2px}
+.shell-flyout{position:absolute;left:0;top:calc(100% + 1px);min-width:180px;background:#0b0b13;border:1px solid var(--dim);box-shadow:0 14px 34px rgba(0,0,0,.55);z-index:70;padding:4px 0}
+.shell-flyout[hidden]{display:none}
+.shell-flyout-item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--silver);text-decoration:none}
+.shell-flyout-item:hover{background:rgba(44,192,253,.1);color:var(--bright)}
+.shell-flyout-item.current{color:var(--sp-blue)}
