@@ -49,7 +49,7 @@ import { loadPotentiaReport } from "./potentiacrm.js";
 import { loadBriefing, loadEmails, loadLeadDetail, loadRows, buildBriefing, buildDraft, parseBriefingParams, briefingRateOk, NO_SIDE_EFFECTS } from "./briefing.js";
 import { runAutoDormant, ensureStatusChangedColumn } from "./dormant.js";
 import { makeThreadFetcher, gmailSelfAddresses } from "./gmail.js";
-import { handlePortal, salesMayUse, autoCustomerLogin, autoCustomerLoginSweep, editInstall, clearDelay, openDelays, customerSchedule } from "./portals.js";
+import { handlePortal, salesMayUse, autoCustomerLogin, autoCustomerLoginSweep, editInstall, clearDelay, openDelays, customerSchedule, ensurePortalTables } from "./portals.js";
 
 // Every (style, width) combination the designer's DOOR_SIZES catalog offers
 // a tile for — kept in sync with that catalog by hand, same as WINDOW_CATALOG
@@ -976,16 +976,32 @@ async function handleGetCustomer(request, env, origin, id) {
 }
 
 // ---- DELETE /admin/customers/:id — permanently removes the customer and
-// every submission/note/payment tied to them. No soft-delete: the admin UI
-// requires typing the customer's name plus a second confirm before this
-// ever fires.
+// every row tied to them (submissions, notes, payments, calls, invoices,
+// portal login, builder assignment, installs, job notes/expenses/time).
+// No soft-delete: the admin UI requires typing the customer's name plus a
+// second confirm before this ever fires. Without the portal/job cascade, a
+// deleted customer could still appear on the builder portal via a leftover
+// job_assignments row.
 async function handleDeleteCustomer(request, env, origin, id) {
   const customer = await env.DB.prepare("SELECT id FROM customers WHERE id = ?").bind(id).first();
   if (!customer) return json({ error: "Not found" }, 404, origin);
 
   await ensurePaymentsTable(env);
   await ensureCallsTable(env);
+  await ensureInstallsTable(env);
+  await ensureInvoicesTable(env);
+  await ensurePortalTables(env);
+  await ensureNoteEditTables(env);
+  const subIn = "submission_id IN (SELECT id FROM submissions WHERE customer_id = ?)";
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM job_assignments WHERE " + subIn).bind(id),
+    env.DB.prepare("DELETE FROM installs WHERE " + subIn).bind(id),
+    env.DB.prepare("DELETE FROM job_notes WHERE " + subIn).bind(id),
+    env.DB.prepare("DELETE FROM job_expenses WHERE " + subIn).bind(id),
+    env.DB.prepare("DELETE FROM time_entries WHERE " + subIn).bind(id),
+    env.DB.prepare("DELETE FROM note_edits WHERE customer_id = ? OR " + subIn).bind(id, id),
+    env.DB.prepare("DELETE FROM invoices WHERE customer_id = ?").bind(id),
+    env.DB.prepare("DELETE FROM portal_users WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM notes WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM payments WHERE customer_id = ?").bind(id),
     env.DB.prepare("DELETE FROM calls WHERE customer_id = ?").bind(id),
