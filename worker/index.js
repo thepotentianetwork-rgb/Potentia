@@ -5485,17 +5485,38 @@ async function handleCrmLogin(request, env, origin) {
 // ---- GET /crm/clients — the whole list plus the headline numbers ----
 async function handleCrmListClients(request, env, origin) {
   await ensureCrmTables(env);
+  // One pass per side table (joined back on client_id) instead of six
+  // correlated subqueries per client row: the side tables have no client_id
+  // index, so the per-row form re-scanned them for every client. The cap is
+  // well above the client count so older leads are not silently dropped.
   const { results } = await env.CRM_DB.prepare(
     `SELECT c.*,
-       (SELECT n.text FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note,
-       (SELECT n.created_at FROM client_notes n WHERE n.client_id = c.id ORDER BY n.created_at DESC LIMIT 1) AS latest_note_at,
-       (SELECT cl.called_at FROM client_calls cl WHERE cl.client_id = c.id ORDER BY cl.called_at DESC LIMIT 1) AS latest_call_at,
-       (SELECT COUNT(*) FROM client_tasks t WHERE t.client_id = c.id AND t.done = 0) AS open_tasks,
-       (SELECT MIN(t.due_date) FROM client_tasks t WHERE t.client_id = c.id AND t.done = 0 AND t.due_date IS NOT NULL) AS next_due,
-       (SELECT COALESCE(SUM(p.amount), 0) FROM client_payments p WHERE p.client_id = c.id) AS collected
+       ln.text AS latest_note,
+       ln.created_at AS latest_note_at,
+       lc.latest_call_at AS latest_call_at,
+       COALESCE(ot.open_tasks, 0) AS open_tasks,
+       ot.next_due AS next_due,
+       COALESCE(pp.collected, 0) AS collected
      FROM clients c
+     LEFT JOIN (
+       SELECT client_id, text, created_at FROM (
+         SELECT n.client_id, n.text, n.created_at,
+                ROW_NUMBER() OVER (PARTITION BY n.client_id ORDER BY n.created_at DESC) AS rn
+         FROM client_notes n
+       ) WHERE rn = 1
+     ) ln ON ln.client_id = c.id
+     LEFT JOIN (
+       SELECT client_id, MAX(called_at) AS latest_call_at FROM client_calls GROUP BY client_id
+     ) lc ON lc.client_id = c.id
+     LEFT JOIN (
+       SELECT client_id, COUNT(*) AS open_tasks, MIN(due_date) AS next_due
+       FROM client_tasks WHERE done = 0 GROUP BY client_id
+     ) ot ON ot.client_id = c.id
+     LEFT JOIN (
+       SELECT client_id, SUM(amount) AS collected FROM client_payments GROUP BY client_id
+     ) pp ON pp.client_id = c.id
      ORDER BY c.updated_at DESC
-     LIMIT 500`
+     LIMIT 5000`
   ).all();
 
   const activeList = CRM_ACTIVE_STATUSES.map((s) => `'${s}'`).join(",");
