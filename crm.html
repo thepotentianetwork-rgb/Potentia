@@ -473,6 +473,11 @@ var SEGMENT_LABELS = {};
 function segmentName(key) {
   if (!key) return '';
   if (SEGMENT_LABELS[key]) return SEGMENT_LABELS[key];
+  /* Outreach-only labels. These segments are not in the Places generator
+     (SEGMENTS in leadpipeline.js), so /crm/segment-names never returns them.
+     Without this, shed_3d_upgrade would render as "Shed 3d Upgrade". */
+  var EXTRA_SEGMENT_LABELS = { shed_3d_upgrade: '3D Designer Upgrade' };
+  if (EXTRA_SEGMENT_LABELS[key]) return EXTRA_SEGMENT_LABELS[key];
   // Until the names land — or if that call fails — a tidied key beats a raw one.
   return String(key).replace(/_/g, ' ').replace(/\b[a-z]/g, function (c) { return c.toUpperCase(); });
 }
