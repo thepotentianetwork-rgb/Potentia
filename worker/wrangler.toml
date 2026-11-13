@@ -29,3 +29,14 @@ database_id = "0a6eec64-0670-4854-9dec-b2a1e3eec42b"
 binding = "CRM_DB"
 database_name = "potentia-crm"
 database_id = "ffb5677f-547b-42cc-ace5-fb095820e622"
+
+# R2 for the quote's 3D snapshot. Must stay in this file or `wrangler deploy`
+# drops the binding — the same failure mode as the D1 outage on 2026-11-03.
+# On 2026-11-13 the live Worker settings had no RENDERS binding, so uploads
+# were silently skipped (uploadRenders returns null without it).
+[[r2_buckets]]
+binding = "RENDERS"
+bucket_name = "potentia-shed-renders"
+
+[vars]
+RENDERS_PUBLIC_BASE = "https://pub-cccde765f8c347f7bd7c9ca08b53eab4.r2.dev"

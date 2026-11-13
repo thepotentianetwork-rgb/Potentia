@@ -494,3 +494,45 @@ test('the before figure is struck through only when the price came down', () => 
   assert.ok(!/You save/.test(upHtml));
   assert.ok(!/price-box-deal/.test(upHtml));
 });
+
+test('quoteDesignUrl prefers a short ?d= code on the current designer URL', () => {
+  const page = loadQuotePage();
+  assert.equal(page.quoteDesignUrl({ permalink: 'https://shedpro-utah.com/designer%203.html?d=ab12cd34' }),
+    'https://www.shedpro-utah.com/designer.html?d=ab12cd34');
+  assert.equal(page.quoteDesignUrl({ permalink: 'https://x/designer.html#d=eyJ4IjoxfQ' }),
+    'https://www.shedpro-utah.com/designer.html#d=eyJ4IjoxfQ');
+  assert.equal(page.quoteDesignUrl({ permalink: '' }), '');
+  assert.equal(page.quoteDesignUrl(null), '');
+});
+
+test('the PDF shows only the perspective photo, even when five views are stored', () => {
+  const page = loadQuotePage();
+  page.document.createElement = function (tag) {
+    const el = { tagName: String(tag || 'div').toLowerCase(), children: [], className: '', textContent: '',
+                 src: '', alt: '', href: '', target: '', rel: '' };
+    el.appendChild = function (c) { el.children.push(c); return c; };
+    el.setAttribute = function () {};
+    return el;
+  };
+  const container = { children: [], appendChild(c) { this.children.push(c); return c; } };
+  page.renderImages({
+    perspective: 'https://pub-test.r2.dev/p.jpg',
+    front: 'https://pub-test.r2.dev/f.jpg',
+    right: 'https://pub-test.r2.dev/r.jpg',
+    back: 'https://pub-test.r2.dev/b.jpg',
+    left: 'https://pub-test.r2.dev/l.jpg'
+  }, container, 'https://www.shedpro-utah.com/designer.html?d=abc123def');
+
+  const imgs = [];
+  const links = [];
+  (function walk(n) {
+    if (!n) return;
+    if (n.tagName === 'img') imgs.push(n.src);
+    if (n.tagName === 'a') links.push({ href: n.href, text: n.textContent });
+    (n.children || []).forEach(walk);
+  })(container);
+  assert.deepEqual(imgs, ['https://pub-test.r2.dev/p.jpg']);
+  assert.equal(links.length, 1);
+  assert.equal(links[0].href, 'https://www.shedpro-utah.com/designer.html?d=abc123def');
+  assert.match(links[0].text, /View this exact 3D design/);
+});

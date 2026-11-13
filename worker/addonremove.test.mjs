@@ -42,7 +42,12 @@ check("price drops", r.data.quotedPrice < p0, [p0, r.data.quotedPrice]);
 check("comp on Shutters flagged stale", r.data.stale.some(a=>a.item==="Shutters"), r.data.stale);
 let d = JSON.parse(db.prepare("SELECT details, adjustments FROM submissions WHERE id=1").get().details);
 check("saved design has shutters off (3D follows)", d.config.addons.shutters===false && d.config.addons.ridgeVent===true, d.config.addons);
-check("permalink cleared so the CRM re-encodes the new config", d.permalink===null);
+check("permalink is a new short link for the updated design",
+  typeof d.permalink==="string" && /designer\.html\?d=[0-9a-f]{32}$/.test(d.permalink), d.permalink);
+const newCode = (d.permalink||"").split("d=")[1];
+const saved = newCode && db.prepare("SELECT config FROM saved_designs WHERE code=?").get(newCode);
+check("the new link points at the design with shutters off",
+  saved && JSON.parse(saved.config).addons.shutters===false, saved && saved.config);
 check("history kept", d.history.length===2 && d.history[1].config.addons.shutters===true);
 check("adjustments kept", JSON.parse(db.prepare("SELECT adjustments FROM submissions WHERE id=1").get().adjustments).length===2);
 check("CRM note", /Add-on removed.*Shutters/.test(db.prepare("SELECT text FROM notes ORDER BY id DESC").get().text));
