@@ -108,10 +108,11 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 
 .empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
 
-.render-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.render-grid{display:grid;grid-template-columns:1fr;gap:12px;max-width:560px}
 .render-cell{border:1px solid var(--dim);overflow:hidden}
 .render-cell img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#000}
 .render-caption{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--silver);text-transform:uppercase;text-align:center;padding:6px 0}
+.render-hero-link{display:block;margin-top:10px}
 
 .floorplan-wrap{text-align:center}
 .floorplan-legend{display:flex;justify-content:center;gap:24px;margin-top:14px;font-family:'DM Mono',monospace;font-size:10px;color:var(--silver);text-transform:uppercase}
@@ -292,7 +293,7 @@ function buildPhrase(config) {
 
 /* Returns null when there is no address to send to — the caller says so rather
    than opening an empty draft, which looks like it worked. */
-function quoteEmailDraft(customer, config, totalDue) {
+function quoteEmailDraft(customer, config, totalDue, designUrl) {
   var to = String((customer && customer.email) || '').trim();
   if (!to) return null;
 
@@ -311,6 +312,10 @@ function quoteEmailDraft(customer, config, totalDue) {
   }
   body.push('');
   body.push('The full itemised quote is attached.');
+  if (designUrl) {
+    body.push('');
+    body.push('View your 3D design: ' + designUrl);
+  }
   body.push('');
   body.push('Any questions, just reply to this or give us a call on ' + SHEDPRO_PHONE + '.');
   body.push('');
@@ -325,10 +330,10 @@ function quoteEmailDraft(customer, config, totalDue) {
    after it rather than behind it. */
 var EMAIL_DRAFT = null;
 
-function syncEmailBtn(customer, config, totalDue) {
+function syncEmailBtn(customer, config, totalDue, designUrl) {
   var btn = document.getElementById('email-btn');
   if (!btn) return;
-  EMAIL_DRAFT = quoteEmailDraft(customer, config, totalDue);
+  EMAIL_DRAFT = quoteEmailDraft(customer, config, totalDue, designUrl);
   btn.style.display = '';
   if (EMAIL_DRAFT) {
     btn.textContent = 'Email quote';
@@ -650,6 +655,21 @@ var COMP_TOTAL = 0;
 /* Supplier-order door/window wording (inches, W x H) — only for a quote whose
    saved redline was priced with it. A quote already sent reads as it did. */
 var SUPPLIER_LABELS = false;
+
+/* A working designer link for the PDF and the email.
+   Prefers the short ?d= code (rebuilt onto /designer.html so old paths still
+   open). Falls back to a #d= config blob if that is all the order has. */
+var DESIGNER_URL = 'https://www.shedpro-utah.com/designer.html';
+function quoteDesignUrl(details) {
+  if (!details) return '';
+  var pl = details.permalink || '';
+  var short = /[?&]d=([A-Za-z0-9]+)/.exec(pl);
+  if (short) return DESIGNER_URL + '?d=' + short[1];
+  var hash = /[#&]d=([A-Za-z0-9\-_]+)/.exec(pl);
+  if (hash) return DESIGNER_URL + '#d=' + hash[1];
+  return '';
+}
+
 function render(submission, customer) {
   var details = {};
   try { details = JSON.parse(submission.details) || {}; } catch (e) {}
@@ -720,16 +740,13 @@ function render(submission, customer) {
   if (config.elec) fields += field('Electrical', config.elec);
   if (!fields) fields = '<p class="empty">No design details captured for this order.</p>';
 
-  var safePermalink = null;
-  if (typeof details.permalink === 'string' && /^https:\/\//i.test(details.permalink)) {
-    safePermalink = details.permalink;
-  }
+  var designUrl = quoteDesignUrl(details);
 
   var breakdown = taxBreakdown(details.redline);
   var totalDue = breakdown ? breakdown.total
     : (details.quotedPrice != null && isFinite(Number(details.quotedPrice)) ? Number(details.quotedPrice) * (1 + TAX_RATE) : null);
 
-  syncEmailBtn(customer, config, totalDue);
+  syncEmailBtn(customer, config, totalDue, designUrl);
 
   var html = ''
     + '<div class="doc-header">'
@@ -759,7 +776,7 @@ function render(submission, customer) {
     + '<div class="doc-section">'
     +   '<div class="doc-label">Building Design</div>'
     +   '<div class="doc-grid">' + fields + '</div>'
-    +   (safePermalink ? '<a class="design-link" href="' + esc(safePermalink) + '" target="_blank" rel="noopener">View this exact 3D design ↗</a>' : '')
+    +   (designUrl ? '<a class="design-link" href="' + esc(designUrl) + '" target="_blank" rel="noopener">View this exact 3D design ↗</a>' : '')
     + '</div>'
 
     + buildRoof(config, details.redline)
@@ -783,50 +800,51 @@ function render(submission, customer) {
   document.getElementById('doc').innerHTML = html;
 
   var frontWall = pickFrontWall(config.doors, config.windows);
-  renderImages(details.renders, document.getElementById('renders-section'), frontWall);
+  renderImages(details.renders, document.getElementById('renders-section'), designUrl);
   renderFloorPlan(config, document.getElementById('floorplan-section'), frontWall);
 }
 
-// ---- Building Images (from R2, if this order has captured renders) ----
-// Captioned by frontWall, same as the floor plan, so a viewer isn't told
-// "Front" here and shown a different wall as FRONT two sections down.
-function renderImages(renders, container, frontWall) {
-  if (!container || !renders || typeof renders !== 'object') return;
-  var rot = WALL_ROTATIONS[frontWall] || WALL_ROTATIONS.front;
-  var byNewKey = {};
-  ['front', 'right', 'back', 'left'].forEach(function (oldKey) {
-    var url = renders[oldKey];
-    if (typeof url === 'string' && /^https:\/\//i.test(url)) byNewKey[rot[oldKey]] = url;
-  });
-  var order = ['perspective', 'front', 'right', 'back', 'left'];
-  var grid = document.createElement('div');
-  grid.className = 'render-grid';
-  var any = false;
+// ---- Building Image (the perspective snapshot on R2, plus the 3D link) ----
+// New quotes store only details.renders.perspective. Older quotes may still
+// have front/right/back/left URLs in the database; those files are left in
+// place, but the PDF shows the single perspective photo so it stays small.
+function renderImages(renders, container, designUrl) {
+  if (!container) return;
+  var url = (renders && typeof renders === 'object' && typeof renders.perspective === 'string'
+             && /^https:\/\//i.test(renders.perspective)) ? renders.perspective : null;
+  if (!url && !designUrl) return;
 
-  order.forEach(function (view) {
-    var url = (view === 'perspective') ? renders.perspective : byNewKey[view];
-    if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return;
-    any = true;
+  var label = document.createElement('div');
+  label.className = 'doc-label';
+  label.textContent = 'Building Image';
+  container.appendChild(label);
+
+  if (url) {
+    var grid = document.createElement('div');
+    grid.className = 'render-grid';
     var cell = document.createElement('div');
     cell.className = 'render-cell';
     var img = document.createElement('img');
     img.src = url;
-    img.alt = view;
-    img.loading = 'lazy';
+    img.alt = 'Perspective view of the building';
     var cap = document.createElement('div');
     cap.className = 'render-caption';
-    cap.textContent = view.charAt(0).toUpperCase() + view.slice(1);
+    cap.textContent = 'Perspective';
     cell.appendChild(img);
     cell.appendChild(cap);
     grid.appendChild(cell);
-  });
+    container.appendChild(grid);
+  }
 
-  if (!any) return;
-  var label = document.createElement('div');
-  label.className = 'doc-label';
-  label.textContent = 'Building Images';
-  container.appendChild(label);
-  container.appendChild(grid);
+  if (designUrl) {
+    var a = document.createElement('a');
+    a.className = 'design-link render-hero-link';
+    a.href = designUrl;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = 'View this exact 3D design ↗';
+    container.appendChild(a);
+  }
 }
 
 // ---- Floor Plan ----

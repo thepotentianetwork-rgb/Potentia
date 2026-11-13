@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "0e443e0";
-const WORKER_BUILT_AT = "2026-11-13T00:17:25.264Z";
+const WORKER_BUILD = "d0fb6c0-dirty";
+const WORKER_BUILT_AT = "2026-11-13T21:05:55.151Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -12060,7 +12060,7 @@ function installGuests(env) {
    can call them too. What that costs is not the same everywhere:
 
      /chat          spends the Anthropic key. Real money, per call.
-     /shed/submit   writes a lead, uploads up to 6 renders (3MB each) to R2,
+     /shed/submit   writes a lead, uploads the perspective render (3MB) to R2,
                     and makes a geocoding request.
      /shed/consult  writes a lead.
      /shed/design   writes a row.
@@ -15123,7 +15123,7 @@ async function handleUpdateColors(request, env, origin, id) {
 async function handleUpdateDesign(request, env, origin, id) {
   await ensureSubmissionAdjustColumns(env);
   const row = await env.DB.prepare(
-    "SELECT id, customer_id, details, status, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
+    "SELECT id, customer_id, name, email, phone, details, status, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?"
   ).bind(id).first();
   if (!row) return json({ error: "Not found" }, 404, origin);
   if (await orderHasDeposit(env, row)) return json({ error: DEPOSIT_LOCK_MSG, locked: true }, 409, origin);
@@ -15164,10 +15164,13 @@ async function handleUpdateDesign(request, env, origin, id) {
   const history = Array.isArray(details.history) ? details.history.slice(-9) : [];
   history.push(prev);
   const renders = body.renders ? await uploadRenders(env, body.renders) : null;
+  const minted = await ensureShortPermalink(
+    env, body.config, removed ? null : (body.permalink || details.permalink || null),
+    { name: row.name, email: row.email, phone: row.phone }
+  );
   const next = Object.assign({}, details, {
     config: body.config,
-    // A removal re-encodes the link from config (the stored one is the old design).
-    permalink: removed ? null : (body.permalink || details.permalink || null),
+    permalink: minted,
     quotedPrice: result.customer,
     marginTarget: marginTarget,
     redline: result.redline,
@@ -15440,11 +15443,12 @@ function dataUrlToBytes(dataUrl) {
   return { bytes, ext, contentType: ext === "png" ? "image/png" : "image/jpeg" };
 }
 
-const ALLOWED_RENDER_VIEWS = ["perspective", "front", "back", "left", "right"];
+const ALLOWED_RENDER_VIEWS = ["perspective"];
 
-// Uploads submitted 3D renders to R2 and returns { view: publicUrl }. Never
-// throws — a broken/oversized image is just skipped, it doesn't fail the
-// whole submission.
+// Uploads the perspective snapshot to R2 and returns { perspective: publicUrl }.
+// Extra views in the payload (from an older designer) are ignored so new
+// quotes store one photo. Never throws — a broken/oversized image is just
+// skipped, it doesn't fail the whole submission.
 async function uploadRenders(env, renders) {
   if (!Array.isArray(renders) || !env.RENDERS || !env.RENDERS_PUBLIC_BASE) return null;
   const out = {};
@@ -15581,7 +15585,9 @@ async function handleShedSubmit(request, env, origin) {
           zip: contact.zip || null,
           notes: contact.notes || null,
           config: body.config || null,
-          permalink: body.permalink || null,
+          permalink: body.config
+            ? await ensureShortPermalink(env, body.config, body.permalink, contact)
+            : (body.permalink || null),
           quotedPrice: quotedPrice,
           // What the shed was actually priced at, when staff moved it off the
           // default. null means the standard margin — see DEFAULTS.marginTarget.
@@ -15716,7 +15722,9 @@ async function handleShedConsult(request, env, origin) {
     // step 1 is not "their design", and summarising it in the admin as an
     // 8x12 gable would invent a preference they never expressed.
     config: (engaged && body.config) || null,
-    permalink: body.permalink || null,
+    permalink: (engaged && body.config)
+      ? await ensureShortPermalink(env, body.config, body.permalink, contact)
+      : (body.permalink || null),
     estimateAtRequest: estimate,
     page: body.page || null
   }).slice(0, 20000);
@@ -16570,22 +16578,25 @@ function isDesignCode(code) {
   return /^[0-9a-f]{8}$|^[0-9a-f]{32}$/.test(code);
 }
 
-async function handleSaveDesign(request, env, origin) {
-  const body = await request.json().catch(() => null);
-  if (!body || typeof body !== "object" || !body.config) {
-    return json({ error: "config required" }, 400, origin);
-  }
-  const config = JSON.stringify(body.config).slice(0, 40000);
-  const contact = body.contact || {};
-  const name = String(contact.name || "").slice(0, 200) || null;
-  const email = String(contact.email || "").slice(0, 200) || null;
-  const phone = String(contact.phone || "").slice(0, 60) || null;
+const DESIGNER_PAGE = "https://www.shedpro-utah.com/designer.html";
 
-  await ensureSavedDesignsTable(env);
+/* Pull an 8- or 32-hex short code out of a permalink, if it has one. */
+function shortDesignCodeFrom(permalink) {
+  const m = /[?&]d=([0-9a-f]{8}|[0-9a-f]{32})\b/i.exec(String(permalink || ""));
+  return m ? m[1].toLowerCase() : null;
+}
 
-  // Collisions are impossible in practice at 32 hex chars (128 bits) but cost
-  // nothing to guard — retry a few times with a fresh code rather than
-  // failing the save outright.
+function designerShortUrl(code) {
+  return DESIGNER_PAGE + "?d=" + code;
+}
+
+/* Insert a saved_designs row and return the new code. Caller must have
+   already called ensureSavedDesignsTable. */
+async function insertSavedDesign(env, config, contact) {
+  const json = JSON.stringify(config).slice(0, 40000);
+  const name = (contact && String(contact.name || "").slice(0, 200)) || null;
+  const email = (contact && String(contact.email || "").slice(0, 200)) || null;
+  const phone = (contact && String(contact.phone || "").slice(0, 60)) || null;
   let code = null;
   for (let attempt = 0; attempt < 5; attempt++) {
     const candidate = randomDesignCode();
@@ -16595,15 +16606,45 @@ async function handleSaveDesign(request, env, origin) {
       break;
     }
   }
-  if (!code) return json({ error: "Could not generate a code, try again" }, 500, origin);
-
+  if (!code) throw new Error("Could not generate a design code");
   await env.DB.prepare(
     "INSERT INTO saved_designs (code, config, contact_name, contact_email, contact_phone, created_at) VALUES (?,?,?,?,?,?)"
   )
-    .bind(code, config, name, email, phone, new Date().toISOString())
+    .bind(code, json, name, email, phone, new Date().toISOString())
     .run();
+  return code;
+}
 
-  return json({ code }, 200, origin);
+/* Guarantee a short ?d= permalink whenever we have a config.
+   Reuses an existing short code; otherwise mints a saved_designs row.
+   Fails open: if the insert throws, the original permalink (long #d= or
+   empty) is kept so the quote itself is never lost. */
+async function ensureShortPermalink(env, config, permalink, contact) {
+  const existing = shortDesignCodeFrom(permalink);
+  if (existing) return designerShortUrl(existing);
+  if (!config || typeof config !== "object") return permalink || null;
+  try {
+    await ensureSavedDesignsTable(env);
+    const code = await insertSavedDesign(env, config, contact || {});
+    return designerShortUrl(code);
+  } catch (e) {
+    console.error("ensureShortPermalink failed", e && e.stack ? e.stack : e);
+    return permalink || null;
+  }
+}
+
+async function handleSaveDesign(request, env, origin) {
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || !body.config) {
+    return json({ error: "config required" }, 400, origin);
+  }
+  await ensureSavedDesignsTable(env);
+  try {
+    const code = await insertSavedDesign(env, body.config, body.contact || {});
+    return json({ code }, 200, origin);
+  } catch (e) {
+    return json({ error: "Could not generate a code, try again" }, 500, origin);
+  }
 }
 
 async function handleGetDesign(request, env, origin, code) {
