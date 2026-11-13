@@ -108,8 +108,9 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
 
 .empty{font-family:'DM Mono',monospace;font-size:12px;color:var(--dim)}
 
-.render-grid{display:grid;grid-template-columns:1fr;gap:12px;max-width:560px}
-.render-cell{border:1px solid var(--dim);overflow:hidden}
+#renders-section{break-inside:avoid;page-break-inside:avoid}
+.render-grid{display:grid;grid-template-columns:1fr;gap:12px;max-width:560px;break-inside:avoid;page-break-inside:avoid}
+.render-cell{border:1px solid var(--dim);overflow:hidden;break-inside:avoid;page-break-inside:avoid}
 .render-cell img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:#000}
 .render-caption{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--silver);text-transform:uppercase;text-align:center;padding:6px 0}
 .render-hero-link{display:block;margin-top:10px}
@@ -157,7 +158,10 @@ body{background:var(--black);color:var(--chrome);font-family:'Cormorant Garamond
      at #c8cdd6 on white - effectively invisible on a printed quote. */
   .br-row.br-tax .br-label{color:#333}
   .render-cell{border-color:#ccc}
-  .render-grid{break-inside:avoid}
+  #renders-section,.render-grid,.render-cell{break-inside:avoid;page-break-inside:avoid}
+  /* Keep the single photo + 3D link on one printed page; cover+4/3 can
+     overflow leftover space at the bottom of a page and get cropped. */
+  .render-cell img{max-height:3.1in;object-fit:contain;background:#fff;aspect-ratio:auto}
   .symbol-legend{border-color:#ccc}
   .symbol-legend-head{background:#eee;color:#111}
   .symbol-legend-row{border-color:#ddd}
