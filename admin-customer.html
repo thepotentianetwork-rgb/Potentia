@@ -1849,10 +1849,11 @@ function invStatePill(status) {
 
 /* Preview panel. Returns the element; the caller decides where it goes and
    when it comes away. */
-/* How the customer will pay this Stripe bill — asked only for a build quoted
-   at regular (card) prices, i.e. with the cash, check & bank transfer discount.
-   'bank' = bank transfer (ACH) only, discount line added; 'card' = card only,
-   regular price. Read by every send below; reset for each new preview. */
+/* How the customer will pay this Stripe bill — asked when the cash, check &
+   bank transfer discount applies (a stamped quote, or any invoice while the
+   Admin Pricing toggle is on). 'bank' = bank transfer (ACH) only, discount
+   line added; 'card' = card only, regular price. Read by every send below;
+   reset for each new preview. */
 var INV_PAY_BY = 'bank';
 function invPreviewPanel(kind, data, onSend, onCancel) {
   var box = document.createElement('div');

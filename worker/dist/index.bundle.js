@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "d0fb6c0-dirty";
-const WORKER_BUILT_AT = "2026-11-13T21:05:55.151Z";
+const WORKER_BUILD = "3191223-dirty";
+const WORKER_BUILT_AT = "2026-11-13T21:50:00.009Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -6846,13 +6846,15 @@ function paidDiscountCents(clearedCents, billedCents, discountCents) {
   return Math.round(d * Math.min(1, Math.max(0, Number(clearedCents) || 0) / billed));
 }
 
-function cardBillFooterNote(pctLabel) {
+function cardBillFooterNote(pctLabel, amount) {
+  const amt = amount != null && Number(amount) > 0 ? ': ' + usd(amount) : '';
   return 'Prices shown are our regular prices. This bill is for payment by card. Pay by cash, check, cashier\u2019s check or bank transfer (ACH) and save ' +
-    pctLabel + '% \u2014 ask us for a bank-transfer bill.';
+    pctLabel + '%' + amt + ' \u2014 ask us for a bank-transfer bill.';
 }
-function bankBillFooterNote(pctLabel) {
+function bankBillFooterNote(pctLabel, amount) {
+  const amt = amount != null && Number(amount) > 0 ? ' of ' + usd(amount) : '';
   return 'This bill is for payment by bank transfer (ACH) and includes our ' + pctLabel +
-    '% cash, check & bank transfer discount. Card payments are billed at our regular price.';
+    '% cash, check & bank transfer discount' + amt + '. Card payments are billed at our regular price.';
 }
 
 /* CONCRETE SCOPE OF WORK (Nando, 12 Oct 2026). Staff type the concrete job's
@@ -13349,7 +13351,8 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
   const breakdown = quoteLines(details.redline, adjustmentsOf(sub));
   if (!breakdown) throw Object.assign(new Error("this submission has no priced build to invoice"), { status: 400 });
-  const uplift = upliftOfQuote(details.redline, null, breakdown);
+  const liveUplift = await liveCashUplift(env);
+  const uplift = invoiceCashUplift(details.redline, null, breakdown, liveUplift);
 
   const { results: payRows } = await env.DB.prepare(
     "SELECT id, amount, discount_amount, method, note, paid_at, submission_id, " + (await payCols(env)) + " FROM payments WHERE customer_id = ? ORDER BY paid_at, id"
@@ -13405,7 +13408,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
       throw Object.assign(e, { status: e.status || (e.code === "already_billed" ? 409 : 400) });
     }
     return { sub, customer, breakdown, split, invoice, builds: builds.map((b) => b.sub),
-             payRows: payRows || [], uplift };
+             payRows: payRows || [], uplift, liveUplift };
   }
 
   /* Everything the quote page puts around the numbers, handed to the invoice
@@ -13421,7 +13424,7 @@ async function invoiceContext(env, submissionId, kind, parts, together) {
   });
   addConcreteScope(invoice, breakdown, concreteScopeFor(sub.concrete_scope), details.config);
   if (kind === "deposit") depositAsQuote(invoice, breakdown);
-  return { sub, customer, breakdown, split, invoice, uplift };
+  return { sub, customer, breakdown, split, invoice, uplift, liveUplift };
 }
 
 /* POST /stripe/webhook — public, and the only thing standing between it and a
@@ -13728,16 +13731,14 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const { sub, customer, split } = ctx;
   const baseInvoice = ctx.invoice;
 
-  /* CASH, CHECK & BANK TRANSFER DISCOUNT. Decided by the BUILD, not by the
-     switch: only a quote priced while the discount was on is at regular (card)
-     prices (redline.cardUplift), so only it earns a discount. For such a bill
-     the CRM picks how it will be paid —
-       card: the regular price, card only;
-       bank: the regular price less the discount line, bank transfer only —
-     and both versions go back on the preview so the picker can switch without
-     asking again. Every other bill is exactly what it always was: one bill,
-     card or bank, same amount. (The retired card surcharge is pinned off in
-     pricing.js and no longer reaches a bill.) */
+  /* CASH, CHECK & BANK TRANSFER DISCOUNT. A stamped quote (redline.cardUplift)
+     keeps its own rate even if the switch is later turned off. When the Admin
+     Pricing toggle is ON, unstamped quotes also get the live rate, so every
+     new deposit, phase, and balance invoice can offer the option: card at the
+     quoted/regular price, or cash / check / ACH with the discount line. Both
+     versions go back on the preview so the picker can switch without asking
+     again. Quote documents are not rewritten. (The retired card surcharge is
+     pinned off in pricing.js and no longer reaches a bill.) */
   const upliftBySub = {};
   const builtSubs = ctx.builds || [sub.id];
   for (const sid of builtSubs) {
@@ -13745,7 +13746,7 @@ async function handleCreateInvoice(request, env, origin, actor) {
     const o = await env.DB.prepare("SELECT details, adjustments, price_adjustment, adjustment_note FROM submissions WHERE id = ?").bind(sid).first();
     let d = {};
     try { d = JSON.parse((o && o.details) || "{}") || {}; } catch (e) {}
-    upliftBySub[sid] = upliftOfQuote(d.redline, o ? adjustmentsOf(o) : []);
+    upliftBySub[sid] = invoiceCashUplift(d.redline, o ? adjustmentsOf(o) : [], null, ctx.liveUplift || 0);
   }
   const upliftFor = (sid) => upliftBySub[Number(sid)] || upliftBySub[String(sid)] || 0;
   const withDiscount = addCashDiscount(baseInvoice, upliftFor, sub.id);
@@ -13753,8 +13754,9 @@ async function handleCreateInvoice(request, env, origin, actor) {
   const payBy = discountOn ? (String(body.pay_by || "").toLowerCase() === "card" ? "card" : "bank") : null;
   const pctLabel = discountOn ? withDiscount.discountPct || cashDiscountPctLabel(upliftFor(sub.id)) : null;
   const clipFooter = (note, f) => String(note + (f ? " " + f : "")).slice(0, LIMITS.footer);
-  const cardInvoice = discountOn ? Object.assign({}, baseInvoice, { footer: clipFooter(cardBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
-  const bankInvoice = discountOn ? Object.assign({}, withDiscount, { footer: clipFooter(bankBillFooterNote(pctLabel), baseInvoice.footer) }) : null;
+  const discAmt = discountOn ? fromCents(withDiscount.discountCents) : 0;
+  const cardInvoice = discountOn ? Object.assign({}, baseInvoice, { footer: clipFooter(cardBillFooterNote(pctLabel, discAmt), baseInvoice.footer) }) : null;
+  const bankInvoice = discountOn ? Object.assign({}, withDiscount, { footer: clipFooter(bankBillFooterNote(pctLabel, discAmt), baseInvoice.footer) }) : null;
   let invoice = !discountOn ? baseInvoice : (payBy === "card" ? cardInvoice : bankInvoice);
   const methods = invoiceMethods(discountOn, payBy);
 
@@ -14055,7 +14057,7 @@ async function manualDiscountFor(env, submissionId, method, amount, excludeId, w
   try { details = JSON.parse(sub.details) || {}; } catch (e) {}
   const bd = quoteLines(details.redline, adjustmentsOf(sub));
   if (!bd) return null;
-  const uplift = upliftOfQuote(details.redline, null, bd);
+  const uplift = invoiceCashUplift(details.redline, null, bd, await liveCashUplift(env));
   if (!uplift) return null;
   const { results } = await env.DB.prepare(
     "SELECT id, amount, discount_amount FROM payments WHERE submission_id = ? AND id != ?"
@@ -14262,6 +14264,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
   const money = (c) => fromCents(c);
   const builds = [];
   const built = [];
+  const liveUplift = await liveCashUplift(env);
   (subs || []).forEach((sub) => {
     let details = {};
     try { details = JSON.parse(sub.details) || {}; } catch (e) {}
@@ -14279,7 +14282,7 @@ async function handleCustomerBalances(request, env, origin, customerId) {
     /* Quoted at regular (card) prices? Then what is left reads two ways: by
        card as it stands, and by cash / check / bank transfer less the discount
        — the figure to ask for when someone says they'll bring a check. */
-    const uplift = upliftOfQuote(details.redline, null, bd);
+    const uplift = invoiceCashUplift(details.redline, null, bd, liveUplift);
     const cashOf = (c) => c - cashDiscountCentsFor(c, uplift);
     builds.push({
       submission_id: sub.id,
@@ -14965,6 +14968,28 @@ function upliftOfQuote(redline, adjustments, bd) {
   if (!redline || !redline.discountsAtSheet) return cardUpliftOf(redline);
   const b = bd || quoteLines(redline, adjustments || []);
   return (b && b.cashDiscount && b.cashDiscount.uplift) || 0;
+}
+/* Live Admin Pricing cash-discount rate, read from this env's pricing_config
+   without relying on leftover global SELL from another request. 0 when the
+   toggle is off, the row is missing, or the table is not there yet. */
+async function liveCashUplift(env) {
+  try {
+    const row = await env.DB.prepare("SELECT data FROM pricing_config WHERE id = 1").first();
+    if (!row || !row.data) return 0;
+    let saved;
+    try { saved = JSON.parse(row.data); } catch (e) { return 0; }
+    const c = (saved && saved.SELL && saved.SELL.cashDiscount) || {};
+    const pct = Math.min(10, Math.max(0, Number(c.percent) || 0));
+    const on = (c.enabled === true || Number(c.enabled) === 1) && pct > 0;
+    return on ? pct / 100 : 0;
+  } catch (e) { return 0; }
+}
+/* Uplift used on invoices and cash/check/ACH payments. A stamped quote keeps
+   its own rate even if the switch is later turned off. When the switch is ON,
+   unstamped quotes also get the live rate so every new invoice can offer the
+   option. Quote documents are not rewritten. */
+function invoiceCashUplift(redline, adjustments, bd, liveUplift) {
+  return upliftOfQuote(redline, adjustments, bd) || liveUplift || 0;
 }
 /* A customer already quoted with the promo marked up (#71, Lee O'Shields,
    who was sent -$515) keeps that on any redone estimate: true when any of
