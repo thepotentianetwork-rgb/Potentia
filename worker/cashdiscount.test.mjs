@@ -184,8 +184,8 @@ test('/shed/quote: off = exactly as today; on = regular prices, scaled tiles, di
 });
 
 /* ── existing quotes ─────────────────────────────────────────────────── */
-test('existing quote (#7) with the switch ON: one bill, both methods, same amount; checks earn nothing', async () => {
-  const { env, db } = setup(ON);
+test('existing quote (#7) with the switch OFF: one bill, both methods, same amount; checks earn nothing', async () => {
+  const { env, db } = setup(OFF);
   const t = await token(env);
   const p = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'balance', preview: true, pay_by: 'bank' }, t);
   assert.equal(p.data.cash_discount, null); assert.equal(p.data.pay_by, null);
@@ -193,6 +193,39 @@ test('existing quote (#7) with the switch ON: one bill, both methods, same amoun
   assert.equal(c(p.data.amount), c(BD0.total));
   await api(env, 'POST', '/admin/customers/1/payments', { amount: 1000, method: 'check', submission_id: 7 }, t);
   assert.equal(pays(db, 7)[0].discount_amount, null);
+});
+
+test('existing quote (#7) with the switch ON: every new invoice offers cash/check/ACH savings; checks earn the discount', async () => {
+  const { env, db } = setup(ON);
+  const tok = await token(env);
+  const wantDisc = (dollars) => cashDiscountCents(c(dollars), 0.03);
+  for (const kind of ['deposit', 'balance']) {
+    const body = { submission_id: 7, kind, preview: true, pay_by: 'bank' };
+    if (kind === 'deposit') body.due_date = TEST_DUE;
+    const p = await api(env, 'POST', '/admin/invoices', body, tok);
+    assert.equal(p.status, 200, kind + ' ' + JSON.stringify(p.data));
+    const cd = p.data.cash_discount;
+    assert.ok(cd, kind + ' should offer the cash discount');
+    assert.equal(p.data.pay_by, 'bank');
+    assert.deepEqual(p.data.payment_methods, ['us_bank_account']);
+    const card = kind === 'deposit' ? c(BD0.depositTotal) : c(BD0.total);
+    assert.equal(c(cd.amount_card), card, kind + ' card amount stays the quoted price');
+    assert.equal(c(cd.discount), wantDisc(cd.amount_card));
+    assert.equal(c(cd.amount_bank), card - wantDisc(cd.amount_card));
+    assert.match(cd.lines_bank.at(-1).label, /^Cash, check & bank transfer discount \(2\.9%\)/);
+    assert.match(cd.footer_card, /save 2\.9%: \$/);
+    assert.match(cd.footer_bank, /2\.9% cash, check & bank transfer discount of \$/);
+  }
+  const phase = await api(env, 'POST', '/admin/invoices', { submission_id: 7, kind: 'phase', parts: [{ phase: 1, part: 'deposit' }], preview: true, pay_by: 'bank' }, tok);
+  assert.equal(phase.status, 200, JSON.stringify(phase.data));
+  assert.ok(phase.data.cash_discount);
+  assert.equal(c(phase.data.cash_discount.discount), wantDisc(phase.data.cash_discount.amount_card));
+  await api(env, 'POST', '/admin/customers/1/payments', { amount: 1000, method: 'check', submission_id: 7 }, tok);
+  const earned = pays(db, 7)[0].discount_amount;
+  assert.ok(Number(earned) > 0);
+  /* A typed check is written for the cash figure; the discount is 3% of that
+     payment (capped so money + discount never exceed what is left). */
+  assert.equal(c(earned), manualDiscountCents(c(1000), 0.03, c(BD0.total)));
 });
 
 /* ── regular-price job: Stripe bills ─────────────────────────────────── */

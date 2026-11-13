@@ -1309,13 +1309,15 @@ export function paidDiscountCents(clearedCents, billedCents, discountCents) {
   return Math.round(d * Math.min(1, Math.max(0, Number(clearedCents) || 0) / billed));
 }
 
-export function cardBillFooterNote(pctLabel) {
+export function cardBillFooterNote(pctLabel, amount) {
+  const amt = amount != null && Number(amount) > 0 ? ': ' + usd(amount) : '';
   return 'Prices shown are our regular prices. This bill is for payment by card. Pay by cash, check, cashier\u2019s check or bank transfer (ACH) and save ' +
-    pctLabel + '% \u2014 ask us for a bank-transfer bill.';
+    pctLabel + '%' + amt + ' \u2014 ask us for a bank-transfer bill.';
 }
-export function bankBillFooterNote(pctLabel) {
+export function bankBillFooterNote(pctLabel, amount) {
+  const amt = amount != null && Number(amount) > 0 ? ' of ' + usd(amount) : '';
   return 'This bill is for payment by bank transfer (ACH) and includes our ' + pctLabel +
-    '% cash, check & bank transfer discount. Card payments are billed at our regular price.';
+    '% cash, check & bank transfer discount' + amt + '. Card payments are billed at our regular price.';
 }
 
 /* CONCRETE SCOPE OF WORK (Nando, 12 Oct 2026). Staff type the concrete job's
