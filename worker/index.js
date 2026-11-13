@@ -5411,7 +5411,7 @@ async function ensureCrmTables(env) {
      "ADD COLUMN IF NOT EXISTS" and a duplicate ADD throws, so read the table
      and add only what is missing. */
   for (const [table, cols] of [
-    ["clients", [["owner", "TEXT"], ["owner_since", "TEXT"]]],
+    ["clients", [["owner", "TEXT"], ["owner_since", "TEXT"], ["priority", "TEXT"], ["replied_at", "TEXT"]]],
     ["client_calls", [["logged_by", "TEXT"]]],
     /* The deposit sits on the SHEET, not on the client. A client can send a
        second sheet for a second project, and "did we get paid" is a question
@@ -5430,6 +5430,9 @@ async function ensureCrmTables(env) {
       }
     }
   }
+
+  await env.CRM_DB.prepare("CREATE INDEX IF NOT EXISTS idx_clients_email ON clients(email)").run();
+  await env.CRM_DB.prepare("CREATE INDEX IF NOT EXISTS idx_clients_priority ON clients(priority)").run();
 
   crmTablesReady.add(binding);
 }
@@ -5515,7 +5518,9 @@ async function handleCrmListClients(request, env, origin) {
      LEFT JOIN (
        SELECT client_id, SUM(amount) AS collected FROM client_payments GROUP BY client_id
      ) pp ON pp.client_id = c.id
-     ORDER BY c.updated_at DESC
+     ORDER BY CASE WHEN lower(c.priority) = 'hot' THEN 0 ELSE 1 END,
+              c.replied_at DESC,
+              c.updated_at DESC
      LIMIT 5000`
   ).all();
 
