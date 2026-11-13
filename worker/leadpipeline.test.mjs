@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  normalisePhone, registrableDomain, findExisting, ensureLeadPipelineTables,
+  normalisePhone, registrableDomain, findExisting, newDedupeCache, ensureLeadPipelineTables,
   pushLeadToCrm, stripCandidate, spentToday, defaultSources, seedLeadSources,
   offerName, LEAD_DEFAULTS, placesReject, placesPromise,
   apiKey, providerError, accountFailure, notARealWebsite, websiteVerdict, SLOW_AT,
@@ -90,6 +90,28 @@ test('a business already in the CRM is caught on place_id, phone OR domain', asy
   const byDomain = await findExisting(env, { place_id: 'PLACE_NEW2', website: 'acme-concrete.com/contact' });
   assert.equal(byDomain && byDomain.on, 'domain');
   assert.equal(await findExisting(env, { place_id: 'OTHER', phone: '8015550000' }), null);
+});
+
+test('a per-run dedupe cache gives identical answers and reads each list once', async () => {
+  const { env, db } = await freshEnv();
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO clients (business_name, phone, website_url, status, created_at, updated_at, place_id)
+              VALUES ('Acme Concrete','(435) 232-9516','https://www.acme-concrete.com/','lead',?,?,'PLACE_A')`).run(now, now);
+  db.prepare(`INSERT INTO clients (business_name, phone, website_url, status, created_at, updated_at)
+              VALUES ('Acme Dup','435.232.9516','acme-concrete.com','lead',?,?)`).run(now, now);
+  db.prepare(`INSERT INTO clients (business_name, phone, website_url, status, created_at, updated_at)
+              VALUES ('Bad Phone','12345','not a url','lead',?,?)`).run(now, now);
+  const cands = [{ place_id: 'PLACE_A' }, { place_id: 'N1', phone: '+1 435-232-9516' },
+    { place_id: 'N2', website: 'https://acme-concrete.com/contact' }, { place_id: 'N3', phone: '8015550000', website: 'other.com' },
+    { place_id: 'N4', phone: '12345' }, { place_id: 'N5' }];
+  const plain = []; for (const c of cands) plain.push(await findExisting(env, c));
+  let scans = 0; const real = env.CRM_DB;
+  const spy = { prepare: (sql) => { if (/FROM clients WHERE (phone|website_url) IS NOT NULL/.test(sql)) scans++; return real.prepare(sql); } };
+  const cache = newDedupeCache(); const cached = [];
+  for (const c of cands) cached.push(await findExisting({ ...env, CRM_DB: spy }, c, cache));
+  assert.deepEqual(cached, plain);
+  assert.equal(plain[1].row.id, plain[2].row.id, 'first row in table order wins, as before');
+  assert.equal(scans, 2, 'phone and website lists loaded once each per run');
 });
 
 test('a candidate already judged is not re-sourced', async () => {
