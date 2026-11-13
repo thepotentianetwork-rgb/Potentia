@@ -313,11 +313,38 @@ export async function placesTextSearch(env, query, signal, opts) {
    Checked against BOTH the CRM and the candidate table, on all three keys, so
    a business sourced last week under a different query does not get paid for
    twice. A hit on `clients` is final: rule 2 says we do not touch it. */
-export async function findExisting(env, cand) {
+export function newDedupeCache() { return { phone: null, domain: null }; }
+
+/* One sourcing run checks dozens of candidates against the same clients
+   table, and nothing in a run writes to `clients`. Loading the phone and
+   website lists once per run (instead of a full-table read per candidate)
+   keeps the same answers: the first row in table order whose normalised
+   phone / registrable domain matches. Pass a cache from newDedupeCache();
+   without one every call reads fresh, exactly as before. */
+async function clientKeyIndex(db, cache, kind) {
+  if (cache && cache[kind]) return cache[kind];
+  const map = new Map();
+  if (kind === "phone") {
+    const rows = await db.prepare(
+      "SELECT id, phone, do_not_contact FROM clients WHERE phone IS NOT NULL AND phone != ''"
+    ).all();
+    for (const r of rows.results || []) { const k = normalisePhone(r.phone); if (!map.has(k)) map.set(k, r); }
+  } else {
+    const rows = await db.prepare(
+      "SELECT id, website_url, do_not_contact FROM clients WHERE website_url IS NOT NULL AND website_url != ''"
+    ).all();
+    for (const r of rows.results || []) { const k = registrableDomain(r.website_url); if (!map.has(k)) map.set(k, r); }
+  }
+  if (cache) cache[kind] = map;
+  return map;
+}
+
+export async function findExisting(env, cand, cache) {
   const db = env.CRM_DB;
   const phone = normalisePhone(cand.phone);
   const domain = registrableDomain(cand.website);
 
+  // Uses idx_clients_place_id (added 2026-11-12) — an indexed lookup, not a scan.
   const byPlace = await db.prepare(
     "SELECT id, do_not_contact FROM clients WHERE place_id = ? LIMIT 1"
   ).bind(cand.place_id).first();
@@ -326,17 +353,11 @@ export async function findExisting(env, cand) {
   if (phone) {
     /* Compare on digits, not on the stored string: the CRM's phone column
        holds whatever a human typed into it. */
-    const rows = await db.prepare(
-      "SELECT id, phone, do_not_contact FROM clients WHERE phone IS NOT NULL AND phone != ''"
-    ).all();
-    const hit = (rows.results || []).find((r) => normalisePhone(r.phone) === phone);
+    const hit = (await clientKeyIndex(db, cache, "phone")).get(phone);
     if (hit) return { where: "clients", on: "phone", row: hit };
   }
   if (domain) {
-    const rows = await db.prepare(
-      "SELECT id, website_url, do_not_contact FROM clients WHERE website_url IS NOT NULL AND website_url != ''"
-    ).all();
-    const hit = (rows.results || []).find((r) => registrableDomain(r.website_url) === domain);
+    const hit = (await clientKeyIndex(db, cache, "domain")).get(domain);
     if (hit) return { where: "clients", on: "domain", row: hit };
   }
 
@@ -627,6 +648,7 @@ export async function sourceCandidates(env, counts, opts) {
      ORDER BY last_run_at IS NOT NULL, last_run_at ASC LIMIT ?`
   ).bind(batch).all();
 
+  const dedupe = newDedupeCache();
   for (const s of srcs.results || []) {
     const query = `${s.query_template} ${s.city} ${s.state}`;
     let found = [];
@@ -644,7 +666,7 @@ export async function sourceCandidates(env, counts, opts) {
       // Permanently closed businesses are not leads.
       if (p.status && p.status !== "OPERATIONAL") { counts.deduped++; continue; }
       counts.sourced++;
-      const existing = await findExisting(env, p);
+      const existing = await findExisting(env, p, dedupe);
       if (existing) { counts.deduped++; continue; }
 
       /* Triage on the free fields. A business that fails is still written
@@ -1834,6 +1856,7 @@ export async function runIntlPipeline(env, opts) {
     // ── source ──
     await emit({ event: "sourcing", profile: "intl", searches: srcs.map(intlQuery) });
     const srcById = {};
+    const dedupe = newDedupeCache();
     for (const s of srcs) {
       srcById[s.id] = s;
       if (overBudget()) { counts.errors.push("daily cost ceiling reached before sourcing"); break; }
@@ -1849,7 +1872,7 @@ export async function runIntlPipeline(env, opts) {
         if (!p.place_id) continue;
         if (p.status && p.status !== "OPERATIONAL") { counts.deduped++; continue; }
         counts.sourced++;
-        if (await findExisting(env, p)) { counts.deduped++; continue; }
+        if (await findExisting(env, p, dedupe)) { counts.deduped++; continue; }
         if ((await intlDedupe(env, p, null, s)).hard) { counts.deduped++; continue; }
         const veto = intlReject(p, minRating);
         const now = new Date().toISOString();
