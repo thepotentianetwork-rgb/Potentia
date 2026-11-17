@@ -30,34 +30,59 @@ const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 0.005, (msg || '') + ' '
 const PAD = { style: 'gable', w: 10, l: 20, h: 8, foundation: 'pad', foundationFinish: 'plain' };
 
 /* ── 1. CONCRETE ─────────────────────────────────────────────────────── */
-test('the pad lists at $3,500 with a $500 promo, and costs $3,000', () => {
+/* The promo can still be turned on from Admin Pricing; these helpers pin it
+   for tests that cover that behavior, then put the shipped default (0) back. */
+async function withPadPromo(amount, fn) {
+  const prev = SELL.concretePromo.amount;
+  applyPricingOverrides({ SELL: { concretePromo: { amount } } });
+  try {
+    return await fn();
+  } finally {
+    applyPricingOverrides({ SELL: { concretePromo: { amount: prev } } });
+  }
+}
+
+test('the pad lists at $3,500 with no promo (winter default)', () => {
   assert.equal(SELL.foundation.pad, 3500);
-  assert.equal(SELL.concretePromo.amount, 500);
+  assert.equal(SELL.concretePromo.amount, 0);
   const { redline } = computePricing(PAD);
-  assert.equal(redline.foundSell, 3000, 'what they pay');
-  assert.equal(redline.foundPromo, 500);
-  assert.equal(redline.foundList, 3500);
-  assert.equal(redline.foundPromoName, 'Concrete pad promo');
+  assert.equal(redline.foundSell, 3500, 'what they pay');
+  assert.equal(redline.foundPromo, 0);
+  assert.equal(redline.foundList, 0);
+  assert.equal(redline.foundPromoName, '');
 });
 
-test('the promo comes off the pad, never the floor finish', () => {
-  // 10x20 = 200 sqft enclosed -> broom finish over 175 sqft = $1,000
-  const { redline } = computePricing({ ...PAD, foundationFinish: 'broom' });
-  assert.equal(redline.foundSell, 3000 + 1000);
-  assert.equal(redline.foundList, 3500 + 1000);
-  const coated = computePricing({ ...PAD, foundationFinish: 'coated' }).redline;
-  /* The stain is its own line now (12 Oct 2026); the promo is still off the pad only. */
-  assert.equal(coated.foundSell, 3000);
-  assert.equal(coated.foundList, 3500);
-  assert.equal(coated.finishSell, 300);
+test('when the promo is on, it comes off the pad, never the floor finish', async () => {
+  await withPadPromo(500, () => {
+    // 10x20 = 200 sqft enclosed -> broom finish over 175 sqft = $1,000
+    const { redline } = computePricing({ ...PAD, foundationFinish: 'broom' });
+    assert.equal(redline.foundSell, 3000 + 1000);
+    assert.equal(redline.foundList, 3500 + 1000);
+    const coated = computePricing({ ...PAD, foundationFinish: 'coated' }).redline;
+    /* The stain is its own line now (12 Oct 2026); the promo is still off the pad only. */
+    assert.equal(coated.foundSell, 3000);
+    assert.equal(coated.foundList, 3500);
+    assert.equal(coated.finishSell, 300);
+  });
 });
 
-test('every pad size pays the same $3,000 it paid before (the pad is a flat price)', () => {
+test('every pad size pays the same flat list price (no promo)', () => {
   for (const [w, l] of [[6, 6], [8, 8], [8, 16], [10, 20], [12, 24], [16, 32], [26, 34]]) {
     const { redline } = computePricing({ ...PAD, w, l });
-    assert.equal(redline.foundSell, 3000, w + 'x' + l);
-    assert.equal(redline.foundList, 3500, w + 'x' + l);
+    assert.equal(redline.foundSell, 3500, w + 'x' + l);
+    assert.equal(redline.foundPromo, 0, w + 'x' + l);
   }
+});
+
+test('when Admin Pricing sets a $500 promo, the pad is $3,500 list / $3,000 to pay', async () => {
+  await withPadPromo(500, () => {
+    assert.equal(SELL.concretePromo.amount, 500);
+    const { redline } = computePricing(PAD);
+    assert.equal(redline.foundSell, 3000, 'what they pay');
+    assert.equal(redline.foundPromo, 500);
+    assert.equal(redline.foundList, 3500);
+    assert.equal(redline.foundPromoName, 'Concrete pad promo');
+  });
 });
 
 test('blocks, gravel and existing foundations carry no promo', () => {
@@ -69,7 +94,7 @@ test('blocks, gravel and existing foundations carry no promo', () => {
   }
 });
 
-test('promo set to 0 in Admin Pricing: full list price, no promo line', () => {
+test('promo set to 0 in Admin Pricing: full list price, no promo line', async () => {
   try {
     applyPricingOverrides({ SELL: { concretePromo: { amount: 0 } } });
     const { redline } = computePricing(PAD);
@@ -78,13 +103,18 @@ test('promo set to 0 in Admin Pricing: full list price, no promo line', () => {
     const bd = quoteLines(redline, []);
     assert.equal(bd.rows[0].promo, undefined);
   } finally {
-    applyPricingOverrides({ SELL: { concretePromo: { amount: 500 } } });
+    applyPricingOverrides({ SELL: { concretePromo: { amount: 0 } } });
   }
-  assert.equal(concretePromoAmount(200), 200, 'never more than the pad');
+  assert.equal(concretePromoAmount(200), 0, 'default promo is off, so the clamp is 0');
+  await withPadPromo(500, () => {
+    assert.equal(concretePromoAmount(200), 200, 'never more than the pad');
+    assert.equal(concretePromoAmount(0), 0);
+  });
   assert.equal(concretePromoAmount(0), 0);
 });
 
-test('the quote: list struck through, promo line, and the totals on what they pay', () => {
+test('the quote: list struck through, promo line, and the totals on what they pay', async () => {
+  await withPadPromo(500, () => {
   const { redline } = computePricing(PAD);
   const bd = quoteLines(redline, []);
   const pad = bd.rows.find((r) => r.kind === 'foundation');
@@ -95,14 +125,17 @@ test('the quote: list struck through, promo line, and the totals on what they pa
   near(pad.deposit, 965.25, '30% deposit on $3,217.50');
   const shed = bd.rows.find((r) => r.kind === 'shed');
   near(bd.subtotal, pad.amt + shed.amt);
+  });
 });
 
-test('a discount on a promo quote scales the pad phase from $3,000, not $3,500', () => {
-  const { redline } = computePricing({ style: 'gable', w: 8, l: 16, h: 8, foundation: 'pad' });
-  const bd = quoteLines(redline, [{ kind: 'amount', value: -1000, note: 'Loyal customer price adjustment' }]);
-  const pad = bd.rows.find((r) => r.kind === 'foundation');
-  const ratio = (bd.subtotal - 1000) / bd.subtotal;
-  near(pad.total, 3000 * ratio * (1 + TAX_RATE));
+test('a discount on a promo quote scales the pad phase from $3,000, not $3,500', async () => {
+  await withPadPromo(500, () => {
+    const { redline } = computePricing({ style: 'gable', w: 8, l: 16, h: 8, foundation: 'pad' });
+    const bd = quoteLines(redline, [{ kind: 'amount', value: -1000, note: 'Loyal customer price adjustment' }]);
+    const pad = bd.rows.find((r) => r.kind === 'foundation');
+    const ratio = (bd.subtotal - 1000) / bd.subtotal;
+    near(pad.total, 3000 * ratio * (1 + TAX_RATE));
+  });
 });
 
 test("a quote saved before the promo (no foundPromo) reads exactly as it did", () => {
@@ -116,7 +149,8 @@ test("a quote saved before the promo (no foundPromo) reads exactly as it did", (
 
 /* Discounts go at the END (Nando, 9 Oct 2026): the pad is billed at its list
    price and the promo is its own line after the phases, before tax. */
-test('invoices list the pad at list price and the promo last; the amounts are unchanged', () => {
+test('invoices list the pad at list price and the promo last; the amounts are unchanged', async () => {
+  await withPadPromo(500, () => {
   const { redline } = computePricing(PAD);
   const bd = quoteLines(redline, []);
   const inv = buildInvoice(bd, 'deposit', [], { adjustments: [] });
@@ -136,6 +170,7 @@ test('invoices list the pad at list price and the promo last; the amounts are un
   assert.equal(ph.lines[ph.lines.length - 1].label, 'Discount on Phase 1 deposit (Concrete pad promo)');
   assert.equal(ph.lines.reduce((t, l) => t + l.amountCents, 0), ph.totalCents);
   assert.equal(ph.totalCents, toCents(965.25));
+  });
 });
 
 /* ── 2. SPRINKLERS ───────────────────────────────────────────────────── */
@@ -169,7 +204,7 @@ test('rates come from Admin Pricing', () => {
   const m = mergedPricingConfig({});
   assert.deepEqual(m.SELL.sprinkler, { base: 300, includedFt: 5, stepFt: 2, stepAmt: 100 });
   assert.deepEqual(m.SELL.travel, { perDay: 0 });
-  assert.deepEqual(m.SELL.concretePromo, { amount: 500 });
+  assert.deepEqual(m.SELL.concretePromo, { amount: 0 });
 });
 
 test('sprinklers add to the quote and sit in their own phase before the pad', () => {
@@ -284,9 +319,9 @@ async function call(m, p, b, t) {
 test('/shed/quote: the pad tile gets pay, list and promo; sprinklers are priced', async () => {
   const r = await call('POST', '/shed/quote', { config: PAD });
   const f = r.data.optionPrices.foundation;
-  assert.equal(f.pad, 3000, 'an older designer reading .pad still shows what they pay');
+  assert.equal(f.pad, 3500, 'an older designer reading .pad still shows what they pay');
   assert.equal(f.padList, 3500);
-  assert.equal(f.padPromo, 500);
+  assert.equal(f.padPromo, 0, 'winter default: no pad promo');
   const sp = r.data.optionPrices.sprinkler;
   assert.equal(sp.byFt[5], 300); assert.equal(sp.byFt[7], 400); assert.equal(sp.byFt[9], 500);
   assert.equal(sp.base, 300); assert.equal(sp.includedFt, 5);
@@ -294,9 +329,17 @@ test('/shed/quote: the pad tile gets pay, list and promo; sprinklers are priced'
   assert.equal(r2.data.total - r.data.total, 900);
   const r3 = await call('POST', '/shed/quote', { config: { ...PAD, sprinklers: 'lots' } });
   assert.equal(r3.data.total, r.data.total, 'junk is no heads');
+  await withPadPromo(500, async () => {
+    const on = await call('POST', '/shed/quote', { config: PAD });
+    const fo = on.data.optionPrices.foundation;
+    assert.equal(fo.pad, 3000, 'when the promo is on, .pad is what they pay');
+    assert.equal(fo.padList, 3500);
+    assert.equal(fo.padPromo, 500);
+  });
 });
 
 test('CRM: a travel adjustment is stored, validated and priced into the effective price', async () => {
+  await withPadPromo(500, async () => {
   const now = new Date().toISOString();
   db.prepare("INSERT INTO customers (name,created_at,updated_at) VALUES ('T',?,?)").run(now, now);
   const { redline, customer } = computePricing(PAD);
@@ -325,10 +368,12 @@ test('CRM: a travel adjustment is stored, validated and priced into the effectiv
 
   r = await call('GET', '/admin/customers/1', null, tok);
   assert.equal(r.data.submissions[0].travel_per_day, 0, 'no default set yet');
+  });
 });
 
 /* ── staff re-pricing a line (site conditions) ─────────────────────── */
-test('override: the pad re-priced for this job moves only the concrete phase, and the promo still comes off', () => {
+test('override: the pad re-priced for this job moves only the concrete phase, and the promo still comes off', async () => {
+  await withPadPromo(500, () => {
   const { redline } = computePricing(PAD);
   const bd0 = quoteLines(redline, []);
   const adj = [{ kind: 'override', item: redline.foundName, amount: 3600, note: 'Sloped lot, extra forms' }];
@@ -347,6 +392,7 @@ test('override: the pad re-priced for this job moves only the concrete phase, an
   near(bd.subtotal - bd0.subtotal, 100);
   near(bd.rows.find((r) => r.kind === 'shed').amt, bd0.rows.find((r) => r.kind === 'shed').amt);
   assert.equal(bd.adjust, 0);
+  });
 });
 
 test('override: the sprinkler job re-priced, down as well as up', () => {
@@ -375,6 +421,7 @@ test('concrete and sprinkler phases are flagged as estimates; removals alone are
 });
 
 test('CRM: overrides are stored, checked, and priced into the effective price', async () => {
+  await withPadPromo(500, async () => {
   const tok = (await call('POST', '/admin/login', { password: 'pw' })).data.token;
   const set = (adj) => call('POST', '/admin/submissions/1/adjustments', { adjustments: adj }, tok);
   const { redline, customer } = computePricing(PAD);
@@ -395,4 +442,5 @@ test('CRM: overrides are stored, checked, and priced into the effective price', 
     r = await set(bad);
     assert.equal(r.status, 400, JSON.stringify(bad));
   }
+  });
 });

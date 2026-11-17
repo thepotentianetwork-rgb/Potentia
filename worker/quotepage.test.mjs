@@ -16,7 +16,12 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { computePricing } from './pricing.js';
+import { computePricing, applyPricingOverrides } from './pricing.js';
+
+/* These tests cover pad-promo behavior, still available from Admin Pricing.
+   The shipped default is now $0 (off for winter); turn it on here so the
+   fixtures match the quotes they were written against. */
+applyPricingOverrides({ SELL: { concretePromo: { amount: 500 } } });
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PAGE = path.join(HERE, '..', 'quote.html');

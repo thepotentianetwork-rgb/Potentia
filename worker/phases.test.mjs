@@ -9,11 +9,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
-import { computePricing } from './pricing.js';
+import { computePricing, applyPricingOverrides } from './pricing.js';
 import { quoteLines } from './quotelines.js';
 import { phaseParts, phaseStatus, allocatePhases, buildPhaseInvoice, buildTogetherInvoice, togetherStatus,
          toCents, LIMITS } from './invoices.js';
 import worker from './index.js';
+
+/* These tests cover pad-promo behavior, still available from Admin Pricing.
+   The shipped default is now $0 (off for winter); turn it on here so the
+   fixtures match the quotes they were written against. */
+applyPricingOverrides({ SELL: { concretePromo: { amount: 500 } } });
 
 /* Three phases: concrete pad, shed, interior. */
 const { redline } = computePricing({ style: 'gable', w: 10, l: 20, h: 9, foundation: 'pad', intFinish: 'painted' });

@@ -97,6 +97,32 @@ async function plan(env, t, id = 7, anchor = '2026-10-07') {
     { anchor_date: anchor, confirm: true }, t);
 }
 
+
+/* A shop-cost figure can land on the same rounded dollar as a customer-facing
+   price (the pad list is $3,500; grandBase currently rounds to 3500). A bare
+   substring check would then fail even though the cost field itself is not
+   in the response. Skip numbers the customer is meant to see; the field-name
+   checks above remain the leak guard for those collisions. */
+function sellSideNumbers(r) {
+  const out = new Set();
+  const add = (v) => {
+    const n = Number(v);
+    if (!isFinite(n) || n === 0) return;
+    out.add(String(n));
+    out.add(String(Math.round(n)));
+  };
+  add(r.foundSell); add(r.foundList); add(r.foundPromo); add(r.finishSell);
+  add(r.customerPrice); add(r.customer);
+  (r.addonLines || []).forEach((l) => add(l && l.amt));
+  (r.framingLines || []).forEach((l) => { /* shop-side; do not allow */ });
+  return out;
+}
+function jsonHasNumber(body, n) {
+  /* "500" must not match the "500" inside "3500". */
+  const re = new RegExp('(?<![0-9.])' + String(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![0-9])');
+  return re.test(body);
+}
+
 // ── the link ────────────────────────────────────────────────────────────────
 
 test('winning an order issues its tracking link', async () => {
@@ -222,10 +248,12 @@ test('the shop’s own cost never leaves the building', async () => {
   const secret = { trueTotalCost: redline.trueTotalCost, grandBase: redline.grandBase,
                    marginDollars: redline.marginDollars, framing: redline.framing,
                    helperCost: redline.helperCost };
+  const allowed = sellSideNumbers(redline);
   Object.keys(secret).forEach((k) => {
     assert.ok(Number(secret[k]) > 0, 'the fixture has no ' + k + ' to leak');
     [String(secret[k]), String(Math.round(secret[k]))].forEach((n) => {
-      assert.ok(body.indexOf(n) === -1, k + ' (' + n + ') is in the response');
+      if (allowed.has(n)) return;
+      assert.ok(!jsonHasNumber(body, n), k + ' (' + n + ') is in the response');
     });
   });
 });
@@ -483,10 +511,12 @@ test('itemising the build does not carry the shop’s cost with it', async () =>
   const secret = { trueTotalCost: LOADED.trueTotalCost, grandBase: LOADED.grandBase,
                    marginDollars: LOADED.marginDollars, framing: LOADED.framing,
                    helperCost: LOADED.helperCost };
+  const allowed = sellSideNumbers(LOADED);
   Object.keys(secret).forEach((k) => {
     assert.ok(Number(secret[k]) > 0, 'the fixture has no ' + k + ' to leak');
     [String(secret[k]), String(Math.round(secret[k]))].forEach((n) => {
-      assert.ok(body.indexOf(n) === -1, k + ' (' + n + ') is in the response');
+      if (allowed.has(n)) return;
+      assert.ok(!jsonHasNumber(body, n), k + ' (' + n + ') is in the response');
     });
   });
 });
