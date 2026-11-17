@@ -8,10 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { computePricing } from './pricing.js';
+import { computePricing, applyPricingOverrides } from './pricing.js';
 import { quoteLines } from './quotelines.js';
 import { buildInvoice, splitPayments, toCents, buildMemo, buildFooter,
          buildCustomFields, LIMITS, fingerprint, buildPhaseInvoice } from './invoices.js';
+
+/* These tests cover pad-promo behavior, still available from Admin Pricing.
+   The shipped default is now $0 (off for winter); turn it on here so the
+   fixtures match the quotes they were written against. */
+applyPricingOverrides({ SELL: { concretePromo: { amount: 500 } } });
 
 const BUILDS = {
   'plain 10x16': { style: 'gable', w: 10, l: 16, h: 9 },

@@ -3,10 +3,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { computePricing, CONCRETE_STAIN_NAME } from './pricing.js';
+import { computePricing, CONCRETE_STAIN_NAME, applyPricingOverrides } from './pricing.js';
 import { quoteLines, TAX_RATE } from './quotelines.js';
 import { buildInvoice } from './invoices.js';
 import worker from './index.js';
+
+/* These tests cover pad-promo behavior, still available from Admin Pricing.
+   The shipped default is now $0 (off for winter); turn it on here so the
+   fixtures match the quotes they were written against. */
+applyPricingOverrides({ SELL: { concretePromo: { amount: 500 } } });
 
 const CFG = { style: 'gable', w: 12, l: 16, h: 8, foundation: 'pad', foundationFinish: 'coated' };
 const near = (a, b, m) => assert.ok(Math.abs(a - b) < 0.011, (m || '') + ' ' + a + ' vs ' + b);
