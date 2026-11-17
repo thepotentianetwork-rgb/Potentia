@@ -205,6 +205,20 @@ check("MRR counts the live client", r.data.stats.mrr === 175, r.data.stats);
 check("active client count", r.data.stats.active_clients === 1, r.data.stats);
 check("collected in last 30d", r.data.stats.collected_30d === 150 || r.data.stats.collected_30d === 1350, r.data.stats);
 
+console.log("\n-- hot reply priority --");
+r = await call("POST", "/crm/clients", { business_name: "Hot Reply Co", email: "reply@hot.test", status: "lead" }, crmToken);
+check("hot-test client created", r.status === 200 && r.data.id, r);
+const hotId = r.data.id;
+crmDb.prepare("UPDATE clients SET priority = 'hot', replied_at = '2026-11-06T15:24:15Z' WHERE id = ?").run(hotId);
+r = await call("GET", "/crm/clients", null, crmToken);
+check("hot lead sorts first, ahead of a more recently updated colder lead",
+  r.status === 200 && r.data.clients[0].id === hotId && r.data.clients[0].priority === "hot"
+    && r.data.clients[0].replied_at === "2026-11-06T15:24:15Z",
+  r.data.clients && r.data.clients.map((c) => ({ id: c.id, priority: c.priority, updated_at: c.updated_at })));
+check("colder lead remains after the hot one", r.data.clients[1] && r.data.clients[1].id === id, r.data.clients[1]);
+r = await call("DELETE", "/crm/clients/" + hotId, null, crmToken);
+check("hot-test client cleaned up", r.status === 200, r);
+
 console.log("\n-- public lead capture --");
 r = await call("POST", "/crm/lead", { name: "Marisol Vega", email: "marisol@vega.test", service: "Website", message: "Need a 3-page site." });
 check("new lead created", r.status === 200 && !r.data.existing, r);

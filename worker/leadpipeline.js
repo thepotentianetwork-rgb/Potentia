@@ -201,7 +201,10 @@ export async function ensureLeadPipelineTables(env) {
     // Intl Phase 3: soft-duplicate review queue. NULL on every domestic row.
     ["lead_dup_of", "INTEGER"],            // clients.id this lead may duplicate
     ["lead_dup_status", "TEXT"],           // possible | confirmed | distinct
-    ["lead_dup_reason", "TEXT"]
+    ["lead_dup_reason", "TEXT"],
+    // Outreach replies: 'hot' + most recent genuine human reply time.
+    ["priority", "TEXT"],
+    ["replied_at", "TEXT"]
   ];
   for (const [name, decl] of wanted) {
     if (cols.indexOf(name) === -1) {

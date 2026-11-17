@@ -156,6 +156,8 @@ select.status-sel:focus{border-color:var(--silver)}
 
 tr.is-lead{background:linear-gradient(90deg,rgba(216,161,95,0.09),rgba(216,161,95,0.01) 55%)}
 tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
+tr.is-hot{background:linear-gradient(90deg,rgba(224,80,60,0.16),rgba(224,80,60,0.02) 55%)}
+tr.is-hot td:first-child{box-shadow:inset 3px 0 0 #e0503c}
 .name-area{color:var(--silver)}
 .owner-chip{display:inline-flex;align-self:flex-start;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid rgba(216,161,95,0.45);background:rgba(216,161,95,0.1);color:var(--warm);margin-top:5px}
 .why-badge{display:inline-flex;align-self:flex-start;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border-radius:20px;border:1px solid;margin-top:5px}
@@ -177,6 +179,7 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
 .speed-mid{color:#d8a15f;border-color:rgba(216,161,95,0.5);background:rgba(216,161,95,0.1)}
 .speed-ok{color:#7fb37a;border-color:rgba(127,179,122,0.45);background:rgba(127,179,122,0.1)}
 .new-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--warm);background:rgba(216,161,95,0.14);border:1px solid rgba(216,161,95,0.45);padding:2px 8px;border-radius:20px;text-transform:uppercase;align-self:flex-start;margin-top:2px}
+.hot-badge{display:inline-flex;align-items:center;gap:5px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.16em;color:#ff6b4a;background:rgba(224,80,60,0.18);border:1px solid rgba(224,80,60,0.55);padding:2px 8px;border-radius:20px;text-transform:uppercase;align-self:flex-start;margin-top:2px;font-weight:600}
 
 @media (max-width:960px){
   .stats{grid-template-columns:repeat(2,1fr)}
@@ -193,6 +196,8 @@ tr.is-lead td:first-child{box-shadow:inset 3px 0 0 var(--warm)}
   tbody tr{border:1px solid var(--dim);padding:14px 16px;margin-bottom:14px}
   tr.is-lead{border-color:rgba(216,161,95,0.45)}
   tr.is-lead td:first-child{box-shadow:none}
+  tr.is-hot{border-color:rgba(224,80,60,0.55)}
+  tr.is-hot td:first-child{box-shadow:none}
   td{border-bottom:none;padding:6px 0}
   td::before{content:attr(data-label);display:block;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.15em;color:var(--dim);text-transform:uppercase;margin-bottom:3px}
   td.view-cell{padding-top:12px}
@@ -1260,6 +1265,23 @@ document.getElementById('search').addEventListener('input', function (e) {
   render();
 });
 
+function isHot(c) {
+  return String(c.priority || '').toLowerCase() === 'hot';
+}
+/* Hot leads (email replies) always sit at the top, most recent reply first.
+   Everyone else keeps the existing last-activity order. */
+function compareLeads(a, b) {
+  var aHot = isHot(a) ? 1 : 0, bHot = isHot(b) ? 1 : 0;
+  if (aHot !== bHot) return bHot - aHot;
+  if (aHot) {
+    var ar = a.replied_at || '', br = b.replied_at || '';
+    if (ar !== br) return ar > br ? -1 : 1;
+  }
+  var au = a.updated_at || '', bu = b.updated_at || '';
+  if (au !== bu) return au > bu ? -1 : 1;
+  return (b.id || 0) - (a.id || 0);
+}
+
 function matches(c) {
   if (activeFilter !== 'all' && (c.status || 'lead') !== activeFilter) return false;
   if (activeSegment !== 'all' && (c.lead_segment || '') !== activeSegment) return false;
@@ -1274,7 +1296,7 @@ function matches(c) {
 function render() {
   var body = document.getElementById('clients-body');
   body.innerHTML = '';
-  var list = allClients.filter(matches);
+  var list = allClients.filter(matches).sort(compareLeads);
   if (!list.length) {
     var tr0 = document.createElement('tr');
     var td0 = document.createElement('td');
@@ -1298,7 +1320,27 @@ function render() {
     var byTrade = activeSegment !== 'all';
     var groups = {};
     var titles = {};
-    list.forEach(function (c) {
+    function renderGroup(title, items) {
+      var head = document.createElement('tr');
+      head.className = 'group-head';
+      var td = document.createElement('td');
+      td.colSpan = 8;
+      var t = document.createElement('span');
+      t.className = 'group-title';
+      t.textContent = title;
+      td.appendChild(t);
+      var n = document.createElement('span');
+      n.className = 'group-count';
+      n.textContent = items.length;
+      td.appendChild(n);
+      head.appendChild(td);
+      body.appendChild(head);
+      items.forEach(row);
+    }
+    var hot = list.filter(isHot);
+    var rest = list.filter(function (c) { return !isHot(c); });
+    if (hot.length) renderGroup('Hot', hot);
+    rest.forEach(function (c) {
       var k, title;
       if (Number(c.created_by_pipeline) !== 1) { k = '__own'; title = 'Your clients'; }
       else if (byTrade && tradeOf(c)) { k = 't:' + tradeOf(c); title = tradeOf(c); }
@@ -1316,21 +1358,7 @@ function render() {
         return groups[b].length - groups[a].length;
       })
       .forEach(function (k) {
-        var head = document.createElement('tr');
-        head.className = 'group-head';
-        var td = document.createElement('td');
-        td.colSpan = 8;
-        var t = document.createElement('span');
-        t.className = 'group-title';
-        t.textContent = titles[k];
-        td.appendChild(t);
-        var n = document.createElement('span');
-        n.className = 'group-count';
-        n.textContent = groups[k].length;
-        td.appendChild(n);
-        head.appendChild(td);
-        body.appendChild(head);
-        groups[k].forEach(row);
+        renderGroup(titles[k], groups[k]);
       });
     return;
   }
@@ -1340,7 +1368,9 @@ function render() {
   function row(c) {
     var status = c.status || 'lead';
     var tr = document.createElement('tr');
-    if (status === 'lead') tr.className = 'is-lead';
+    var hot = isHot(c);
+    if (hot) tr.className = 'is-hot';
+    else if (status === 'lead') tr.className = 'is-lead';
 
     // client
     var tdName = document.createElement('td');
@@ -1385,7 +1415,13 @@ function render() {
       where.textContent = area;
       wrap.appendChild(where);
     }
-    if (status === 'lead') {
+    if (hot) {
+      var badge = document.createElement('span');
+      badge.className = 'hot-badge';
+      badge.textContent = 'Hot';
+      badge.title = c.replied_at ? ('Replied ' + c.replied_at) : 'Replied by email';
+      wrap.appendChild(badge);
+    } else if (status === 'lead') {
       var badge = document.createElement('span');
       badge.className = 'new-badge';
       badge.textContent = 'New Lead';

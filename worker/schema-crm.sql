@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS clients (
   -- overwritten: first contact wins.
   owner TEXT,
   owner_since TEXT,
+  -- Outreach reply priority. 'hot' when a lead replies by email; NULL otherwise.
+  -- Existing rows keep NULL. Live installs get these via ensureCrmTables.
+  priority TEXT,
+  -- ISO timestamp of the most recent genuine human reply. Sorts Hot leads.
+  replied_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
