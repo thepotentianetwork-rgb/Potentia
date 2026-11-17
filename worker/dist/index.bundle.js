@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "3191223-dirty";
-const WORKER_BUILT_AT = "2026-11-13T21:50:00.009Z";
+const WORKER_BUILD = "4a77cb6";
+const WORKER_BUILT_AT = "2026-11-17T09:16:58.661Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -500,17 +500,18 @@ let SELL = {
   // ── FOUNDATION (flat) ── Levelling on blocks is complimentary. Gravel is
   // blocks levelling PLUS pouring gravel over the site first — tiered by
   // shed sqft, see gravelTiers below, not this table.
-  /* pad is the LIST price of the pour. Nando, 9 Oct 2026: "Make the prices on
-     concrete $3,500 instead, but with the promo discount $500 to make it
-     $3000." The promo is its own group below so it can be switched off (0) or
-     changed from Admin Pricing without touching the list price, and the quote
-     shows both: $3,500 struck through, -$500 promo, $3,000 to pay. */
+  /* pad is the LIST price of the pour. Nando, 9 Oct 2026: list $3,500, with
+     a $500 promo that made it $3,000 to pay. Nando, 17 Nov 2026: turn the
+     promo off for winter (do not incentivize concrete pads). The promo group
+     stays so it can be switched back on from Admin Pricing without touching
+     the list price. 0 = no promo line; the customer pays the full $3,500.
+     Existing saved quotes keep whatever promo was stamped on their redline. */
   foundation: { pad: 3500, blocks: 0, existing: 0 },
 
   // ── CONCRETE PAD PROMO ── taken off the pad's list price above, never off
   // the floor finish. Clamped to the pad price. 0 = no promo (the customer
-  // pays the full list price).
-  concretePromo: { amount: 500 },
+  // pays the full list price). Off as of 17 Nov 2026.
+  concretePromo: { amount: 0 },
 
   /* ── SPRINKLER RELOCATION ── per sprinkler head, by how far it moves.
      Nando, 9 Oct 2026: $300 to relocate a head up to 5 ft; past that, $100
