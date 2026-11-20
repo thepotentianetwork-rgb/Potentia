@@ -4250,7 +4250,7 @@ function capArray(a, max) {
    the designer sets its sliders from them, so this file is the one source and
    the two cannot drift apart again. */
 const SHED_LIMITS = {
-  w: { min: 6,  max: 26, def: 8,  step: 2 },
+  w: { min: 4,  max: 26, def: 8,  step: 2 },   // 4x6 is the smallest (Nando, 20 Nov 2026)
   l: { min: 6,  max: 34, def: 12, step: 2 },
   h: { min: 6,  max: 12, def: 8,  step: 1 }
 };
