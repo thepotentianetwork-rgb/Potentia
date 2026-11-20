@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "6a71265";
-const WORKER_BUILT_AT = "2026-11-17T09:18:16.006Z";
+const WORKER_BUILD = "2428b91-dirty";
+const WORKER_BUILT_AT = "2026-11-20T22:46:07.737Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -16158,7 +16158,7 @@ function capArray(a, max) {
    the designer sets its sliders from them, so this file is the one source and
    the two cannot drift apart again. */
 const SHED_LIMITS = {
-  w: { min: 6,  max: 26, def: 8,  step: 2 },
+  w: { min: 4,  max: 26, def: 8,  step: 2 },   // 4x6 is the smallest (Nando, 20 Nov 2026)
   l: { min: 6,  max: 34, def: 12, step: 2 },
   h: { min: 6,  max: 12, def: 8,  step: 1 }
 };
