@@ -354,20 +354,28 @@ export const FLOORING_NAMES = {
 // Ceiling division on integers — no float anywhere, so a rate can't land one
 // ten-thousandth under a step and round down a tier.
 function _ceilDiv(a, b){ return Math.floor((a + b - 1) / b); }
+/* SELL.upliftPct[k] as a number, 0..100. Anything unreadable is 0. */
+function upliftPct(k){
+  var u = SELL && SELL.upliftPct, v = u ? Number(u[k]) : 0;
+  return (isFinite(v) && v > 0) ? Math.min(100, v) : 0;
+}
+/* The flooring uplift as a multiplier in basis points (15% -> 11500), integer,
+   so the cents arithmetic below stays integer. */
+function _flUpBp(){ return 10000 + Math.round(upliftPct('flooring') * 100); }
 /* Sell rate per square foot, in whole cents, rounded UP to the nearest 5c.
    Good $1.80, Better $7.95, Best $9.95 — assert these, they are the numbers
    on the price sheet. */
 export function flooringSellRateCents(tier){
   var t = FLOORING.tiers[tier]; if(!t || !t.costSqftCents) return 0;
   var STEP = 5;                                            // round up to 5 cents
-  return _ceilDiv(t.costSqftCents * 10000, (10000 - FLOORING.marginBp) * STEP) * STEP;
+  return _ceilDiv(t.costSqftCents * _flUpBp(), (10000 - FLOORING.marginBp) * STEP) * STEP;
 }
 /* Job minimum, in whole cents, rounded UP to the nearest $5.
    Good $290, Better $1,195, Best $1,495. */
 export function flooringSellMinCents(tier){
   var t = FLOORING.tiers[tier]; if(!t || !t.costMinCents) return 0;
   var STEP = 500;                                          // round up to $5
-  return _ceilDiv(t.costMinCents * 10000, (10000 - FLOORING.marginBp) * STEP) * STEP;
+  return _ceilDiv(t.costMinCents * _flUpBp(), (10000 - FLOORING.marginBp) * STEP) * STEP;
 }
 /* Whole dollars for THIS shed. Area is the ENCLOSED floor — a porch deck is
    not floored and a loft is not a second floor to price, so neither counts.
@@ -590,6 +598,22 @@ export let SELL = {
      get grids (solid doors and roll-ups: none, no charge); Price-TBD and no-grid windows (72x48 slider, 24x80
      sidelight) are skipped too. Admin -> Pricing can override (group 'grids'). */
   grids: { pct: 30, shopDoorBase: 170 },
+
+  /* ── PRICES THAT USED TO BE CODE CONSTANTS (23 Nov 2026) ──
+     Moved into SELL so a store-wide price change can be made from the saved
+     pricing snapshot (Admin Pricing / pricing_config) alone, with nothing
+     left behind in code. The shipped values are exactly what the constants
+     were, so this changes no price on its own.
+       finishFloor.rate  - the old $7 per sqft of WALL area that paint + labour
+                           is topped up to (see FINISH SHORTFALL below).
+       rollupColor       - factory black/brown curtain upcharge on roll-ups.
+       upliftPct.flooring  - % on top of the cost/margin flooring sell rate
+                             and job minimum.
+       upliftPct.baseProxy - % on top of the cost x margin base price used for
+                             sizes that have no base-sheet cell. */
+  finishFloor: { rate: LEGACY_FINISH_RATE },
+  rollupColor: { white: 0, black: 100, brown: 100 },
+  upliftPct: { flooring: 0, baseProxy: 0 },
 
   // ── DOORS (upcharge over the included 5' Double) ──
   doors: {
@@ -1224,7 +1248,9 @@ export function sellDoorUpcharge(dd){
 export function rollUpColorUpcharge(dd){
   if((dd && dd.style) !== 'rollup') return 0;
   var c = String((dd && dd.color) || 'white').toLowerCase();
-  return ROLLUP_COLOR_UPCHARGE[c] || 0;
+  var t = (SELL && SELL.rollupColor) || ROLLUP_COLOR_UPCHARGE;
+  var v = Number(t[c]);
+  return (isFinite(v) && v > 0) ? v : 0;
 }
 
 /* Which door styles come in a finish colour, and what each has always been
@@ -1624,7 +1650,7 @@ export function computePricing(cfgIn, opts){
   // twice. Base includes exactly one standard door's cost.
   var includedDoorCost = (typeof doorsData!=='undefined' && doorsData.length>0) ? doorMaterialCost(60, 76, true) : 0;
   var shellCost = framing + sid.cost + roofDelta + includedDoorCost + helperCost + fuelCost;
-  var baseProxy = shellCost / (1 - cfg.marginTarget/100);
+  var baseProxy = shellCost / (1 - cfg.marginTarget/100) * (1 + upliftPct('baseProxy')/100);
 
   // ── REAL BASE (workbook sheet) with the proxy as fallback ──
   // The sheet is chosen by style AND porch — see sellSheetKey().
@@ -1769,7 +1795,8 @@ export function computePricing(cfgIn, opts){
      so there is no shortfall to recover on it. */
   var finishRecovered = 0;
   if(sidId!=='pine'){
-    var _legacyFinish = LEGACY_FINISH_RATE * wallAreaFt(Wf, Df, Hf);
+    var _ffr = SELL.finishFloor && Number(SELL.finishFloor.rate);
+    var _legacyFinish = ((isFinite(_ffr) && _ffr >= 0) ? _ffr : LEGACY_FINISH_RATE) * wallAreaFt(Wf, Df, Hf);
     finishRecovered = Math.max(0, _legacyFinish - (paintSell + laborSell));
     if(finishRecovered>0){
       marginPrice   += finishRecovered;
@@ -2168,8 +2195,8 @@ export const ELEC_INCLUDES = {
    neither line; and a config without usable dimensions cannot be priced, so it
    is left as written rather than guessed at.
 
-   Reads SELL, so an owner's dashboard edits apply here exactly as they do to a
-   new quote. */
+   Reads the SHIPPED paint fee and labour rates, not SELL: an owner's
+   dashboard edits (and price rises) apply to new quotes only. */
 export function repriceFinish(redline, cfg){
   if(!redline || typeof redline!=='object') return null;
   if(!cfg || typeof cfg!=='object') return null;
@@ -2179,11 +2206,12 @@ export function repriceFinish(redline, cfg){
   var w=Number(cfg.w), d=Number(cfg.l), h=Number(cfg.h);
   if(!(w>0 && d>0 && h>0)) return null;
 
-  var _pf = SELL.exteriorPaint && SELL.exteriorPaint.flat;
-  var paintSell = (typeof _pf==='number' && isFinite(_pf) && _pf>=0) ? _pf : PAINT_FLAT;
-  var _lr = SELL.labor && SELL.labor[h];
-  var laborRate = (typeof _lr==='number' && isFinite(_lr) && _lr>=0)
-    ? _lr : (LABOR_BY_HEIGHT[h] || LABOR_BY_HEIGHT[8]);
+  /* Pinned to the shipped paint fee and labour rates, NOT the live SELL
+     table (Nando, 23 Nov 2026: a price rise is for new quotes only). Read off
+     SELL, any later rise in paint or labour re-allocates an already-sent quote
+     onto the new rates and pushes the total its customer was given upwards. */
+  var paintSell = PAINT_FLAT;
+  var laborRate = LABOR_BY_HEIGHT[h] || LABOR_BY_HEIGHT[8];
   var floor = w*d;
   var laborSell = laborRate * floor;
 
@@ -2214,7 +2242,8 @@ export function elecIncludesFor(sellName){
 
 const OVERRIDE_GROUPS = ['doors','windows','siding','exteriorPaint','labor','electrical','dormers','wallHeight','porchDeckSqft',
   'porchFrontSqft','porchSideSqft','porchPartial','interior','foundation','foundationFinish','broomTiers','gravelTiers',
-  'concretePromo','sprinkler','travel','cardFee','cashDiscount','concreteScope','grids'];
+  'concretePromo','sprinkler','travel','cardFee','cashDiscount','concreteScope','grids',
+  'finishFloor','rollupColor','upliftPct'];
 const OVERRIDE_OPTION_SUBS = ['flat','perLinFt','perSqft'];
 
 /* A null in a saved override means REMOVED, not "priced at null".

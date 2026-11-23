@@ -119,10 +119,14 @@ test('a stored height with no rate of its own uses the 8ft rate', () => {
   assert.equal(Math.round(out.laborSell), Math.round(LABOR[8] * 216));
 });
 
-test("the owner's dashboard edits reach re-priced quotes too", () => {
-  withOverride({ SELL: { exteriorPaint: { flat: 900 }, labor: { 8: 6 } } }, () => {
+/* Nando, 23 Nov 2026: a price rise is for new quotes only. Dashboard edits to
+   paint and labour must not re-allocate (and raise) a quote already sent. */
+test("the owner's dashboard edits do NOT move an already-sent quote", () => {
+  const before = repriceFinish(legacyRedline(), legacyConfig);
+  withOverride({ SELL: { exteriorPaint: { flat: 1610 }, labor: { 8: 8.91 } } }, () => {
     const out = repriceFinish(legacyRedline(), legacyConfig);
-    assert.equal(out.paintSell, 900);
-    assert.equal(Math.round(out.laborSell), Math.round(6 * 216));
+    assert.equal(out.paintSell, PAINT);
+    assert.equal(Math.round(out.laborSell), Math.round(LABOR[8] * 216));
+    assert.deepEqual(out, before);
   });
 });
