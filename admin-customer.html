@@ -386,7 +386,7 @@ select:focus{border-color:var(--sp-blue)}
 
   <!-- Owner only: share this lead with a partner sales team. Off by default. -->
   <label id="share-team-wrap" style="display:none;align-items:center;gap:8px;margin:10px 0 4px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--silver);cursor:pointer">
-    <input type="checkbox" id="share-team"> Share with sales team (Absolute Built) <span id="share-team-msg"></span>
+    <input type="checkbox" id="share-team"> Assign lead to Absolute Built <span id="share-team-msg"></span>
   </label>
 
   <div id="focus-builds"></div>
@@ -3896,7 +3896,7 @@ function loadShareToggle() {
       box.onchange = function () {
         box.disabled = true; msg.textContent = '…';
         fetch(API_BASE + '/portal/share/' + customerId, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ team: box.checked ? 'absolute_built' : null }) })
-          .then(function (r) { if (!r.ok) throw 0; msg.textContent = box.checked ? '· shared' : '· not shared'; })
+          .then(function (r) { if (!r.ok) throw 0; msg.textContent = box.checked ? '· assigned' : '· not assigned'; })
           .catch(function () { box.checked = !box.checked; msg.textContent = '· could not save'; })
           .finally(function () { box.disabled = false; });
       };
