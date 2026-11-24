@@ -1301,7 +1301,7 @@ function planAdjustmentCopy(source, current, compItems) {
 }
 function adjPlainText(a) {
   var t = a.kind === 'comp' ? 'Free: ' + a.item
-    : a.kind === 'override' ? 'Price: ' + a.item + ' \u2192 $' + fmtN(a.amount)
+    : a.kind === 'override' ? 'Price: ' + a.item + (a.label && a.label !== a.item ? ' as \u201c' + a.label + '\u201d' : '') + ' \u2192 $' + fmtN(a.amount)
     : a.kind === 'travel' ? travelText(a)
     : a.kind === 'percent' ? Math.abs(a.value) + '% ' + (a.value < 0 ? 'off' : 'added')
     : (a.value < 0 ? '\u2212$' : '+$') + fmtN(Math.abs(a.value));
@@ -1568,7 +1568,8 @@ function renderAdjustBlock(card, s, details) {
       text.textContent = adjLabelFor(a, compPrices, compPromos);
       var note = document.createElement('span');
       note.className = 'adj-note-shown';
-      if (a.note && a.kind !== 'comp') note.textContent = a.note;
+      if (a.kind === 'override' && a.label) note.textContent = 'Shown as \u201c' + a.label + '\u201d';
+      if (a.note && a.kind !== 'comp') note.textContent = (note.textContent ? note.textContent + ' \u00b7 ' : '') + a.note;
       if (a.kind === 'travel') note.textContent = (a.note ? a.note + ' \u00b7 ' : '') + 'in the Shed phase, taxed with it';
       /* After a design update a line can disappear; the adjustment stays
          stored but does nothing, so say so instead of showing it as live. */
@@ -1683,6 +1684,17 @@ function renderAdjustBlock(card, s, details) {
   noteIn.type = 'text';
   noteIn.placeholder = 'Reason shown on the quote';
 
+  var nameIn = document.createElement('input');
+  nameIn.className = 'adj-note';
+  nameIn.type = 'text';
+  nameIn.placeholder = 'Name shown on the quote';
+  nameIn.setAttribute('aria-label', 'Name shown on the quote');
+  function fillNameFromItem() {
+    if (!nameIn.dataset.edited) nameIn.value = itemSel.value || '';
+  }
+  itemSel.addEventListener('change', fillNameFromItem);
+  nameIn.addEventListener('input', function () { nameIn.dataset.edited = '1'; });
+
   var hint = document.createElement('p');
   hint.className = 'adj-dir-hint';
 
@@ -1695,6 +1707,7 @@ function renderAdjustBlock(card, s, details) {
     rateIn.style.display = isTravel ? '' : 'none';
     travelCalc.style.display = isTravel ? '' : 'none';
     noteIn.style.display = isComp ? 'none' : '';
+    nameIn.style.display = isOvr ? '' : 'none';
     valIn.placeholder = (k === 'percent') ? '10' : '500';
     /* A price going UP reaches the customer as a line on their quote. Saying
        why is not optional, so the note is required in that direction only. */
@@ -1708,12 +1721,14 @@ function renderAdjustBlock(card, s, details) {
          the promo still comes off the price typed (Nando, 9 Oct 2026). */
       valIn.placeholder = 'New price';
       noteIn.placeholder = 'Reason (shown on the quote only if you lower it)';
+      nameIn.placeholder = 'Name shown on the quote';
+      fillNameFromItem();
       var cur = compPrices[itemSel.value];
       var pr = compPromos[itemSel.value] || 0;
       hint.textContent = 'Sets this line to a new price for this quote only' +
         (cur != null ? ' (now $' + fmtN(cur + pr) + (pr ? ' before the $' + fmtN(pr) + ' promo' : '') + ')' : '') +
         (pr ? '. Type the regular price: the $' + fmtN(pr) + ' promo still comes off it' : '') +
-        '. It stays in its own phase; deposits follow.';
+        '. Change the name if the customer should see a different description (for example a 6" pad). It stays in its own phase; deposits follow.';
       return;
     }
     if (isTravel) {
@@ -1755,6 +1770,7 @@ function renderAdjustBlock(card, s, details) {
         alert('That line is included free. Remove that first to re-price it.'); return;
       }
       entry = { kind: 'override', item: itemSel.value, amount: na, note: noteIn.value };
+      if (nameIn.value.trim() && nameIn.value.trim() !== itemSel.value) entry.label = nameIn.value.trim();
       list = list.filter(function (a) { return !(a.kind === 'override' && a.item === itemSel.value); });
     } else if (k === 'travel') {
       var days = Number(daysIn.value), rate = Number(rateIn.value);
@@ -1789,6 +1805,7 @@ function renderAdjustBlock(card, s, details) {
   form.appendChild(daysIn);
   form.appendChild(rateIn);
   form.appendChild(travelCalc);
+  form.appendChild(nameIn);
   form.appendChild(noteIn);
   form.appendChild(btn);
   form.appendChild(hint);

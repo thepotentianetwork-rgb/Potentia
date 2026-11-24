@@ -2953,7 +2953,12 @@ function validateAdjustments(raw) {
       if (!item) return { error: "a price change needs an item" };
       if (!Number.isFinite(amount) || amount < 0 || amount > 1000000) return { error: "a price change needs a new amount of $0 or more" };
       if (out.some((x) => x.kind === "override" && x.item === item)) return { error: "that line already has a price change" };
-      out.push({ kind: kind, item: item, amount: Math.round(amount * 100) / 100, note: note });
+      const entry = { kind: kind, item: item, amount: Math.round(amount * 100) / 100, note: note };
+      /* Optional name shown on the customer quote and PDF. The priced key
+         stays `item`, so a rename cannot orphan the override. */
+      const label = String(a.label || "").trim().slice(0, 200);
+      if (label && label !== item) entry.label = label;
+      out.push(entry);
     } else if (kind === "travel") {
       /* Days can be a half day; the amount is per day, in dollars. Both have
          to be real, positive numbers — a surcharge of $0 is not a line. One
