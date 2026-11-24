@@ -191,9 +191,11 @@ function overrideMap(redline, adjustments) {
     const promo = Math.min(padPromoOf(redline, a.item), amt);
     const regular = prices[a.item] + padPromoOf(redline, a.item);
     const pays = overridePays(amt, promo);
+    const label = String(a.label || '').trim();
     out[a.item] = { was: prices[a.item], typed: amt, regular: regular, amt: pays, promo: promo,
                     delta: prices[a.item] - pays, cut: Math.max(0, regular - amt),
-                    note: a.note || null, up: amt > regular };
+                    note: a.note || null, up: amt > regular,
+                    label: (label && label !== String(a.item)) ? label : null };
   });
   return out;
 }
@@ -235,6 +237,14 @@ function quoteLinesCore(redline, adjustments) {
   const OVR = overrideMap(redline, adjustments);
   const ADJUSTMENTS = adjustments || [];
 
+  /* A staff-edited name on an override is what the customer should see on
+     the quote and the PDF. The priced key stays the original item name, so
+     a rename never breaks matching. A reason-only note is not a name. */
+  function shownName(item, fallback) {
+    const lab = item && OVR[item] && OVR[item].label;
+    return lab || fallback || item;
+  }
+
   /* How much of a given row is being comped, so the reduction lands on the
      phase the item actually belongs to rather than being lopped off the
      bottom line. */
@@ -253,8 +263,8 @@ function quoteLinesCore(redline, adjustments) {
   function compsIn(names) {
     const out = [];
     names.forEach(function (n) {
-      if (n && COMPED[n] != null && COMPED[n] > 0) out.push({ label: n + ' \u2014 included free', amt: COMPED[n], kind: 'comp', item: n });
-      else if (n && OVR[n] && OVR[n].cut > 0) out.push({ label: n + ' \u2014 ' + (OVR[n].note ? String(OVR[n].note).trim() : 'price adjusted'), amt: OVR[n].cut, kind: 'override', item: n });
+      if (n && COMPED[n] != null && COMPED[n] > 0) out.push({ label: shownName(n, n) + ' \u2014 included free', amt: COMPED[n], kind: 'comp', item: n });
+      else if (n && OVR[n] && OVR[n].cut > 0) out.push({ label: shownName(n, n) + ' \u2014 ' + (OVR[n].note ? String(OVR[n].note).trim() : 'price adjusted'), amt: OVR[n].cut, kind: 'override', item: n });
     });
     return out;
   }
@@ -326,15 +336,15 @@ function quoteLinesCore(redline, adjustments) {
     /* Two removals have always read "Site Clearance"; with sprinkler work in
        the mix it is more than clearing, so it reads "Site Prep". */
     const multiName = removal.some((l) => REMOVAL_NAMES.indexOf(l.name) === -1) ? 'Site Prep' : 'Site Clearance';
-    const rRow = add(removal.length > 1 ? multiName : removal[0].name, rTotal);
+    const rRow = add(removal.length > 1 ? multiName : shownName(removal[0].name, removal[0].name), rTotal);
     if (rRow) rRow.kind = 'clearance';
     if (rRow) {
       /* A price staff set after seeing the site is no longer an estimate. */
       rRow.estimate = removal.some((l) => !REMOVAL_NAMES.includes(l.name) && !OVR[l.name]);
     }
     if (rRow && removal.length > 1) {
-      rRow.subLines = removal.map((l) => ({ label: l.name, amt: num(l.amt) - (OVR[l.name] ? OVR[l.name].delta : 0) }));
-      rRow.regularSubLines = removal.map((l) => ({ label: l.name, amt: regularOf(l.name, l.amt) }));
+      rRow.subLines = removal.map((l) => ({ label: shownName(l.name, l.name), amt: num(l.amt) - (OVR[l.name] ? OVR[l.name].delta : 0) }));
+      rRow.regularSubLines = removal.map((l) => ({ label: shownName(l.name, l.name), amt: regularOf(l.name, l.amt) }));
     }
     discountsFor(rRow, removal.map((l) => l.name), removal.length > 1 ? multiName : removal[0].name, 'clearance');
   }
@@ -343,7 +353,9 @@ function quoteLinesCore(redline, adjustments) {
      redline snapshot was taken, so it is added at display time rather than
      depending on redline.foundName having been generated with it baked in. */
   let foundLabel = redline.foundName || 'Concrete';
-  if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
+  if (OVR[redline.foundName] && OVR[redline.foundName].label) {
+    foundLabel = OVR[redline.foundName].label;
+  } else if (foundLabel.indexOf('Concrete Pad') === 0 && foundLabel.indexOf('4"') === -1) {
     foundLabel = foundLabel.replace('Concrete Pad', 'Concrete Pad (4" slab)');
   }
   /* A stain priced on its own line (redlines from 12 Oct 2026 on) shares the
@@ -355,7 +367,7 @@ function quoteLinesCore(redline, adjustments) {
   /* A coat over the customer's own slab (foundation 'existing') has no pad
      line beside it: the row is just the coat, under its own name. */
   const coatOnly = hasFinish && !(num(redline.foundSell) > 0) && !redline.foundName;
-  if (hasFinish) foundLabel = coatOnly ? redline.finishSellName : 'Concrete Foundation';
+  if (hasFinish) foundLabel = coatOnly ? shownName(redline.finishSellName, redline.finishSellName) : 'Concrete Foundation';
   /* Folded into the Shed phase (Nando, 23 Oct 2026): no pad to pour, so the
      coat is a Shed sub-line with no phase or deposit of its own. */
   const coatAmt = coatOnly ? num(redline.finishSell) - compedIn(nameList(redline, 'foundation')) : 0;
@@ -369,8 +381,8 @@ function quoteLinesCore(redline, adjustments) {
     const padReg = padOvr ? (padOvr.up ? padOvr.typed : padOvr.regular) : num(redline.foundSell) + num(redline.foundPromo);
     /* Stripe's memo is 500 characters; this row reads as one line there. */
     foundRow.memoCompact = true;
-    foundRow.subLines = [{ label: padLabel, amt: padNet, includes: null }, { label: redline.finishSellName, amt: finNet, includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }].filter(function (l) { return l.amt; });
-    foundRow.regularSubLines = [{ label: padLabel, amt: padReg, includes: null }, { label: redline.finishSellName, amt: regularOf(redline.finishSellName, redline.finishSell), includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }];
+    foundRow.subLines = [{ label: padLabel, amt: padNet, includes: null }, { label: shownName(redline.finishSellName, redline.finishSellName), amt: finNet, includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }].filter(function (l) { return l.amt; });
+    foundRow.regularSubLines = [{ label: padLabel, amt: padReg, includes: null }, { label: shownName(redline.finishSellName, redline.finishSellName), amt: regularOf(redline.finishSellName, redline.finishSell), includes: null, memoLabel: 'Concrete Floor Stain (2 coats)' }];
   }
   /* A promo on the pad: the row's amount is already what they pay; this is
      only so the page can show the list price struck through and the promo
@@ -398,10 +410,10 @@ function quoteLinesCore(redline, adjustments) {
   });
   const shedRow = add('Shed' + (redline.baseSheetLabel ? ' (' + shedStyleName(redline.baseSheetLabel) + ')' : ''), shedTotal + travelTotal + coatAmt);
   if (shedRow) shedRow.kind = 'shed';
-  const intRow = add(redline.intSellName || 'Interior Finishing', num(redline.intSell) - compedIn(nameList(redline, 'interior')));
+  const intRow = add(shownName(redline.intSellName, redline.intSellName || 'Interior Finishing'), num(redline.intSell) - compedIn(nameList(redline, 'interior')));
   if (intRow) intRow.kind = 'interior';
   discountsFor(shedRow, nameList(redline, 'shed').concat(coatOnly ? nameList(redline, 'foundation') : []), 'Shed', 'shed');
-  discountsFor(intRow, nameList(redline, 'interior'), redline.intSellName || 'Interior Finishing', 'interior');
+  discountsFor(intRow, nameList(redline, 'interior'), shownName(redline.intSellName, redline.intSellName || 'Interior Finishing'), 'interior');
 
   /* Electrical and flooring are still billed and deposited as part of the Shed
      phase (their dollars stay inside shedTotal) — these just break them out so
@@ -429,7 +441,7 @@ function quoteLinesCore(redline, adjustments) {
   function shedItem(label, amt) {
     if (!label) return;
     const ovr = OVR[label] ? OVR[label].delta : 0;
-    shedSubLine(num(amt) - (COMPED[label] || 0) - ovr, label, null, regularOf(label, amt));
+    shedSubLine(num(amt) - (COMPED[label] || 0) - ovr, shownName(label, label), null, regularOf(label, amt));
   }
   function shedItemsFrom(lines, nameKey, amtKey) {
     (lines || []).forEach(function (l) {
@@ -457,8 +469,8 @@ function quoteLinesCore(redline, adjustments) {
   shedItemsFrom(redline.addonLines, 'name', 'amt');
 
   if (coatOnly) shedItem(redline.finishSellName, redline.finishSell);
-  shedSubLine(redline.elecSell, redline.elecSellName || 'Electrical', redline.elecIncludes);
-  shedSubLine(redline.floorSell, redline.floorSellName || 'Flooring');
+  shedSubLine(redline.elecSell, shownName(redline.elecSellName, redline.elecSellName || 'Electrical'), redline.elecIncludes);
+  shedSubLine(redline.floorSell, shownName(redline.floorSellName, redline.floorSellName || 'Flooring'));
   travelLines.forEach(function (t) { shedSubLine(t.amt, t.label); });
 
   if (!rows.length) return null;
