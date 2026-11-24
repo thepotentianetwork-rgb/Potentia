@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "470f92b";
-const WORKER_BUILT_AT = "2026-11-23T16:25:23.855Z";
+const WORKER_BUILD = "fca01a9-dirty";
+const WORKER_BUILT_AT = "2026-11-24T00:14:34.801Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -11439,7 +11439,26 @@ async function runAutoDormant(db, { now = new Date(), dryRun = false } = {}) {
  *              deposit is on it. Agreement, progress, warranties. Nothing else.
  */
 
-const PORTAL_ROLES = ["sales", "builder", "customer"];
+const PORTAL_ROLES = ["sales", "builder", "customer", "partner"];
+
+/* PARTNER SALES TEAMS — outside companies that help sell sheds.
+ *
+ * A "partner" login belongs to exactly one team (portal_users.sales_team).
+ * It may NOT use any /admin/* route (index.js only lets role "sales" through)
+ * and sees nothing but /portal/partner/*, which returns only customers the
+ * owner has explicitly shared with that team (customers.shared_team = team).
+ * Nothing is shared by default, so a new partner login shows zero data.
+ * More rep logins can be added under the same team later; they all see the
+ * same shared list.
+ *
+ * `internal` is owner-only context (GET /portal/teams) — never sent to a
+ * partner session. */
+const SALES_TEAMS = {
+  absolute_built: {
+    label: "Absolute Built",
+    internal: "Build team is backed up until about February. The sales team can keep filling the schedule and taking deposits, but work will not start until roughly February."
+  }
+};
 
 // ---- password hashing (PBKDF2-SHA256, 100k) ----
 const ITER = 100000;
@@ -11502,8 +11521,12 @@ async function ensurePortalTables(env) {
   /* Additive: auto-created customer logins. needs_password=1 means nobody has
      seen this account's password yet — the owner presses Reset in Team logins
      to get one (shown once). No plaintext password is ever stored. */
-  for (const c of ["needs_password INTEGER", "auto_created_at TEXT"]) {
+  for (const c of ["needs_password INTEGER", "auto_created_at TEXT", "sales_team TEXT"]) {
     try { await env.DB.prepare("ALTER TABLE portal_users ADD COLUMN " + c).run(); } catch (e) {}
+  }
+  /* Partner sharing: NULL = not shared (the default for every customer). */
+  for (const c of ["shared_team TEXT", "shared_at TEXT"]) {
+    try { await env.DB.prepare("ALTER TABLE customers ADD COLUMN " + c).run(); } catch (e) {}
   }
   ensured.add(env.DB);
 }
@@ -11557,7 +11580,7 @@ async function handlePortal(request, env, origin, path, deps) {
   if (path === "/portal/users") {
     if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
     if (method === "GET") {
-      const { results } = await env.DB.prepare("SELECT id, role, login, name, customer_id, disabled_at, created_at, needs_password, auto_created_at FROM portal_users ORDER BY id").all();
+      const { results } = await env.DB.prepare("SELECT id, role, login, name, customer_id, disabled_at, created_at, needs_password, auto_created_at, sales_team FROM portal_users ORDER BY id").all();
       return json({ users: results || [] }, 200, origin);
     }
     if (method === "POST") {
@@ -11566,6 +11589,8 @@ async function handlePortal(request, env, origin, path, deps) {
       const login = String(b.login || "").trim().toLowerCase();
       if (!PORTAL_ROLES.includes(role) || !/^[a-z0-9._@+-]{3,80}$/.test(login)) return json({ error: "role and login required" }, 400, origin);
       let customerId = null;
+      const team = role === "partner" ? String(b.sales_team || "") : null;
+      if (role === "partner" && !SALES_TEAMS[team]) return json({ error: "sales_team required" }, 400, origin);
       if (role === "customer") {
         customerId = Number(b.customer_id) || null;
         const c = customerId && await env.DB.prepare("SELECT id FROM customers WHERE id = ?").bind(customerId).first();
@@ -11575,8 +11600,8 @@ async function handlePortal(request, env, origin, path, deps) {
       }
       const { password, password_source } = role === "customer" ? await customerPassword(env, customerId) : { password: generatePassword(), password_source: "random" };
       try {
-        await env.DB.prepare("INSERT INTO portal_users (role, login, name, pass_hash, customer_id, created_at) VALUES (?,?,?,?,?,?)")
-          .bind(role, login, String(b.name || "").slice(0, 80), await hashPassword(password), customerId, now()).run();
+        await env.DB.prepare("INSERT INTO portal_users (role, login, name, pass_hash, customer_id, created_at, sales_team) VALUES (?,?,?,?,?,?,?)")
+          .bind(role, login, String(b.name || "").slice(0, 80), await hashPassword(password), customerId, now(), team).run();
       } catch (e) { return json({ error: "Login already exists" }, 409, origin); }
       /* The ONLY time the password exists in the clear. */
       return json({ ok: true, role, login, password, password_source }, 200, origin);
@@ -11610,6 +11635,32 @@ async function handlePortal(request, env, origin, path, deps) {
     return json({ ok: true, password, password_source }, 200, origin);
   }
 
+  // ---------- owner: partner teams + per-customer sharing ----------
+  if (path === "/portal/teams" && method === "GET") {
+    if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+    const counts = {};
+    try {
+      const { results } = await env.DB.prepare("SELECT shared_team, COUNT(*) AS n FROM customers WHERE shared_team IS NOT NULL GROUP BY shared_team").all();
+      for (const r of results || []) counts[r.shared_team] = Number(r.n);
+    } catch (e) {}
+    return json({ teams: Object.entries(SALES_TEAMS).map(([id, t]) => ({ id, label: t.label, internal: t.internal, shared: counts[id] || 0 })) }, 200, origin);
+  }
+  const shm = path.match(/^\/portal\/share\/(\d+)$/);
+  if (shm) {
+    if (!(await deps.requireAdmin(request, env))) return json({ error: "Unauthorized" }, 401, origin);
+    const cid = Number(shm[1]);
+    const c = await env.DB.prepare("SELECT id, shared_team, shared_at FROM customers WHERE id = ?").bind(cid).first();
+    if (!c) return json({ error: "Not found" }, 404, origin);
+    if (method === "GET") return json({ customer_id: cid, shared_team: c.shared_team || null, shared_at: c.shared_at || null, teams: Object.entries(SALES_TEAMS).map(([id, t]) => ({ id, label: t.label })) }, 200, origin);
+    if (method === "POST") {
+      const b = await body();
+      const team = b.team == null || b.team === "" ? null : String(b.team);
+      if (team && !SALES_TEAMS[team]) return json({ error: "Unknown team" }, 400, origin);
+      await env.DB.prepare("UPDATE customers SET shared_team = ?, shared_at = ? WHERE id = ?").bind(team, team ? now() : null, cid).run();
+      return json({ ok: true, customer_id: cid, shared_team: team }, 200, origin);
+    }
+  }
+
   // everything below needs a portal session (or admin for assign/builders)
   const sess = await deps.verifySession(env, "portal", deps.bearerToken(request));
   const isAdmin = !sess && await deps.requireAdmin(request, env);
@@ -11641,6 +11692,25 @@ async function handlePortal(request, env, origin, path, deps) {
         .bind(sid, bu.id, now(), sess ? sess.name || "sales" : "owner").run();
       return json({ ok: true }, 200, origin);
     }
+  }
+
+  // ---------- partner sales team ----------
+  /* Team is read from portal_users on every call (not the token), so
+     disabling the login or changing its team takes effect at once. Only
+     customers with shared_team = that team are ever returned; no prices,
+     payments, invoices or schedule. */
+  if (path.startsWith("/portal/partner/")) {
+    if (role !== "partner") return json({ error: "Forbidden" }, 403, origin);
+    const u = await env.DB.prepare("SELECT id, name, sales_team FROM portal_users WHERE id=? AND role='partner' AND disabled_at IS NULL").bind(sess.uid).first();
+    const team = u && SALES_TEAMS[u.sales_team] ? u.sales_team : null;
+    if (!team) return json({ error: "Forbidden" }, 403, origin);
+    if (path === "/portal/partner/leads" && method === "GET") {
+      const { results } = await env.DB.prepare(
+        "SELECT id, name, email, phone, address, city, state, zip, shared_at FROM customers WHERE shared_team = ? AND shared_team IS NOT NULL ORDER BY shared_at DESC, id DESC"
+      ).bind(team).all();
+      return json({ team: SALES_TEAMS[team].label, leads: results || [] }, 200, origin);
+    }
+    return json({ error: "Not found" }, 404, origin);
   }
 
   // ---------- builder ----------
