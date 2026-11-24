@@ -157,3 +157,39 @@ test("owner can set advisor/builder password; customer set refused; login works"
   const refused = await call(env, "POST", `/portal/users/${cid}/password`, { token: admin, body: { password: "notallowed1" } });
   assert.equal(refused.status, 400);
 });
+
+test("partner sales team: zero data until owner shares; only shared leads; no /admin access", async () => {
+  const { env, admin, db } = await setup();
+  assert.equal((await mk(env, admin, { role: "partner", login: "rep@x.com" })).error, "sales_team required");
+  const r = await mk(env, admin, { role: "partner", login: "Lead@AbsoluteBuilt.com", name: "Lead", sales_team: "absolute_built" });
+  assert.equal(r.ok, true);
+  const t = (await call(env, "POST", "/portal/login", { body: { portal: "team", login: "lead@absolutebuilt.com", password: r.password } })).data.token;
+  // new login sees nothing
+  const empty = (await call(env, "GET", "/portal/partner/leads", { token: t })).data;
+  assert.deepEqual(empty.leads, []);
+  // every CRM / money route is closed to partner
+  for (const [m, p] of [["GET", "/admin/customers"], ["GET", "/admin/customers/1"], ["GET", "/admin/schedule"], ["GET", "/admin/dashboard"],
+    ["GET", "/admin/pricing"], ["GET", "/admin/activity"], ["GET", "/admin/submissions/10"], ["GET", "/admin/production"]]) {
+    assert.equal((await call(env, m, p, { token: t })).status, 403, p);
+  }
+  for (const p of ["/portal/builders", "/portal/jobs/10/assign", "/portal/users", "/portal/teams", "/portal/share/1", "/portal/builder/jobs", "/portal/customer/order"]) {
+    assert.ok([401, 403, 404].includes((await call(env, "GET", p, { token: t })).status), p);
+  }
+  assert.ok([401, 403].includes((await call(env, "POST", "/portal/share/1", { token: t, body: { team: "absolute_built" } })).status));
+  // owner shares one lead -> only that one shows; no money fields
+  assert.equal((await call(env, "POST", "/portal/share/1", { token: admin, body: { team: "nope" } })).status, 400);
+  assert.equal((await call(env, "POST", "/portal/share/1", { token: admin, body: { team: "absolute_built" } })).status, 200);
+  const one = (await call(env, "GET", "/portal/partner/leads", { token: t })).data.leads;
+  assert.deepEqual(one.map((c) => c.id), [1]);
+  assert.equal("details" in one[0] || "total" in one[0], false);
+  const teams = (await call(env, "GET", "/portal/teams", { token: admin })).data.teams;
+  assert.equal(teams[0].shared, 1); assert.ok(teams[0].internal.includes("February"));
+  assert.equal(JSON.stringify(one).includes("February"), false);
+  // unshare -> empty again
+  await call(env, "POST", "/portal/share/1", { token: admin, body: { team: null } });
+  assert.deepEqual((await call(env, "GET", "/portal/partner/leads", { token: t })).data.leads, []);
+  // disabled login is cut off immediately
+  const uid = db.prepare("SELECT id FROM portal_users WHERE login='lead@absolutebuilt.com'").get().id;
+  await call(env, "POST", `/portal/users/${uid}/disable`, { token: admin });
+  assert.equal((await call(env, "GET", "/portal/partner/leads", { token: t })).status, 403);
+});

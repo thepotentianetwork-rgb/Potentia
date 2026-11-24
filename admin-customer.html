@@ -384,6 +384,11 @@ select:focus{border-color:var(--sp-blue)}
     <div class="info-item"><div class="il">Customer Since</div><div class="iv" id="c-since">—</div></div>
   </div>
 
+  <!-- Owner only: share this lead with a partner sales team. Off by default. -->
+  <label id="share-team-wrap" style="display:none;align-items:center;gap:8px;margin:10px 0 4px;font-family:'DM Mono',monospace;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--silver);cursor:pointer">
+    <input type="checkbox" id="share-team"> Assign lead to Absolute Built <span id="share-team-msg"></span>
+  </label>
+
   <div id="focus-builds"></div>
   <button type="button" class="show-all-btn" id="show-all-btn" hidden></button>
 
@@ -3876,6 +3881,28 @@ document.getElementById('call-form').addEventListener('submit', function (e) {
     loadCustomer();
   }).catch(function () { alert('Could not reach the server.'); });
 });
+
+/* Partner sharing toggle (owner session only; the endpoint refuses others). */
+function loadShareToggle() {
+  if (localStorage.getItem('potentia_role') === 'sales') return;
+  var wrap = document.getElementById('share-team-wrap'), box = document.getElementById('share-team'), msg = document.getElementById('share-team-msg');
+  if (!wrap) return;
+  fetch(API_BASE + '/portal/share/' + customerId, { headers: { 'Authorization': 'Bearer ' + token } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (d) {
+      if (!d) return;
+      box.checked = d.shared_team === 'absolute_built';
+      wrap.style.display = 'flex';
+      box.onchange = function () {
+        box.disabled = true; msg.textContent = '…';
+        fetch(API_BASE + '/portal/share/' + customerId, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ team: box.checked ? 'absolute_built' : null }) })
+          .then(function (r) { if (!r.ok) throw 0; msg.textContent = box.checked ? '· assigned' : '· not assigned'; })
+          .catch(function () { box.checked = !box.checked; msg.textContent = '· could not save'; })
+          .finally(function () { box.disabled = false; });
+      };
+    }).catch(function () {});
+}
+loadShareToggle();
 
 function loadCustomer() {
   /* Invoices live on their own endpoint but are drawn inside the order cards,
