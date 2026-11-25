@@ -114,10 +114,12 @@ export function compItemPrices(redline) {
   push(redline.porchSellName, redline.porchSell);
   push(redline.porchDeckSellName, redline.porchDeckSell);
   push(redline.sidingSellName, redline.sidingSell);
+  push(redline.paintSellName, redline.paintSell);
   push(redline.heightSellName, redline.heightSell);
   push(redline.elecSellName, redline.elecSell);
   push(redline.loftSellName, redline.loftSell);
   push(redline.intSellName, redline.intSell);
+  push(redline.floorSellName, redline.floorSell);
   push(redline.foundName, redline.foundSell);
   push(redline.finishSellName, redline.finishSell);
   return out;
@@ -138,7 +140,8 @@ export function nameList(redline, which) {
   (redline.dormerSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
   (redline.shelfSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
   [redline.porchSellName, redline.porchDeckSellName, redline.sidingSellName,
-   redline.heightSellName, redline.elecSellName, redline.loftSellName]
+   redline.paintSellName, redline.heightSellName, redline.elecSellName,
+   redline.loftSellName, redline.floorSellName]
     .forEach(function (n) { if (n) out.push(n); });
   return out;
 }

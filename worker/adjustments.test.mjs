@@ -61,7 +61,8 @@ check("shelf lines offered", names.includes('16" Shelf 8ft'), names);
    "charged separately" — which nothing did. Now they are a line, so they can
    also be given away deliberately. */
 check("placed vents offered", names.some(n=>/Gable\/Wall Vent/.test(n)), names);
-check("exterior paint NOT offered — the quote never sums it", !names.includes("Exterior Paint"), names);
+check("exterior paint is offered — it is a billed shed line", names.includes("Exterior Paint"), names);
+check("paint price comes with it", items.find(i=>i.name==="Exterior Paint").amt===900, items);
 check("prices come with them", items.find(i=>i.name==="Skylight").amt===184, items);
 
 console.log("\n-- comping a line --");
@@ -70,6 +71,9 @@ check("comp accepted", r.status===200, r);
 check("effective price 20000-600", r.data.effective_price===19400, r.data.effective_price);
 r = await set([{kind:"comp",item:"Gold Taps"}]);
 check("comping something not on the quote is refused", r.status===400, r);
+r = await set([{kind:"comp",item:"Exterior Paint"}]);
+check("paint can be given away", r.status===200, r);
+check("effective price 20000-900", r.data.effective_price===19100, r.data.effective_price);
 
 console.log("\n-- the order that matters --");
 r = await set([{kind:"comp",item:"Cupola (Black Roof)"},{kind:"percent",value:-10}]);

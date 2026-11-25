@@ -1,6 +1,6 @@
 // Build stamp, written by build-bundle.mjs. Read it back from GET /version.
-const WORKER_BUILD = "727dc6f";
-const WORKER_BUILT_AT = "2026-11-24T21:39:06.223Z";
+const WORKER_BUILD = "0c148a8";
+const WORKER_BUILT_AT = "2026-11-25T23:24:12.433Z";
 
 // ---- inlined from worker/pricing.js by build-bundle.mjs — do not edit below by hand ----
 /* Potentia / ShedPro — pricing engine, server-side only.
@@ -4698,10 +4698,12 @@ function compItemPrices(redline) {
   push(redline.porchSellName, redline.porchSell);
   push(redline.porchDeckSellName, redline.porchDeckSell);
   push(redline.sidingSellName, redline.sidingSell);
+  push(redline.paintSellName, redline.paintSell);
   push(redline.heightSellName, redline.heightSell);
   push(redline.elecSellName, redline.elecSell);
   push(redline.loftSellName, redline.loftSell);
   push(redline.intSellName, redline.intSell);
+  push(redline.floorSellName, redline.floorSell);
   push(redline.foundName, redline.foundSell);
   push(redline.finishSellName, redline.finishSell);
   return out;
@@ -4722,7 +4724,8 @@ function nameList(redline, which) {
   (redline.dormerSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
   (redline.shelfSellLines || []).forEach(function (l) { if (l && l.label) out.push(l.label); });
   [redline.porchSellName, redline.porchDeckSellName, redline.sidingSellName,
-   redline.heightSellName, redline.elecSellName, redline.loftSellName]
+   redline.paintSellName, redline.heightSellName, redline.elecSellName,
+   redline.loftSellName, redline.floorSellName]
     .forEach(function (n) { if (n) out.push(n); });
   return out;
 }
@@ -14866,20 +14869,21 @@ function compItemsFromRedline(redline) {
   push(redline.porchSellName, redline.porchSell);
   push(redline.porchDeckSellName, redline.porchDeckSell);
   push(redline.sidingSellName, redline.sidingSell);
+  /* Exterior Paint is a billed shed line (shedTotal / shedItem). It used to
+     be left out because the quote document did not add it up; that is no
+     longer true, and omitting it made "Include free" unable to target paint. */
+  push(redline.paintSellName, redline.paintSell);
   push(redline.heightSellName, redline.heightSell);
   push(redline.elecSellName, redline.elecSell);
   push(redline.loftSellName, redline.loftSell);
   push(redline.intSellName, redline.intSell);
   push(redline.floorSellName, redline.floorSell);
   push(redline.foundName, redline.foundSell);
+  push(redline.finishSellName, redline.finishSell);
   /* The pad carries its promo, so the CRM can say the promo still comes off
      a price typed for it, and the stored price takes it off (Nando, 9 Oct). */
   const padPromo = padPromoOf(redline, redline.foundName);
   if (padPromo && seen[String(redline.foundName)] != null) out[seen[String(redline.foundName)]].promo = padPromo;
-  // paintSell is deliberately absent. The quote document never sums it as its
-  // own line, so comping it would take money off a total that never contained
-  // it — the customer's bill would drop by an amount nothing on the page
-  // accounts for. Only lines the quote actually adds up can be given away.
   return out;
 }
 
